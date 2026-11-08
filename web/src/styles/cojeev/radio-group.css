@@ -1,0 +1,41 @@
+@layer cojeev-states {
+[data-slot="radio-group"] { display:grid; gap:var(--s-2); }
+.v-radio[data-slot="radio-group-item"] { display:inline-flex; align-items:center; gap:var(--s-3); min-height:44px; min-width:0; border:0; box-shadow:none; background:transparent; color:var(--v-text); font-size:var(--fs-body); text-align:start; cursor:pointer; }
+[data-slot="radio-group-indicator"] { display:inline-grid; place-items:center; width:var(--selector-size,28px); height:var(--selector-size,28px); flex:none; }
+[data-slot="radio-group-item"]:focus-visible { outline:none; }
+[data-slot="radio-group-item"]:focus-visible [data-slot="radio-group-indicator"] { outline:2px solid var(--ring); outline-offset:3px; border-radius:var(--r-sm); }
+[data-slot="radio-group-item"][data-disabled] { color:var(--v-disabled-ink); cursor:not-allowed; }
+.v-radio[data-slot="radio-group-item"].-block { display:grid; grid-template-columns:var(--selector-size,28px) minmax(0,1fr) auto; gap:var(--s-4); padding:var(--s-4) var(--s-4); border-radius:var(--r-card-sm); background:var(--card); box-shadow:inset 0 0 0 1px var(--v-border); }
+.v-radio[data-slot="radio-group-item"].-block:not([data-disabled]):hover { background:var(--v-beige-2); }
+.v-radio[data-slot="radio-group-item"].-block[data-state="checked"] { background:color-mix(in oklab,var(--selector-accent) 16%,var(--v-canvas)); box-shadow:inset 0 0 0 1.5px var(--selector-accent); }
+[data-slot="radio-group-body"] { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; }
+[data-slot="radio-group-body"] b { font-size:var(--fs-body); font-weight:var(--fw-semibold); line-height:1.35; }
+[data-slot="radio-group-body"] small { color:var(--v-text-2); font-size:var(--fs-small); line-height:1.45; }
+[data-slot="radio-group-item"][data-disabled] [data-slot="radio-group-body"] small { color:var(--v-disabled-ink); }
+.v-iradios[data-slot="radio-group"] { grid-template-columns:repeat(auto-fit,minmax(88px,1fr)); max-width:400px; }
+.v-iradio[data-slot="radio-group-item"] { position:relative; display:grid; justify-items:center; gap:var(--s-2); padding:var(--s-5) var(--s-3) var(--s-4); border-radius:var(--r-card-sm); background:var(--card); color:var(--v-text); cursor:pointer; }
+.v-iradio[data-slot="radio-group-item"] [data-slot="radio-group-indicator"] { position:absolute; inset:5px 5px auto auto; width:var(--selector-size,16px); height:var(--selector-size,16px); }
+.v-iradio[data-slot="radio-group-item"] [data-slot="selector-glyph"] { width:var(--selector-size,16px); height:var(--selector-size,16px); }
+.v-iradio[data-slot="radio-group-item"] > .v-icon { width:26px; height:26px; }
+.v-iradio[data-slot="radio-group-item"] small { font-size:var(--fs-meta); font-weight:var(--fw-medium); }
+.v-iradio[data-slot="radio-group-item"][data-state="checked"] { background:var(--selector-accent); color:var(--v-on-accent); }
+.v-iradio[data-slot="radio-group-item"]:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+@media(pointer:coarse) { .v-radio[data-slot="radio-group-item"] { min-height:44px; } }
+
+/* The shared Button body engine owns the moving selector contour. The original
+   SVG is the immediate SSR/Off/reduced fallback; the mark stays above either. */
+[data-slot="selector-glyph"]:has([data-slot="selector-surface-host"] > svg.v-morph) [data-slot="selector-surface"] { opacity:0; }
+[data-slot="selector-drawing"] { position:relative; pointer-events:none; }
+
+[data-slot="radio-group-item"][data-appearance] { display:flex; align-items:center; min-height:44px; min-width:0; padding:var(--s-3) var(--s-3); gap:var(--s-3); color:var(--v-text); text-align:start; border:0; border-radius:var(--v-control-radius,12px); background:transparent; cursor:pointer; }
+[data-slot="radio-group-item"][data-appearance="row"] { width:100%; border-radius:0; border-bottom:1px solid var(--v-border); }
+[data-slot="radio-group-item"][data-appearance="card"] { display:grid; grid-template-columns:var(--selector-size,28px) minmax(0,1fr); align-items:start; width:100%; padding:var(--s-5); border-radius:min(var(--v-control-radius,16px),24px); background:var(--card); box-shadow:inset 0 0 0 1px var(--v-edge); }
+[data-slot="radio-group-item"][data-appearance="chip"] { width:fit-content; border-radius:var(--v-control-radius,999px); box-shadow:inset 0 0 0 1px var(--v-edge); gap:var(--s-2); }
+[data-slot="radio-group-item"][data-appearance]:not([data-disabled])[data-state="checked"] { background:color-mix(in oklab,var(--selector-accent) 18%,var(--v-canvas)); }
+[data-slot="radio-group-item"][data-appearance]:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+[data-slot="radio-group-item"][data-appearance]:focus-visible [data-slot="radio-group-indicator"] { outline:none; }
+[data-slot="radio-group-item"][data-appearance][data-disabled] { color:var(--v-disabled-ink); cursor:not-allowed; }
+[data-slot="radio-group-body"] { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; }
+[data-slot="radio-group-body"] small { color:var(--v-text-2); font-size:var(--fs-small); line-height:1.45; }
+
+}

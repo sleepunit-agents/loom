@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-assembly-order",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:f65b5cedbcf7c5e2bd841f3f4c6d87da7e58d0545dd6df6cb1d49d0745e3e9f1"
+    }
+  ]
+}

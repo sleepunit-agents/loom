@@ -1,0 +1,1285 @@
+{
+  "asOf": "2026-06-15T00:00:00Z",
+  "spec": [
+    {
+      "record": "preamble",
+      "conformanceVersion": "0.1.0",
+      "contracts": [
+        {
+          "description": "loom's episodic memory model: the six-category write vocabulary (open on read), insert-only remember (no store-side dedup — dedup is the writer's discipline served by find_similar/audit affordances), recall and find_similar as deterministic filter/projection over a cosine vector search, TTL/expiry/prune aging, and the memory-vs-knowledge and memory-vs-work-store boundaries. Behaviors observed in the sqlite-vec backend and the MCP tool definitions of loom (github.com/jbarket/loom), v0.4 line.",
+          "id": "c-loom-memory"
+        }
+      ],
+      "exclusions": [
+        "The MCP tool surface and wire formats: tool names, zod parameter schemas, descriptions, and result string formatting are binding surface, not contract. Only the BEHAVIORS they project are excavated here; the projection wire-formats (loom-memory/*) are this spec's own honest model of those behaviors, not loom's actual MCP I/O.",
+        "The embedding model and ranking QUALITY: fastembed/sqlite-vec, vector dimensions, cosine distances, and whether a returned neighbour is genuinely \"the right\" memory are non-deterministic and model-dependent. Recall RANKING relevance is recorded as a judgment criterion (left proposed/descriptive), never fixtured as arithmetic; only the deterministic filter/projection AROUND the ranking is fixtured.",
+        "The knowledge wing internals: knowledge_write/recall/merge/supersede/verify/history, the epistemic citation gate, entity-page slugs, link graph, and freshness/expansion — a separate contract. Only the memory-vs-knowledge ROUTING boundary is in scope here (which store a fact belongs to), not the knowledge surface itself.",
+        "Identity and creed: IDENTITY.md, preferences.md, self-model.md, dossier, bootstrap/harness manifests, update-identity. The identity wing is loom's third surface and its own contract; this spec touches it only insofar as the work-store boundary names identity as loom-owned.",
+        "Storage backend and persistence: SQLite, WAL, sqlite-vec virtual table, vec0 rowids, file locations, the growing-k KNN loop's performance, schema/migrations, and embedding buffers are implementation surface. What is contract is the observable filter/projection result, the insert-only write outcome, and the TTL/prune decision — not how the rows are stored or searched.",
+        "Consolidation and maintenance verbs as MECHANISMS: memory_audit, prune, archive/restore, find_similar are named here only as the affordances that SERVE the writer's dedup discipline and the aging policy; their full surface (audit thresholds, archive tombstones, restore re-embedding, maintenance-log) is excluded. find_similar self-exclusion + minRelevance and prune's expire/stale split ARE excavated because they are deterministic and load-bearing for the model.",
+        "Reads accept arbitrary category strings BY DESIGN (legacy reachability for pre-vocabulary memories like \"general\"); enumerating the legacy values is out of scope — only the write-closed/read-open ASYMMETRY is contract."
+      ],
+      "goals": [
+        "Record loom's episodic-memory model as it ACTUALLY behaves — categories, remember/recall/find_similar, TTL aging, and the memory/knowledge and memory/work-store boundaries — with provenance pointing at the code that was read. This is archaeology (source:discovered), not invention.",
+        "Isolate loom's DETERMINISTIC contribution (category vocabulary, insert-only writes, the filter/projection over a vector search, TTL arithmetic, prune policy) from the non-deterministic embedding ranking, so the mechanical behaviors are fixtured and the genuinely-judgment behaviors (is a recall relevant? which store does a fact belong to?) carry rubrics.",
+        "Pin loom's side of the same boundary the work store pinned as ac-ts-loom-boundary: loom owns memory/knowledge/identity and offers NO work-tracking surface. The boundary that is not enforced is the boundary that erodes."
+      ],
+      "governance": {
+        "timeoutDays": 30
+      },
+      "implementers": [
+        {
+          "name": "loom",
+          "roles": [
+            "author",
+            "maintainer",
+            "repo-owner"
+          ]
+        }
+      ],
+      "name": "loom-memory"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-categories",
+      "body": "Every memory carries one category. The vocabulary is the six values {user, project, self, feedback, reference, pursuit}, defined as the single source of truth in categories.ts (MEMORY_CATEGORIES / isMemoryCategory). The closed set is enforced ON WRITE ONLY: remember validates category against the enum (z.enum(MEMORY_CATEGORIES), server.ts), rejecting anything else. READS — recall, memory_list, forget, find_similar — accept an arbitrary category string (z.string().optional()), intentionally, so memories written before the vocabulary existed (e.g. legacy 'general') stay reachable. The six are not arbitrary buckets: each has a stated meaning (user = about the human; project = about work; self = capability/learning; feedback = corrections/confirmations; reference = external pointers; pursuit = active goal or ongoing creative thread) and the boundaries between them are a judgment, not a lookup.",
+      "interfaceSketch": "isMemoryCategory(value: string): boolean — the write-side gate (categories.ts). Reads bypass it: the category arg flows straight into a SQL equality filter, never validated.",
+      "title": "The category vocabulary — closed on write, open on read"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-remember",
+      "body": "remember always INSERTS a new row: a fresh uuid, a unique ref (category/slug-of-title-uuid8), its own embedding (sqlite-vec.ts remember()). It performs NO existence check, NO similarity check, NO merge — two identical remember calls produce two distinct memories. This is the archaeology-vs-invention line of this whole excavation: the 'dedup-before-save' rule (check for an existing memory covering the fact and UPDATE it rather than duplicate) is the WRITER'S discipline, carried in the harness memory instructions, NOT enforced by loom. What loom CONTRIBUTES to that discipline is affordances, not enforcement: find_similar (semantic neighbours of an anchor) and memory_audit (duplicate-pair detection above a similarity threshold) SURFACE overlaps for the agent to resolve with update/forget/merge. A criterion that said remember refuses or merges duplicates would be inventing a behavior loom does not have.",
+      "interfaceSketch": "remember(input): always one INSERT (memories row + vec_memories row), returns a fresh ref. No read-before-write. Dedup tooling lives in find_similar()/audit(), invoked separately by the writer.",
+      "title": "remember is insert-only — the store never dedups"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-recall",
+      "body": "recall and find_similar both run a KNN cosine search (searchVectors) and then apply a DETERMINISTIC accept-filter and projection. The vector ranking itself is non-deterministic (a learned embedding) and is treated here as a GIVEN: the wire-format loom-memory/vector-projection@0 takes the candidate list (id, category, project, distance) the vector layer returned and asserts what loom does with it. recall: filters by category (exact string match; the sentinel 'all' OR an omitted category means no category filter) and by project, caps at limit (default 10), projects each hit to relevance = 1 - distance, preserves distance order, and stamps last_accessed on every hit. find_similar: additionally EXCLUDES the anchor itself and drops any candidate whose relevance (1 - distance) is below minRelevance (default 0). Whether the returned memory is genuinely the RIGHT one for the query is a separate, judgment-shaped behavior — recorded as such, not fixtured.",
+      "interfaceSketch": "searchVectors(queryVector, limit, startK, accept): folds a growing-k KNN through an accept(mem, vecRow) predicate, distance-ordered, capped at limit. recall passes a category/project predicate; find_similar passes anchor-exclusion + minRelevance + category/project. rowToMatch sets relevance = 1 - distance.",
+      "title": "recall & find_similar — deterministic filter/projection over a cosine vector search"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-ttl",
+      "body": "A memory may carry a TTL. The grammar is exactly /^(\\d+)(d|h)$/ plus the literal 'permanent'; anything else throws (parseTTL). computeExpiresAt(created, ttl) = created + duration, or null for permanent/absent. isExpired(expiresAt, now) = expiresAt != null && now >= expiresAt. prune walks the non-archived memories and splits them: a memory with an expiresAt that isExpired is EXPIRED (and deleted when not a dry run); a 'permanent' memory is skipped entirely; any other memory whose last touch (last_accessed ?? updated ?? created) is older than staleDays (default 30) is STALE — surfaced for review but NOT deleted. Expiry is hard (TTL elapsed → removed); staleness is soft (untouched → reported).",
+      "interfaceSketch": "parseTTL(ttl): ms | null (throws on bad grammar). computeExpiresAt(created, ttl): iso | null. isExpired(expiresAt, now): boolean. prune({dryRun, staleDays}): {expired: ref[], stale: ref[]} — expired deleted unless dryRun; stale never deleted; permanent neither.",
+      "title": "TTL and aging — expiry arithmetic and the prune expire/stale split"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-salience",
+      "body": "TO-BE: episodic memories carry a salience/temperature scalar — a STORED field, decayed by a per-category half-life (hotter categories cool faster) and reheated by an access bump on recall OR write/update — recomputed by the consolidation lane (art-memory-consolidation). The lane ASSEMBLES a boot digest by filling a token budget hottest-first from authored memory atoms, labeled into salience tiers (Hot/top-of-mind, Warm/recent, Cool/background), injected at identity-load after preferences so a fresh sleeve wakes knowing where attention sits without an on-demand recall fishing trip. Lifted from Anthropic's native boot digest (Desktop, 2026-06-15) — same output SHAPE, opposite integrity model: native GENERATES the digest prose; loom ASSEMBLES a view over authored atoms and NEVER free-writes synthesis or persists tier glue as a memory. The pen stays with Art.",
+      "title": "Salience temperature and the assembled boot digest"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-salience-field",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "evidence": "src/backends/salience.ts:35-64 (temperature: per-category half-life HALF_LIVES:18, 1.0 at touch / 0.5 at a half-life), :66-79 (recomputeSalience stores it); migration add_salience src/backends/migrations.ts:63; fresh memory inserts hot at 1.0 src/backends/sqlite-vec.ts:134; recall stamps last_accessed (existing). Tests src/backends/salience.test.ts (decay/bump order, recompute cools aged below fresh).",
+      "fixtures": [
+        "fx-loom-salience-decay-bump"
+      ],
+      "force": "MUST",
+      "gherkin": "Given episodic memories of different ages and categories — some recalled or updated recently, some untouched\nWhen salience is computed\nThen each memory carries a STORED temperature scalar that decays by a PER-CATEGORY half-life (hotter categories cool faster) and is reheated by an access bump on recall OR write/update, so a frequently-recalled fact stays warm and an untouched one cools — recomputed by the consolidation lane, not derived on every read",
+      "itemId": "it-loom-salience",
+      "source": "forethought",
+      "state": "active",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-digest-assemble",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "evidence": "src/backends/salience.ts:108-146 (assembleDigest: order hottest-first, fill token budget, group under tier headers, atomLine selects existing title/content — never generates); test src/backends/salience.test.ts ('orders hottest-first', 'respects the token budget', 'never invents prose').",
+      "fixtures": [
+        "fx-loom-digest-assemble"
+      ],
+      "force": "MUST",
+      "gherkin": "Given the recomputed temperatures across authored memories\nWhen the consolidation lane builds the boot digest\nThen it fills a token budget HOTTEST-FIRST from EXISTING authored atoms, labeled by salience tier (Hot/Warm/Cool), and NEVER free-writes new synthesis nor persists tier glue as a memory — the digest is a VIEW over authored atoms, not a new authored artifact (assemble, never generate)",
+      "itemId": "it-loom-salience",
+      "source": "forethought",
+      "state": "active",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-digest-inject",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "evidence": "src/tools/identity.ts:115-127 (digestForContext injected as '# Top of Mind' after preferences, best-effort); src/backends/salience.ts:159-180 (digestForContext opens memories.db read-only, no embedder). Test src/backends/salience.test.ts ('a fresh memory shows in the digest').",
+      "fixtures": [
+        "fx-loom-digest-inject"
+      ],
+      "force": "MUST",
+      "gherkin": "Given an identity load on a fresh sleeve\nWhen the payload is assembled\nThen the boot digest is injected after preferences, so the agent wakes already knowing what is top-of-mind versus settled background — without an on-demand recall fishing trip",
+      "itemId": "it-loom-salience",
+      "source": "forethought",
+      "state": "active",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-boundary",
+      "body": "loom's memory wing sits inside two boundaries it does not cross. (1) memory vs knowledge: episodic memory holds what is true about Jonathan, the work, or the agent itself — agent-authored, recalled by similarity; the knowledge wing holds facts true INDEPENDENT of Jonathan (entity pages, citation-gated). The routing rule is stated at the knowledge_write surface: 'Knowledge is true independent of Jonathan — if it is about Jonathan or our work, store it in memory instead.' This is a routing CONVENTION carried in the tool contract, not a runtime rejection — loom will physically store a world-fact sent to remember; the boundary is which surface you are SUPPOSED to use. (2) memory vs work store: loom owns memory, knowledge, and identity, and offers NO work-tracking surface at all — no status, no claim/close, no ready queue. Work records live in the work store (taskstore) and are cited from memory by reference ([[slug]], paths, URLs), never absorbed. This is loom's side of the boundary the work store pinned as ac-ts-loom-boundary; loom enforces it by OMISSION — there is no verb to misuse.",
+      "interfaceSketch": "Two surfaces, one omission: remember/recall (episodic) and knowledge_* (world-fact) are distinct tool families routed by the \"true independent of Jonathan?\" test; neither family, nor any other loom verb, offers work-tracking — that surface is deliberately absent.",
+      "title": "What loom owns and what it refuses — the two boundaries"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-capture",
+      "body": "A background lane can DRAFT memory writes into a separate proposal queue that Art ratifies before anything becomes canon — auto-capture ergonomics without surrendering the one-writer/authored model. Proposals live in a separate table, INVISIBLE to recall / memory_list / find_similar / the salience digest; the only path from proposal to memory is an explicit ratify (routed through the same validated remember(), so an invalid draft is refused and stays pending). Never auto-commit. Lifted from native memory's never-forget-to-capture, bent to propose-then-ratify.",
+      "title": "Capture-propose — a staging queue, ratified before it's canon"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-propose-staging",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "evidence": "src/backends/proposals.ts:104-200 (separate proposals table via migration add_proposals src/backends/migrations.ts:80; propose/listProposals/getProposal/rejectProposal); canon reads (recall/list/digest/find_similar) query only `memories`. MCP memory_propose/memory_proposals/memory_ratify/memory_reject src/server.ts:341+. Test src/backends/proposals.test.ts (integrity invariant: draft absent from recall+list while real present).",
+      "fixtures": [
+        "fx-loom-propose-invisible"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a real remembered memory and a separately PROPOSED draft\nWhen recall, memory_list, find_similar and the salience digest run\nThen only the real memory is visible — the proposal is staged in a separate queue, invisible to every canon read path, and is not authored memory until ratified",
+      "itemId": "it-loom-capture",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-ratify-lifecycle",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "evidence": "src/backends/proposals.ts:203+ (ratifyProposal applies overrides, commits via remember() so validateMemoryInput runs — invalid throws and the row survives — then deletes; UnknownProposalError on bad id) and rejectProposal:178. Test src/backends/proposals.test.ts (ratify commits+removes+overrides; invalid refused stays pending; reject removes).",
+      "fixtures": [
+        "fx-loom-ratify-lifecycle"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a pending proposal\nWhen Art ratifies it (optionally with edits), and separately when an INVALID proposal is ratified, and when a proposal is rejected\nThen ratify commits it through the validated remember() path (edits applied), then removes the proposal; an invalid proposal is refused with its typed reason and STAYS pending (no canon written); reject discards it — never an auto-commit",
+      "itemId": "it-loom-capture",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-loom-provenance",
+      "body": "TO-BE / backlog: episodic memories carry source/session provenance (which lane/transcript/harvest produced a fact) so a maintenance lane can retire orphaned or superseded ones and a knowledge_verify audit is sharper — the loom analog of native retiring derived facts when their source conversation is deleted, but as authored decay (propose retirement), never silent generation.",
+      "title": "Provenance-linked decay (backlog)"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-category-closed-write",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: categories.ts (MEMORY_CATEGORIES, isMemoryCategory + the read-accepts-arbitrary-strings comment) and src/server.ts:136 (remember category: z.enum(MEMORY_CATEGORIES)) vs :159 (recall category: z.string().optional()).",
+      "fixtures": [
+        "fx-loom-category-write",
+        "fx-loom-category-read"
+      ],
+      "force": "MUST",
+      "item": "A category-bearing WRITE (remember) is accepted iff the category is one of the six {user, project, self, feedback, reference, pursuit} (isMemoryCategory true); any other value is rejected. A READ-side category argument (recall/list/forget/find_similar filter) is accepted for ANY string — including legacy values outside the six — and used as an exact-match filter, never validated.",
+      "itemId": "it-loom-categories",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-category-meanings",
+      "class": "judgment",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/server.ts:137 — the remember category enum description enumerating the six meanings verbatim.",
+      "fixtures": [
+        "fx-loom-cat-user",
+        "fx-loom-cat-feedback",
+        "fx-loom-cat-reference",
+        "fx-loom-cat-pursuit"
+      ],
+      "force": "SHOULD",
+      "item": "Each of the six categories carries a distinct meaning and a memory SHOULD be filed under the one that fits: user = a fact about the human (Jonathan); project = a fact about ongoing work; self = the agent's own capability or a lesson learned; feedback = a correction or confirmation the human gave about how to work; reference = a pointer to an external resource; pursuit = an active goal or ongoing creative thread. The boundaries blur (a lesson FROM feedback could be self or feedback) — this is a judgment, not a lookup.",
+      "itemId": "it-loom-categories",
+      "judgment": {
+        "rubric": "Read the fact. Choose the single category whose stated meaning best fits: user (about Jonathan), project (about the work), self (agent capability/lesson), feedback (a correction/confirmation on how to work), reference (external pointer/URL), pursuit (active goal/creative thread). Judge the dominant intent of the fact; when two fit, prefer the more specific (feedback over self for an explicit instruction; reference for a fact whose payload is a pointer). Pass iff the chosen category matches the expected one.",
+        "tolerance": {
+          "agreement": 2,
+          "runs": 3
+        }
+      },
+      "source": "discovered",
+      "state": "descriptive",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-remember-no-dedup",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-vec.ts remember() (~:96-138): unconditional INSERT of a fresh uuid/ref/embedding, no SELECT-before-INSERT anywhere in the path.",
+      "fixtures": [
+        "fx-loom-remember-twice"
+      ],
+      "force": "MUST",
+      "item": "remember always inserts a new, distinct memory. Two remember calls with identical title and content yield two separately-stored memories with distinct refs — the store performs no existence check, no similarity check, and no merge on write. (Dedup is the writer's responsibility, served by the find_similar and memory_audit affordances, not by remember.)",
+      "itemId": "it-loom-remember",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-recall-filters",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-vec.ts recall() (~:140-171): categoryFilter = category && category !== \"all\" ? category : null; project equality; limit default 10; rowToMatch relevance = 1 - distance; last_accessed UPDATE on hit ids.",
+      "fixtures": [
+        "fx-loom-recall-allcat",
+        "fx-loom-recall-nocat",
+        "fx-loom-recall-catfilter",
+        "fx-loom-recall-project",
+        "fx-loom-recall-limit"
+      ],
+      "force": "MUST",
+      "item": "Given the distance-ordered candidates from the vector search, recall returns matches that pass its filter, in distance order, capped at limit (default 10), each projected to relevance = 1 - distance. The category filter is exact string equality EXCEPT the sentinel 'all' OR an omitted category, either of which disables category filtering; the project filter is exact equality when present. Every returned hit is stamped as accessed (a write side-effect on last_accessed, verified by code inspection — the projection wire-format deliberately does not express it).",
+      "itemId": "it-loom-recall",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-find-similar-exclusion",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-vec.ts findSimilar() (~:354-399): accept callback rejects vr.rowid === anchorId and 1 - vr.distance < minRelevance, plus category/project equality.",
+      "fixtures": [
+        "fx-loom-similar-exclude",
+        "fx-loom-similar-floor",
+        "fx-loom-similar-default0"
+      ],
+      "force": "MUST",
+      "item": "find_similar applies recall's filter/projection AND two extra rules: it excludes the anchor memory itself from the results, and it drops any candidate whose relevance (1 - distance) is strictly below minRelevance (default 0). The default-0 floor is not 'no floor': cosine distance ranges [0,2], so relevance = 1 - distance ranges [-1,1], and a floor at 0 still drops anti-correlated candidates (distance > 1). The surviving candidates are returned in distance order, capped at limit.",
+      "itemId": "it-loom-recall",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-recall-relevance",
+      "class": "judgment",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-vec.ts recall()/searchVectors + rowToMatch: ranking is cosine distance over a fastembed embedding (non-deterministic, model-dependent), explicitly excluded from arithmetic fixturing.",
+      "fixtures": [
+        "fx-loom-relevance-hit"
+      ],
+      "force": "SHOULD",
+      "item": "A recall SHOULD surface memories that are actually relevant to the query. loom ranks by cosine similarity over a learned embedding of title+content; whether the top results are 'the right' memories is a property of the embedding model, not an arithmetic guarantee loom makes. Recorded as a judgment and left descriptive — loom provides similarity ranking, not a relevance promise.",
+      "itemId": "it-loom-recall",
+      "judgment": {
+        "rubric": "Given a query and the memories loom returned (ranked by cosine similarity), judge whether the top results are topically relevant to the query — would a reasonable reader agree these memories bear on the question asked. This judges the EMBEDDING's ranking quality, which loom does not control or guarantee; it is descriptive. Pass iff the returned set is plausibly the relevant neighbourhood for the query.",
+        "tolerance": {
+          "agreement": 2,
+          "runs": 3
+        }
+      },
+      "source": "discovered",
+      "state": "descriptive",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-ttl-compute",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/ttl.ts: DURATION_RE = /^(\\d+)(d|h)$/; parseTTL returns null for permanent/undefined and throws on mismatch; computeExpiresAt = created + ms; isExpired = expiresAt && now >= expiry.",
+      "fixtures": [
+        "fx-loom-ttl-permanent",
+        "fx-loom-ttl-days",
+        "fx-loom-ttl-expired",
+        "fx-loom-ttl-invalid"
+      ],
+      "force": "MUST",
+      "item": "TTL is parsed by the grammar /^(\\d+)(d|h)$/ plus the literal 'permanent'. For 'permanent' or an absent TTL, expiresAt is null and the memory never expires. For 'Nd'/'Nh', expiresAt = created + N days/hours. A memory is expired exactly when it has an expiresAt and now >= expiresAt. Any TTL that is neither 'permanent' nor matches the grammar is invalid (throws).",
+      "itemId": "it-loom-ttl",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-prune",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-vec.ts prune() (~:266-314): expired (isExpired) pushed+deleted with continue; ttl === \"permanent\" continue; lastTouch = last_accessed ?? updated ?? created < staleThreshold → stale; stale never deleted.",
+      "fixtures": [
+        "fx-loom-prune-split"
+      ],
+      "force": "MUST",
+      "item": "prune classifies each non-archived memory: one with an expired expiresAt is EXPIRED (deleted unless dry run); a 'permanent' memory is neither expired nor stale; any other memory whose last touch (last_accessed, else updated, else created) is older than staleDays (default 30) is STALE — reported but never deleted. A memory that is expired is never also reported stale.",
+      "itemId": "it-loom-ttl",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-memory-knowledge-boundary",
+      "class": "judgment",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/server.ts knowledge_write tool description: 'Knowledge is true independent of Jonathan — if it is about Jonathan or our work, store it in memory instead.'",
+      "fixtures": [
+        "fx-loom-route-knowledge",
+        "fx-loom-route-memory-user",
+        "fx-loom-route-memory-self"
+      ],
+      "force": "MUST",
+      "item": "A fact that is true independently of Jonathan (a world-fact about some entity) belongs in the knowledge wing; a fact about Jonathan, the work, or the agent itself belongs in episodic memory. The routing is a convention stated at the knowledge_write surface, not a runtime rejection — loom will store either anywhere, so the obligation is on the writer to route by the 'true independent of Jonathan?' test.",
+      "itemId": "it-loom-boundary",
+      "judgment": {
+        "rubric": "Apply the test stated at knowledge_write: is this fact true INDEPENDENT of Jonathan? If yes (a fact about a band, a library, a piece of gear — true whether or not Jonathan exists), it belongs in KNOWLEDGE. If it is about Jonathan, the work/projects, the agent's own capability, or a preference/correction, it belongs in MEMORY. Pass iff the chosen store matches the expected one.",
+        "tolerance": {
+          "agreement": 2,
+          "runs": 3
+        }
+      },
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-workstore-boundary",
+      "class": "judgment",
+      "contractId": "c-loom-memory",
+      "discoveredAt": "2026-06-13T03:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/server.ts: loom registers memory (remember/recall/...), knowledge (knowledge_*), and identity (identity/update-identity/dossier/bootstrap) tools and NO work-tracking verb; mirror of taskstore-core ac-ts-loom-boundary.",
+      "fixtures": [
+        "fx-loom-boundary-memory",
+        "fx-loom-boundary-work"
+      ],
+      "force": "MUST",
+      "item": "loom owns memory, knowledge, and identity and offers NO work-tracking surface: there is no verb to create/claim/close a task, no status, no ready queue. A work item — something with a lifecycle to be done — belongs in the work store, cited from memory by reference ([[slug]], path, URL), never stored AS a memory. loom enforces this by omission: the surface to misuse does not exist. This is loom's side of the boundary the work store pinned as ac-ts-loom-boundary.",
+      "itemId": "it-loom-boundary",
+      "judgment": {
+        "rubric": "Given a record someone wants to store, decide whether it belongs in LOOM (a durable fact/preference/lesson/episodic note — memory, knowledge, or identity) or the WORK STORE (a unit of work with a lifecycle: a task to do, a bug to fix, something to claim/close/track). Pass iff the choice matches expected. A loom record may CITE work by reference; a work item must not be smuggled in as a memory.",
+        "tolerance": {
+          "agreement": 2,
+          "runs": 3
+        }
+      },
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag ceremony 4, 2026-06-13) — the first excavate dig",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-loom-provenance-decay",
+      "class": "behavioral",
+      "contractId": "c-loom-memory",
+      "fixtures": [
+        "fx-loom-provenance-decay"
+      ],
+      "force": "MUST",
+      "gherkin": "Given episodic memories that carry source/session provenance and a source that is later deleted or superseded\nWhen a maintenance lane runs\nThen orphaned/superseded memories can be identified by their provenance and PROPOSED for retirement (not silently deleted) — provenance makes decay auditable",
+      "itemId": "it-loom-provenance",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario"
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-boundary-memory",
+      "contractId": "c-loom-memory",
+      "description": "A durable lesson with no lifecycle → loom (memory).",
+      "expected": {
+        "belongs": "loom"
+      },
+      "format": "loom-memory/ownership@0",
+      "input": {
+        "record": "Boundaries you don't draw on purpose get drawn by accretion — write refusals as enforceable criteria."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-boundary-work",
+      "contractId": "c-loom-memory",
+      "description": "A unit of work with a lifecycle to track → work store, not loom.",
+      "expected": {
+        "belongs": "workstore"
+      },
+      "format": "loom-memory/ownership@0",
+      "input": {
+        "record": "Port the reflection lanes to taskstore and wire OnFailure alerting — to be claimed and closed."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-cat-feedback",
+      "contractId": "c-loom-memory",
+      "description": "An explicit correction about how to work → feedback (more specific than self).",
+      "expected": {
+        "category": "feedback"
+      },
+      "format": "loom-memory/classification@0",
+      "input": {
+        "fact": "Jonathan corrected me: design guardrails around human error rather than just adding a rule and blaming the model."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-cat-pursuit",
+      "contractId": "c-loom-memory",
+      "description": "An active ongoing creative/goal thread → pursuit.",
+      "expected": {
+        "category": "pursuit"
+      },
+      "format": "loom-memory/classification@0",
+      "input": {
+        "fact": "The Abyss game: a Chainsaw-Man-inspired mechanic design I am actively developing."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-cat-reference",
+      "contractId": "c-loom-memory",
+      "description": "A pointer to an external resource → reference.",
+      "expected": {
+        "category": "reference"
+      },
+      "format": "loom-memory/classification@0",
+      "input": {
+        "fact": "The Forgejo API base is https://git.one.sleepunit.com/api/v1; auth via the drfish token."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-cat-user",
+      "contractId": "c-loom-memory",
+      "description": "A fact about Jonathan himself → user.",
+      "expected": {
+        "category": "user"
+      },
+      "format": "loom-memory/classification@0",
+      "input": {
+        "fact": "Jonathan is Director of R&D at CTEH; his real-world work is environmental health and safety."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-category-read",
+      "contractId": "c-loom-memory",
+      "description": "READ accepts any category string as a filter, including the out-of-vocabulary legacy \"general\" — reads are never validated.",
+      "expected": {
+        "accepted": [
+          "user",
+          "general",
+          "random"
+        ],
+        "rejected": []
+      },
+      "format": "loom-memory/category-decision@0",
+      "input": {
+        "categories": [
+          "user",
+          "general",
+          "random"
+        ],
+        "op": "read"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-category-write",
+      "contractId": "c-loom-memory",
+      "description": "WRITE accepts only the six categories: user accepted, the legacy value \"general\" rejected.",
+      "expected": {
+        "accepted": [
+          "user",
+          "project",
+          "self",
+          "feedback",
+          "reference",
+          "pursuit"
+        ],
+        "rejected": [
+          "general",
+          "random"
+        ]
+      },
+      "format": "loom-memory/category-decision@0",
+      "input": {
+        "categories": [
+          "user",
+          "project",
+          "self",
+          "feedback",
+          "reference",
+          "pursuit",
+          "general",
+          "random"
+        ],
+        "op": "write"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-digest-assemble",
+      "contractId": "c-loom-memory",
+      "description": "Token-budget hottest-first over authored atoms; nothing generated, no glue persisted.",
+      "expected": {
+        "generatedProse": false,
+        "included": [
+          "a",
+          "b"
+        ],
+        "orderedHotFirst": true,
+        "persistedGlue": false,
+        "tiersLabeled": [
+          "Hot",
+          "Warm"
+        ]
+      },
+      "format": "memory/digest@0",
+      "input": {
+        "atoms": [
+          {
+            "id": "a",
+            "temp": 0.9
+          },
+          {
+            "id": "b",
+            "temp": 0.5
+          },
+          {
+            "id": "c",
+            "temp": 0.1
+          }
+        ],
+        "tokenBudget": 200,
+        "tokensPerAtom": 80
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-digest-inject",
+      "contractId": "c-loom-memory",
+      "description": "The digest is injected at identity-load, after preferences.",
+      "expected": {
+        "digestAfter": "preferences",
+        "requiredRecallFishing": false,
+        "wakesWithSalience": true
+      },
+      "format": "memory/digest@0",
+      "input": {
+        "layers": [
+          "creed",
+          "preferences",
+          "<digest>"
+        ],
+        "load": "identity"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-propose-invisible",
+      "contractId": "c-loom-memory",
+      "description": "A proposal is invisible to every canon read path until ratified.",
+      "expected": {
+        "canonContainsDraft": false,
+        "digest": [
+          "real fact"
+        ],
+        "memoryList": [
+          "real fact"
+        ],
+        "proposalsQueue": [
+          "draft fact"
+        ],
+        "recall": [
+          "real fact"
+        ]
+      },
+      "format": "memory/propose@0",
+      "input": {
+        "ops": [
+          {
+            "remember": "real fact"
+          },
+          {
+            "propose": "draft fact"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-provenance-decay",
+      "contractId": "c-loom-memory",
+      "description": "Provenance lets a lane propose retirement of an orphaned memory.",
+      "expected": {
+        "carriesProvenance": true,
+        "laneProposesRetirement": true,
+        "silentDelete": false
+      },
+      "format": "memory/provenance@0",
+      "input": {
+        "memory": {
+          "source": "session-123"
+        },
+        "sourceDeleted": true
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-prune-split",
+      "contractId": "c-loom-memory",
+      "description": "expired (TTL elapsed) → expired+deleted; permanent → untouched; old non-permanent → stale (reported, not deleted); fresh → neither.",
+      "expected": {
+        "expired": [
+          "self/exp"
+        ],
+        "stale": [
+          "self/old"
+        ]
+      },
+      "format": "loom-memory/prune@0",
+      "input": {
+        "memories": [
+          {
+            "expiresAt": "2026-06-02T00:00:00Z",
+            "lastTouch": "2026-06-01T00:00:00Z",
+            "ref": "self/exp",
+            "ttl": "24h"
+          },
+          {
+            "expiresAt": null,
+            "lastTouch": "2026-01-01T00:00:00Z",
+            "ref": "self/perm",
+            "ttl": "permanent"
+          },
+          {
+            "expiresAt": null,
+            "lastTouch": "2026-04-01T00:00:00Z",
+            "ref": "self/old",
+            "ttl": null
+          },
+          {
+            "expiresAt": null,
+            "lastTouch": "2026-06-29T00:00:00Z",
+            "ref": "self/fresh",
+            "ttl": null
+          }
+        ],
+        "now": "2026-06-30T00:00:00Z",
+        "staleDays": 30
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-ratify-lifecycle",
+      "contractId": "c-loom-memory",
+      "description": "Ratify commits via validated remember; invalid stays pending; reject discards.",
+      "expected": {
+        "results": [
+          {
+            "committed": true,
+            "content": "edited",
+            "removed": true,
+            "viaRememberValidation": true
+          },
+          {
+            "canonWritten": false,
+            "reason": "content is required",
+            "refused": true,
+            "staysPending": true
+          },
+          {
+            "committed": false,
+            "removed": true
+          }
+        ]
+      },
+      "format": "memory/ratify@0",
+      "input": {
+        "cases": [
+          {
+            "action": "ratify",
+            "override": {
+              "content": "edited"
+            },
+            "proposal": {
+              "content": "c",
+              "title": "t"
+            }
+          },
+          {
+            "action": "ratify",
+            "proposal": {
+              "content": "",
+              "title": "t"
+            }
+          },
+          {
+            "action": "reject",
+            "proposal": {
+              "content": "c",
+              "title": "t"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-recall-allcat",
+      "contractId": "c-loom-memory",
+      "description": "category 'all' disables the category filter; results in distance order, relevance = 1 - distance, capped at limit.",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.9
+          },
+          {
+            "id": "b",
+            "relevance": 0.75
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "user",
+            "distance": 0.1,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 0.25,
+            "id": "b",
+            "project": null
+          }
+        ],
+        "filter": {
+          "category": "all"
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-recall-catfilter",
+      "contractId": "c-loom-memory",
+      "description": "An explicit category keeps only exact matches; the off-category nearer candidate is dropped.",
+      "expected": {
+        "matches": [
+          {
+            "id": "b",
+            "relevance": 0.75
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "user",
+            "distance": 0.1,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 0.25,
+            "id": "b",
+            "project": null
+          }
+        ],
+        "filter": {
+          "category": "self"
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-recall-limit",
+      "contractId": "c-loom-memory",
+      "description": "limit caps the result count, keeping the nearest; distance order preserved.",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.9
+          },
+          {
+            "id": "b",
+            "relevance": 0.8
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "user",
+            "distance": 0.1,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "user",
+            "distance": 0.2,
+            "id": "b",
+            "project": null
+          },
+          {
+            "category": "user",
+            "distance": 0.3,
+            "id": "c",
+            "project": null
+          }
+        ],
+        "filter": {
+          "category": "all"
+        },
+        "limit": 2
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-recall-nocat",
+      "contractId": "c-loom-memory",
+      "description": "An OMITTED category (filter {} — not the literal \"all\") also disables category filtering; both candidates survive. Pins the second half of `category && category !== \"all\"`.",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.9
+          },
+          {
+            "id": "b",
+            "relevance": 0.75
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "user",
+            "distance": 0.1,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 0.25,
+            "id": "b",
+            "project": null
+          }
+        ],
+        "filter": {},
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-recall-project",
+      "contractId": "c-loom-memory",
+      "description": "The project filter keeps only exact-project matches even when nearer candidates belong to other projects; an impl that ignores project fails this.",
+      "expected": {
+        "matches": [
+          {
+            "id": "b",
+            "relevance": 0.7
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "project",
+            "distance": 0.1,
+            "id": "a",
+            "project": "other"
+          },
+          {
+            "category": "project",
+            "distance": 0.3,
+            "id": "b",
+            "project": "abyss"
+          }
+        ],
+        "filter": {
+          "project": "abyss"
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-relevance-hit",
+      "contractId": "c-loom-memory",
+      "description": "ILLUSTRATIVE descriptive-judgment exemplar (not a discriminating gate — loom does not control embedding rank quality): query about the Forgejo token; the returned memory is the one carrying that pointer, a plausibly-relevant hit.",
+      "expected": {
+        "relevant": true
+      },
+      "format": "loom-memory/relevance@0",
+      "input": {
+        "query": "where is the drfish Forgejo API token",
+        "returned": [
+          "Forgejo token location — embedded in the loom git remote URL (drfish account)."
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-remember-twice",
+      "contractId": "c-loom-memory",
+      "description": "Two identical remember calls store two distinct memories — no dedup on write.",
+      "expected": {
+        "merged": 0,
+        "refsDistinct": true,
+        "stored": 2
+      },
+      "format": "loom-memory/remember-seq@0",
+      "input": {
+        "ops": [
+          {
+            "category": "self",
+            "content": "same body",
+            "op": "remember",
+            "title": "note"
+          },
+          {
+            "category": "self",
+            "content": "same body",
+            "op": "remember",
+            "title": "note"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-route-knowledge",
+      "contractId": "c-loom-memory",
+      "description": "A fact true independent of Jonathan (a band, an entity) → knowledge.",
+      "expected": {
+        "store": "knowledge"
+      },
+      "format": "loom-memory/routing@0",
+      "input": {
+        "fact": "Mutable Instruments Rings is a resonator eurorack module with six resonator models."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-route-memory-self",
+      "contractId": "c-loom-memory",
+      "description": "A lesson about the agent's own practice → memory.",
+      "expected": {
+        "store": "memory"
+      },
+      "format": "loom-memory/routing@0",
+      "input": {
+        "fact": "The cold-reader test finds defects insiders cannot see — strip context and review before merge."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-route-memory-user",
+      "contractId": "c-loom-memory",
+      "description": "A fact about Jonathan → memory.",
+      "expected": {
+        "store": "memory"
+      },
+      "format": "loom-memory/routing@0",
+      "input": {
+        "fact": "Jonathan prefers TypeScript/Node with better-sqlite3 and rejects Dapr."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-salience-decay-bump",
+      "contractId": "c-loom-memory",
+      "description": "Per-category half-life decay + recall/write bump: a recalled old atom outranks an untouched same-age one; identity-category cools slower.",
+      "expected": {
+        "orderHotToCold": [
+          "old-but-recalled",
+          "fresh-project",
+          "identity-fact",
+          "old-untouched"
+        ],
+        "recomputedBy": "consolidation-lane",
+        "stored": true
+      },
+      "format": "memory/salience@0",
+      "input": {
+        "bump": "recall-or-write",
+        "cases": [
+          {
+            "ageDays": 1,
+            "category": "project",
+            "id": "fresh-project",
+            "recalledRecently": false
+          },
+          {
+            "ageDays": 60,
+            "category": "project",
+            "id": "old-untouched",
+            "recalledRecently": false
+          },
+          {
+            "ageDays": 60,
+            "category": "project",
+            "id": "old-but-recalled",
+            "recalledRecently": true
+          },
+          {
+            "ageDays": 60,
+            "category": "user",
+            "id": "identity-fact",
+            "recalledRecently": false
+          }
+        ],
+        "decay": "per-category-half-life"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-similar-default0",
+      "contractId": "c-loom-memory",
+      "description": "minRelevance OMITTED → default 0: an anti-correlated candidate (distance 1.5, relevance -0.5) is dropped by the 0 floor; the correlated one survives. Pins \"default 0 is a floor, not no-floor\".",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.8
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "self",
+            "distance": 0.2,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 1.5,
+            "id": "far",
+            "project": null
+          }
+        ],
+        "filter": {
+          "excludeId": "anchor"
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-similar-exclude",
+      "contractId": "c-loom-memory",
+      "description": "The anchor itself (excludeId) is removed even though it is the nearest (distance 0).",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.85
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "self",
+            "distance": 0,
+            "id": "anchor",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 0.15,
+            "id": "a",
+            "project": null
+          }
+        ],
+        "filter": {
+          "excludeId": "anchor"
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-similar-floor",
+      "contractId": "c-loom-memory",
+      "description": "minRelevance drops candidates below the floor; 1 - 0.50 = 0.50 < 0.70 is excluded.",
+      "expected": {
+        "matches": [
+          {
+            "id": "a",
+            "relevance": 0.9
+          }
+        ]
+      },
+      "format": "loom-memory/vector-projection@0",
+      "input": {
+        "candidates": [
+          {
+            "category": "self",
+            "distance": 0.1,
+            "id": "a",
+            "project": null
+          },
+          {
+            "category": "self",
+            "distance": 0.5,
+            "id": "b",
+            "project": null
+          }
+        ],
+        "filter": {
+          "excludeId": "anchor",
+          "minRelevance": 0.7
+        },
+        "limit": 10
+      },
+      "projection": "the excavator deterministic model of loom recall: candidates carry pre-computed cosine distances, isolating the filter/projection (this contract) from the non-deterministic fastembed ranking (the descriptive ac-loom-recall-relevance). Not the impl wire format — its model."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-ttl-days",
+      "contractId": "c-loom-memory",
+      "description": "'7d' → expiresAt = created + 7 days; not yet expired at now.",
+      "expected": {
+        "expired": false,
+        "expiresAt": "2026-06-08T00:00:00Z",
+        "valid": true
+      },
+      "format": "loom-memory/ttl@0",
+      "input": {
+        "created": "2026-06-01T00:00:00Z",
+        "now": "2026-06-05T00:00:00Z",
+        "ttl": "7d"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-ttl-expired",
+      "contractId": "c-loom-memory",
+      "description": "'24h' elapsed → expired when now >= expiresAt.",
+      "expected": {
+        "expired": true,
+        "expiresAt": "2026-06-02T00:00:00Z",
+        "valid": true
+      },
+      "format": "loom-memory/ttl@0",
+      "input": {
+        "created": "2026-06-01T00:00:00Z",
+        "now": "2026-06-03T00:00:00Z",
+        "ttl": "24h"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-ttl-invalid",
+      "contractId": "c-loom-memory",
+      "description": "A TTL neither 'permanent' nor matching /^(\\d+)(d|h)$/ is invalid.",
+      "expected": {
+        "expired": false,
+        "expiresAt": null,
+        "valid": false
+      },
+      "format": "loom-memory/ttl@0",
+      "input": {
+        "created": "2026-06-01T00:00:00Z",
+        "now": "2026-06-05T00:00:00Z",
+        "ttl": "7 days"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-loom-ttl-permanent",
+      "contractId": "c-loom-memory",
+      "description": "'permanent' → never expires, expiresAt null.",
+      "expected": {
+        "expired": false,
+        "expiresAt": null,
+        "valid": true
+      },
+      "format": "loom-memory/ttl@0",
+      "input": {
+        "created": "2026-06-01T00:00:00Z",
+        "now": "2030-01-01T00:00:00Z",
+        "ttl": "permanent"
+      }
+    }
+  ],
+  "transition": {
+    "criterionId": "ac-loom-ratify-lifecycle",
+    "to": "active",
+    "requestedAt": "2026-06-15T00:00:00Z",
+    "requestedBy": "loom",
+    "acknowledgments": [
+      {
+        "implementer": "loom",
+        "decision": "ack",
+        "at": "2026-06-15T00:00:00Z",
+        "criterionHash": "sha256:76f1b87d1b0f2ddc4e50cb21891782e2144c32c0e86cbabc2a8b6ac1561b3cec"
+      }
+    ]
+  }
+}

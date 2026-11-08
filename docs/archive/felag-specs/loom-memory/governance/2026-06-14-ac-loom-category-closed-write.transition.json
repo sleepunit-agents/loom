@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-category-closed-write",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:1d203d252b224367d2a83dc1be9a258ade7967817a10f73cb3d2f135069d2e37"
+    }
+  ]
+}

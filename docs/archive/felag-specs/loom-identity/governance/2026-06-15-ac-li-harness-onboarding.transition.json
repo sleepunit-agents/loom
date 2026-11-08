@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-harness-onboarding",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:9f45ebbd9ed53d930a3e750cb55c96b0081fd3a940c7b87ab74a0b1af637c87d"
+    }
+  ]
+}

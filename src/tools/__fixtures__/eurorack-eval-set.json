@@ -1,0 +1,107 @@
+[
+  {
+    "id": 1,
+    "question": "How much power does the Palette 4U case provide?",
+    "search_terms": "Power Budget",
+    "expected_slugs": ["eurorack-cases-palette-4u-spec"],
+    "rationale": "Direct spec lookup; power budget is tabulated in the spec file"
+  },
+  {
+    "id": 2,
+    "question": "What is the design philosophy behind this eurorack setup?",
+    "search_terms": "noodle-first",
+    "expected_slugs": ["eurorack-philosophy"],
+    "rationale": "Core thesis document; keyword match on noodle-first or philosophy"
+  },
+  {
+    "id": 3,
+    "question": "What modules are in the jbarket Palette 4U build?",
+    "search_terms": "jbarket",
+    "expected_slugs": ["eurorack-cases-palette-4u-2026-02-19-techno-jbarket"],
+    "rationale": "Specific patch documentation identified by name"
+  },
+  {
+    "id": 4,
+    "question": "How do DivSkip and OCP X work together?",
+    "search_terms": "DivSkip",
+    "expected_slugs": ["eurorack-notes-divskip-ocpx"],
+    "rationale": "Interaction pattern; LIKE matches both module names in the same doc"
+  },
+  {
+    "id": 5,
+    "question": "What is the Voltron rule?",
+    "search_terms": "Voltron rule",
+    "expected_slugs": ["eurorack-setup-architecture"],
+    "rationale": "Quoted string appearing verbatim in setup-architecture"
+  },
+  {
+    "id": 6,
+    "question": "How much headroom does the Palette 4U build have on +12V?",
+    "search_terms": "Headroom",
+    "expected_slugs": ["eurorack-cases-palette-4u-2026-02-19-techno-jbarket"],
+    "rationale": "Specific numeric fact: headroom line in the jbarket build"
+  },
+  {
+    "id": 7,
+    "question": "What is the role of the Battering Ram in the Palette 4U patch?",
+    "search_terms": "Battering Ram",
+    "expected_slugs": ["eurorack-cases-palette-4u-2026-02-19-techno-jbarket"],
+    "rationale": "Module name match in the build doc"
+  },
+  {
+    "id": 8,
+    "question": "Which case is currently the main rig?",
+    "search_terms": "Main rig",
+    "expected_slugs": ["eurorack-readme"],
+    "rationale": "Status table in README contains the 'Main rig' string"
+  },
+  {
+    "id": 9,
+    "question": "What is noodle-first and how does it differ from studio-first?",
+    "search_terms": "Noodle-First",
+    "expected_slugs": ["eurorack-setup-architecture"],
+    "rationale": "Section heading appears verbatim in setup-architecture"
+  },
+  {
+    "id": 10,
+    "question": "What are the specs for the Performance 7U case?",
+    "search_terms": "Performance 7U",
+    "expected_slugs": ["eurorack-cases-performance-7u-spec"],
+    "rationale": "Case name match in spec file"
+  },
+  {
+    "id": 11,
+    "question": "What modules are marked as passive in the catalog?",
+    "search_terms": "passive",
+    "expected_slugs": ["eurorack-modules-catalog"],
+    "rationale": "Passive modules marked in catalog; word 'passive' appears in the doc"
+  },
+  {
+    "id": 12,
+    "question": "What is the zero-to-sound test?",
+    "search_terms": "zero-to-sound",
+    "expected_slugs": ["eurorack-setup-architecture"],
+    "rationale": "Specific term appears in the setup-architecture section heading"
+  },
+  {
+    "id": 13,
+    "question": "Why is Hermod+ a trade candidate?",
+    "search_terms": "Hermod+",
+    "expected_slugs": ["eurorack-philosophy", "eurorack-readme"],
+    "rationale": "Hermod+ mentioned in both philosophy and README"
+  },
+  {
+    "id": 14,
+    "question": "What depth does the FX AID XL have and why does that matter for the Palette 4U?",
+    "search_terms": "FX AID XL",
+    "expected_slugs": ["eurorack-cases-palette-4u-2026-02-19-techno-jbarket"],
+    "rationale": "Module name match in the build doc"
+  },
+  {
+    "id": 15,
+    "question": "What is CSL?",
+    "search_terms": "CSL",
+    "expected_slugs": ["eurorack-cases-palette-4u-csl"],
+    "rationale": "Acronym match in csl.md title"
+  }
+]

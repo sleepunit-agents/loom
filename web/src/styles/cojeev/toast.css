@@ -1,0 +1,235 @@
+@layer cojeev-states {
+/* Cojeev authored subparts, state precedence, and irreducible shapes; scoped to this registry item. */
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]).-danger {
+  color: var(--destructive-foreground);
+}
+.v-toaster:where([data-slot="toast"], [data-slot^="toast-"]) {
+  position: fixed;
+  right: var(--s-6);
+  bottom: var(--s-6);
+  display: grid;
+  gap: var(--s-2);
+  z-index: var(--z-toast);
+  width: min(380px, calc(100% - 48px));
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]) {
+  animation: v-toast-in var(--t-max) var(--enter);
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]).-cream {
+  background: var(--v-canvas);
+  color: var(--v-text);
+  border: 1px solid var(--v-border);
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]).-danger {
+  background: var(--v-danger-fill);
+  color: var(--destructive-foreground);
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]) .v-btn {
+  height: 30px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-meta);
+  margin-left: auto;
+  background: rgba(251, 244, 230, 0.14);
+  color: inherit;
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]).-cream .v-btn {
+  background: var(--v-beige);
+}
+.v-toast:where([data-slot="toast"], [data-slot^="toast-"]).-out {
+  animation: v-toast-out var(--t-element) var(--exit) forwards;
+}
+@keyframes v-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes v-toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="toast"],
+  [data-slot^="toast-"],
+  [data-slot="toast"]::before,
+  [data-slot="toast"]::after,
+  [data-slot^="toast-"]::before,
+  [data-slot^="toast-"]::after {
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    transition-duration: 0s;
+    scroll-behavior: auto;
+  }
+}
+
+[data-slot="toast"][data-state="closed"] {
+  animation: v-toast-out var(--t-element) var(--exit) forwards;
+}
+[data-slot="toast"][data-swipe="move"] {
+  transform: translateX(var(--radix-toast-swipe-move-x));
+}
+[data-slot="toast"][data-swipe="end"] {
+  transform: translateX(var(--radix-toast-swipe-end-x));
+  opacity: 0;
+}
+[data-slot="toast"] {
+  min-width: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+[data-slot="toast-title"],
+[data-slot="toast-description"] {
+  min-width: 0;
+}
+[data-slot="toast-action"],
+[data-slot="toast-close"] {
+  flex-shrink: 0;
+}
+
+/* Explicit hierarchy; title and description no longer compete in one flex row. */
+.v-toast[data-appearance] {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 44px;
+  grid-template-areas: "icon title close" "icon description close" ". action .";
+  align-items: center;
+  column-gap: var(--s-3);
+  row-gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-4);
+  border-radius: var(--r-card);
+  background: var(--card);
+  color: var(--v-text);
+  border: 1px solid var(--v-border);
+}
+.v-toast[data-appearance] [data-slot="toast-title"] {
+  grid-area: title;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+}
+.v-toast[data-appearance] [data-slot="toast-description"] {
+  grid-area: description;
+  font-size: var(--fs-small);
+  color: var(--toast-secondary, var(--v-text-2));
+  line-height: 1.6;
+}
+.v-toast[data-appearance] [data-slot="toast-indicator"] {
+  grid-area: icon;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 42% 58% 52% 48%;
+  background: var(--v-olive);
+  color: var(--v-on-accent);
+}
+:root .v-toast[data-appearance] .v-btn[data-slot="toast-action"] {
+  grid-area: action;
+  justify-self: start;
+  margin: var(--s-2) 0 0;
+  min-height: 44px;
+  background: var(--v-blue);
+  color: var(--v-on-accent);
+  padding-inline: var(--s-5);
+  font-size: var(--fs-small);
+}
+:root .v-toast[data-appearance] .v-btn[data-slot="toast-close"] {
+  grid-area: close;
+  align-self: start;
+  margin: 0;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: inherit;
+}
+.v-toast[data-appearance]:not(.-cream):not(.-danger) {
+  background: var(--v-ink);
+  color: var(--v-on-ink);
+  --toast-primary: var(--v-on-ink);
+  --toast-secondary: var(--v-on-ink);
+}
+.v-toast[data-appearance].-danger {
+  background: var(--v-danger-fill);
+  color: var(--destructive-foreground);
+  --toast-primary: var(--destructive-foreground);
+  --toast-secondary: var(--destructive-foreground);
+}
+.v-toast[data-appearance="compact"] {
+  grid-template-areas: "icon title close";
+  padding: var(--s-3) var(--s-3);
+  border-radius: var(--r-pill);
+}
+.v-toast[data-appearance="compact"] [data-slot="toast-indicator"] {
+  align-self: center;
+}
+.v-toast[data-appearance="receipt"] {
+  grid-template-areas: "icon title close" "icon description close" "receipt receipt receipt";
+  padding: var(--s-5);
+  border-radius: var(--r-card) var(--r-card) var(--r-sm) var(--r-sm);
+}
+.v-toast__receipt {
+  grid-area: receipt;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+  padding-top: var(--s-4);
+  margin-top: var(--s-3);
+  border-top: 1px dashed var(--v-border);
+  font-size: var(--fs-caps);
+  color: var(--toast-secondary, var(--v-text-2));
+}
+.v-toast__receipt > span {
+  display: grid;
+  gap: var(--s-2);
+}
+.v-toast__receipt strong {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  color: var(--toast-primary, var(--v-text));
+}
+.v-toast-demo {
+  width: 100%;
+  display: grid;
+  justify-items: start;
+  gap: var(--s-4);
+}
+.v-toast-demo__status {
+  font-size: var(--fs-small);
+  color: var(--v-text-2);
+}
+.v-toast-demo .v-toast-demo__viewport {
+  position: static;
+  width: min(100%, 440px);
+  margin: 0;
+  padding: 0;
+  justify-self: end;
+  list-style: none;
+  outline: none;
+}
+.v-toast-demo .v-toast-demo__viewport:empty {
+  display: none;
+}
+.v-toast[data-flow-presence][data-state="open"] {
+  animation: none;
+}
+.v-toast[data-flow-presence][data-state="closed"] {
+  animation: v-toast-retain var(--flow-exit-duration, 0.22s) linear;
+}
+@keyframes v-toast-retain {
+  from {
+    visibility: visible;
+  }
+  to {
+    visibility: visible;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v-toast[data-flow-presence][data-state="closed"] {
+    animation: none;
+  }
+}
+
+}

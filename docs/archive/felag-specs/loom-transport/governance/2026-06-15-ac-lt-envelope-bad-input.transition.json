@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-envelope-bad-input",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:fb5340c28a60d2eb59ebb1a8a2a01e28167c42c9832b6a6dd9af30ca4bc4d745"
+    }
+  ]
+}

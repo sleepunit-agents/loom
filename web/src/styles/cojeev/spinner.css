@@ -1,0 +1,23 @@
+/* loom's one loader (components/ui/spinner.tsx): four segments lit in turn, a scanline across a meter. Every size in
+   px, set here, never from the text around it. */
+.loom-load[data-slot] {
+  --s: 24px; --g: 3px;
+  display: inline-grid; grid-template-columns: repeat(4, 1fr); align-items: center; gap: var(--g);
+  width: var(--s); height: var(--s); min-width: var(--s); min-height: var(--s); flex: none;
+  font-size: 0; line-height: 0; vertical-align: middle; color: var(--loom-load-c, var(--v-pink));
+}
+.loom-load[data-slot][data-size="sm"] { --s: 16px; --g: 2px; }
+.loom-load[data-slot][data-size="lg"] { --s: 40px; --g: 4px; }
+.loom-load[data-slot] > i {
+  display: block; height: 70%; border-radius: 1px; background: currentColor;
+  box-shadow: 0 0 calc(var(--s) / 6) color-mix(in srgb, currentColor 70%, transparent);
+  opacity: .22; transform: scaleY(.5);
+  animation: loom-load 1s cubic-bezier(.3,.7,.4,1) infinite;
+}
+.loom-load[data-slot] > i:nth-child(2) { animation-delay: .14s; }
+.loom-load[data-slot] > i:nth-child(3) { animation-delay: .28s; }
+.loom-load[data-slot] > i:nth-child(4) { animation-delay: .42s; }
+@keyframes loom-load { 0%, 60%, 100% { opacity: .22; transform: scaleY(.5); } 20% { opacity: 1; transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .loom-load[data-slot] > i { animation: none; opacity: .55; transform: scaleY(.8); }
+}

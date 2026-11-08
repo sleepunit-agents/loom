@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-digest-inject",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:b52dcafc8c837556f2cfc16bbc47c562930773542a36a0d8b98c1a91f43c4421"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+@layer cojeev-states {
+.v-depth-background {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  pointer-events: none;
+  user-select: none;
+  border-radius: inherit;
+  isolation: isolate;
+}
+.v-depth-background__scene {
+  position: absolute;
+  inset: 0;
+  perspective: 900px;
+  perspective-origin: 50% 45%;
+  transform-style: preserve-3d;
+}
+.v-depth-background__piece {
+  position: absolute;
+  display: block;
+  aspect-ratio: 1;
+  margin: -1% 0 0 -1%;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+.v-depth-background__piece > svg { display: block; width: 100%; height: 100%; max-width: none; overflow: visible; }
+.v-depth-background[data-variant="contour"] .v-depth-background__piece { translate: -50% -50%; }
+.v-depth-background__pollen { mix-blend-mode: normal; }
+.v-depth-background__orbital { stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 600px) {
+  .v-depth-background__scene { perspective: 700px; }
+  .v-depth-background[data-variant="contour"] .v-depth-background__piece { min-width: 28rem; }
+  .v-depth-background[data-variant="pollen"] [data-depth-layer="near"] { opacity: .24; }
+}
+
+}

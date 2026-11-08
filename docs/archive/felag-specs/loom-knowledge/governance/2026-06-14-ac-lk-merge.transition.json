@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-merge",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:599fb97914a4cd8125ec8a56eb5e350502cae02c26247c95b5c514c817a19cf0"
+    }
+  ]
+}

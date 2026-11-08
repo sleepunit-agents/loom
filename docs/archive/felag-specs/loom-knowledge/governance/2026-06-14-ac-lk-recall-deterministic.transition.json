@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-recall-deterministic",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:2ccb217a2dbf4f0cece694947b10c1db4e292eab503fd7925227b03b86290a12"
+    }
+  ]
+}

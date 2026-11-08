@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-propose-staging",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:872149efacb2fd26e766b41827dfab5d120323bd064859694f2b7c85c8965cb5"
+    }
+  ]
+}

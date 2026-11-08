@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-archive-restore",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:e363a12c29a8b5f8865c7a6f126dc4915e35511cd4821170b8bd71cd284f586d"
+    }
+  ]
+}

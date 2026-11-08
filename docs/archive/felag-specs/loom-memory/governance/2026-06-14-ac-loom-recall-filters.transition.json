@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-recall-filters",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:10ad930c3ea8022f0d68d3d573788dd763491ff457b4ff0043b3fc051b2dc4f5"
+    }
+  ]
+}

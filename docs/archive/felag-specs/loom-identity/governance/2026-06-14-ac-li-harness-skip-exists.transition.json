@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-harness-skip-exists",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:dc05ae5bee7ef4bfbb221df5c8d5bd0df29a34827e7569e4f09afb6dfbdbe284"
+    }
+  ]
+}

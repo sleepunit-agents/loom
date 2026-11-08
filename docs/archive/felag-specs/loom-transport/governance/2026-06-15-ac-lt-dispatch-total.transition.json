@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-dispatch-total",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:4ab8e3038df204dd8f180257117ea0d76df053103961f51331f7296171a0a7c3"
+    }
+  ]
+}

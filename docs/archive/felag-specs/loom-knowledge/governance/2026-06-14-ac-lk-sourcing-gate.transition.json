@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-sourcing-gate",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:ca04f5abb277074c60b6f4199f29f7c46fc26417d418e07905a542a5dd9cd895"
+    }
+  ]
+}

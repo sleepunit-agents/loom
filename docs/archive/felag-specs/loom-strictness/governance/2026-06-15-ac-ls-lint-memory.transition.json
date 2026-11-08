@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-ls-lint-memory",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:6cae501757984c100dead2e9e5388bf52278cd51d1476d1e1f14d73c06ca63a2"
+    }
+  ]
+}

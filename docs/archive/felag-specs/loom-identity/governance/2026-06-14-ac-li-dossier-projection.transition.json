@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-dossier-projection",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:3f90b47c82a7bd243c784eb28c92e35014afc1826bffb4ed610544d876d066e2"
+    }
+  ]
+}

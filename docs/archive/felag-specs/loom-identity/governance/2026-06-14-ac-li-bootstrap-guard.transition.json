@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-bootstrap-guard",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:3b23193e028c8c3dc819b76bdc84c495442515a594b1012c216501a838131079"
+    }
+  ]
+}

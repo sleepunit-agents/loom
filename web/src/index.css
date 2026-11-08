@@ -1,0 +1,591 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@/styles/cojeev-fonts.css";
+@import "@/styles/cojeev/tokens.css";
+@import "@/styles/cojeev/theme.css";
+@import "@/styles/cojeev/base.css";
+@import "@/styles/cojeev/morph.css";
+@import "@/styles/cojeev/flow-press.css";
+@import "@/styles/cojeev/badge.css";
+@import "@/styles/cojeev/control-appearance.css";
+@import "@/styles/cojeev/label.css";
+@import "@/styles/cojeev/drawer.css";
+@import "@/styles/cojeev/item.css";
+@import "@/styles/cojeev/spinner.css";
+@import "@/styles/cojeev/switch.css";
+@import "@/styles/cojeev/choice-foundations.css";
+@import "@/styles/cojeev/progress.css";
+@import "@/styles/cojeev/living-link.css";
+@import "@/styles/cojeev/presence.css";
+@import "@/styles/cojeev/shape.css";
+@import "@/styles/cojeev/typography.css";
+@import "@/styles/cojeev/scroll-area.css";
+@import "@/styles/cojeev/icon.css";
+@import "@/styles/cojeev/pattern-background.css";
+@import "@/styles/cojeev/button.css";
+@import "@/styles/cojeev/textarea.css";
+@import "@/styles/cojeev/dock.css";
+@import "@/styles/cojeev/animated-icon.css";
+@import "@/styles/cojeev/card.css";
+@import "@/styles/cojeev/input.css";
+@import "@/styles/cojeev/dialog.css";
+@import "@/styles/cojeev/alert-dialog.css";
+@import "@/styles/cojeev/toast.css";
+@import "@/styles/cojeev/code-block.css";
+@import "@/styles/cojeev/item-adornment.css";
+@import "@/styles/cojeev/empty.css";
+@import "@/styles/cojeev/select.css";
+@import "@/styles/cojeev/sidebar.css";
+@import "@/styles/cojeev/checkbox.css";
+@import "@/styles/cojeev/radio-group.css";
+@import "@/styles/cojeev/field.css";
+@import "@/styles/cojeev/breadcrumb.css";
+@import "@/styles/cojeev/avatar.css";
+@import "@/styles/cojeev/activity-feed.css";
+@import "@/styles/cojeev/agent-state.css";
+@import "@/styles/cojeev/message.css";
+@import "@/styles/cojeev/message-scroller.css";
+@import "@/styles/cojeev/attachment.css";
+@import "@/styles/cojeev/bubble.css";
+@import "@/styles/cojeev/input-group.css";
+@import "@/styles/cojeev/questionnaire.css";
+@import "@/styles/cojeev/agent-chat.css";
+@import "@/styles/cojeev/table.css";
+@import "@/styles/cojeev/pagination.css";
+@import "@/styles/cojeev/navigation-menu.css";
+@import "@/styles/cojeev/contour-field.css";
+@import "@/styles/cojeev/depth-background.css";
+@import "@/styles/cojeev/kbd.css";
+@import "@/styles/cojeev/toggle.css";
+@import "@/styles/cojeev/toggle-group.css";
+@import "@/styles/cojeev/alert.css";
+@import "@/styles/cojeev/dropdown-menu.css";
+/* The looks (Neon Noir, Low Light, Daylight): Neon's structure and each look's tokens. */
+@import "@/looks/looks.css";
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+    }
+  html {
+    @apply font-sans;
+    }
+}
+  :root, :root[data-mode] {
+    --background: var(--v-canvas);
+    --foreground: var(--v-text);
+    --card: var(--v-paper);
+    --card-foreground: var(--v-text);
+    --card-2: var(--v-beige-2);
+    --popover: var(--v-paper);
+    --popover-foreground: var(--v-text);
+    --primary: var(--v-ink);
+    --primary-foreground: var(--v-on-ink);
+    --secondary: var(--v-beige);
+    --secondary-foreground: var(--v-text);
+    --accent: var(--v-pink);
+    --accent-foreground: var(--v-on-accent);
+    --muted: var(--v-beige-2);
+    --muted-foreground: var(--v-text-2);
+    --border: var(--v-border);
+    --input: var(--v-beige);
+    --ring: var(--v-brand);
+    --destructive: var(--v-danger-fill);
+    --chart-1: var(--v-yellow);
+    --chart-2: var(--v-pink);
+    --chart-3: var(--v-olive);
+    --chart-4: var(--v-blue);
+    --chart-5: var(--v-ink);
+    --sidebar: var(--v-structure);
+    --sidebar-foreground: var(--on-structure);
+    --sidebar-primary: var(--v-pink);
+}
+
+/* loom: an icon in a dock tile is the tile's size, not the SVG default (300px). */
+/* A phone's dock labels sit under their tiles (dock.css's touch block), but the hover popup's own rules still applied
+   over it: an engaged middle label kept translate(-50%) and slid half its width left until the tap went stale, and the
+   end ones sat 5px low until engaged (Jonathan, 2026-10-30: "the inbox text moves to the left", "home and More start
+   low"). On touch, a label never moves: every one on the same line, tapped or not. */
+@media (hover: none), (pointer: coarse) {
+  .v-dock:not([data-variant="rail"]) [data-part="lane"] [data-part="label"] { transform: none !important; }
+}
+/* The launcher (sheets.tsx: Places and More): a phone's home screen, its tiles in the dock's colours, in turn. */
+/* The ink on an app's colour is the palette's on-accent (dark, in both modes), as the dock's: light text on a pastel tile in dark
+   mode read at 1.6:1. */
+.loom-launch-tile { color: var(--v-on-accent); }
+/* An app's one colour (web/src/tint.ts), by name: its launch tile, its dock tile, its header's tile, the same. Read from
+   the palette as it is at the root, so a page that takes its app's accent ([data-accent] renames --v-pink) doesn't
+   repaint the pink apps' tiles on it. */
+:root { --loom-tint-pink: var(--v-pink); --loom-tint-blue: var(--v-blue); --loom-tint-yellow: var(--v-yellow); --loom-tint-olive: var(--v-olive); }
+.loom-launch-tile[data-tint="pink"], .loom-app-tile[data-tint="pink"], .v-dock[data-variant] [data-part="lane"][data-tint="pink"] [data-part="visual"] { background: var(--loom-tint-pink); }
+.loom-launch-tile[data-tint="blue"], .loom-app-tile[data-tint="blue"], .v-dock[data-variant] [data-part="lane"][data-tint="blue"] [data-part="visual"] { background: var(--loom-tint-blue); }
+.loom-launch-tile[data-tint="yellow"], .loom-app-tile[data-tint="yellow"], .v-dock[data-variant] [data-part="lane"][data-tint="yellow"] [data-part="visual"] { background: var(--loom-tint-yellow); }
+.loom-launch-tile[data-tint="olive"], .loom-app-tile[data-tint="olive"], .v-dock[data-variant] [data-part="lane"][data-tint="olive"] [data-part="visual"] { background: var(--loom-tint-olive); }
+.loom-launch-tile [data-slot="animated-icon"], .loom-launch-tile [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 28px; height: 28px; }
+.loom-launch-tile svg { width: 28px !important; height: 28px !important; }
+.v-dock [data-part="visual"] [data-slot="animated-icon"],
+.v-dock [data-part="visual"] [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 26px; height: 26px; }
+.v-dock [data-part="visual"] svg { width: 26px !important; height: 26px !important; }
+
+/* An agent's pages wear its accent (docs/specs/ui-app.md): 000h's components accent in pink; point pink at the family. */
+[data-accent="blue"] { --v-pink: var(--v-blue); --v-pink-soft: var(--v-blue-soft); --v-pink-deep: var(--v-blue-deep); }
+[data-accent="olive"] { --v-pink: var(--v-olive); --v-pink-soft: var(--v-olive-soft); --v-pink-deep: var(--v-olive-deep); --v-accent-ink: var(--v-olive-ink); }
+[data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
+/* loom's own colours that were literals (Neon Noir's sweep, 2026-11-04): a status dot (ok, warn, bad, muted), a working
+   agent's dot and its pulse, a section's warning ring, a count's badge, an unread dot, and how far the dark dims the
+   ground. Tailwind's own values, the base under every look; each re-points some or all of them (src/looks/looks.css). */
+:root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
+  --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
+  --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
+  --loom-ok-ink: oklch(50.8% .118 165.612); --loom-warn-ink: oklch(55.5% .163 48.998); --loom-bad-ink: oklch(50.5% .213 27.518); --loom-muted-wash: oklch(55.6% 0 none); --loom-count-ink: #fff; --loom-unread: #2563eb; --loom-ground-dim: .55; --loom-wash-dim: .35;
+  /* A meter's track while its bar loads (was bg-black/10). */
+  --loom-track: color-mix(in oklab, #000 10%, transparent);
+  /* An app's tile's corners (a phone's launcher, a header's tile, a state's mark): a look can square them. */
+  --loom-r-launch: 22%; --loom-r-tile: 28%; --loom-r-state: 30%; --loom-r-side: 24px; --loom-r-soft: 14px; --loom-r-icon: 12px; }
+:root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
+/* The page's ground: three soft pools on the canvas (looks/looks.css); quieter in the dark. */
+.loom-wash { background: var(--v-canvas); }
+[data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: var(--loom-wash-dim); }
+body { background: var(--v-canvas); }
+/* No top bar: the page's head sits on the ground and scrolls with it. */
+.loom-top { background: none; }
+/* The side panel floats on the wash: paper, translucent, a soft shadow, no rule beside it. */
+.loom-side.v-sidebar { background: color-mix(in oklab, var(--v-paper) 72%, transparent); color: var(--v-text); backdrop-filter: blur(18px);
+  box-shadow: 0 8px 28px rgb(0 0 0 / .06); border: 1px solid color-mix(in oklab, var(--v-border) 55%, transparent); border-radius: var(--loom-r-side); --sidebar-foreground: var(--v-text); }
+.loom-search { background: color-mix(in oklab, var(--v-paper) 80%, transparent); border-color: color-mix(in oklab, var(--v-border) 80%, transparent); }
+.loom-menu { background: var(--v-paper); color: var(--v-text); border-color: color-mix(in oklab, var(--v-border) 70%, transparent); box-shadow: 0 12px 32px rgb(0 0 0 / .12); }
+
+/* What's new arrives (arrive.tsx): out of a blur into focus, rising a little, and a pigment glow that fades. */
+@keyframes loom-arrive-in {
+  0% { opacity: 0; filter: blur(10px) saturate(1.6); transform: translateY(10px) scale(.975); }
+  55% { opacity: 1; filter: blur(0) saturate(1.2); }
+  100% { opacity: 1; filter: none; transform: none; }
+}
+@keyframes loom-arrive-glow {
+  /* No ring: an edge drawn tight round the words distracts from them resolving (Jonathan, 2026-10-29). A wash and a soft halo. */
+  0% { box-shadow: 0 0 36px 4px color-mix(in oklab, var(--v-pink) 40%, transparent); background-color: color-mix(in oklab, var(--v-pink) 14%, transparent); }
+  45% { box-shadow: 0 0 28px 2px color-mix(in oklab, var(--v-blue) 28%, transparent); background-color: color-mix(in oklab, var(--v-blue) 8%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+}
+.loom-arrive { animation: loom-arrive-in 900ms cubic-bezier(.2,.8,.2,1) both, loom-arrive-glow 2600ms cubic-bezier(.3,.6,.2,1); border-radius: var(--loom-r-soft); }
+@media (prefers-reduced-motion: reduce) { .loom-arrive { animation: none; } }
+
+/* The app's own states (states.tsx): a loom card with the app's tinted mark; a page on its way breathes in its shape. */
+.loom-state { background: color-mix(in oklab, var(--v-canvas) 88%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
+.loom-state-mark [data-slot="animated-icon"], .loom-state-mark [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 30px; height: 30px; }
+.loom-state-mark svg { width: 30px !important; height: 30px !important; }
+.loom-skel { background: color-mix(in oklab, var(--v-canvas) 80%, transparent); animation: loom-skel 1.6s ease-in-out infinite both; }
+.loom-skel-line { background: color-mix(in oklab, var(--v-text) 9%, transparent); }
+@keyframes loom-skel { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .loom-skel { animation: none; } }
+/* Nothing at all for the first 150 ms, then the shape (t-1925 F): a page that lands quickly never flashes one. */
+.loom-skel-wait { animation: loom-skel-wait 0s 150ms both; }
+@keyframes loom-skel-wait { from { visibility: hidden; } to { visibility: visible; } }
+/* A page on its way while the one shown stays (page.ts pending): after 150 ms, a line along the top says so. */
+main[data-pending]::before { content: ''; position: fixed; inset: 0 0 auto; height: 2px; z-index: 60; background: var(--v-pink); animation: loom-skel-wait 0s 150ms both; }
+
+/* The arrival, once a session (arrive.tsx arriveOnce): the ground first, then the header and the cards in turn, the
+   dock or the side last; under a second. arriveOnce never sets it under reduced motion. */
+@keyframes loom-in-fade { from { opacity: 0; } }
+@keyframes loom-in-rise { from { opacity: 0; transform: translateY(14px); } }
+@keyframes loom-in-dock { from { opacity: 0; transform: translateY(110%); } }
+@keyframes loom-in-side { from { opacity: 0; transform: translateX(-18px); } }
+[data-arrive] .loom-wash, [data-arrive] .loom-ground { animation: loom-in-fade 520ms ease-out both; }
+[data-arrive] .loom-top { animation: loom-in-rise 460ms cubic-bezier(.2,.8,.2,1) 120ms both; }
+[data-arrive] main > *, [data-arrive] main > div > * > * { animation: loom-in-rise 480ms cubic-bezier(.2,.8,.2,1) both; }
+[data-arrive] main > div > * > :nth-child(1) { animation-delay: 220ms; } [data-arrive] main > div > * > :nth-child(2) { animation-delay: 290ms; }
+[data-arrive] main > div > * > :nth-child(3) { animation-delay: 360ms; } [data-arrive] main > div > * > :nth-child(n+4) { animation-delay: 420ms; }
+[data-arrive] .loom-dock-bar, [data-arrive] .loom-find-pill { animation: loom-in-dock 560ms cubic-bezier(.2,.9,.25,1.15) 380ms both; }
+[data-arrive] .loom-side { animation: loom-in-side 520ms cubic-bezier(.2,.8,.2,1) 200ms both; }
+
+/* An agent's dock on a phone (the "dock swap"): its mark with a back chevron first, a rule, then its tabs in its colour,
+   the one you're on solid. The page root carries the agent's colour (--loom-accent, --loom-on-accent). */
+.loom-agent-dock.v-dock [data-part="lane"] [data-part="visual"] { background: color-mix(in oklab, var(--loom-accent) 34%, var(--v-paper)); color: var(--v-text); }
+.loom-agent-dock.v-dock [data-part="lane"][data-active] [data-part="visual"],
+.loom-agent-dock.v-dock [data-part="lane"]:first-child [data-part="visual"] { background: var(--loom-accent); color: var(--loom-on-accent); }
+.loom-agent-dock.v-dock [data-part="lane"]:first-child { position: relative; margin-inline-end: 14px; }
+.loom-agent-dock.v-dock [data-part="lane"]:first-child::after { content: ""; position: absolute; inset-inline-end: -11px; inset-block: 22% 30%; width: 1px; background: var(--v-border); }
+.loom-agent-dock [data-part="lane"]:first-child [data-part="badge"] { inset-inline-start: -7px; inset-inline-end: auto; inset-block-start: -7px; inline-size: 22px; block-size: 22px; min-inline-size: 0; padding: 0;
+  border-radius: 999px; background: var(--v-text); color: var(--v-canvas); display: grid; place-items: center; border: 2px solid var(--v-paper); }
+/* The household's dock ends with who's signed in (App.tsx meTile): past a divider, their avatar as it is, not a tinted tile. */
+.loom-me-dock.v-dock [data-part="lane"]:last-child { position: relative; margin-inline-start: 14px; }
+.loom-me-dock.v-dock [data-part="lane"]:last-child::before { content: ""; position: absolute; inset-inline-start: -11px; inset-block: 22% 30%; width: 1px; background: var(--v-border); }
+.loom-me-dock.v-dock [data-part="lane"]:last-child [data-part="visual"] { background: var(--v-pink); color: var(--v-on-accent); border-radius: 999px; }
+.loom-me-dock.v-dock [data-part="lane"]:last-child[data-active] [data-part="visual"] { box-shadow: 0 0 0 2px var(--v-paper), 0 0 0 4px var(--v-text); }
+/* Find (find.tsx): a panel from the top over the dimmed page, a phone's full width and a desktop's spotlight. */
+:root { --dock-h: 96px; }
+.loom-find-scrim { background: color-mix(in oklab, var(--v-text) 28%, transparent); backdrop-filter: blur(3px); }
+.loom-find { background: var(--v-canvas); color: var(--v-text); box-shadow: var(--shadow-float, 0 24px 60px -20px rgb(0 0 0 / .35)), inset 0 0 0 1px var(--v-border);
+  border-radius: 0 0 var(--r-sheet, 28px) var(--r-sheet, 28px); padding-top: env(safe-area-inset-top); }
+@media (min-width: 1024px) { .loom-find { border-radius: var(--r-sheet, 28px); padding-top: 0; } }
+.loom-find.loom-find-page { border-radius: var(--r-card, 24px); padding-top: 0; }
+.loom-find[data-state="open"] { animation: loom-find-in .22s cubic-bezier(.2, .8, .2, 1); }
+.loom-find-scrim[data-state="open"] { animation: loom-fade-in .2s ease-out; }
+@keyframes loom-find-in { from { opacity: 0; transform: translateY(-14px) scale(.985); } }
+@keyframes loom-fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .loom-find[data-state="open"], .loom-find-scrim[data-state="open"] { animation: none; } }
+.loom-find-field { border-color: var(--v-border); }
+.loom-find-row[data-selected] { background: var(--v-beige); }
+.loom-find-esc { background: var(--v-beige); }
+/* An agent's pixel face (pixel-face.tsx): whole pixels, centred on its place (a 2x face is wider than a card's slot). */
+.loom-pixel-face { position: relative; display: block; overflow: visible; }
+.loom-pixel-face canvas { position: absolute; left: 50%; top: 50%; translate: -50% -50%; image-rendering: pixelated; max-width: none; pointer-events: none; }
+/* A small one (PixelAvatar, under 36 px): its crop at a whole-pixel scale, cut to its box where the scale overshoots it. */
+.loom-pixel-avatar { overflow: hidden; }
+/* An app's tile (app-header.tsx AppTile): its header, Find's rows. */
+.loom-app-tile { color: var(--v-on-accent); box-shadow: 0 6px 12px -8px rgb(17 17 17 / .45), inset 0 1px rgb(255 255 255 / .4); }
+.loom-head-action { background: color-mix(in oklab, var(--v-canvas) 70%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
+.loom-head-action:hover { background: var(--v-canvas); }
+.loom-head-more { background: color-mix(in oklab, var(--v-canvas) 80%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
+.loom-find-pill { background: color-mix(in oklab, var(--v-canvas) 82%, transparent); backdrop-filter: blur(12px); color: var(--v-text);
+  box-shadow: 0 6px 18px -8px rgb(0 0 0 / .35), inset 0 0 0 1px var(--v-border); }
+.loom-find-pill:active { transform: scale(.97); }
+/* A card's title with a line under it (CardHeader is a row, for a title and its action): the two stack, so a narrow
+   card never squeezes the title into a column a few letters wide ("Notif / icati / ons" on a phone's Passkeys). */
+[data-slot="card-header"]:has(> [data-slot="card-description"]) { flex-direction: column; align-items: stretch; gap: var(--s-1, 4px); }
+[data-slot="card-title"] { overflow-wrap: normal; word-break: normal; min-width: 0; }
+.loom-back-mark { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1; }
+.loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
+.loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }
+/* An agent's state on its mark: a dot; a working one breathes. */
+@keyframes loom-dot-live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--loom-live-pulse) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+.loom-dot-live { animation: loom-dot-live 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .loom-dot-live { animation: none; } }/* The contour field over the wash (ground.tsx): its own paper off, so the wash shows through its lines; quieter in the dark. */
+.loom-ground .v-contour-field { background: transparent; }
+[data-mode="dark"] .loom-ground { opacity: var(--loom-ground-dim); }
+/* How much terrain the contour field shows: 1 is 000h's (three big hills to a screen); more is further out. */
+.loom-ground { --field-zoom: 2.2; }
+
+/* A prose block's markdown (markdown.tsx): headings come two levels down (h3 is a body's #), lists with their marks,
+   code on beige, tables ruled; spaced for reading, at the page's width. */
+.loom-prose { line-height: 1.65; overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
+/* A long line of code scrolls inside its box; a table too: neither pushes a phone's page wider (2026-11-03 catalogue). */
+.loom-prose table { display: block; max-width: 100%; overflow-x: auto; }
+.loom-prose > * + * { margin-top: .8em; }
+.loom-prose :is(h3, h4, h5, h6) { font-family: var(--font-display); font-weight: 600; line-height: 1.25; margin-top: 1.4em; }
+.loom-prose > :first-child { margin-top: 0; }
+.loom-prose h3 { font-size: 1.5rem; } .loom-prose h4 { font-size: 1.2rem; } .loom-prose :is(h5, h6) { font-size: 1rem; }
+.loom-prose :is(ul, ol) { padding-inline-start: 1.4em; } .loom-prose ul { list-style: disc; } .loom-prose ol { list-style: decimal; }
+.loom-prose li + li { margin-top: .3em; } .loom-prose li::marker { color: var(--v-text-2); }
+.loom-prose a { text-decoration: underline; text-underline-offset: 3px; }
+.loom-prose code { font-family: var(--font-mono, ui-monospace, monospace); font-size: .88em; background: var(--v-beige); border-radius: 6px; padding: .1em .35em; }
+.loom-prose pre { background: var(--v-beige); border-radius: var(--loom-r-soft); padding: 14px 16px; overflow-x: auto; }
+.loom-prose pre code { background: none; padding: 0; }
+.loom-prose blockquote { border-inline-start: 3px solid var(--v-border); padding-inline-start: 1em; color: var(--v-text-2); }
+.loom-prose hr { border: 0; border-top: 1px solid var(--v-border); }
+.loom-prose table { width: 100%; border-collapse: collapse; font-size: .92em; display: block; overflow-x: auto; }
+.loom-prose :is(th, td) { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--v-border); }
+.loom-prose th { font-weight: 600; }
+
+/* A profile (profile.tsx): 000h's profile card, rebuilt around loom's data. A cover in their colour (an agent's own
+   mark colour through --cover) with three signature shapes drifting on it, and the avatar sitting over its edge. */
+.loom-profile__cover { position: relative; height: 132px; overflow: hidden; background: var(--cover, var(--v-blue)); }
+.loom-profile__cover.-pink { --cover-def: var(--v-pink); } .loom-profile__cover.-yellow { --cover-def: var(--v-yellow); }
+.loom-profile__cover.-olive { --cover-def: var(--v-olive); } .loom-profile__cover.-blue { --cover-def: var(--v-blue); }
+.loom-profile__cover:not([style]) { background: var(--cover-def); }
+.loom-profile__shape { position: absolute; --c: rgb(255 255 255 / .42); }
+.loom-profile__shape.-a { width: 120px; height: 120px; right: 6%; top: -22px; animation: loom-profile-drift 14s ease-in-out infinite; }
+.loom-profile__shape.-b { width: 70px; height: 70px; right: 24%; bottom: -14px; animation: loom-profile-drift 18s ease-in-out infinite reverse; }
+.loom-profile__shape.-c { width: 46px; height: 46px; right: 38%; top: 18px; animation: loom-profile-drift 11s ease-in-out infinite; }
+@keyframes loom-profile-drift { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(6px) rotate(10deg); } }
+@media (prefers-reduced-motion: reduce) { .loom-profile__shape { animation: none; } }
+.loom-profile__avatar { box-shadow: 0 0 0 5px var(--v-paper) !important; flex: none; }
+.loom-profile__initials { display: grid; place-items: center; width: 112px; height: 112px; border-radius: 50%;
+  font-family: var(--font-display); font-weight: 600; font-size: 40px; color: var(--v-on-accent); background: var(--v-blue); }
+.loom-profile__initials.-pink { background: var(--v-pink); } .loom-profile__initials.-yellow { background: var(--v-yellow); }
+.loom-profile__initials.-olive { background: var(--v-olive); } .loom-profile__initials.-blue { background: var(--v-blue); }
+
+/* An agent's face (face.tsx): its expression's motion. The still frame already says the state; motion only adds life. */
+.loom-face__eyes, .loom-face__field { transform-box: fill-box; transform-origin: center; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-slot="agent-face"][data-motion="blink"] .loom-face__eyes { animation: loom-blink 5s infinite; }
+  [data-slot="agent-face"][data-motion="glance"] .loom-face__eyes { animation: loom-glance 6s ease-in-out infinite; }
+  [data-slot="agent-face"][data-motion="lean"] .loom-face__field { animation: loom-lean 2.4s ease-in-out infinite; }
+  [data-slot="agent-face"][data-motion="shake"] .loom-face__field { animation: loom-shake 3.2s infinite; }
+}
+@keyframes loom-blink { 0%, 95%, 100% { transform: scaleY(1); } 97.5% { transform: scaleY(.1); } }
+@keyframes loom-glance { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
+@keyframes loom-lean { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes loom-shake { 0%, 20%, 100% { transform: translateX(0); } 5% { transform: translateX(-4px); } 10% { transform: translateX(4px); } 15% { transform: translateX(-3px); } }
+
+/* An iPhone's home-screen app (standalone.ts; Jonathan, 2026-11-03: the dock sat too high). iOS 26 shortens a home-screen
+   app's viewport by the status bar's height (viewport-fit=cover with a black-translucent status bar: WebKit bug 301108)
+   while the document is no taller than that short viewport, and a fixed bar's bottom: 0 is that viewport's bottom. So the
+   document is never shorter than the screen there: 100% plus the top inset is the whole screen when iOS has shortened it,
+   and 100lvh caps it at the screen when it hasn't, so nothing scrolls that wouldn't. The document scrolls as anywhere
+   else; the dock stays fixed, bottom 0, over env(safe-area-inset-bottom) once (App.tsx). (#470 had the document stop
+   scrolling and #root scroll instead: that pinned the document at exactly the short height, so the dock never came down.)
+   The media query is there before the first layout; the class (navigator.standalone) for an iOS that doesn't match it. */
+@media (display-mode: standalone) { html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); } }
+html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
+
+/* Toasts on a phone (toasts.tsx; Jonathan, 2026-11-03: one covered the whole screen): a strip at the top centre, under
+   the status bar and clear of the dock; a desktop keeps toast.css's bottom right. toast.css's .v-toaster sits in
+   @layer cojeev-states, which comes after Tailwind's utilities, so a utility class can't move it: its bottom and right
+   won over max-lg:bottom-auto and max-lg:right-auto, and a viewport with a top and a bottom stretched the toast to the
+   screen's height. This rule is unlayered, so it wins. */
+@media (width < 64rem) {
+  .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
+}
+
+/* A phone's gestures (gestures.ts): the page pans only up and down, so a sideways swipe is the page's to take, never a
+   wait on its scroll; the dock (its keys and the strip over them) and Find's pill take a touch whole, for a swipe up.
+   A label for haptics (haptic.tsx HapticLabel, iOS only) lies over its key or button, unseen. */
+html[data-gestures] :is(main, .loom-top) { touch-action: pan-y pinch-zoom; }
+/* Every part of them: the dock's keys sit in a scroll area of its own, where a touch's own rules start again. */
+html[data-gestures] :is(.loom-dock-bar, .loom-dock-bar *, .loom-find-pill, .loom-find-pill *) { touch-action: none; }
+html[data-gestures][data-look] .loom-dock-bar { pointer-events: auto; }
+/* ...but only the bar's own box and the stage in it (the keys and the strip over them). The dock's scroller reaches its
+   reserved lift (48 px, looks.css) past the bar's top, room for a grown key's glow; taking touches there it lay over
+   Comms' composer, its field and its Send, which then took no tap (Jonathan, 2026-11-05: "Hard to get the input to
+   take and then ... I can't get send to work"). */
+html[data-gestures][data-look] .loom-dock-bar :is(.v-dock, .v-dock__scroll, [data-part="viewport"]) { pointer-events: none; }
+html[data-gestures][data-look] .loom-dock-bar [data-part="stage"] { pointer-events: auto; }
+.loom-haptic { position: absolute; inset: 0; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
+/* The fallback lean (gestures.ts, where pages don't move) never widens the page. */
+html[data-gestures] .loom-page-clip { overflow-x: clip; }
+
+/* Page moves (transitions.ts): only the page (main) moves, and the page's name crossfades; the bar, the dock, the fade
+   over it and Find's pill stay where they are. Named only while a move runs (html[data-move]). Restrained and quick:
+   280 ms on the app's --enter curve; the old page gives way a quarter of the distance, a little dimmed, never faded out. */
+html[data-move] main { view-transition-name: loom-page; }
+html[data-move] .loom-top { view-transition-name: loom-bar; }
+html[data-move] .loom-top h1 { view-transition-name: loom-title; }
+html[data-move] .loom-dock-bar { view-transition-name: loom-dock; }
+html[data-move] .loom-fade { view-transition-name: loom-fade; }
+html[data-move] .loom-find-pill { view-transition-name: loom-pill; }
+::view-transition-old(root) { display: none; }
+::view-transition-new(root) { animation: none; }
+::view-transition-group(loom-page), ::view-transition-group(loom-bar), ::view-transition-group(loom-dock), ::view-transition-group(loom-fade), ::view-transition-group(loom-title) { animation: none; }
+::view-transition-old(loom-bar), ::view-transition-old(loom-dock), ::view-transition-old(loom-fade) { display: none; }
+::view-transition-new(loom-bar), ::view-transition-new(loom-dock), ::view-transition-new(loom-fade) { animation: none; }
+::view-transition-old(loom-page), ::view-transition-new(loom-page) {
+  mix-blend-mode: normal; animation-duration: 280ms; animation-timing-function: cubic-bezier(.2, .8, .2, 1); animation-fill-mode: both; }
+::view-transition-old(loom-title), ::view-transition-new(loom-title), ::view-transition-old(loom-pill), ::view-transition-new(loom-pill) {
+  animation-duration: 280ms; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+html:is([data-move="right"], [data-move="push"])::view-transition-old(loom-page) { animation-name: loom-move-give-left; }
+html:is([data-move="right"], [data-move="push"])::view-transition-new(loom-page) { animation-name: loom-move-in-right; }
+html[data-move="left"]::view-transition-old(loom-page) { animation-name: loom-move-give-right; }
+html[data-move="left"]::view-transition-new(loom-page) { animation-name: loom-move-in-left; }
+/* A pop: the page you were on slides off to the right, over the one it came from. */
+html[data-move="pop"]::view-transition-old(loom-page) { animation-name: loom-move-off-right; z-index: 1; }
+html[data-move="pop"]::view-transition-new(loom-page) { animation-name: loom-move-under-left; }
+@keyframes loom-move-give-left { to { transform: translateX(-25%); filter: brightness(.72); } }
+@keyframes loom-move-give-right { to { transform: translateX(25%); filter: brightness(.72); } }
+@keyframes loom-move-in-right { from { transform: translateX(100%); } }
+@keyframes loom-move-in-left { from { transform: translateX(-100%); } }
+@keyframes loom-move-off-right { to { transform: translateX(100%); } }
+@keyframes loom-move-under-left { from { transform: translateX(-25%); filter: brightness(.72); } }
+/* The incoming name catches once, a single frame, as a tube does. */
+html[data-look]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
+@keyframes loom-move-name-in { from { opacity: 0; } }
+@keyframes loom-move-flick { 0%, 40%, 100% { filter: none; } 34% { filter: brightness(1.7); } }
+/* Reduced motion: a short crossfade, nothing slides. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-move]::view-transition-old(loom-page) { animation: loom-move-fade-out 140ms ease both; z-index: auto; }
+  html[data-move]::view-transition-new(loom-page) { animation: loom-move-name-in 140ms ease both; }
+  html[data-move]::view-transition-new(loom-title) { animation: loom-move-name-in 140ms ease both; }
+}
+@keyframes loom-move-fade-out { to { opacity: 0; } }
+
+/* Dock swap (dock-swap.tsx): the old keys slide down off the screen and the new ones rise in, 25 ms apart, about 250 ms
+   in all for four keys (six: 325 ms, inside dock-swap.tsx's LEAVE_MS); going back, from the other end. The two sets share one place; while they swap nothing clips them. */
+.loom-dock-swap { display: grid; justify-items: center; }
+.loom-dock-swap > * { grid-area: 1 / 1; min-width: 0; }
+.loom-dock-gone { pointer-events: none; }
+/* loom: a dock never shows a scrollbar (Jonathan, 2026-11-05: "that tiny scroll bar ... above the dock, lets murder
+   that"). Its scroll area always mounts a vertical bar, so Radix writes overflow-y: scroll on the viewport (inline,
+   over dock.css's own overflow-y: hidden): whenever the stage ran a pixel taller (a key growing, the keys rising in), the dock scrolled up
+   and down and drew its thumb, grip and all, at the row's end. Up and down it never scrolls; sideways it scrolls,
+   when it must, with no bar, as a phone's does. Unlayered, so a swap's overflow: visible (just below, while the keys slide) still wins. */
+.v-dock:not([data-variant="rail"]) [data-part="viewport"] {
+  overflow-y: hidden !important;
+}
+.v-dock:not([data-variant="rail"])
+  :is([data-slot="scroll-area-scrollbar"], [data-slot="scroll-area-corner"]) {
+  display: none !important;
+}
+.loom-dock-swap[data-swap] :is(.v-dock__scroll, [data-part="viewport"], [data-radix-scroll-area-viewport]) { overflow: visible !important; }
+.loom-dock-swap [data-part="lane"]:nth-child(1) { --i: 0; } .loom-dock-swap [data-part="lane"]:nth-child(2) { --i: 1; }
+.loom-dock-swap [data-part="lane"]:nth-child(3) { --i: 2; } .loom-dock-swap [data-part="lane"]:nth-child(4) { --i: 3; }
+.loom-dock-swap [data-part="lane"]:nth-child(5) { --i: 4; } .loom-dock-swap [data-part="lane"]:nth-child(n+6) { --i: 5; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(1) { --j: 0; } .loom-dock-swap [data-part="lane"]:nth-last-child(2) { --j: 1; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(3) { --j: 2; } .loom-dock-swap [data-part="lane"]:nth-last-child(4) { --j: 3; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(5) { --j: 4; } .loom-dock-swap [data-part="lane"]:nth-last-child(n+6) { --j: 5; }
+.loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-dock-out 150ms cubic-bezier(.4, 0, 1, 1) calc(var(--i, 0) * 25ms) both; }
+.loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-dock-in 150ms cubic-bezier(.2, .8, .2, 1) calc(var(--i, 0) * 25ms + 50ms) both; }
+.loom-dock-swap[data-swap="back"] .loom-dock-gone [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms); }
+.loom-dock-swap[data-swap="back"] .loom-dock-now [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms + 50ms); }
+@keyframes loom-dock-out { to { transform: translateY(calc(var(--dock-item-size, 52px) + 120px)); } }
+@keyframes loom-dock-in { from { transform: translateY(calc(var(--dock-item-size, 52px) + 120px)); } }
+@media (prefers-reduced-motion: reduce) {
+  .loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-move-fade-out 120ms ease both; }
+  .loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-move-name-in 120ms ease both; }
+}
+
+/* A phone's app, not a web page (immersion.ts; Jonathan, 2026-11-05: "We need to disable anything that lets me break the
+   illusion"). What a page does that an app doesn't: zoom, a long-press menu or a selection on the app's own chrome, the
+   grey flash on a tap, a rubber band past the page's ends and pull to refresh. Content (a message, a note, a task's
+   words, code) stays selectable, for copying. A desktop keeps its browser's ways, except chrome's words not selecting. */
+
+/* The page: no rubber band past its ends and no pull to refresh; inner scrollers keep their own momentum. Where iOS
+   bounces anyway, what shows past the edge is the app's canvas: body's (above), which the browser paints past the page
+   because <html> has none of its own. Keep it that way: a background on <html> would make body paint its own, over the
+   ground and wash under it (-z-10). The page doesn't move into an inner scroller: the document still scrolls, so the
+   iOS home-screen fix above (301108), the dock and the page moves are as they were. */
+html, body { overscroll-behavior: none; }
+
+/* Zoom (immersion.ts allowZoom): pinch and double-tap zoom are off unless the person allows zoom (Accessibility), and then
+   left alone. A touch screen's only: a desktop keeps its zoom. The page pans; main's and the bar's pan-y (gestures, above) narrow it further. */
+@media (pointer: coarse) { html:not([data-zoom="on"]) { touch-action: pan-x pan-y; } }
+/* Allowed, zoom is the person's whole: the page and its bar take every touch the browser would (double-tap, and
+   panning a zoomed page sideways), over a phone's sideways swipe between pages. The dock keeps its own (a swipe up). */
+html[data-zoom="on"][data-gestures] :is(main, .loom-top) { touch-action: auto; }
+
+/* No grey flash on a tap (base.css keeps the browser's on its components; this is unlayered, so it wins): a press shows
+   as the control's own. A plain button or link with no pressed state of its own dims while it's held. */
+:where(html, html *) { -webkit-tap-highlight-color: transparent; }
+@media (hover: none) {
+  :where(button, a[href], [role="button"], [role="option"], summary):not(.v-btn, .v-ibtn, .v-toggle, [data-part="item"], [data-slot="toggle-group-item"], :disabled, [aria-disabled="true"]):active { opacity: .72; }
+}
+
+/* Chrome doesn't select, and a long press on it opens no menu: the bars, the dock, Find's pill, the side panel, buttons,
+   tabs and chips, badges, labels, and a card's head. -webkit-touch-callout inherits, so it covers what's inside.
+   immersion.ts NO_MENU is the same list, for Android's Chrome: change both. */
+:is(.loom-top, .loom-dock-bar, .loom-find-pill, .loom-fade, .loom-side, .loom-sheet-bar, .loom-app-tile, .loom-launch-tile, .loom-r-tile,
+  button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="switch"], [role="checkbox"], [role^="menuitem"],
+  [data-slot="badge"], [data-slot="card-header"], [data-slot="toggle-group"], [data-slot="dock"], label, summary) {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Links, images and icons, wherever they are: no preview or "Open in new tab" on a long press (Android's Chrome:
+   immersion.ts noTouchMenus), and an image doesn't drag away. */
+:is(a[href], img, svg) { -webkit-touch-callout: none; }
+img { -webkit-user-drag: none; }
+/* What's typed and what's read stays selectable, even inside chrome, with iOS's own long-press menu (Paste, Copy, Look
+   Up): a field (iOS won't type into one under user-select: none; Find's sits in a label), prose and code. A link in
+   prose still has none: its own rule above is its own, over what it inherits. */
+:is(input, textarea, [contenteditable]:not([contenteditable="false"]), .loom-prose, pre, code, [data-slot="code-block"]) {
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+/* A field's words are at least 16 px on a touch screen, or iOS zooms in when it takes focus. A component's own size wins
+   (its layer comes later), so its small sizes are 16 px on a field; a field that only inherits its size gets 16 px. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) { font-size: 16px; }
+  }
+}
+@media (pointer: coarse) {
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) {
+    --fs-caps: 16px; --fs-meta: 16px; --fs-small: 16px; --fs-control: 16px; --fs-body: 16px; --text-xs: 16px; --text-sm: 16px; --text-base: 16px; }
+}
+
+/* A phone's chrome scrolls without a bar (the dock's own already has none); a desktop keeps its scrollbars. */
+@media (pointer: coarse) {
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick), :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) * { scrollbar-width: none; }
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick)::-webkit-scrollbar, :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) *::-webkit-scrollbar { display: none; }
+}
+
+/* Higher contrast (Accessibility, access.ts: <html data-contrast="more">, the person's choice or the phone's own
+   prefers-contrast: more while they follow it): each look's tokens raised (looks/looks.css), measured by
+   src/ui/look-contrast.test.ts. */
+/* Every look: no faded words (Tailwind's opacity steps on text), stronger focus rings, solid ground behind words that
+   sat on a see-through surface (the wash, the side, Find's pill, the header's buttons, a state's card), and full
+   hairlines where they were mixed toward transparent. */
+:root[data-contrast="more"] :is(.opacity-40, .opacity-50, .opacity-60, .opacity-70, .opacity-75, .opacity-80, .opacity-90) { opacity: 1; }
+/* A press shows as a darker press, not faded words (the tap dimming, "A phone's app", below). */
+@media (hover: none) { :root[data-contrast="more"] :where(button, a[href], [role="button"], [role="option"], summary):active { opacity: 1; } }
+:root[data-contrast="more"] :focus-visible { outline: 3px solid var(--v-text); outline-offset: 2px; }
+:root[data-contrast="more"][data-look] .loom-wash { background: var(--v-canvas); opacity: 1; }
+:root[data-contrast="more"] .loom-ground { opacity: .45; }
+:root[data-contrast="more"] :is(.loom-state, .loom-skel, .loom-head-action, .loom-head-more, .loom-find-pill) { background: var(--v-canvas); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search) { background: var(--v-paper); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search, .loom-menu) { border-color: var(--v-border); }
+:root[data-contrast="more"] .loom-find-scrim { backdrop-filter: none; }
+
+/* A page's side sections (App.tsx PageView; docs/extensions.md "Pages"): in a column of a fixed width, or folded
+   together at the top of the page. Nothing in them ever scrolls sideways: words wrap (a long id or address breaks
+   where it must), a table keeps to the column, and whatever cuts itself short does so with an ellipsis. */
+.loom-side-col { min-width: 0; max-width: 100%; overflow-x: hidden; overflow-wrap: anywhere; }
+.loom-side-col > *, .loom-side-col [data-slot="card"], .loom-side-col [data-slot="card-content"] { min-width: 0; max-width: 100%; }
+.loom-side-col table { display: table; table-layout: fixed; width: 100%; }
+.loom-side-col pre, .loom-side-col .v-code-block pre { width: auto; max-width: 100%; white-space: pre-wrap; overflow-x: hidden; }
+.loom-side-col :is(pre, table, [data-radix-scroll-area-viewport]) { overflow-x: hidden !important; }
+.loom-side-fold { min-width: 0; border-radius: var(--r-card, 16px); box-shadow: inset 0 0 0 1px var(--v-border); background: color-mix(in srgb, var(--v-paper) 70%, transparent); }
+.loom-side-fold > summary { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.loom-side-fold > summary::-webkit-details-marker { display: none; }
+.loom-side-fold > summary::before { content: "›"; flex: none; display: inline-block; width: 10px; color: var(--v-text-3); transition: rotate .15s; }
+.loom-side-fold[open] > summary::before { rotate: 90deg; }
+.loom-side-fold__name { flex: none; font-weight: 600; }
+.loom-side-fold__what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--v-text-3); }
+.loom-side-fold > .loom-side-col { padding: 0 8px 8px; }
+@media (prefers-reduced-motion: reduce) { .loom-side-fold > summary::before { transition: none; } }
+
+/* The dock's last key: nine lit dots (the mockups' "All apps"). */
+.loom-apps-dots{display:grid;grid-template-columns:repeat(3,5px);gap:4px}
+.loom-apps-dots i{width:5px;height:5px;background:currentColor;box-shadow:var(--glow-key,0 0 0 0) currentColor}
+
+/* A letter avatar (t-1925 D): an agent in a small place (a window's corner, a list's row), its initial in its colour.
+   The pixel face is the one big picture (the agent's window). */
+.loom-letter{--c:var(--v-pink);--ls:26px;width:var(--ls);height:var(--ls);flex:none;display:inline-grid;place-items:center;border-radius:calc(var(--ls)*.27);
+  font:700 calc(var(--ls)*.5)/1 var(--font-display);color:var(--c);background:color-mix(in srgb,var(--c) 14%,var(--v-paper));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,transparent)}
+:root[data-contrast="more"] .loom-letter{box-shadow:inset 0 0 0 1.5px var(--c)}

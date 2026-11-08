@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-blank-creed-refusal",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:881f477de9406f2b332fd299fc3a874fd7f3aab00db18e5da1ed3f347903ba90"
+    }
+  ]
+}

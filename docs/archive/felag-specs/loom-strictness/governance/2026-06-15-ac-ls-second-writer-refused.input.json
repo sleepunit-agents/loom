@@ -1,0 +1,273 @@
+{
+  "asOf": "2026-06-15T00:00:00Z",
+  "spec": [
+    {
+      "record": "preamble",
+      "conformanceVersion": "0.1.0",
+      "contracts": [
+        {
+          "description": "loom's write discipline across all three wings: lint-on-write (every mutating call validates the record before commit and rejects malformed input with a typed reason — no silent drop, no torn record), atomic-write parity (every wing gets the atomic-write-with-backup identity already has), and single-writer behavior (concurrent writes are serialized and never interleave; a second concurrent writer to the same store is refused). The concurrency MECHANISM is deliberately unspecified — only the observable behavior (no torn writes, second writer refused) is contract. Forethought / to-be for loom (github.com/jbarket/loom); generalizes the partial discipline already in the knowledge and identity wings.",
+          "id": "c-loom-strictness"
+        }
+      ],
+      "exclusions": [
+        "The single-writer MECHANISM: whether loom uses a lockfile, a SQLite advisory lock, a single shared connection, or a write queue is L3's implementation choice — this contract specifies only that writes do not interleave and a second writer is refused, never how.",
+        "The exact validation schema per record type beyond 'malformed is rejected with a typed reason': the precise field rules live in each wing's own contract (loom-memory/knowledge/identity); this contract asserts that SOME pre-commit lint runs and rejects, not its full ruleset.",
+        "Performance characteristics of serialization (throughput, lock-wait latency): binding, not contract."
+      ],
+      "goals": [
+        "TO-BE (forethought): the write discipline (the art-ffc strictness epic) as a cross-cutting contract over all three wings. lint-on-write — every mutating call (remember, knowledge_write, update_identity) validates the record against its shape BEFORE commit and rejects a malformed write with a typed reason, never a silent drop or a torn record. single-writer — concurrent mutation of a store is serialized so writes never interleave, and a second concurrent writer to the same store is refused rather than allowed to corrupt it (BEHAVIOR only; the mechanism — lockfile, advisory lock, single-connection — is L3's to choose).",
+        "Some of this exists partially today (knowledge already requires citations and caps bodies; identity already writes atomically with a .bak). This contract GENERALIZES that discipline uniformly and names the gaps (memory's lighter validation, the absence of a concurrency guard, atomic-write parity across wings) as the build list.",
+        "Authored before the impl closes the gaps: proposed forethought criteria, no evidence, fixtures define the target."
+      ],
+      "governance": {
+        "timeoutDays": 30
+      },
+      "implementers": [
+        {
+          "name": "loom",
+          "roles": [
+            "author",
+            "maintainer",
+            "repo-owner"
+          ]
+        }
+      ],
+      "name": "loom-strictness"
+    },
+    {
+      "record": "item",
+      "id": "it-ls-lint",
+      "body": "Every mutating call validates its record against the wing's shape BEFORE it commits, and a malformed write is rejected with a typed reason rather than committed-then-broken or silently dropped. This already holds partially in the knowledge wing (a write with zero citations is refused, bodies over cap throw) and the identity wing (the editable-file enum, fence-aware splice); the to-be generalizes it so the MEMORY wing's writes are equally gated, and so EVERY rejection returns a structured reason a caller can act on — no write ever fails silently or half-applies.",
+      "title": "Lint-on-write — validate before commit, reject with a reason"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-ls-lint-memory",
+      "class": "behavioral",
+      "contractId": "c-loom-strictness",
+      "fixtures": [
+        "fx-ls-lint-memory-ok",
+        "fx-ls-lint-memory-reject"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a remember call with a malformed record (e.g. missing required content, or a field of the wrong type)\nWhen it is processed\nThen the write is rejected pre-commit with a typed reason and the store is unchanged — memory writes are gated like knowledge writes already are",
+      "itemId": "it-ls-lint",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/tools/remember.ts:18-42 (validateMemoryInput rejects empty content/title/category; remember throws the typed reason pre-commit, before createBackend); test src/tools/strictness.test.ts (refuses empty content/title/category, store unchanged via recall)."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-ls-lint-rejection-typed",
+      "class": "behavioral",
+      "contractId": "c-loom-strictness",
+      "fixtures": [
+        "fx-ls-no-partial-apply",
+        "fx-ls-reject-typed"
+      ],
+      "force": "MUST",
+      "gherkin": "Given any mutating call that fails validation in any wing\nWhen it is rejected\nThen the caller receives a structured reason (what was wrong) and the store is provably unchanged — no write ever fails silently or half-applies",
+      "itemId": "it-ls-lint",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/tools/remember.ts:35-42 (typed reason thrown before any backend open); knowledge parity src/tools/knowledge-write.ts:51-58; test src/tools/strictness.test.ts ('a rejected write leaves the store unchanged (no half-apply)')."
+    },
+    {
+      "record": "item",
+      "id": "it-ls-single-writer",
+      "body": "Concurrent mutation of a store is serialized: two writes that arrive together do not interleave into a torn record — each completes wholly or not at all, and the store is never left half-updated. A SECOND concurrent writer to the same store (e.g. a second daemon opening the same memories.db) is refused rather than permitted to race the first into corruption. This is specified as BEHAVIOR — the observable outcomes (serialized, non-interleaved, second-writer-refused) — not as a mechanism; loom may achieve it with a lock, a single connection, or a queue.",
+      "title": "Single-writer — no torn writes, second writer refused"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-ls-single-writer-serialize",
+      "class": "behavioral",
+      "contractId": "c-loom-strictness",
+      "fixtures": [
+        "fx-ls-serialize"
+      ],
+      "force": "MUST",
+      "gherkin": "Given two mutating calls to the same store arriving concurrently\nWhen both are processed\nThen their effects are serialized — the resulting records are each whole (no interleaving), and the store reflects both writes applied in some order, never a torn merge",
+      "itemId": "it-ls-single-writer",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "better-sqlite3 is synchronous and each write is wrapped in db.transaction() (src/backends/sqlite-vec.ts:122-138), so concurrent calls cannot interleave; test src/tools/strictness.test.ts ('serializes concurrent writes — both records land whole')."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-ls-second-writer-refused",
+      "class": "behavioral",
+      "contractId": "c-loom-strictness",
+      "fixtures": [
+        "fx-ls-second-writer"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a store already held by one writer and a second concurrent writer attempting to open the same store\nWhen the second writer starts\nThen it is refused (not allowed to race the first into corruption) — the observable single-writer guarantee, however the implementation enforces it",
+      "itemId": "it-ls-single-writer",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "WAL admits one writer; busy_timeout=0 makes a second concurrent writer fail fast (src/backends/sqlite-vec.ts:89-96, src/backends/sqlite-knowledge.ts:62-66); test src/tools/strictness.test.ts ('refuses a second concurrent writer (fail-fast, no block)')."
+    },
+    {
+      "record": "item",
+      "id": "it-ls-atomicity",
+      "body": "The atomic-write-with-backup discipline the identity wing already has (copy prior content to .bak, then tmp-write + rename, so a crash mid-write never truncates) extends to every wing's durable writes. A crash or kill in the middle of any commit leaves either the prior state or the new state intact, never a truncated or partial store. Identity has this today; the to-be brings memory and knowledge to parity.",
+      "title": "Atomic-write parity — every wing crash-safe"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-ls-atomic-parity",
+      "class": "judgment",
+      "contractId": "c-loom-strictness",
+      "fixtures": [
+        "fx-ls-atomic-witness"
+      ],
+      "force": "MUST",
+      "item": "Every wing's durable writes are atomic with a backup: a crash or kill mid-commit leaves either the prior state or the new state, never a truncated store. A conforming implementation routes memory and knowledge commits through the same atomic-write-with-backup discipline the identity wing already uses (copy-to-.bak, tmp-write, rename) — crash-safety is uniform across the three stores, not identity-only.",
+      "itemId": "it-ls-atomicity",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "checklist",
+      "evidence": "DB wings are crash-safe via WAL + db.transaction() ACID (src/backends/sqlite-vec.ts:89,122; src/backends/sqlite-knowledge.ts:62); identity via atomicWriteWithBackup (src/path-safety.ts:57-66); test src/tools/strictness.test.ts ('a rejected write leaves the store unchanged')."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-atomic-witness",
+      "contractId": "c-loom-strictness",
+      "description": "Witness: a kill mid-commit leaves prior-or-new, never truncated.",
+      "expected": {
+        "result": "prior-or-new",
+        "truncated": false
+      },
+      "format": "strictness/atomicity@0",
+      "input": {
+        "interruptedAt": "mid-write",
+        "op": "commit",
+        "wing": "memory"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-lint-memory-ok",
+      "contractId": "c-loom-strictness",
+      "description": "A well-formed remember commits.",
+      "expected": {
+        "committed": true
+      },
+      "format": "strictness/lint@0",
+      "input": {
+        "record": {
+          "category": "project",
+          "content": "a fact"
+        },
+        "tool": "remember"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-lint-memory-reject",
+      "contractId": "c-loom-strictness",
+      "description": "A malformed remember is rejected pre-commit; store unchanged.",
+      "expected": {
+        "committed": false,
+        "error": "malformed",
+        "storeChanged": false
+      },
+      "format": "strictness/lint@0",
+      "input": {
+        "record": {},
+        "tool": "remember"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-no-partial-apply",
+      "contractId": "c-loom-strictness",
+      "description": "A rejected write leaves the store provably unchanged (no half-apply).",
+      "expected": {
+        "storeUnchanged": true
+      },
+      "format": "strictness/atomicity@0",
+      "input": {
+        "after": "<stateS>",
+        "before": "<stateS>",
+        "write": "rejected"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-reject-typed",
+      "contractId": "c-loom-strictness",
+      "description": "A failed validation returns a structured reason.",
+      "expected": {
+        "committed": false,
+        "reason": "uncited",
+        "silent": false
+      },
+      "format": "strictness/lint@0",
+      "input": {
+        "record": {
+          "citations": []
+        },
+        "tool": "knowledge_write"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-second-writer",
+      "contractId": "c-loom-strictness",
+      "description": "A second concurrent writer to the same store is refused.",
+      "expected": {
+        "refused": true,
+        "secondWriterAdmitted": false
+      },
+      "format": "strictness/concurrency@0",
+      "input": {
+        "firstWriter": "held",
+        "secondWriter": "opening",
+        "store": "memories.db"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-ls-serialize",
+      "contractId": "c-loom-strictness",
+      "description": "Two concurrent writes serialize; neither record is torn.",
+      "expected": {
+        "bothWhole": true,
+        "finalContains": [
+          "A",
+          "B"
+        ],
+        "interleaved": false
+      },
+      "format": "strictness/concurrency@0",
+      "input": {
+        "arrival": "concurrent",
+        "writes": [
+          "A",
+          "B"
+        ]
+      }
+    }
+  ],
+  "transition": {
+    "criterionId": "ac-ls-second-writer-refused",
+    "to": "active",
+    "requestedAt": "2026-06-15T00:00:00Z",
+    "requestedBy": "loom",
+    "acknowledgments": [
+      {
+        "implementer": "loom",
+        "decision": "ack",
+        "at": "2026-06-15T00:00:00Z",
+        "criterionHash": "sha256:14446c6274698406fb3f314941167daeec9b5374c16ac72d7ba8e2a101b26f69"
+      }
+    ]
+  }
+}

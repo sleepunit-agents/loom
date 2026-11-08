@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-bind-safety",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:578e3b2b38ce7c76e9ed95c529c6bbc1ca18781020168d90ef8c07162a908fac"
+    }
+  ]
+}

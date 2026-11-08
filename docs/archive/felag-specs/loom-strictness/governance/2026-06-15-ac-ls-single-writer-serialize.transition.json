@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-ls-single-writer-serialize",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:3d68d9a921196f461c0193dff1402766823733c78ce4993b69f3d10598012d76"
+    }
+  ]
+}

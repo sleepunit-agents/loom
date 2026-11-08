@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-harness-self-describe",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:90da6e5d51de49f1cae55c11744e9d2f539cc9a782bac07c6c4afc5505fce6fd"
+    }
+  ]
+}

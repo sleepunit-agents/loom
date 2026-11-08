@@ -1,0 +1,40 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+.v-bubble[data-slot].-me{background:var(--v-pink);border-radius:var(--r-card) var(--r-card) var(--r-xs) var(--r-card);color:var(--v-on-accent)}
+.v-bubble[data-slot].-tail{border-bottom-left-radius:var(--r-card)}
+.v-bubble[data-slot] { min-width:0; max-width:min(100%,65ch); overflow-wrap:anywhere; }
+.v-chat__row[data-slot].-me{justify-self:end;flex-direction:row-reverse}
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-bubble[data-slot]+.v-bubble:not(.-me){border-radius:var(--r-card) var(--r-card) var(--r-card) var(--r-card);margin-top:-2px}
+.v-bubble[data-slot].-tail.-me{border-bottom-right-radius:var(--r-card)}
+.v-bubble[data-slot].-tail::before{content:"";position:absolute;bottom:0;height:18px}
+.v-bubble[data-slot].-tail::after{content:"";position:absolute;bottom:0;height:18px}
+.v-bubble[data-slot].-tail::before{left:-7px;width:20px;background:inherit;border-bottom-right-radius:var(--r-card-sm) var(--r-card-sm)}
+.v-bubble[data-slot].-tail::after{left:-10px;width:10px;background:var(--bubble-surface,var(--v-beige));border-bottom-right-radius:var(--r-md)}
+.v-bubble[data-slot].-tail.-me::before{left:auto;right:-7px;border-bottom-right-radius:0;border-bottom-left-radius:var(--r-card-sm) var(--r-card-sm)}
+.v-bubble[data-slot].-tail.-me::after{left:auto;right:-10px;border-bottom-right-radius:0;border-bottom-left-radius:var(--r-md)}
+.v-chat__row[data-slot] .v-avatar{flex:none;width:28px;height:28px;font-size:var(--fs-caps);box-shadow:none;margin-bottom:2px}
+.v-chat__row[data-slot]+.v-chat__row:not(.-me):not(:has(.v-avatar)){padding-left:38px}
+.v-chat__row[data-slot].-me+.v-chat__row.-me{margin-top:0}
+.v-chat__row[data-slot].-me+.v-chat__time{text-align:right;padding-left:0}
+.v-chat[data-slot] .v-bubble{max-width:none;padding:var(--s-3) var(--s-4) var(--s-3)}
+:root[data-mode="dark"] .v-bubble[data-slot]{background:var(--v-beige-2);color:var(--v-text)}
+:root[data-mode="dark"] .v-bubble[data-slot].-me{background:var(--v-pink);color:var(--v-on-accent)}
+.v-chat[data-slot] .v-chat__time[data-slot]{color:var(--v-text-2)}
+
+.v-bubble__reaction[data-slot] {
+  min-height: 28px;
+  padding: 3px var(--s-2);
+  gap: var(--s-1);
+  font-size: var(--fs-meta);
+  line-height: 1.3;
+  margin-block-start: var(--s-1);
+  justify-self: start;
+}
+.v-bubble__reaction[data-slot][aria-pressed="true"] { background: var(--v-olive); color: var(--v-on-accent); }
+.v-bubble__typing[data-slot] { display: inline-flex; align-items: center; gap: var(--s-1); min-height: 24px; padding: var(--s-1) 2px; }
+.v-bubble__typing-dot { display: inline-block; width: 6px; height: 6px; border-radius: 42% 58% 48% 52%; background: currentColor; }
+.v-chat__row[data-slot] { min-width: 0; }
+
+}

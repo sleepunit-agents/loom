@@ -1,0 +1,177 @@
+@layer cojeev-states {
+.v-code-block[data-slot="code-block"] {
+  --code-comment: #68645f;
+  --code-keyword: #934268;
+  --code-string: #356742;
+  --code-function: #315f94;
+  --code-number: #86551f;
+  position: relative;
+  isolation: isolate;
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--v-border);
+  border-radius: var(--r-card-sm);
+  background: var(--v-paper);
+  color: var(--v-text);
+}
+.v-code-block[data-slot="code-block"][data-embedded] {
+  border: 0;
+  border-radius: 0;
+}
+.v-code-block[data-slot="code-block"] > [data-slot="code-block-header"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  border-block-end: 1px solid var(--v-border);
+  background: var(--v-beige-2);
+}
+.v-code-block[data-slot="code-block"] [data-slot="code-block-label"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--s-2);
+  overflow-wrap: anywhere;
+}
+.v-code-block[data-slot="code-block"] [data-slot="code-block-title"] {
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+.v-code-block[data-slot="code-block"] [data-slot="code-block-language"] {
+  padding: 2px var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--v-pink-soft);
+  color: var(--v-accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}
+/* The shared viewport owns both axes; pre remains ordinary selectable text. */
+.v-code-block > .v-code-block__scroll {
+  --h: 24rem;
+  border-radius: 0;
+}
+.v-code-block > .v-code-block__scroll > [data-slot="scroll-area-viewport"] {
+  padding: 0;
+}
+.v-code-block > .v-code-block__scroll > [data-slot="scroll-area-viewport"] > div {
+  /* Bound Radix's intrinsic table so wrapped lines use the viewport's measure. */
+  table-layout: fixed;
+  width: 100%;
+}
+.v-code-block[data-slot="code-block"] pre {
+  box-sizing: border-box;
+  margin: 0;
+  width: max-content;
+  min-width: 100%;
+  padding: var(--s-4) var(--s-8) var(--s-6) var(--s-5);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.8;
+  tab-size: 2;
+  white-space: pre;
+  user-select: text;
+}
+.v-code-block[data-slot="code-block"][data-wrap] pre {
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.v-code-block[data-slot="code-block"] pre > code {
+  font: inherit;
+  color: inherit;
+}
+.v-code-block [data-slot="code-block-caption"] { position:relative; display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); padding:var(--s-4) var(--s-5) var(--s-1); color:var(--v-text-2); font:var(--fs-meta)/1.4 var(--font-text); }
+.v-code-block [data-slot="code-block-caption"] > span:first-child { display:flex; align-items:center; gap:var(--s-2); }
+.v-code-block [data-slot="code-block-caption"] > span:first-child > span { padding:2px var(--s-2); border-radius:var(--r-sm); background:var(--v-pink-soft); color:var(--v-accent-ink); font:var(--fs-caps)/1.4 var(--font-mono); }
+.v-code-block .token:is(.comment,.prolog,.doctype,.cdata) { color:var(--code-comment); font-style:italic; }
+.v-code-block .token:is(.keyword,.operator,.tag) { color:var(--code-keyword); }
+.v-code-block .token:is(.string,.char,.attr-value,.regex) { color:var(--code-string); }
+.v-code-block .token:is(.function,.class-name,.attr-name) { color:var(--code-function); }
+.v-code-block .token:is(.number,.boolean,.constant,.property) { color:var(--code-number); }
+:root[data-mode="dark"] .v-code-block, .v-code-block[data-variant="terminal"] { --code-comment:#a4aaa8; --code-keyword:#edacd0; --code-string:#b5cf91; --code-function:#a6c9ed; --code-number:#e8cd85; }
+.v-code-block[data-slot="code-block"] pre ::selection {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.v-copy-control[data-slot="copy-control"] {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+  max-width: 100%;
+}
+.v-copy-control[data-slot="copy-control"] > [role="status"] {
+  /* The state icon is the visible receipt; keep the live announcement out of flow. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.v-copy-control[data-slot="copy-control"] > [role="status"][data-copy-state="error"] {
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  z-index: 2;
+  width: min(32ch, calc(100vw - 2rem));
+  height: auto;
+  padding: var(--s-2) var(--s-3);
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--v-border);
+  border-radius: var(--r-card-sm);
+  background: var(--v-paper);
+  color: var(--v-text);
+}
+/* Copy supplies its own fixed-size state icon, including the pending spinner. */
+.v-copy-control [data-slot="copy-button"][aria-busy="true"] { gap: var(--s-2); }
+.v-copy-control [data-slot="button-loading"] {
+  display: none;
+}
+
+/* A terminal is an ink surface in either appearance, using the system's fixed
+   structural pair. Scoped tokens also keep copy feedback and scroll rails legible. */
+.v-code-block[data-slot="code-block"][data-variant="terminal"] {
+  --v-paper: var(--v-structure);
+  --v-beige: var(--structure-quiet);
+  --v-beige-2: var(--structure-quiet);
+  --v-text: var(--on-structure);
+  --v-text-2: var(--structure-text);
+  --v-text-3: var(--structure-text);
+  --v-ink: var(--on-structure);
+  --v-on-ink: var(--v-structure);
+  --v-border: var(--structure-line);
+  --v-brand: var(--v-pink);
+  --v-pink-soft: var(--structure-quiet);
+  --sel-bg: var(--v-pink);
+  --sel-ink: var(--v-on-accent);
+}
+.v-code-block[data-variant="terminal"] > [data-slot="code-block-header"] {
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+.v-code-block[data-variant="terminal"] [data-slot="code-block-label"] { gap: var(--s-2); }
+.v-code-block[data-variant="terminal"] [data-slot="code-block-title"] { color: var(--structure-text); }
+.v-code-block[data-variant="terminal"] [data-slot="code-block-language"] { background: transparent; color: var(--structure-text); }
+[data-slot="terminal-window-marks"] { display: inline-flex; gap: var(--s-1); margin-inline-end: var(--s-2); }
+[data-slot="terminal-window-marks"] > i { width: var(--s-2); height: var(--s-2); border-radius: var(--r-pill); background: var(--v-pink); }
+[data-slot="terminal-window-marks"] > i:nth-child(2) { background: var(--v-yellow); }
+[data-slot="terminal-window-marks"] > i:nth-child(3) { background: var(--v-olive); }
+.v-code-block[data-variant="terminal"] pre { display: flex; align-items: flex-start; gap: var(--s-3); padding-block: var(--s-6); }
+.v-code-block[data-variant="terminal"] pre > code { min-width: 0; }
+[data-slot="terminal-prompt"] { flex: none; color: var(--v-olive); user-select: none; }
+
+}

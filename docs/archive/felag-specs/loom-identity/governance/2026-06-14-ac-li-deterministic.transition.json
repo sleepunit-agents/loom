@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-deterministic",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:5dd0ffd6e7cd48ce754102d076f8f8ba1d6fa2066b0498d4b47e0c7ebbf33127"
+    }
+  ]
+}

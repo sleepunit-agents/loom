@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-history-nondestructive",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:8446019c28f6a91f9e9bb1b44a38c3cb17a94afbc7e8824e51de0a9a36a96142"
+    }
+  ]
+}

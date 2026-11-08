@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-refusals",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:2e20b6e9632d9350848ae9380454b90cae326acd0ad02802dc5c8a4977ec832b"
+    }
+  ]
+}

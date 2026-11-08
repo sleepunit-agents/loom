@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-creed-immutable",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:7f03584156fabe8a648ed14b22b761ce975dd03cf6cdf804a6ca86bbe59f76cc"
+    }
+  ]
+}

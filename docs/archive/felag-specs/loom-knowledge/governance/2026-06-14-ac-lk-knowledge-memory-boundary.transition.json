@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-knowledge-memory-boundary",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:62c4dc45dab101532d742f8c2b7e33103a2140547beebe59118a98756bfb76e5"
+    }
+  ]
+}

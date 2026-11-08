@@ -1,0 +1,348 @@
+@layer cojeev-states {
+/* Cojeev authored subparts, state precedence, and irreducible shapes; scoped to this registry item. */
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]) {
+  transition: background var(--t-element) var(--enter);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])
+  > [data-slot="switch-thumb"] {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--v-canvas);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: transform var(--t-element) var(--enter);
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[aria-checked="true"],
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"] {
+  background: var(--v-ink);
+  box-shadow: none;
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[aria-checked="true"]
+  > [data-slot="switch-thumb"],
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]
+  > [data-slot="switch-thumb"] {
+  transform: translateX(18px);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]):not(
+    [aria-checked="true"]
+  ):not([data-state="checked"]) {
+  box-shadow: inset 0 0 0 1px var(--v-edge);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled] {
+  cursor: not-allowed;
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled] {
+  cursor: not-allowed;
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])
+  > [data-slot="switch-thumb"] {
+  background: var(--switch-knob);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[aria-checked="true"]
+  > [data-slot="switch-thumb"],
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]
+  > [data-slot="switch-thumb"] {
+  background: var(--switch-knob-on);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled] {
+  background: var(--v-disabled-face);
+  box-shadow: inset 0 0 0 1px var(--v-disabled-edge);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled]
+  > [data-slot="switch-thumb"] {
+  background: var(--v-disabled-edge);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])
+  > [data-slot="switch-thumb"],
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])::before {
+  pointer-events: none;
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]) {
+  transition:
+    background var(--t-element) var(--enter),
+    box-shadow var(--t-element);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])
+  > [data-slot="switch-thumb"] {
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  background: var(--v-canvas);
+  box-shadow: inset 0 0 0 1.5px var(--v-edge);
+  transition:
+    transform var(--t-max) cubic-bezier(0.34, 1.4, 0.44, 1),
+    border-radius var(--t-max) var(--enter),
+    background var(--t-element),
+    box-shadow var(--t-element);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]):hover {
+  background: color-mix(in oklab, var(--v-beige) 90%, var(--v-ink));
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]):hover
+  > [data-slot="switch-thumb"] {
+  box-shadow: inset 0 0 0 1.5px var(--v-text);
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"],
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[aria-checked="true"] {
+  background: var(--sw, var(--v-pink));
+  box-shadow: none;
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]
+  > [data-slot="switch-thumb"],
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[aria-checked="true"]
+  > [data-slot="switch-thumb"] {
+  transform: translateX(20px);
+  background: var(--ink-fixed);
+  box-shadow: none;
+  border-radius: 50% 46% 54% 50%/46% 50% 50% 54%;
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]:hover {
+  background: color-mix(
+    in oklab,
+    var(--sw, var(--v-pink)) 88%,
+    var(--ink-fixed)
+  );
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]):active
+  > [data-slot="switch-thumb"] {
+  transform: scaleX(1.18);
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]:active
+  > [data-slot="switch-thumb"] {
+  transform: translateX(18px) scaleX(1.18);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-olive {
+  --sw: var(--v-olive);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-blue {
+  --sw: var(--v-blue);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-yellow {
+  --sw: var(--v-yellow);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-ink {
+  --sw: var(--v-ink);
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  ).-ink[data-state="checked"]
+  > [data-slot="switch-thumb"] {
+  background: var(--v-canvas);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-sm {
+  width: 38px;
+  height: 22px;
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"]).-sm
+  > [data-slot="switch-thumb"] {
+  width: 16px;
+  height: 16px;
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  ).-sm[data-state="checked"]
+  > [data-slot="switch-thumb"] {
+  transform: translateX(16px);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled] {
+  background: var(--v-disabled-face);
+  box-shadow: inset 0 0 0 1px var(--v-disabled-edge);
+}
+.v-switch:where([data-slot="switch"], [data-slot^="switch-"])[data-disabled]
+  > [data-slot="switch-thumb"] {
+  background: var(--v-disabled-edge);
+  box-shadow: none;
+}
+.v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-disabled][data-state="checked"] {
+  background: color-mix(in oklab, var(--v-pink) 40%, var(--v-disabled-face));
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--s-4);
+  align-items: center;
+  min-height: 56px;
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--v-border) 70%, transparent);
+  cursor: pointer;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]):last-child {
+  border-bottom: 0;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]) > b {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-body);
+  line-height: 1.3;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]) > small {
+  grid-column: 1;
+  font-size: var(--fs-small);
+  color: var(--v-text-2);
+  line-height: 1.4;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]) > .v-switch {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]):has(
+    [data-slot="switch"][data-disabled]
+  ) {
+  color: var(--v-disabled-ink);
+  cursor: not-allowed;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]):has(
+    [data-slot="switch"][data-disabled]
+  )
+  > small {
+  color: var(--v-disabled-ink);
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]).-card {
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-card);
+  background: var(--card);
+  border-bottom: 0;
+}
+.v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]).-card:has(
+    [data-slot="switch"][data-state="checked"]
+  ) {
+  background: var(--v-canvas);
+  box-shadow: inset 0 0 0 1.5px var(--sw, var(--v-pink));
+}
+:root[data-mode="dark"]
+  .v-switch:where([data-slot="switch"], [data-slot^="switch-"]) {
+  background: var(--v-beige-2);
+}
+:root[data-mode="dark"]
+  .v-switch:where([data-slot="switch"], [data-slot^="switch-"])
+  > [data-slot="switch-thumb"] {
+  background: var(--v-text-2);
+  box-shadow: none;
+}
+:root[data-mode="dark"]
+  .v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  )[data-state="checked"]
+  > [data-slot="switch-thumb"] {
+  background: var(--ink-fixed);
+}
+:root[data-mode="dark"]
+  .v-switch:where(
+    [data-slot="switch"],
+    [data-slot^="switch-"]
+  ).-ink[data-state="checked"] {
+  background: var(--v-pink);
+}
+:root[data-mode="dark"]
+  .v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]).-card:has(
+    [data-slot="switch"][data-state="checked"]
+  ) {
+  background: var(--v-beige-2);
+}
+:root[data-mode="dark"]
+  .v-switchrow:where([data-slot="switch"], [data-slot^="switch-"]).-card {
+  background: var(--v-beige);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="switch"],
+  [data-slot^="switch-"],
+  [data-slot="switch"]::before,
+  [data-slot="switch"]::after,
+  [data-slot^="switch-"]::before,
+  [data-slot^="switch-"]::after {
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    transition-duration: 0s;
+    scroll-behavior: auto;
+  }
+}
+
+/* Preserve the source :has(input:disabled:checked) precedence over the dark base. */
+:root[data-mode="dark"] .v-switch:where([data-slot="switch"])[data-disabled][data-state="checked"] {
+  background: color-mix(in oklab, var(--v-pink) 40%, var(--v-disabled-face));
+}
+
+/* The dark resting surface must not cover a checked accent track. */
+:root[data-mode="dark"] .v-switch[data-slot="switch"][data-state="checked"]:not([data-disabled]):not(.-ink) {
+  background:var(--sw,var(--v-pink));
+}
+:root[data-mode="dark"] .v-switch[data-slot="switch"][data-state="checked"]:not([data-disabled]):not(.-ink):hover {
+  background:color-mix(in oklab,var(--sw,var(--v-pink)) 88%,var(--ink-fixed));
+}
+
+/* Stable native hit area; only the authored face moves. */
+.v-switch[data-slot="switch"][data-appearance] { width:64px; height:44px; min-width:64px; min-height:44px; padding:0; border:0; border-radius:var(--v-control-radius,999px); }
+.v-switch:is([data-slot="switch"],[data-slot="switch-face"])[data-appearance="capsule"] > [data-slot="switch-thumb"] { top:7px; left:7px; width:30px; height:30px; }
+.v-switch:is([data-slot="switch"],[data-slot="switch-face"])[data-appearance="capsule"][data-state="checked"] > [data-slot="switch-thumb"] { transform:translateX(20px); }
+.v-switch[data-slot="switch"][data-appearance="rocker"],.v-switch[data-slot="switch"][data-appearance="latch"] { border-radius:var(--v-control-radius,8px); }
+[data-slot="switch-rocker"] { position:absolute; inset:5px; display:grid; grid-template-columns:1fr 1fr; border-radius:inherit; background:var(--v-beige-2); color:var(--v-text); box-shadow:inset -3px 0 0 var(--v-edge),-2px 1px 0 var(--v-border); transition:box-shadow var(--t-element) var(--enter); pointer-events:none; }
+[data-slot="switch-rocker"] span { display:grid; place-items:center; font-size:var(--fs-body); font-weight:var(--fw-semibold); }
+[data-slot="switch-rocker"] span:first-child { background:var(--v-text); color:var(--v-canvas); border-radius:inherit; }
+[data-state="checked"] > [data-slot="switch-rocker"] { box-shadow:inset 3px 0 0 var(--v-edge),2px 1px 0 var(--v-border); }
+[data-state="checked"] > [data-slot="switch-rocker"] span:first-child { background:transparent; color:var(--v-text); }
+[data-state="checked"] > [data-slot="switch-rocker"] span:last-child { background:var(--v-pink); color:var(--ink-fixed); border-radius:inherit; }
+[data-slot="switch-latch"] { position:absolute; inset:6px; display:grid; place-items:center; border:1.5px solid currentColor; border-radius:inherit; color:var(--v-text); pointer-events:none; }
+[data-slot="switch-latch"] span { grid-area:1/1; font-size:var(--fs-caps); font-weight:var(--fw-bold); letter-spacing:.08em; transition:opacity var(--t-element),transform var(--t-element); }
+[data-slot="switch-latch"] [data-mark="on"] { opacity:0; transform:scale(.85); }
+[data-state="checked"] > [data-slot="switch-latch"] { color:var(--ink-fixed); border-style:double; border-width:3px; }
+[data-state="checked"] > [data-slot="switch-latch"] [data-mark="off"] { opacity:0; transform:scale(.85); }
+[data-state="checked"] > [data-slot="switch-latch"] [data-mark="on"] { opacity:1; transform:scale(1); }
+:root [data-slot="switch"][data-motion-quiet] *, :root [data-slot="switch"][data-motion-quiet] { transition:none; }
+[data-slot="switch"][data-disabled] > :is([data-slot="switch-rocker"],[data-slot="switch-latch"]) { color:var(--v-disabled-ink); background:var(--v-disabled-face); }
+:root [data-slot="switch"].v-switch[data-state]:has(> [data-slot="switch-face"]) { background:transparent; box-shadow:none; isolation:isolate; }
+.v-switch[data-slot="switch-face"] { position:absolute; inset:0; width:100%; height:100%; border-radius:inherit; pointer-events:none; }
+[data-slot="switch-face"][data-disabled] > :is([data-slot="switch-rocker"],[data-slot="switch-latch"]) { color:var(--v-disabled-ink); background:var(--v-disabled-face); }
+:root[data-mode="dark"] .v-switch[data-slot="switch-face"][data-state="checked"]:not([data-disabled]) { background:var(--sw,var(--v-pink)); }
+
+}

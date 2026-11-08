@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-oversized-guard",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:0d3fed73a5611036cef805bd4037405da4580477a803a0095804d709e5f41b9b"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+@layer cojeev-states {
+[data-slot="agent-state"] {
+  --agent-base: var(--v-pink);
+  --agent-light: var(--v-yellow);
+  --agent-deep: var(--v-pink-deep);
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--s-3);
+  color: var(--v-text);
+}
+[data-slot="agent-state"][data-status="thinking"] { --agent-base: var(--v-blue); --agent-light: var(--v-pink); --agent-deep: var(--v-blue-deep); }
+[data-slot="agent-state"][data-status="working"] { --agent-base: var(--v-pink); --agent-light: var(--v-yellow); --agent-deep: var(--v-pink-deep); }
+[data-slot="agent-state"][data-status="needs-input"] { --agent-base: var(--v-yellow); --agent-light: var(--cream-fixed); --agent-deep: var(--v-yellow-deep); }
+[data-slot="agent-state"][data-status="complete"] { --agent-base: var(--v-olive); --agent-light: var(--v-yellow); --agent-deep: var(--v-olive-deep); }
+[data-slot="agent-state"][data-status="error"] { --agent-base: var(--v-pink); --agent-light: var(--v-yellow); --agent-deep: var(--v-danger); }
+.v-agent-state__field { display: block; width: 88px; height: auto; flex: 0 0 auto; overflow: visible; pointer-events: none; }
+.v-agent-state__copy { display: grid; min-width: 0; gap: var(--s-1); }
+.v-agent-state__label { font: var(--fw-semibold) var(--fs-lead)/1.25 var(--font-display); letter-spacing: -.02em; overflow-wrap: anywhere; }
+.v-agent-state__description { font: var(--fw-regular) var(--fs-small)/1.45 var(--font-text); color: var(--v-text-2); max-width: 35ch; overflow-wrap: anywhere; }
+[data-slot="agent-state"][data-size="sm"] { gap: var(--s-1); }
+[data-slot="agent-state"][data-size="sm"] .v-agent-state__field { width: 48px; }
+[data-slot="agent-state"][data-size="sm"] .v-agent-state__label { font-family: var(--font-text); font-size: var(--fs-small); letter-spacing: 0; }
+[data-slot="agent-state"][data-size="sm"] .v-agent-state__description { font-size: var(--fs-meta); }
+[data-slot="agent-state"][data-size="lg"] { flex-direction: column; text-align: center; gap: 0; }
+[data-slot="agent-state"][data-size="lg"] .v-agent-state__field { width: min(100%, 216px); }
+[data-slot="agent-state"][data-size="lg"] .v-agent-state__label { font-size: var(--fs-section); }
+[data-slot="agent-state"][data-size="lg"] .v-agent-state__description { max-width: 32ch; margin-inline: auto; font-size: var(--fs-control); }
+@media (forced-colors: active) {
+  .v-agent-state__field { forced-color-adjust: none; }
+}
+
+}

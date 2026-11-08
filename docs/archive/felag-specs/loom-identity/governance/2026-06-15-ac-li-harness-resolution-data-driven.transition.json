@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-harness-resolution-data-driven",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:36d4845903b0813ba6cccde9674ba09078c2c56e86f681e6caea7e4da3e958a3"
+    }
+  ]
+}

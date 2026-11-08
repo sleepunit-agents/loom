@@ -1,0 +1,1123 @@
+{
+  "asOf": "2026-06-14T00:00:00Z",
+  "spec": [
+    {
+      "record": "preamble",
+      "conformanceVersion": "0.1.0",
+      "contracts": [
+        {
+          "description": "loom's knowledge wing: cited entity pages in a SQLite store separate from memory, with a sourced/provisional epistemic gate, deterministic LIKE recall that never surfaces archived pages, an archive/restore/supersede/move/merge/purge/verify lifecycle that is destruction-averse (archive-first purge, body-immutable verify, auto-snapshotted revisions, surviving supersession pointers), and the knowledge-vs-memory boundary. Observed in src/server.ts, src/tools/knowledge-*.ts, and src/backends/sqlite-knowledge.ts of loom (github.com/jbarket/loom), v0.4 line.",
+          "id": "c-loom-knowledge"
+        }
+      ],
+      "exclusions": [
+        "The embedding/vector machinery: knowledge deliberately uses no embeddings (plain SQLite LIKE) — the non-deterministic ranking that the memory wing's recall projects is simply absent here, not modeled.",
+        "Wall-clock and id generation: every write/move/merge/verify/archive stamps new Date() and creates randomUUID()s; these timestamps and ids are not observable in a pure return-value fixture and bind as prose (the inspection-verified residue class).",
+        "MCP transport, CLI, and store-file location (the context dir, WAL pragmas, user_version) are binding surface; only the command/result values and the store's logical schema are contract."
+      ],
+      "goals": [
+        "Record loom's knowledge-wing contract — the entity-page store distinct from episodic memory: cited, sourced/provisional epistemics, deterministic LIKE retrieval (no embeddings), the archive/supersede/move/merge/purge/verify/history lifecycle, and the boundaries it refuses to cross. Read out of the loomai codebase (github.com/jbarket/loom, v0.4 line), nothing authored.",
+        "Knowledge recall is deterministic (LIKE over title/body/domain), so its filter/order is fixtured directly — the projection device the memory wing needs for its vector ranking is absent here. Side-effects (timestamps, access stamping, revision snapshots) are the unfixturable facets, inspection-verified."
+      ],
+      "governance": {
+        "timeoutDays": 30
+      },
+      "implementers": [
+        {
+          "name": "loom",
+          "roles": [
+            "author",
+            "maintainer",
+            "repo-owner"
+          ]
+        }
+      ],
+      "name": "loom-knowledge"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-epistemics",
+      "body": "Every knowledge_write requires at least one citation (server.ts:384-430; handler knowledge-write.ts:52-58) — there is no uncited knowledge. A page's sourcing is derived, not declared: a page whose every citation is of source_kind 'conversation' (or which somehow has none) is filed sourcing='provisional'; any non-conversation citation (web, loom_memory) makes it 'sourced' (determineSourcing, knowledge-write.ts:40-46). provisional is loom saying \"the sole support is our own talk\" — and knowledge_maintain's misfile audit flags such pages as candidate memories. Bodies are capped at 64 KB and citation excerpts at 4 KB (sqlite-knowledge.ts:1074-1090); over-cap writes throw.",
+      "title": "Cited and sourced — the epistemic gate"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-citation-required",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/knowledge-write.ts:52-58 (>=1 citation required) and src/server.ts:384-430 (write registration); body/excerpt caps at src/backends/sqlite-knowledge.ts:1074-1090.",
+      "fixtures": [
+        "fx-lk-cite-required"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a knowledge_write with zero citations, and one with a non-empty citation list\nWhen each is validated\nThen the zero-citation write is rejected (there is no uncited knowledge) and the cited write is accepted",
+      "itemId": "it-lk-epistemics",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-sourcing-gate",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/knowledge-write.ts:40-46 (determineSourcing: all-conversation/empty -> provisional, else sourced); maintain misfile audit at src/tools/knowledge-maintain.ts:24-28,109-125.",
+      "fixtures": [
+        "fx-lk-sourcing-conversation",
+        "fx-lk-sourcing-memory",
+        "fx-lk-sourcing-web"
+      ],
+      "force": "MUST",
+      "gherkin": "Given knowledge_write citation sets — all of source_kind conversation, a mix including web, and a single loom_memory citation\nWhen sourcing is derived\nThen an all-conversation (or empty) set yields sourcing provisional and any non-conversation citation yields sourced — sourcing is computed from the citations, never declared",
+      "itemId": "it-lk-epistemics",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-recall",
+      "body": "knowledge_recall has two paths. By slug (precedence): an active page returns full and stamps access; an ARCHIVED page returns a restore hint and is NOT stamped; a missing slug returns a not-found message (knowledge-recall.ts:106-121). By query: a whitespace-tokenized LIKE search where every token must match title OR body OR domain (AND across tokens, no token-length filter), the domain filter is prefix-inclusive (domain = ? OR domain LIKE ?/%), ordered hit_count DESC, updated DESC, created DESC (or verified_at ASC NULLS FIRST when sort_by_verified), and ALWAYS excludes archived (excludeStatus 'archived' passed unconditionally) — sqlite-knowledge.ts queryPages:266-334, recall handler:123-176. There are NO embeddings and no cosine ranking anywhere in the knowledge wing (it never loads sqlite-vec) — recall is a pure, fixturable function of the page set and the query, the deterministic contrast with the memory wing's vector recall. detail 'full' returns whole pages and stamps last_accessed+hit_count; detail 'index' returns compact entries and does not stamp; full output is size-guarded at 24,000 chars, degrading overflow to index entries (first page always shown full).",
+      "title": "Recall is deterministic LIKE — archived pages never surface"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-recall-deterministic",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts queryPages:266-334 (token AND match over title/body/domain, prefix-inclusive domain, order hit_count/updated/created, excludeStatus archived); recall handler src/tools/knowledge-recall.ts:123-176; no sqlite-vec in the knowledge backend (factory src/backends/index.ts:81-86).",
+      "fixtures": [
+        "fx-lk-recall-archived-hidden",
+        "fx-lk-recall-tokens"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a set of pages and a multi-token query\nWhen knowledge_recall runs\nThen it returns exactly the active pages where every token LIKE-matches title, body, or domain (AND across tokens), ordered by hit_count then updated then created, excluding every archived page — a pure deterministic function of the pages and query, with no embedding or cosine ranking",
+      "itemId": "it-lk-recall",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-recall-slug-archived",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/knowledge-recall.ts:106-121 (by-slug: getPage unstamped, archived -> restore hint unstamped, else re-fetch stampAccess true); stamping in src/backends/sqlite-knowledge.ts:211-217,316-325.",
+      "fixtures": [
+        "fx-lk-recall-slug-active",
+        "fx-lk-recall-slug-archived"
+      ],
+      "force": "MUST",
+      "gherkin": "Given recall by an exact slug for an active page and for an archived page\nWhen each runs\nThen the active page returns in full and is access-stamped, while the archived page returns a restore hint and is NOT stamped — archived pages surface only as a pointer to restore",
+      "itemId": "it-lk-recall",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-lifecycle",
+      "body": "A page's lifecycle axis is status active|archived, orthogonal to the sourced|provisional epistemic axis. archive sets status='archived' with an optional tombstone_note and bumps updated; archiving a missing or already-archived page is an idempotent no-op reporting archived=false (sqlite-knowledge.ts archivePage:336-357). restore is the exact mirror: it returns an archived page to active and CLEARS the tombstone, else restored=false (restorePage:359-380). supersede is a 1:1 dedup pointer: both slugs must exist (it rejects on a missing old or new, and the handler rejects old==new), and if old is already archived it early-returns archived=false writing nothing; otherwise, in one transaction, it archives old with a tombstone \"Superseded by <new>\" and inserts a supersessions(old_slug, new_slug, note) row (supersedePage:382-432). supersession rows are plain TEXT with no foreign key — they are the historical trail and survive purge and hard-delete.",
+      "title": "Archive, restore, supersede — status and the pointer trail"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-archive-restore",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts archivePage:336-357 (status archived + tombstone + updated; missing/already -> archived false) and restorePage:359-380 (archived -> active, tombstone NULL; else restored false).",
+      "fixtures": [
+        "fx-lk-archive-restore"
+      ],
+      "force": "MUST",
+      "gherkin": "Given an active page, then archive, then restore\nWhen each runs\nThen archive sets status archived with the tombstone note and reports archived true; a second archive is an idempotent no-op (archived false); restore returns it to active and CLEARS the tombstone (restored true); restoring a non-archived page is restored false",
+      "itemId": "it-lk-lifecycle",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-supersede",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts supersedePage:382-432 (reject missing 390-400; old-archived early return 402-404 before the tx; tx archives old + inserts supersessions 413-420); handler old==new reject src/tools/knowledge-supersede.ts:25-27; supersessions schema (no FK) 1036-1042.",
+      "fixtures": [
+        "fx-lk-supersede"
+      ],
+      "force": "MUST",
+      "gherkin": "Given supersede with a missing old or new slug, with old equal to new, with old already archived, and with two valid distinct active pages\nWhen each runs\nThen missing endpoints reject, old==new rejects, an already-archived old early-returns archived false writing NO supersession row, and the valid case archives old with a 'Superseded by <new>' tombstone and records a supersessions(old,new) pointer that has no foreign key",
+      "itemId": "it-lk-lifecycle",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-restructure",
+      "body": "knowledge_move re-keys a page (same uuid, citations, verification preserved) in three mutually-selected modes: a domain-prefix batch, a slug-list batch (rolls the whole transaction back if any slug is missing), and a single-page rename of slug and/or domain. A single move that collides with an existing slug is REJECTED and redirected to knowledge_merge — never a silent overwrite — and a slug rename writes a supersessions pointer 'slug rename via knowledge_move' unless leave_pointer is false (movePage:434-567). knowledge_merge consolidates N sources into one target: it rejects an empty source set, a source equal to the target, a missing target, or any missing source; per source it dedups citations identical to the target's by the (claim, source_kind, locator, excerpt) tuple and re-parents the rest to the target, sets the target's verified_at to the MAX across all merged pages, archives each source with a \"Merged into <target>\" tombstone and a supersession pointer, optionally appends loser bodies under markers, and optionally hard-deletes the losers (their citations cascade, their supersession pointers survive) — mergePages:569-713.",
+      "title": "Move and merge — re-key and consolidate, never silently clobber"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-move",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts movePage:434-567 (collision reject->merge 514-525; slug-list rollback on missing 480-482; rename writes pointer 537-542 default leave_pointer true 529).",
+      "fixtures": [
+        "fx-lk-move"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a single-page move whose new slug collides with an existing page, a slug-list move with one missing slug, and a clean single-page rename\nWhen each runs\nThen the collision is rejected and redirected to knowledge_merge (never a silent overwrite), the missing-slug batch rolls back whole, and the clean rename preserves the uuid and citations and writes a 'slug rename via knowledge_move' supersession pointer unless leave_pointer is false",
+      "itemId": "it-lk-restructure",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-merge",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts mergePages:569-713 (reject empty/self 573-594; citation dedup 638-649 + re-parent 658; verified_at MAX 663-665; archive + pointer 677-690; hard delete 692-698, pointers survive).",
+      "fixtures": [
+        "fx-lk-merge"
+      ],
+      "force": "MUST",
+      "gherkin": "Given merge with an empty source set, a source equal to the target, and two real sources into a target\nWhen each runs\nThen the empty set and the self-merge reject, and the real merge re-parents each source's citations to the target after dropping those identical to the target's by (claim, source_kind, locator, excerpt), sets the target verified_at to the MAX across all merged pages, archives each source with a 'Merged into <target>' tombstone and a supersession pointer, and on hard_delete deletes the losers while their supersession pointers survive",
+      "itemId": "it-lk-restructure",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-curate",
+      "body": "knowledge_verify stamps verified_at (and optional freshness_anchor) WITHOUT touching the body — the primitive added after a 2026-06-01 incident where verifying through knowledge_write stomped 13 bodies. It accepts exactly one of slug|slugs (XOR), batch mode forbids note and freshness_anchor, it rejects an archived page and whole-batch-rejects any unknown slug, a single-page note is APPENDED as a '## Verification — <date>' section (never a replace), and the pure stamp deliberately does NOT bump updated while a note does (verifyPages:762-836). knowledge_purge hard-deletes archived pages and cascades their citations, but only with confirm: literal true, and only after an archive-first guard validates ALL slugs before any mutation — any missing or any still-ACTIVE page rejects the whole batch with no deletion; supersession pointers survive the purge (purgePages:715-760). knowledge_maintain is a READ-ONLY audit (no mutation): over active pages it reports expansion candidates (hit_count >= threshold AND body shorter than a thin-body floor), cold pages (never accessed or last_accessed older than coldDays), and misfiled pages (provisional or conversation-only) — knowledge-maintain.ts.",
+      "title": "Verify, purge, maintain — body-immutable, archive-first, read-only"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-verify-immutable",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts verifyPages:762-836 (XOR slug/slugs 768-774; batch forbids note/freshness 775-779; archived reject 797-801; unknown -> batch reject 794-796; note append-only 812-814; updated only with note 816-820); incident docstring src/tools/knowledge-verify.ts:4-8.",
+      "fixtures": [
+        "fx-lk-verify"
+      ],
+      "force": "MUST",
+      "gherkin": "Given knowledge_verify on a page, in batch with a note, and on an archived or unknown slug\nWhen each runs\nThen verify stamps verified_at WITHOUT changing the body, accepts exactly one of slug|slugs, forbids note and freshness_anchor in batch mode, rejects an archived page and whole-batch-rejects any unknown slug, appends a single-page note as a Verification section (never replacing the body), and the pure stamp does not bump updated while a note does",
+      "itemId": "it-lk-curate",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-purge-guard",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts purgePages:715-760 (confirm literal true 723-725; archive-first guard rejects active 738-742 or missing 735-737 before any mutation; delete tx 749-754; pointers survive, no FK); server confirm z.literal(true) src/server.ts:635.",
+      "fixtures": [
+        "fx-lk-purge"
+      ],
+      "force": "MUST",
+      "gherkin": "Given purge without confirm, with an active or missing slug in the batch, and over a batch of only archived pages with confirm true\nWhen each runs\nThen purge requires confirm literal true, the archive-first guard rejects the WHOLE batch with no deletion if any slug is active or unknown, and only an all-archived confirmed batch hard-deletes (citations cascade, supersession pointers survive)",
+      "itemId": "it-lk-curate",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-history",
+      "body": "Replace-writes and restores auto-snapshot the displaced body into page_revisions (op 'write-replace' / 'history-restore'), capped at 10 revisions per page (sqlite-knowledge.ts:48, 103-105, 919-936). knowledge_history is the recovery surface: list returns revision metadata newest-first; read returns a snapshot body by revision_id; restore puts a snapshot's body back AND snapshots the currently-displaced body first, so restore is never destructive, validating that the page and revision exist and that the revision belongs to that page (restoreRevision:872-916). Body loss is always recoverable for the last 10 revisions.",
+      "title": "History — every body change is recoverable"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-history-nondestructive",
+      "class": "behavioral",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/backends/sqlite-knowledge.ts write-replace snapshot 103-105 (MAX_REVISIONS_PER_PAGE 10, line 48); listRevisions 838-852 (id DESC); restoreRevision:872-916 (snapshot displaced first 896-904; revision-belongs-to-page check 890-894).",
+      "fixtures": [
+        "fx-lk-history"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a page replace-written twice (snapshotting the prior body) and then a history restore of an old revision\nWhen history list/read/restore run\nThen list returns the revisions newest-first, restore puts the chosen snapshot's body back AND snapshots the currently-displaced body first so nothing is lost, and a restore of a revision that does not belong to the page is rejected",
+      "itemId": "it-lk-history",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-lk-boundary",
+      "body": "The filing test is stated verbatim in the tool surface: \"Knowledge is true independent of Jonathan — if it is about Jonathan or our work, store it in memory instead\" (server.ts:389-390). Knowledge pages are world-facts about entities; facts about the user, the work, or the agent belong in the memory wing. The two wings are SEPARATE databases (knowledge.db vs memories.db), hard-isolated by a path/inode co-location assertion that throws (config.ts:90-99). The knowledge surface deliberately refuses: uncited knowledge (write needs a citation), hard-deletion of active pages (purge is archive-first), verification that mutates a body (verify is body-immutable), silent overwrite on slug collision (move redirects to merge), and loss of the supersession trail (pointers have no FK and survive deletion).",
+      "title": "What knowledge is, and what loom refuses"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-knowledge-memory-boundary",
+      "class": "judgment",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/server.ts:389-390 (knowledge_write desc: 'Knowledge is true independent of Jonathan — if it is about Jonathan or our work, store it in memory instead'); separate-db isolation src/config.ts:90-99; provisional->candidate-memory in src/tools/knowledge-maintain.ts:109-125.",
+      "fixtures": [
+        "fx-lk-route-knowledge",
+        "fx-lk-route-memory"
+      ],
+      "force": "MUST",
+      "item": "A fact true independently of Jonathan — a world-fact about some entity — belongs in the knowledge wing; a fact about Jonathan, the work, or the agent itself belongs in episodic memory. The two wings are SEPARATE, hard-isolated databases. Knowledge stores cited entity pages; memory stores categorized episodic facts. A page whose only support is conversation is provisional and is a candidate to be re-filed as a memory.",
+      "itemId": "it-lk-boundary",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lk-refusals",
+      "class": "judgment",
+      "contractId": "c-loom-knowledge",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: write citation req knowledge-write.ts:52-58; purge archive-first src/backends/sqlite-knowledge.ts:738-742 + confirm src/server.ts:635; verify body-immutable verifyPages:762-836; move->merge collision 514-525; body/excerpt caps 1074-1090; supersessions no-FK survival 1036-1042.",
+      "fixtures": [
+        "fx-lk-refuse-purge-active",
+        "fx-lk-refuse-uncited"
+      ],
+      "force": "MUST",
+      "item": "The knowledge surface refuses, on purpose: uncited knowledge (write requires a citation), hard-deletion of an active page (purge is archive-first + confirm), verification that mutates a body (verify is body-immutable), silent overwrite on a slug collision (move redirects to merge), body bloat (64 KB body / 4 KB excerpt caps), and loss of the supersession trail (pointers have no foreign key and survive every deletion). Each refusal is a drawn boundary, not an accident.",
+      "itemId": "it-lk-boundary",
+      "source": "discovered",
+      "state": "proposed",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-knowledge dig)",
+      "type": "checklist"
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-archive-restore",
+      "contractId": "c-loom-knowledge",
+      "description": "archive flips active->archived with a tombstone (idempotent on re-archive); restore returns to active and clears the tombstone.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "archived": true,
+            "status": "archived",
+            "tombstone": "stale"
+          },
+          {
+            "archived": false
+          },
+          {
+            "restored": true,
+            "status": "active",
+            "tombstone": null
+          },
+          {
+            "restored": false
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "op": "seed",
+            "slug": "rings",
+            "status": "active"
+          },
+          {
+            "note": "stale",
+            "op": "archive",
+            "slug": "rings"
+          },
+          {
+            "op": "archive",
+            "slug": "rings"
+          },
+          {
+            "op": "restore",
+            "slug": "rings"
+          },
+          {
+            "op": "restore",
+            "slug": "rings"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-cite-required",
+      "contractId": "c-loom-knowledge",
+      "description": "A write with no citations is rejected; a write with at least one citation is accepted — there is no uncited knowledge.",
+      "expected": {
+        "results": [
+          {
+            "accepted": false,
+            "reason": "no-citation"
+          },
+          {
+            "accepted": true
+          }
+        ]
+      },
+      "format": "knowledge/write-validate@0",
+      "input": {
+        "writes": [
+          {
+            "body": "A resonator module.",
+            "citations": [],
+            "domain": "eurorack/mutable",
+            "title": "Rings"
+          },
+          {
+            "body": "A resonator module.",
+            "citations": [
+              {
+                "claim": "six models",
+                "source_kind": "web"
+              }
+            ],
+            "domain": "eurorack/mutable",
+            "title": "Rings"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-history",
+      "contractId": "c-loom-knowledge",
+      "description": "Replace-writes snapshot the displaced body; restore puts an old body back and snapshots the current one first (never destructive); a foreign revision is rejected.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "snapshot": "v1"
+          },
+          {
+            "snapshot": "v2"
+          },
+          {
+            "revisions": [
+              {
+                "id": 2,
+                "op": "write-replace"
+              },
+              {
+                "id": 1,
+                "op": "write-replace"
+              }
+            ]
+          },
+          {
+            "body": "v1",
+            "snapshottedDisplaced": "v3"
+          },
+          {
+            "rejected": "revision-not-on-page"
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "body": "v1",
+            "op": "write",
+            "slug": "p"
+          },
+          {
+            "body": "v2",
+            "mode": "replace",
+            "op": "write",
+            "slug": "p"
+          },
+          {
+            "body": "v3",
+            "mode": "replace",
+            "op": "write",
+            "slug": "p"
+          },
+          {
+            "op": "history-list",
+            "slug": "p"
+          },
+          {
+            "op": "history-restore",
+            "revision": 1,
+            "slug": "p"
+          },
+          {
+            "op": "history-restore",
+            "revision": 1,
+            "slug": "other"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-merge",
+      "contractId": "c-loom-knowledge",
+      "description": "merge rejects empty/self; a real merge re-parents citations (dedup vs target), takes MAX verified_at, archives losers with pointers; hard delete keeps the pointers.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "rejected": "empty-sources"
+          },
+          {
+            "rejected": "self"
+          },
+          {
+            "citations_deduped": 1,
+            "citations_moved": 1,
+            "losers_deleted": [
+              "s"
+            ],
+            "sources_merged": 1,
+            "verified_at": "2026-06-05T00:00:00Z"
+          },
+          {
+            "pointers": [
+              {
+                "new": "t",
+                "old": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "citations": [
+              {
+                "claim": "c1",
+                "source_kind": "web"
+              }
+            ],
+            "op": "seed",
+            "slug": "t",
+            "status": "active",
+            "verified_at": "2026-06-01T00:00:00Z"
+          },
+          {
+            "citations": [
+              {
+                "claim": "c1",
+                "source_kind": "web"
+              },
+              {
+                "claim": "c2",
+                "source_kind": "web"
+              }
+            ],
+            "op": "seed",
+            "slug": "s",
+            "status": "active",
+            "verified_at": "2026-06-05T00:00:00Z"
+          },
+          {
+            "op": "merge",
+            "sources": [],
+            "target": "t"
+          },
+          {
+            "op": "merge",
+            "sources": [
+              "t"
+            ],
+            "target": "t"
+          },
+          {
+            "hard_delete": true,
+            "op": "merge",
+            "sources": [
+              "s"
+            ],
+            "target": "t"
+          },
+          {
+            "op": "pointers"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-move",
+      "contractId": "c-loom-knowledge",
+      "description": "A colliding move is rejected toward merge; a clean rename preserves uuid and writes a rename pointer.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "redirect": "merge",
+            "rejected": "collision"
+          },
+          {
+            "moved": true,
+            "pointer": {
+              "new": "a2",
+              "note": "slug rename via knowledge_move",
+              "old": "a"
+            },
+            "slug": "a2",
+            "uuidPreserved": true
+          },
+          {
+            "pointers": [
+              {
+                "new": "a2",
+                "old": "a"
+              }
+            ]
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "domain": "x",
+            "op": "seed",
+            "slug": "a",
+            "status": "active"
+          },
+          {
+            "domain": "x",
+            "op": "seed",
+            "slug": "b",
+            "status": "active"
+          },
+          {
+            "new_slug": "b",
+            "op": "move",
+            "slug": "a"
+          },
+          {
+            "new_slug": "a2",
+            "op": "move",
+            "slug": "a"
+          },
+          {
+            "op": "pointers"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-purge",
+      "contractId": "c-loom-knowledge",
+      "description": "purge needs confirm:true and is archive-first: any active or unknown slug rejects the whole batch; an all-archived confirmed batch deletes while pointers survive.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "rejected": "no-confirm"
+          },
+          {
+            "rejected": "not-archived"
+          },
+          {
+            "rejected": "unknown-slug"
+          },
+          {
+            "pointersSurvive": true,
+            "purged": [
+              "ar1"
+            ]
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "op": "seed",
+            "slug": "ar1",
+            "status": "archived"
+          },
+          {
+            "op": "seed",
+            "slug": "act",
+            "status": "active"
+          },
+          {
+            "confirm": false,
+            "op": "purge",
+            "slugs": [
+              "ar1"
+            ]
+          },
+          {
+            "confirm": true,
+            "op": "purge",
+            "slugs": [
+              "ar1",
+              "act"
+            ]
+          },
+          {
+            "confirm": true,
+            "op": "purge",
+            "slugs": [
+              "ar1",
+              "nope"
+            ]
+          },
+          {
+            "confirm": true,
+            "op": "purge",
+            "slugs": [
+              "ar1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-recall-archived-hidden",
+      "contractId": "c-loom-knowledge",
+      "description": "A query never surfaces an archived page even when it matches.",
+      "expected": {
+        "order": [
+          "rings"
+        ]
+      },
+      "format": "knowledge/recall-query@0",
+      "input": {
+        "pages": [
+          {
+            "body": "resonator",
+            "created": "2026-06-01T00:00:00Z",
+            "domain": "eurorack",
+            "hit_count": 1,
+            "slug": "rings",
+            "status": "active",
+            "title": "Rings",
+            "updated": "2026-06-01T00:00:00Z"
+          },
+          {
+            "body": "resonator",
+            "created": "2026-06-01T00:00:00Z",
+            "domain": "eurorack",
+            "hit_count": 9,
+            "slug": "old-rings",
+            "status": "archived",
+            "title": "Rings",
+            "updated": "2026-06-02T00:00:00Z"
+          }
+        ],
+        "query": "resonator"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-recall-slug-active",
+      "contractId": "c-loom-knowledge",
+      "description": "By-slug recall of an active page returns it in full and stamps access.",
+      "expected": {
+        "result": "page",
+        "stamped": true
+      },
+      "format": "knowledge/recall-slug@0",
+      "input": {
+        "page": {
+          "slug": "rings",
+          "status": "active"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-recall-slug-archived",
+      "contractId": "c-loom-knowledge",
+      "description": "By-slug recall of an archived page returns a restore hint and does NOT stamp.",
+      "expected": {
+        "result": "restore-hint",
+        "stamped": false
+      },
+      "format": "knowledge/recall-slug@0",
+      "input": {
+        "page": {
+          "slug": "rings",
+          "status": "archived"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-recall-tokens",
+      "contractId": "c-loom-knowledge",
+      "description": "Multi-token query: every token must LIKE-match title/body/domain (AND); results ordered hit_count, updated, created.",
+      "expected": {
+        "order": [
+          "plaits",
+          "rings"
+        ]
+      },
+      "format": "knowledge/recall-query@0",
+      "input": {
+        "pages": [
+          {
+            "body": "six models",
+            "created": "2026-06-01T00:00:00Z",
+            "domain": "eurorack/mutable",
+            "hit_count": 5,
+            "slug": "rings",
+            "status": "active",
+            "title": "Rings resonator",
+            "updated": "2026-06-02T00:00:00Z"
+          },
+          {
+            "body": "models",
+            "created": "2026-06-01T00:00:00Z",
+            "domain": "eurorack/mutable",
+            "hit_count": 9,
+            "slug": "plaits",
+            "status": "active",
+            "title": "Plaits macro oscillator",
+            "updated": "2026-06-01T00:00:00Z"
+          },
+          {
+            "body": "granular",
+            "created": "2026-06-01T00:00:00Z",
+            "domain": "eurorack/mutable",
+            "hit_count": 1,
+            "slug": "clouds",
+            "status": "active",
+            "title": "Clouds",
+            "updated": "2026-06-03T00:00:00Z"
+          }
+        ],
+        "query": "models"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-refuse-purge-active",
+      "contractId": "c-loom-knowledge",
+      "description": "hard-deleting an active page is refused (purge is archive-first).",
+      "expected": {
+        "reason": "not-archived",
+        "refused": true
+      },
+      "format": "knowledge/refusal@0",
+      "input": {
+        "attempt": "purge an active page"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-refuse-uncited",
+      "contractId": "c-loom-knowledge",
+      "description": "knowledge with no citation is refused.",
+      "expected": {
+        "reason": "uncited",
+        "refused": true
+      },
+      "format": "knowledge/refusal@0",
+      "input": {
+        "attempt": "write a page with zero citations"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-route-knowledge",
+      "contractId": "c-loom-knowledge",
+      "description": "A world-fact about an entity routes to knowledge.",
+      "expected": {
+        "store": "knowledge"
+      },
+      "format": "knowledge/routing@0",
+      "input": {
+        "fact": "Mutable Instruments Rings is a eurorack resonator module with six models."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-route-memory",
+      "contractId": "c-loom-knowledge",
+      "description": "A fact about Jonathan or the work routes to memory, not knowledge.",
+      "expected": {
+        "store": "memory"
+      },
+      "format": "knowledge/routing@0",
+      "input": {
+        "fact": "Jonathan prefers better-sqlite3 for local persistence."
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-sourcing-conversation",
+      "contractId": "c-loom-knowledge",
+      "description": "All citations of kind conversation (or none) -> provisional: the sole support is our own talk.",
+      "expected": {
+        "sourcing": "provisional"
+      },
+      "format": "knowledge/sourcing@0",
+      "input": {
+        "citations": [
+          {
+            "source_kind": "conversation"
+          },
+          {
+            "source_kind": "conversation"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-sourcing-memory",
+      "contractId": "c-loom-knowledge",
+      "description": "A single loom_memory citation -> sourced (any non-conversation kind suffices).",
+      "expected": {
+        "sourcing": "sourced"
+      },
+      "format": "knowledge/sourcing@0",
+      "input": {
+        "citations": [
+          {
+            "source_kind": "loom_memory"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-sourcing-web",
+      "contractId": "c-loom-knowledge",
+      "description": "A mix containing a web citation -> sourced.",
+      "expected": {
+        "sourcing": "sourced"
+      },
+      "format": "knowledge/sourcing@0",
+      "input": {
+        "citations": [
+          {
+            "source_kind": "conversation"
+          },
+          {
+            "source_kind": "web"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-supersede",
+      "contractId": "c-loom-knowledge",
+      "description": "supersede rejects missing endpoints and self; an already-archived old writes no pointer; the valid case archives old + records a surviving pointer.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "rejected": "unknown-slug"
+          },
+          {
+            "rejected": "self"
+          },
+          {
+            "archived": true,
+            "pointer": {
+              "new": "new",
+              "old": "old"
+            }
+          },
+          {
+            "pointers": [
+              {
+                "new": "new",
+                "old": "old"
+              }
+            ]
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "op": "seed",
+            "slug": "old",
+            "status": "active"
+          },
+          {
+            "op": "seed",
+            "slug": "new",
+            "status": "active"
+          },
+          {
+            "new": "missing",
+            "old": "old",
+            "op": "supersede"
+          },
+          {
+            "new": "old",
+            "old": "old",
+            "op": "supersede"
+          },
+          {
+            "new": "new",
+            "old": "old",
+            "op": "supersede"
+          },
+          {
+            "op": "pointers"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lk-verify",
+      "contractId": "c-loom-knowledge",
+      "description": "verify stamps verified_at without touching the body, rejects archived and unknown, and a pure stamp does not bump updated while a note does.",
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "body": "B",
+            "updatedBumped": false,
+            "verified": true
+          },
+          {
+            "noted": true,
+            "updatedBumped": true,
+            "verified": true
+          },
+          {
+            "rejected": "archived"
+          },
+          {
+            "rejected": "unknown-slug"
+          }
+        ]
+      },
+      "format": "knowledge/op-sequence@0",
+      "input": {
+        "ops": [
+          {
+            "body": "B",
+            "op": "seed",
+            "slug": "p",
+            "status": "active",
+            "updated": "2026-06-01T00:00:00Z"
+          },
+          {
+            "op": "seed",
+            "slug": "ar",
+            "status": "archived"
+          },
+          {
+            "at": "2026-06-10T00:00:00Z",
+            "op": "verify",
+            "slug": "p"
+          },
+          {
+            "at": "2026-06-11T00:00:00Z",
+            "note": "checked",
+            "op": "verify",
+            "slug": "p"
+          },
+          {
+            "op": "verify",
+            "slug": "ar"
+          },
+          {
+            "op": "verify",
+            "slug": "nope"
+          }
+        ]
+      }
+    }
+  ],
+  "transition": {
+    "criterionId": "ac-lk-knowledge-memory-boundary",
+    "to": "active",
+    "requestedAt": "2026-06-14T00:00:00Z",
+    "requestedBy": "loom",
+    "acknowledgments": [
+      {
+        "implementer": "loom",
+        "decision": "ack",
+        "at": "2026-06-14T00:00:00Z",
+        "criterionHash": "sha256:62c4dc45dab101532d742f8c2b7e33103a2140547beebe59118a98756bfb76e5"
+      }
+    ]
+  }
+}

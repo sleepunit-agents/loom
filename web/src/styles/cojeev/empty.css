@@ -1,0 +1,22 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+.v-empty[data-slot].v-card{padding:var(--s-12) var(--s-6)}
+.v-state[data-slot].-partial{--muted-foreground:var(--muted-foreground-tinted);background:var(--v-yellow-soft)}
+.v-state[data-slot].-error{background:var(--status-danger-bg)}
+.v-state[data-slot].-filtered{background:transparent;border:1px dashed var(--v-border)}
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-state[data-slot][data-morph]{--mfill:var(--card)}
+.v-state[data-slot].-partial[data-morph]{--mfill:var(--v-yellow-soft)}
+.v-empty[data-slot] .v-shape{font-size:96px}
+.v-state[data-slot].-error .v-state__word{color:var(--status-danger-ink)}
+.v-state[data-slot].-partial .v-state__why{color:rgba(17,17,17,.68)}
+.v-state[data-slot].-error .v-state__why{color:rgba(17,17,17,.68)}
+:root[data-mode="dark"] .v-state[data-slot] .v-state__why{color:var(--v-text-2)}
+.v-state[data-slot].-unavail .v-state__word{color:var(--v-text-2)}
+.v-state[data-slot].-error .v-state__word{color:var(--v-danger-ink)}
+.v-state[data-slot].-partial { color:var(--v-on-accent); }
+:root[data-mode="dark"] .v-state[data-slot].-partial .v-state__why { color:var(--alert-ink); }
+:is(.v-empty,.v-state)[data-slot] { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+
+}

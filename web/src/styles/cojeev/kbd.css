@@ -1,0 +1,8 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+:root[data-mode="dark"] .v-kbd[data-slot]{color:var(--v-text)}
+
+
+}

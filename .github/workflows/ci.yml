@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'hat-v*']
+  pull_request:
+    branches: [main, 'hat-v*']
+  # The merge queue (t-1935) tests each group before it lands on main.
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  # PR-only: it reads the PR's head and base. In the merge queue it is
+  # skipped (a skip counts as passing), since the PR was checked already.
+  signoff:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # From the base branch's current tip, not base.sha: a re-run or a
+      # stale event would otherwise count main's own commits as the PR's.
+      - name: Every commit in the PR is signed off
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-signoff.sh --range "origin/$BASE_REF" "$HEAD_SHA"
+
+  test:
+    name: build + test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The household bundle (src/bundle.ts) encrypts with age; its tests run the real thing.
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - name: Build
+        run: npm run build
+
+      # The embedding runtime is vendored, so nothing upstream will catch a
+      # regression in it. embedding-runtime.parity.test.ts runs the real ONNX
+      # model against golden vectors; this caches the ~90 MB download so that
+      # costs one fetch rather than one per run.
+      - name: Cache embedding model
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/loom/fastembed
+          key: loom-embedding-model-fast-bge-small-en-v1.5-v1
+
+      - name: Test
+        run: npm test

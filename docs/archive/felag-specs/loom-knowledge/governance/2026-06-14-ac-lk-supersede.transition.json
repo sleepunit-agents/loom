@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-supersede",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:4e56a71472914c8eec44927a87974853e56593b6ebd25dea2da0ab76d94462eb"
+    }
+  ]
+}

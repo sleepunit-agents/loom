@@ -1,0 +1,83 @@
+{
+  "v": 1,
+  "pieces": [
+    {
+      "name": "runtime",
+      "repo": "sleepunit-agents/loom-box",
+      "commit": "e8590eb9b05a16c3f2343de27ca34efcd78decc5",
+      "version": "0.1.0",
+      "label": "Runtime",
+      "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
+    },
+    {
+      "name": "secrets",
+      "repo": "sleepunit-agents/loom-secrets",
+      "commit": "bc8d2117b8ac35a33ff54ab8fb33ab59b0d8ed39",
+      "version": "0.1.0",
+      "label": "Secrets",
+      "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
+    },
+    {
+      "name": "shuttle",
+      "repo": "sleepunit-agents/shuttle",
+      "commit": "f68370e6b297f3cb081efbdb0ba7d7096ffed24a",
+      "version": "0.1.0",
+      "label": "Shuttle",
+      "description": "Chat bridges (Discord, Slack)."
+    },
+    {
+      "name": "tasks",
+      "repo": "sleepunit-agents/taskstore",
+      "commit": "5e1175594c8aab0a8a0f008f7b915060f0d3c65c",
+      "version": "0.6.1",
+      "label": "Tasks",
+      "description": "A work store: tasks, links, comments and the ready queue."
+    },
+    {
+      "name": "approvals",
+      "repo": "sleepunit-agents/loom-approvals",
+      "commit": "7a56814416c64bbf8bbbc3f527cd26ac9c7194f3",
+      "version": "0.1.0",
+      "label": "Approvals",
+      "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
+    },
+    {
+      "name": "changes",
+      "repo": "sleepunit-agents/loom-changes",
+      "commit": "6bc4bfcd0e9717b4b65d61089c87c33e92229108",
+      "version": "0.2.0",
+      "label": "Changes",
+      "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."
+    },
+    {
+      "name": "clock",
+      "repo": "sleepunit-agents/loom-clock",
+      "commit": "e6b26a00baa0c62da2b23c0cba834b35a493e84d",
+      "version": "0.1.0",
+      "label": "Clock",
+      "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
+    },
+    {
+      "name": "discord",
+      "repo": "sleepunit-agents/loom-discord",
+      "commit": "5d197bacbe80e82b5546656db538cee43c09c835",
+      "version": "0.1.0",
+      "label": "Discord",
+      "description": "Discord as a venue: each agent's own bot; a message is routed (a mention, the channel's primary, the gates) and delivered to the agent, and its replies post as that bot."
+    },
+    {
+      "name": "slack",
+      "repo": "sleepunit-agents/loom-slack",
+      "commit": "549550c633f89f9e653a6c8adbc7b90174d93b8e",
+      "version": "0.1.0",
+      "label": "Slack",
+      "description": "Slack as a venue: each agent's own app; a DM or group DM is checked against Slack and the gates and delivered to the agent, and its replies post as that app."
+    }
+  ],
+  "kinds": {
+    "_comment": "A piece's tab kind when its manifest doesn't say (tab.kind): first-party pieces that are setup, not daily places.",
+    "runtime": "setting",
+    "secrets": "setting",
+    "subscriptions": "setting"
+  }
+}

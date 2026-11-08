@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-wing-isolation",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:a438d6223da3a77213f63901666b28ff0822eabbf50e0eea14a0eb3d8ae5ed31"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-ttl-compute",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:ff12def48a2a8ab29cc3274ba3875779429cb3bee86925ba198d6637463d0236"
+    }
+  ]
+}

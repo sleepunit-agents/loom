@@ -1,0 +1,351 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+.v-avatar[data-avatar-shape] {
+  padding: 3px;
+}
+.v-avatar[data-avatar-shape="circle"] {
+  border-radius: 50%;
+}
+.v-avatar[data-avatar-shape="rounded"] {
+  border-radius: 25%;
+}
+.v-avatar[data-avatar-shape="pebble"] {
+  border-radius: 43% 57% 49% 51% / 55% 44% 56% 45%;
+}
+.v-avatar[data-slot].-square {
+  border-radius: var(--r-card-sm);
+}
+.v-avatar[data-slot].-lg {
+  width: 110px;
+  height: 110px;
+  font-size: 34px;
+  letter-spacing: -0.01em;
+}
+.v-avatar[data-slot].-pink {
+  --c: var(--v-pink);
+  color: var(--v-on-accent);
+}
+.v-avatar[data-slot].-yellow {
+  --c: var(--v-yellow);
+  color: var(--v-on-accent);
+}
+.v-avatar[data-slot].-olive {
+  --c: var(--v-olive);
+  color: var(--v-on-accent);
+}
+.v-avatar[data-slot].-blue {
+  --c: var(--v-blue);
+  color: var(--v-on-accent);
+}
+.v-avatar[data-slot].-ink {
+  --c: var(--v-ink);
+  color: var(--v-on-ink);
+}
+.v-avatar[data-slot].-sm {
+  width: 28px;
+  height: 28px;
+  font-size: var(--fs-caps);
+}
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-hexgroup[data-slot] .v-more {
+  width: var(--hex);
+  height: var(--hex);
+  border-radius: 50%;
+  background: var(--v-canvas);
+  font-size: var(--fs-caps);
+  font-weight: var(--fw-bold);
+  display: grid;
+  place-items: center;
+}
+.v-avatar-wrap[data-slot] .v-edit {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: var(--edit-badge);
+  height: var(--edit-badge);
+  display: grid;
+  place-items: center;
+  color: var(--v-text);
+}
+.v-avatar-wrap[data-slot] .v-edit .v-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.v-avatar-wrap[data-slot] .v-edit .v-icon {
+  position: relative;
+  width: 14px;
+  height: 14px;
+}
+.v-avatar-wrap[data-slot] .v-edit {
+  color: var(--v-on-accent);
+}
+.v-hexgroup[data-slot] {
+  box-shadow: none;
+  border: 0;
+}
+.v-hexgroup[data-slot] .v-more {
+  box-shadow: inset 0 0 0 1px var(--v-edge);
+  color: var(--v-text);
+}
+.v-avatar-wrap[data-slot] .v-edit {
+  width: 40px;
+  height: 40px;
+}
+.v-hexgroup[data-slot] > * + * {
+  margin-left: -6px;
+}
+.v-hexgroup[data-slot] .v-more {
+  width: 32px;
+  height: 32px;
+  font-size: var(--fs-caps);
+  background: var(--v-ink);
+  color: var(--v-on-ink);
+  box-shadow: 0 0 0 2px var(--v-canvas);
+}
+.v-avatar-stack[data-slot] > .v-avatar + .v-avatar {
+  margin-left: -10px;
+}
+.v-avatar-wrap[data-slot] .v-edit {
+  top: -6px;
+  right: -6px;
+  background: var(--v-ink);
+  color: var(--v-on-ink);
+  box-shadow: 0 0 0 3px var(--v-canvas);
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  cursor: pointer;
+  transition:
+    transform var(--t-element) var(--enter),
+    background var(--t-micro);
+}
+.v-avatar-wrap[data-slot] .v-edit:hover {
+  transform: scale(1.08) rotate(-8deg);
+  background: var(--v-pink);
+  color: var(--v-on-accent);
+}
+.v-avatar-wrap[data-slot]:has(> .v-avatar:not(.-lg)) {
+  padding-right: 56px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.v-avatar-wrap[data-slot]:has(> .v-avatar:not(.-lg)) .v-edit {
+  right: 0;
+  top: 50%;
+  bottom: auto;
+  margin-top: -22px;
+}
+.v-avatar[data-slot].-square.-lg {
+  border-radius: var(--r-sheet);
+}
+.v-avatar-stack[data-slot] > .v-avatar {
+  transition: transform var(--t-element) var(--enter);
+}
+.v-avatar-stack[data-slot]:hover > .v-avatar {
+  transform: translateX(calc(var(--i, 0) * 4px));
+}
+.v-hexgroup[data-slot] > * {
+  transition: transform var(--t-element) var(--enter);
+}
+.v-hexgroup[data-slot]:hover > *:hover {
+  transform: translateY(-3px);
+  z-index: 1;
+}
+.v-avatar-wrap[data-slot] .v-edit > .v-shape {
+  display: none;
+}
+.v-avatar-wrap[data-slot] .v-edit .v-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+.v-avatar-wrap[data-slot] .v-edit {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  top: auto;
+  bottom: -12px;
+  right: -16px;
+  background: transparent;
+  color: var(--v-on-accent);
+  transform: none;
+  transition: none;
+}
+.v-avatar-wrap[data-slot] .v-edit:hover {
+  transform: none;
+  background: transparent;
+}
+.v-avatar-wrap[data-slot] .v-edit .v-icon {
+  width: 19px;
+  height: 19px;
+}
+:root[data-mode="dark"] .v-hexgroup[data-slot] .v-more {
+  box-shadow: 0 0 0 2px var(--v-canvas);
+}
+:root[data-mode="dark"] .v-avatar[data-slot] {
+  box-shadow: 0 0 0 2px var(--v-canvas);
+}
+
+/* Identity is the subject. One authored backdrop frames it; utilities stay quiet. */
+.v-identity-example {
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
+  display: grid;
+  gap: var(--s-6);
+  color: var(--v-text);
+}
+.v-identity-example p {
+  margin: 0;
+}
+.v-identity-example .v-identity-example__avatar-medium {
+  width: 80px;
+  height: 80px;
+  font-size: var(--fs-section);
+}
+.v-identity-example .v-avatar-wrap[data-slot][data-edit-placement="badge"] {
+  padding-right: 0;
+}
+.v-identity-example
+  .v-avatar-wrap[data-slot][data-edit-placement="badge"]
+  .v-edit {
+  top: auto;
+  bottom: -12px;
+  right: -16px;
+  margin-top: 0;
+}
+.v-identity-example__surface {
+  position: relative;
+  min-width: 0;
+  background: var(--v-paper);
+  border: 1px solid var(--v-edge);
+  border-radius: var(--r-panel);
+  padding: var(--s-7);
+}
+.v-identity-example__portrait {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-6);
+  text-align: center;
+}
+.v-identity-example__art {
+  display: grid;
+  place-items: center;
+  min-width: 180px;
+  min-height: 180px;
+  padding: var(--s-7);
+  background:
+    radial-gradient(ellipse at 30% 15%, var(--v-pink-soft), transparent 70%),
+    var(--v-canvas);
+  border-radius: 46% 54% 51% 49%/45% 48% 52% 55%;
+}
+.v-identity-example__eyebrow {
+  display: block;
+  color: var(--v-text-3);
+  font-size: var(--fs-caps);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.v-identity-example__name {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3cqi, 30px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.v-identity-example__copy {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.v-identity-example__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+}
+.v-identity-example__row .v-identity-example__copy {
+  flex: 1;
+}
+.v-identity-example__row .v-avatar-wrap {
+  flex: none;
+  margin-right: var(--s-3);
+}
+.v-identity-example__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.v-identity-example__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-4);
+  align-items: end;
+  padding: var(--s-3);
+}
+.v-identity-example__controls > .v-btn {
+  justify-self: start;
+}
+.v-identity-example__detail {
+  padding-top: var(--s-5);
+  margin-top: var(--s-6);
+  border-top: 1px solid var(--v-edge);
+  line-height: 1.65;
+}
+.v-identity-example__participants {
+  display: grid;
+  gap: var(--s-6);
+}
+.v-identity-example__participants .v-avatar-stack {
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+}
+.v-identity-example__participants .v-avatar-stack > .v-avatar + .v-avatar {
+  margin-left: -12px;
+}
+.v-identity-example__roster {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--v-edge);
+}
+.v-identity-example__roster li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-block: var(--s-3);
+  border-bottom: 1px solid var(--v-edge);
+}
+.v-identity-example__roster li > span:last-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.v-identity-example__roster small {
+  color: var(--v-text-3);
+}
+.v-identity-example__legacy {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+}
+@container (max-width:440px) {
+  .v-identity-example__surface {
+    padding: var(--s-5);
+  }
+  .v-identity-example__row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .v-identity-example__controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+}

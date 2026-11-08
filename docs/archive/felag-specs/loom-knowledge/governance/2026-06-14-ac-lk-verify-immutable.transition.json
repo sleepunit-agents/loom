@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-verify-immutable",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:105d3614972b28c28f632ae90a019796f8a7d4b0fab82053afbd325eadceb02a"
+    }
+  ]
+}

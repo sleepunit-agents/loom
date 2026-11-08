@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-section-splice",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:18a2dbb7f448b1692094c98348f792f23b6a665a3fff247e839b9ad02d668486"
+    }
+  ]
+}

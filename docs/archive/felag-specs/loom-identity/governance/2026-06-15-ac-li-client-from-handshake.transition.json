@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-client-from-handshake",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:d09a528047ff8eb2a8098d6606d8b127790043d006667eecf3cf377b8ae197d9"
+    }
+  ]
+}

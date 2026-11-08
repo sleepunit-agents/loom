@@ -1,0 +1,28 @@
+@layer cojeev-states {
+.v-contour-field {
+  --field-a: var(--v-pink, #f5b8db);
+  --field-b: var(--v-blue, #b6caeb);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  user-select: none;
+  isolation: isolate;
+  background: var(--v-paper, #fbf4e6);
+  contain: paint;
+}
+.v-contour-field[data-tone="warm"] { --field-b: var(--v-yellow, #f5d867); }
+.v-contour-field[data-tone="cool"] { --field-a: var(--v-blue, #b6caeb); --field-b: var(--v-olive, #9aab63); }
+.v-contour-field > [data-slot="field-fallback"] {
+  position: absolute;
+  inset: -12%;
+  opacity: clamp(0, var(--field-intensity, 1), 1);
+  transform: rotate(-12deg);
+  background: repeating-radial-gradient(ellipse at 26% 38%, transparent 0 12px, color-mix(in srgb, var(--field-a) 34%, transparent) 13px 14px, transparent 15px 26px), radial-gradient(ellipse at 75% 68%, color-mix(in srgb, var(--field-b) 22%, transparent), transparent 64%);
+}
+.v-contour-field > [data-slot="field-canvas"] { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; pointer-events: none; }
+.v-contour-field[data-renderer="webgl"] > [data-slot="field-canvas"] { opacity: 1; }
+@media (forced-colors: active) { .v-contour-field { visibility: hidden; } }
+
+}

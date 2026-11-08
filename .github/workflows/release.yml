@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: publish to npm + cut GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22.x still ships npm 10.x.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Verify tag matches package.json version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          pkg_version=$(node -p "require('./package.json').version")
+          tag_version="${TAG_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "Tag ($tag_version) does not match package.json version ($pkg_version)" >&2
+            exit 1
+          fi
+
+      # 0.5.0 was published by hand before the trusted publisher existed, and a
+      # re-run of this workflow on any already-released tag would otherwise die
+      # on EPUBLISHCONFLICT. Skip the publish when the exact version is already
+      # on the registry; still cut the GitHub release below.
+      - name: Check whether this version is already published
+        id: published
+        run: |
+          pkg_name=$(node -p "require('./package.json').name")
+          pkg_version=$(node -p "require('./package.json').version")
+          if npm view "${pkg_name}@${pkg_version}" version >/dev/null 2>&1; then
+            echo "Already on the registry: ${pkg_name}@${pkg_version} - skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Authenticates via the trusted publisher configured on npmjs.com for
+      # sleepunit-agents/loom + release.yml. No NPM_TOKEN, nothing to rotate,
+      # and provenance is attested from this run.
+      - name: Publish to npm
+        if: steps.published.outputs.skip != 'true'
+        run: npm publish
+
+      - name: Detect prerelease
+        id: prerelease
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          case "$TAG_NAME" in
+            *-alpha*|*-beta*|*-rc*) echo "flag=true"  >> "$GITHUB_OUTPUT" ;;
+            *)                       echo "flag=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.flag }}

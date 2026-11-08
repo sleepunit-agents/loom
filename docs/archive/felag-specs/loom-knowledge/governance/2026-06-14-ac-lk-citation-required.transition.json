@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-citation-required",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:18dd1b5ccba56a3746e2d8ad69a3902ed10d75bf473f9a0db649050edd981774"
+    }
+  ]
+}

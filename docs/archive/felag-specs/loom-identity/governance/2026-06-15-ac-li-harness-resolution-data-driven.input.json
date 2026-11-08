@@ -1,0 +1,956 @@
+{
+  "asOf": "2026-06-15T00:00:00Z",
+  "spec": [
+    {
+      "record": "preamble",
+      "conformanceVersion": "0.1.0",
+      "contracts": [
+        {
+          "description": "loom's identity wing: deterministic markdown assembly of the agent's identity in a fixed layer order (creed, preferences, self-model, optional role/project/harness/model/client addenda) with missing layers silently skipped and a hard refusal to serve a blank creed at the default context dir; the dossier worker-projection that reframes the same files in third person behind a fixed push-back preamble while omitting the creed; and a guarded mutation surface — bootstrap (overwrite-guarded), update_identity (enum-gated so the creed is structurally immutable, fence-aware section splice, atomic write with single-generation backup), and harness_init (idempotent skip-exists). Observed in src/server.ts, src/tools/{identity,dossier,bootstrap,harness,update-identity}.ts, src/blocks/harness.ts and src/path-safety.ts of loom (github.com/jbarket/loom), v0.4 line.",
+          "id": "c-loom-identity"
+        }
+      ],
+      "exclusions": [
+        "The embedding/vector machinery: identity deliberately touches no embeddings and no DB — there is no path from any identity tool into fastembed or sqlite-vec. Unlike memory's recall, identity files are never indexed, so the non-deterministic ranking projected by the memory wing is simply absent here.",
+        "The on-disk context directory location (~/.config/loom/<agent>/), env resolution of LOOM_CLIENT/LOOM_MODEL, and the running build's package version that names the server — these are binding surface; only the assembled payload and the file-state transitions are contract.",
+        "The onboarding interview itself: bootstrap does not conduct it — the calling agent runs the interview and passes distilled name/purpose/voice/preferences as params. The server-side template fill is the contract; the interview is excluded."
+      ],
+      "goals": [
+        "Record loom's identity-wing contract — the third store beside memory and knowledge: deterministic markdown assembly of who the agent is (creed, preferences, self-model, contextual manifests), the worker-projection (dossier), and the guarded mutation surface (bootstrap, update_identity, harness_init). Read out of the loomai codebase (github.com/jbarket/loom, v0.4 line), nothing authored.",
+        "Identity is a pure function of on-disk files — no embeddings, no DB, no model call server-side — so every facet is fixtured directly as a value transition (assembly, section splice, write guards). The atomic-write-with-backup crash-safety property and the blank-creed refusal are the structural invariants, inspection-verified."
+      ],
+      "governance": {
+        "timeoutDays": 30
+      },
+      "implementers": [
+        {
+          "name": "loom",
+          "roles": [
+            "author",
+            "maintainer",
+            "repo-owner"
+          ]
+        }
+      ],
+      "name": "loom-identity"
+    },
+    {
+      "record": "item",
+      "id": "it-li-assembly",
+      "body": "loom's identity() concatenates up to nine markdown layers in a FIXED order joined by \"\\n\\n---\\n\\n\": terminal creed (IDENTITY.md -> # Identity), preferences.md (# Preferences), self-model.md (# Self-Model), an optional mode addendum (roles/<role>.md), an optional project brief (projects/<project>.md), a harness manifest (harnesses/<client>.md), a model manifest (models/<model>.md), a legacy memory hint (memories/INDEX.md, a vestigial FS-era sidecar), and a runtime client adapter (src/tools/identity.ts:27-154). Every layer is read through readOptional (identity.ts:19-25) which swallows ENOENT, so a MISSING layer is silently skipped, never an error — the payload degrades gracefully. The one exception is the creed: if IDENTITY.md is absent AND the context dir is the default, identity() THROWS \"refusing to serve a blank identity\" (identity.ts:61-68) rather than emit an empty self; at a non-default dir it emits a placeholder block instead. Harness and model manifests that are missing emit a \"(manifest missing)\" block carrying an inline template, not nothing (identity.ts:107-134). identity is a pure, deterministic function of the on-disk files plus LOOM_CLIENT/LOOM_MODEL — no embeddings, no DB, no model call.",
+      "title": "Identity is a layered assembly — fixed order, missing layers skipped, blank creed refused"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-assembly-order",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/identity.ts:27-154 (fixed layer order, joined 153); readOptional swallows ENOENT (identity.ts:19-25); missing harness/model emit a (manifest missing) template block (identity.ts:107-134).",
+      "fixtures": [
+        "fx-li-assemble-core",
+        "fx-li-assemble-skip-missing"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a context dir with IDENTITY.md, preferences.md and self-model.md present but no role/project/manifest files\nWhen identity() assembles the payload\nThen it emits the creed, preferences and self-model blocks in that fixed order joined by the section divider, and silently omits every missing optional layer — never erroring on an absent layer",
+      "itemId": "it-li-assembly",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-blank-creed-refusal",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/identity.ts:58-74 (absent creed at default contextDir -> throw 'refusing to serve a blank identity'; non-default -> placeholder block).",
+      "fixtures": [
+        "fx-li-creed-placeholder-nondefault",
+        "fx-li-creed-refuse-default"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a context dir that is the default and has no IDENTITY.md, and separately a non-default dir with no IDENTITY.md\nWhen identity() is called\nThen the default-dir case throws 'refusing to serve a blank identity' rather than emit an empty self, while the non-default-dir case emits a creed placeholder block",
+      "itemId": "it-li-assembly",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-client-from-handshake",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "evidence": "src/tools/identity.ts:41-55 (resolveClientFromPeer alias map; unknown -> undefined so LOOM_CLIENT wins); applied in src/server.ts:95,125 (identity + dossier: client ?? resolveClientFromPeer(server.server.getClientVersion()?.name)); peer logged at src/transport/http-server.ts oninitialized; tests src/transport/client-resolution.integration.test.ts.",
+      "fixtures": [
+        "fx-li-client-handshake"
+      ],
+      "force": "MUST",
+      "gherkin": "Given an MCP peer connects and identifies via the initialize handshake (clientInfo.name) and no explicit client param is passed\nWhen identity or dossier resolves the client for harness selection\nThen the client is taken from the connected peer (mapped: claude-ai -> claude-desktop, claude-code -> claude-code), an unknown or proxy peer falls back to LOOM_CLIENT, and an explicit client param overrides both — a single daemon serves each peer its own harness",
+      "itemId": "it-li-assembly",
+      "source": "forethought",
+      "state": "active",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-harness-resolution-data-driven",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "fixtures": [
+        "fx-li-harness-data-driven"
+      ],
+      "force": "MUST",
+      "gherkin": "Given several harness manifests, each declaring in frontmatter the clientInfo.name(s) it answers to (e.g. claude-desktop.md answersTo [claude-ai]), and a peer connecting as 'claude-ai (via mcp-remote ...)'\nWhen identity resolves the connected peer to a harness\nThen the resolution is built from the manifest files (frontmatter + filename), NOT a hardcoded code map — so a brand-new harness is recognized by dropping a file with no code change; LOOM_CLIENT stays the fallback and an explicit client param still overrides. Supersedes the static alias map in ac-li-client-from-handshake.",
+      "itemId": "it-li-assembly",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/blocks/harness.ts:47-102 (normalizePeer strips a '(via ...)' proxy annotation then normalizes; resolvePeerToHarness matches the peer to a harness by filename or by comma-split `answersTo` frontmatter); src/server.ts:99-101,133-135 (resolution: explicit param > data-driven > code-map seed > normalized peer); the manifests carry `answersTo`. Tests src/blocks/harness-resolve.test.ts, src/transport/client-resolution.integration.test.ts."
+    },
+    {
+      "record": "item",
+      "id": "it-li-guards",
+      "body": "identity() and dossier() take four optional selectors — project, client, model, role — each of which becomes a path component (roles/<role>.md, projects/<project>.md, ...). Before ANY file is read, each truthy selector is validated as a single safe path segment via pathSegmentError / assertSafePathSegment (identity.ts:43-53, rejector at path-safety.ts:24-39): empty, \".\", \"..\", or any value containing \"/\", \"\\\\\", or a NUL byte is rejected. identity/dossier return the validation as an error STRING (no throw, no read), while harness_init and the write tools THROW on a bad segment. This is the traversal guard: a caller can never walk out of the context dir via a crafted selector.",
+      "title": "Every context selector is a safe path segment, checked before any read"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-segment-guard",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/identity.ts:43-53 (pathSegmentError before any read); rejector src/path-safety.ts:24-39 (empty, '.', '..', '/', '\\\\', NUL); identity/dossier return error string, harness/write tools throw.",
+      "fixtures": [
+        "fx-li-guard-clean",
+        "fx-li-guard-traversal"
+      ],
+      "force": "MUST",
+      "gherkin": "Given identity()/dossier() selectors that are unsafe path segments (containing '/', '..', a NUL, or empty) and one that is a clean segment\nWhen each is validated before any read\nThen every unsafe selector is rejected before a single file is opened (identity/dossier return an error string, the write tools throw) and only the clean segment is accepted — no selector can traverse out of the context dir",
+      "itemId": "it-li-guards",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-li-dossier",
+      "body": "dossier() assembles the SAME identity files as identity() but as a third-person WORKER brief, not a first-person self (src/tools/dossier.ts:38-118). It always opens with a hardcoded PREAMBLE (dossier.ts:26-36) declaring the agent is a worker (not Art) and carrying the push-back mandate, then reframes preferences.md as \"Art's Standards & Working Style\" and self-model.md as \"Art's Capabilities & Focus\" (dossier.ts:65-74), followed by optional role/project/harness/model/client addenda joined \"\\n\\n---\\n\\n\". It deliberately OMITS the creed (IDENTITY.md) and the memory-index hint — identity says \"you are Art\", dossier says \"you serve Art, here is Art's brief\" (dossier.ts:8-9). Unlike identity, a missing harness/model manifest is simply skipped with no template fallback (dossier.ts:94-107). dossier is not a fourth store — it is a re-projection of the identity files, equally deterministic.",
+      "title": "The dossier is the worker projection — third person, push-back mandate, no creed"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-dossier-projection",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/dossier.ts:26-36 (hardcoded PREAMBLE + push-back mandate), 65-74 (third-person reframes), and the deliberate omission of IDENTITY.md and the memory hint (dossier.ts:8-9,38-118).",
+      "fixtures": [
+        "fx-li-dossier-omits-creed",
+        "fx-li-dossier-preamble"
+      ],
+      "force": "MUST",
+      "gherkin": "Given the same identity files used by identity()\nWhen dossier() assembles\nThen it opens with the fixed worker preamble and push-back mandate, reframes preferences and self-model in the third person ('Art's Standards', 'Art's Capabilities'), and OMITS the creed — the worker projection of identity, not the first-person self",
+      "itemId": "it-li-dossier",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-li-mutation",
+      "body": "update_identity edits ONLY self-model.md or preferences.md — file is an enum and the EDITABLE_FILES map has no creed entry (update-identity.ts:16-19, server.ts:322-335), so IDENTITY.md is structurally unreachable: the creed cannot be mutated through the API. With neither section nor content it runs LIST mode, returning the section inventory with per-section line counts read-only (update-identity.ts:189-191). A section without content (or vice-versa) is a guard error. Otherwise it parses the file into H2 sections with a FENCE-AWARE parser (a \"## \" inside a code fence is body, not a boundary — update-identity.ts:36-82), matches the section case-insensitively (213-215), and either appends (erroring if the section already exists — 218-220) or, in the default replace mode, splices ONLY the lines between that H2 and the next, leaving every other line byte-identical and preserving the trailing newline (spliceSection:110-123; replace errors and lists sections if the target is absent, 226-228). All identity-tier writes go through atomicWriteWithBackup (path-safety.ts:57-66): copy prior content to <path>.bak (single generation, ENOENT-tolerant), then tmp-write + rename — a crash mid-write can never truncate the file.",
+      "title": "Mutation is enum-gated and section-spliced — the creed is structurally immutable"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-creed-immutable",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/update-identity.ts:16-19 (EDITABLE_FILES: only self-model/preferences) and src/server.ts:322-335 (file enum excludes IDENTITY.md); unknown file -> error string (update-identity.ts:183-186).",
+      "fixtures": [
+        "fx-li-update-target-creed",
+        "fx-li-update-target-editable"
+      ],
+      "force": "MUST",
+      "gherkin": "Given update_identity calls targeting self-model, preferences, and IDENTITY.md\nWhen the target is resolved\nThen self-model and preferences are editable but IDENTITY.md is structurally unreachable (rejected — not in the file enum / EDITABLE_FILES map): the creed cannot be mutated through the API",
+      "itemId": "it-li-mutation",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-section-splice",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/update-identity.ts:36-82 (fence-aware parseSections), 110-123 (spliceSection replaces only the section body), 213-215 (case-insensitive match).",
+      "fixtures": [
+        "fx-li-splice-fence-aware",
+        "fx-li-splice-replace"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a self-model.md with several H2 sections (one containing a fenced block that itself has a '## ' line)\nWhen update_identity replaces one section's content\nThen only the lines between that H2 and the next H2 are replaced — every other line stays byte-identical, the trailing newline is preserved, the fenced '## ' is treated as body not a boundary, and the section name is matched case-insensitively",
+      "itemId": "it-li-mutation",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-update-modes",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/update-identity.ts:189-191 (list mode, listSections 149-171), 218-220 (append rejects existing section), 226-228 (replace rejects absent section and lists).",
+      "fixtures": [
+        "fx-li-update-append-guard",
+        "fx-li-update-list",
+        "fx-li-update-replace-absent"
+      ],
+      "force": "MUST",
+      "gherkin": "Given update_identity called with neither section nor content, with append on an existing section, and with replace on an absent section\nWhen each runs\nThen the empty call returns the section inventory read-only (list mode), append on an existing section is rejected, and replace on an absent section is rejected and lists the available sections — no silent clobber or no-op write",
+      "itemId": "it-li-mutation",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-atomic-backup",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/path-safety.ts:57-66 (atomicWriteWithBackup: copy to .bak ENOENT-tolerant, then atomicWrite tmp+rename); used by update_identity and bootstrap.",
+      "fixtures": [
+        "fx-li-atomic-backup"
+      ],
+      "force": "MUST",
+      "gherkin": "Given an existing identity file being rewritten by update_identity (or bootstrap under force)\nWhen the write happens\nThen the prior content is first copied to <path>.bak (single generation) and the new content is written via a tmp-file rename — so the resulting state has the new body at the path and the old body at .bak, and a crash mid-write can never leave a truncated file",
+      "itemId": "it-li-mutation",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "item",
+      "id": "it-li-onboarding",
+      "body": "bootstrap writes the three core identity files (IDENTITY.md, preferences.md, self-model.md) from fixed templates filled with the caller-supplied name/purpose/voice/preferences (src/tools/bootstrap.ts:32-66,134-186). It is overwrite-GUARDED: if force is not set and ANY of the three already exists it writes NOTHING and returns a message (bootstrap.ts:142-154); force:true bypasses, preserving prior files as .bak via atomicWriteWithBackup. The onboarding interview is run by the calling agent, not the server — bootstrap only fills templates from params. harness_init writes a harness manifest stub harnesses/<name>.md from a template (blocks/harness.ts:39-60,70-85): it mkdir's the dir, and if the target exists without overwrite it returns action 'skipped-exists' writing nothing (idempotent), else 'created'/'overwritten'. The name is asserted as a safe path segment (throws on a bad segment); manifest writes are plain (not atomic/backed-up) since manifests are not identity-tier.",
+      "title": "Bootstrap and harness_init — guarded first writes, idempotent stubs"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-bootstrap-guard",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/tools/bootstrap.ts:142-154 (overwrite guard: no force + any exists -> write nothing), 157-163 (force writes three via atomicWriteWithBackup), templates 32-66.",
+      "fixtures": [
+        "fx-li-bootstrap-force",
+        "fx-li-bootstrap-guarded"
+      ],
+      "force": "MUST",
+      "gherkin": "Given bootstrap called when one of IDENTITY.md/preferences.md/self-model.md already exists, once without force and once with force\nWhen each runs\nThen the no-force call writes NOTHING and reports the existing files, while force writes all three from the templated params and preserves the prior files as .bak — first-run identity is never silently overwritten",
+      "itemId": "it-li-onboarding",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-harness-skip-exists",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: src/blocks/harness.ts:70-85 (assertSafePathSegment throws 75; skip-exists 80-82; created/overwritten 83-84) and the template 39-60.",
+      "fixtures": [
+        "fx-li-harness-bad-name",
+        "fx-li-harness-create",
+        "fx-li-harness-skip"
+      ],
+      "force": "MUST",
+      "gherkin": "Given harness_init for a manifest name that already exists (without overwrite), one that does not, and one whose name is an unsafe path segment\nWhen each runs\nThen the existing-without-overwrite case returns action 'skipped-exists' writing nothing (idempotent), the new name writes the template returning 'created', and the unsafe name is rejected (throws) before any write",
+      "itemId": "it-li-onboarding",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "scenario"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-harness-self-describe",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "fixtures": [
+        "fx-li-harness-self-describe"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a connected harness calls the self-describe tool (harness_describe) to author or update its own manifest, and separately attempts to write a DIFFERENT harness's manifest or the creed\nWhen each is processed\nThen the manifest written is the one the CONNECTED peer resolves to (or a new one keyed to its own clientInfo.name) — the tool takes no target, so a harness can only describe itself; the write is re-runnable (overwrites as the runtime evolves) and stamped with version + updated-timestamp; a write of another harness's file or IDENTITY.md is structurally impossible (only harnesses/<own> is ever touched)",
+      "itemId": "it-li-onboarding",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/blocks/harness.ts:104+ (describeHarness writes harnesses/<key>.md with stamped harness/version/updated frontmatter, overwrites, assertSafePathSegment); src/tools/harness.ts:26+ (harnessDescribe derives the target from the connected peer via resolvePeerToHarness ?? normalizePeer — NO target param, so it is scoped to the caller's own clientInfo.name); registered src/server.ts:396. Tests src/tools/harness.test.ts (peer-scoped, refuses no-peer), src/blocks/harness-resolve.test.ts (rejects traversal keys)."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-harness-onboarding",
+      "class": "behavioral",
+      "contractId": "c-loom-identity",
+      "fixtures": [
+        "fx-li-harness-onboarding"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a peer connects whose clientInfo.name resolves to no manifest (an unknown runtime)\nWhen identity assembles the harness layer\nThen instead of a bare '(manifest missing)' placeholder it emits an ONBOARDING instruction — the peer's clientInfo.name plus the sections to describe (tool surface, sandbox/filesystem, delegation primitive, scheduling, session search, memory layers, gotchas) and the harness_describe tool to call — so the runtime self-onboards rather than being guessed at from outside.",
+      "itemId": "it-li-onboarding",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/tools/identity.ts:156-166 (an unresolved harness emits a '# Harness: <name> (unknown)' onboarding instruction naming harness_describe + the sections to cover, not a bare '(manifest missing)' stub); src/server.ts normalized-peer fallback makes it fire for an unknown CONNECTED peer (LOOM_CLIENT only catches the no-peer case). Tests src/tools/identity.test.ts, src/transport/client-resolution.integration.test.ts ('an unknown peer gets the harness onboarding prompt')."
+    },
+    {
+      "record": "item",
+      "id": "it-li-boundary",
+      "body": "loom has three stores sharing only the context-dir root: identity (flat markdown — IDENTITY.md, preferences.md, self-model.md, plus harnesses/models/roles/projects/clients manifests), memory (memories.db, sqlite + sqlite-vec, embedding-ranked), and knowledge (knowledge.db, separate DB, hard-isolated from memory by an inode co-location assertion). Every identity tool — identity, dossier, harness_init, update_identity, bootstrap — is DETERMINISTIC assembly/templating over markdown: an import grep confirms NO path from any identity handler into fastembed.ts or sqlite-vec.ts. Identity files are never indexed into the vector store; the only bridge from identity to memory is the legacy memories/INDEX.md hint in identity(), explicitly documented as a vestigial sidecar with the DB as the store of record (identity.ts:136-143). The identity wing refuses: a blank creed at the default dir (throws), creed mutation (enum-gated out), path traversal via a selector (segment guard), and a destructive write (atomic + .bak).",
+      "title": "Identity is the third store — deterministic, never embedded, isolated from memory and knowledge"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-deterministic",
+      "class": "judgment",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: import grep across src/tools/{identity,dossier,bootstrap,harness,update-identity}.ts and helpers (blocks/harness.ts, path-safety.ts, clients.ts, config.ts) shows no fastembed/sqlite-vec import; identity files are never indexed.",
+      "fixtures": [
+        "fx-li-deterministic-witness"
+      ],
+      "force": "MUST",
+      "item": "Every identity-wing tool (identity, dossier, harness_init, update_identity, bootstrap) is a deterministic function of on-disk markdown files and params: there is NO path from any identity handler into the embedding (fastembed) or vector (sqlite-vec) layers. Same files + same params yield byte-identical output. A conforming implementation keeps the identity wing free of embeddings and non-deterministic ranking — identity is assembled, never recalled.",
+      "itemId": "it-li-boundary",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "checklist"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-li-wing-isolation",
+      "class": "judgment",
+      "contractId": "c-loom-identity",
+      "discoveredAt": "2026-06-14T00:00:00Z",
+      "discoveredBy": "art",
+      "evidence": "src ref: identity store = flat markdown directly in the context dir; memory = memories.db (sqlite-vec), knowledge = knowledge.db (separate, inode-isolated); only bridge is the legacy memories/INDEX.md hint (src/tools/identity.ts:136-143).",
+      "fixtures": [
+        "fx-li-isolation-witness"
+      ],
+      "force": "MUST",
+      "item": "Identity is one of three stores (identity markdown / memory.db / knowledge.db) sharing only the context-dir root, and identity files are never written into the memory or knowledge databases. A conforming implementation keeps identity in flat human-editable markdown, isolated from the vector and entity stores, with at most the documented legacy memories/INDEX.md read-only hint as a bridge — the agent's self is editable text, not an embedded record.",
+      "itemId": "it-li-boundary",
+      "source": "discovered",
+      "state": "active",
+      "triggeringEvent": "loom brownfield excavation (felag, the loom-identity dig)",
+      "type": "checklist"
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-assemble-core",
+      "contractId": "c-loom-identity",
+      "description": "Core three files present, no optional layers — assembled in fixed order with the divider, missing layers absent.",
+      "expected": {
+        "erroredOnMissing": false,
+        "joinedWith": "\n\n---\n\n",
+        "layers": [
+          "# Identity",
+          "# Preferences",
+          "# Self-Model"
+        ]
+      },
+      "format": "identity/assemble@0",
+      "input": {
+        "files": {
+          "IDENTITY.md": "# creed",
+          "preferences.md": "- terse",
+          "self-model.md": "- capable"
+        },
+        "params": {}
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-assemble-skip-missing",
+      "contractId": "c-loom-identity",
+      "description": "A requested role with no roles/<role>.md file is silently skipped, not an error; present layers still assemble.",
+      "expected": {
+        "erroredOnMissing": false,
+        "layers": [
+          "# Identity",
+          "# Preferences",
+          "# Self-Model"
+        ],
+        "skipped": [
+          "roles/reviewer.md"
+        ]
+      },
+      "format": "identity/assemble@0",
+      "input": {
+        "files": {
+          "IDENTITY.md": "# creed",
+          "preferences.md": "- terse",
+          "self-model.md": "- capable"
+        },
+        "params": {
+          "role": "reviewer"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-atomic-backup",
+      "contractId": "c-loom-identity",
+      "description": "Rewriting an existing identity file copies the old body to <path>.bak then renames the new body in.",
+      "expected": {
+        "self-model.md": "new-body",
+        "self-model.md.bak": "old-body",
+        "viaTmpRename": true
+      },
+      "format": "identity/atomic-write@0",
+      "input": {
+        "existing": "old-body",
+        "next": "new-body",
+        "path": "self-model.md"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-bootstrap-force",
+      "contractId": "c-loom-identity",
+      "description": "Bootstrap with force writes all three core files from the templated params, prior files preserved as .bak.",
+      "expected": {
+        "backedUp": true,
+        "wrote": [
+          "IDENTITY.md",
+          "preferences.md",
+          "self-model.md"
+        ]
+      },
+      "format": "identity/bootstrap@0",
+      "input": {
+        "existing": [
+          "IDENTITY.md"
+        ],
+        "force": true,
+        "params": {
+          "name": "A",
+          "purpose": "p",
+          "voice": "v"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-bootstrap-guarded",
+      "contractId": "c-loom-identity",
+      "description": "Bootstrap without force when an identity file already exists writes nothing and reports the existing files.",
+      "expected": {
+        "reported": "existing-files",
+        "wrote": []
+      },
+      "format": "identity/bootstrap@0",
+      "input": {
+        "existing": [
+          "IDENTITY.md"
+        ],
+        "force": false,
+        "params": {
+          "name": "A",
+          "purpose": "p",
+          "voice": "v"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-client-handshake",
+      "contractId": "c-loom-identity",
+      "description": "Client resolution precedence: explicit param > mapped peer > LOOM_CLIENT; unknown peer defers to LOOM_CLIENT.",
+      "expected": {
+        "resolved": [
+          "claude-desktop",
+          "claude-code",
+          "claude-code",
+          "claude-desktop"
+        ]
+      },
+      "format": "identity/client-resolution@0",
+      "input": {
+        "cases": [
+          {
+            "loomClient": "claude-code",
+            "param": null,
+            "peer": "claude-ai"
+          },
+          {
+            "loomClient": "claude-desktop",
+            "param": null,
+            "peer": "claude-code"
+          },
+          {
+            "loomClient": null,
+            "param": "claude-code",
+            "peer": "claude-ai"
+          },
+          {
+            "loomClient": "claude-desktop",
+            "param": null,
+            "peer": "mcp-remote"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-creed-placeholder-nondefault",
+      "contractId": "c-loom-identity",
+      "description": "No IDENTITY.md at a non-default dir — identity() emits a creed placeholder block instead of throwing.",
+      "expected": {
+        "creedBlock": "placeholder",
+        "throws": null
+      },
+      "format": "identity/refusal@0",
+      "input": {
+        "contextDir": "nondefault",
+        "files": {
+          "preferences.md": "- terse"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-creed-refuse-default",
+      "contractId": "c-loom-identity",
+      "description": "No IDENTITY.md at the default context dir — identity() throws rather than serve a blank self.",
+      "expected": {
+        "throws": "refusing to serve a blank identity"
+      },
+      "format": "identity/refusal@0",
+      "input": {
+        "contextDir": "default",
+        "files": {
+          "preferences.md": "- terse"
+        }
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-deterministic-witness",
+      "contractId": "c-loom-identity",
+      "description": "Witness: identical files + params yield byte-identical assembly across two calls; no embedding/DB touched.",
+      "expected": {
+        "identical": true,
+        "touchedDb": false,
+        "touchedEmbeddings": false
+      },
+      "format": "identity/determinism@0",
+      "input": {
+        "calls": 2,
+        "files": {
+          "IDENTITY.md": "# creed",
+          "preferences.md": "- p",
+          "self-model.md": "- s"
+        },
+        "params": {}
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-dossier-omits-creed",
+      "contractId": "c-loom-identity",
+      "description": "Dossier omits the creed (IDENTITY.md) and the memory-index hint that identity() would include.",
+      "expected": {
+        "includesCreed": false,
+        "includesMemoryHint": false
+      },
+      "format": "identity/dossier@0",
+      "input": {
+        "files": {
+          "IDENTITY.md": "# creed",
+          "preferences.md": "- terse",
+          "self-model.md": "- capable"
+        },
+        "params": {}
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-dossier-preamble",
+      "contractId": "c-loom-identity",
+      "description": "Dossier opens with the worker preamble + push-back mandate and reframes the files in third person.",
+      "expected": {
+        "firstBlock": "worker-preamble",
+        "pushBackMandate": true,
+        "reframes": {
+          "preferences.md": "Art's Standards & Working Style",
+          "self-model.md": "Art's Capabilities & Focus"
+        }
+      },
+      "format": "identity/dossier@0",
+      "input": {
+        "files": {
+          "IDENTITY.md": "# creed",
+          "preferences.md": "- terse",
+          "self-model.md": "- capable"
+        },
+        "params": {}
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-guard-clean",
+      "contractId": "c-loom-identity",
+      "description": "A clean single-segment selector is accepted and resolves to its manifest path.",
+      "expected": {
+        "accepted": [
+          "reviewer"
+        ],
+        "rejected": []
+      },
+      "format": "identity/guard@0",
+      "input": {
+        "selectors": [
+          "reviewer"
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-guard-traversal",
+      "contractId": "c-loom-identity",
+      "description": "Unsafe selectors (traversal, separator, empty, NUL) are rejected before any file read.",
+      "expected": {
+        "readBeforeReject": false,
+        "rejected": [
+          "..",
+          "a/b",
+          "",
+          "x\u0000y",
+          "."
+        ]
+      },
+      "format": "identity/guard@0",
+      "input": {
+        "selectors": [
+          "..",
+          "a/b",
+          "",
+          "x\u0000y",
+          "."
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-bad-name",
+      "contractId": "c-loom-identity",
+      "description": "harness_init with an unsafe path-segment name throws before any write.",
+      "expected": {
+        "throws": true,
+        "wrote": false
+      },
+      "format": "identity/harness-init@0",
+      "input": {
+        "exists": false,
+        "name": "../escape",
+        "overwrite": false
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-create",
+      "contractId": "c-loom-identity",
+      "description": "harness_init on a new name writes the template manifest.",
+      "expected": {
+        "action": "created",
+        "wrote": true
+      },
+      "format": "identity/harness-init@0",
+      "input": {
+        "exists": false,
+        "name": "claude-code",
+        "overwrite": false
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-data-driven",
+      "contractId": "c-loom-identity",
+      "description": "A new harness is recognized from its file's frontmatter answersTo, with no code change.",
+      "expected": {
+        "codeChangeNeeded": false,
+        "resolved": "claude-desktop",
+        "source": "frontmatter"
+      },
+      "format": "identity/harness-resolve@0",
+      "input": {
+        "harnesses": [
+          {
+            "answersTo": [
+              "claude-ai"
+            ],
+            "file": "claude-desktop.md"
+          },
+          {
+            "answersTo": [
+              "mystery-x"
+            ],
+            "file": "mystery-x.md"
+          }
+        ],
+        "peer": "claude-ai (via mcp-remote 0.1.37)"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-onboarding",
+      "contractId": "c-loom-identity",
+      "description": "An unknown peer gets a self-describe instruction, not a bare placeholder.",
+      "expected": {
+        "barePlaceholder": false,
+        "block": "onboarding-instruction",
+        "includesClientName": true,
+        "namesSections": true,
+        "namesTool": "harness_describe"
+      },
+      "format": "identity/harness-onboard@0",
+      "input": {
+        "manifest": "none",
+        "peer": "mystery-x"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-self-describe",
+      "contractId": "c-loom-identity",
+      "description": "A harness writes only its own manifest; foreign manifest + creed writes are refused.",
+      "expected": {
+        "reRunnable": true,
+        "refused": [
+          "claude-code",
+          "IDENTITY.md"
+        ],
+        "stamped": [
+          "version",
+          "timestamp"
+        ],
+        "wrote": [
+          "mystery-x"
+        ]
+      },
+      "format": "identity/harness-describe@0",
+      "input": {
+        "connectedAs": "mystery-x",
+        "writes": [
+          {
+            "allowed": "self",
+            "target": "mystery-x"
+          },
+          {
+            "allowed": "foreign",
+            "target": "claude-code"
+          },
+          {
+            "allowed": "creed",
+            "target": "IDENTITY.md"
+          }
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-harness-skip",
+      "contractId": "c-loom-identity",
+      "description": "harness_init on an existing manifest without overwrite is an idempotent skip-exists.",
+      "expected": {
+        "action": "skipped-exists",
+        "wrote": false
+      },
+      "format": "identity/harness-init@0",
+      "input": {
+        "exists": true,
+        "name": "claude-code",
+        "overwrite": false
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-isolation-witness",
+      "contractId": "c-loom-identity",
+      "description": "Witness: an identity write lands only in the markdown file — neither memories.db nor knowledge.db is mutated.",
+      "expected": {
+        "embeddedIntoMemory": false,
+        "mutated": [
+          "identity-md"
+        ],
+        "wroteKnowledge": false
+      },
+      "format": "identity/isolation@0",
+      "input": {
+        "op": "update_identity self-model",
+        "stores": [
+          "identity-md",
+          "memories.db",
+          "knowledge.db"
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-splice-fence-aware",
+      "contractId": "c-loom-identity",
+      "description": "A '## ' line inside a code fence is body, not a section boundary; case-insensitive section match.",
+      "expected": {
+        "after": "## Notes\nreplaced\n\n## Other\nkeep\n",
+        "fenceTreatedAsBody": true
+      },
+      "format": "identity/splice@0",
+      "input": {
+        "before": "## Notes\nintro\n```\n## not-a-heading\n```\ntail\n\n## Other\nkeep\n",
+        "content": "replaced",
+        "mode": "replace",
+        "section": "notes"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-splice-replace",
+      "contractId": "c-loom-identity",
+      "description": "Replacing one H2 section's body leaves every other line byte-identical and preserves the trailing newline.",
+      "expected": {
+        "after": "## A\nkeep-a\n\n## B\nnew-b\n\n## C\nkeep-c\n"
+      },
+      "format": "identity/splice@0",
+      "input": {
+        "before": "## A\nkeep-a\n\n## B\nold-b\n\n## C\nkeep-c\n",
+        "content": "new-b",
+        "mode": "replace",
+        "section": "B"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-update-append-guard",
+      "contractId": "c-loom-identity",
+      "description": "Append targeting a section that already exists is rejected (no duplicate section).",
+      "expected": {
+        "rejected": true,
+        "wrote": false
+      },
+      "format": "identity/update-mode@0",
+      "input": {
+        "content": "x",
+        "file": "self-model",
+        "mode": "append",
+        "section": "Focus",
+        "sectionExists": true
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-update-list",
+      "contractId": "c-loom-identity",
+      "description": "No section and no content -> list mode: the section inventory with per-section line counts, no write.",
+      "expected": {
+        "mode": "list",
+        "returns": "section-inventory",
+        "wrote": false
+      },
+      "format": "identity/update-mode@0",
+      "input": {
+        "content": null,
+        "file": "self-model",
+        "section": null
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-update-replace-absent",
+      "contractId": "c-loom-identity",
+      "description": "Replace targeting an absent section is rejected and the available sections are listed.",
+      "expected": {
+        "lists": "available-sections",
+        "rejected": true,
+        "wrote": false
+      },
+      "format": "identity/update-mode@0",
+      "input": {
+        "content": "x",
+        "file": "self-model",
+        "mode": "replace",
+        "section": "Ghost",
+        "sectionExists": false
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-update-target-creed",
+      "contractId": "c-loom-identity",
+      "description": "update_identity cannot target IDENTITY.md — the creed is not in the editable enum, so it is rejected.",
+      "expected": {
+        "accepted": false,
+        "reason": "not-in-editable-enum"
+      },
+      "format": "identity/update-target@0",
+      "input": {
+        "file": "IDENTITY.md"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-li-update-target-editable",
+      "contractId": "c-loom-identity",
+      "description": "update_identity accepts self-model and preferences as edit targets.",
+      "expected": {
+        "accepted": true
+      },
+      "format": "identity/update-target@0",
+      "input": {
+        "file": "self-model"
+      }
+    }
+  ],
+  "transition": {
+    "criterionId": "ac-li-harness-resolution-data-driven",
+    "to": "active",
+    "requestedAt": "2026-06-15T00:00:00Z",
+    "requestedBy": "loom",
+    "acknowledgments": [
+      {
+        "implementer": "loom",
+        "decision": "ack",
+        "at": "2026-06-15T00:00:00Z",
+        "criterionHash": "sha256:36d4845903b0813ba6cccde9674ba09078c2c56e86f681e6caea7e4da3e958a3"
+      }
+    ]
+  }
+}

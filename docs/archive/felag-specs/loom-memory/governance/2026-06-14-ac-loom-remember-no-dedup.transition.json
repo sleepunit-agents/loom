@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-remember-no-dedup",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:abd3cf3df00cce8b4a7063cc2bcade6d77d138035bc8bdfd62d3b0b76ec0acf2"
+    }
+  ]
+}

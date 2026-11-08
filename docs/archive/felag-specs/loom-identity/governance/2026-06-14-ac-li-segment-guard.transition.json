@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-segment-guard",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:847118662a90edc06662abdac6d9dce80d77dd09733e8ff89b071784b05f3d91"
+    }
+  ]
+}

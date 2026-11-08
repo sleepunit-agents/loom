@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-ratify-lifecycle",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:76f1b87d1b0f2ddc4e50cb21891782e2144c32c0e86cbabc2a8b6ac1561b3cec"
+    }
+  ]
+}

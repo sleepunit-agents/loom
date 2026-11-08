@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-salience-field",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:30312da43a58a5634a34dc4422e54934d416739ce58dac649da6c7567f9a4275"
+    }
+  ]
+}

@@ -1,0 +1,366 @@
+{
+  "asOf": "2026-06-15T00:00:00Z",
+  "spec": [
+    {
+      "record": "preamble",
+      "conformanceVersion": "0.1.0",
+      "contracts": [
+        {
+          "description": "loom's MCP transport as behavior: a request/result envelope identical across HTTP and stdio (transport-neutral), total dispatch (every registered tool resolves or returns a typed error envelope, never an uncaught throw), an oversized-payload guard, and a security boundary expressed as refusals — reject unauthenticated calls when a token is set, refuse to bind a non-mesh/public interface, and never dial outbound to serve a call. The literal bind address and the Tailscale topology are deployment (recorded in the portable-MCP ADR), excluded here. Forethought / to-be for loom (github.com/jbarket/loom).",
+          "id": "c-loom-transport"
+        }
+      ],
+      "exclusions": [
+        "The literal bind address, port, and Tailscale interface selection: where loom listens is deployment (the ADR), not behavioral contract. The contract is that it REFUSES a public bind, not which mesh address it picks.",
+        "The HTTP wire framing itself (chunking, keep-alive, TLS termination) and the MCP protocol version handshake mechanics: binding surface. Only the envelope's logical shape and the transport-neutrality of results are contract.",
+        "MCP-App / ui:// resource serving is a FUTURE extension of this contract (the felag-board pattern applied to loom), deliberately out of this 0.1.0 — it lands once the base transport conforms."
+      ],
+      "goals": [
+        "TO-BE (forethought): loom's network surface as observable BEHAVIOR — the MCP request/result envelope, total tool dispatch, typed error envelopes, a guard against oversized payloads, and crucially transport-NEUTRALITY (the same call over HTTP and over stdio yields the same result). This is the 'how you reach loom' layer that unlocks the chat surface (spear -> one over the mesh).",
+        "TO-BE: the security boundary, also as behavior — loom rejects unauthenticated calls when a bearer token is configured, refuses to bind a public/0.0.0.0 interface (only loopback or the mesh interface), and never initiates an outbound connection to fulfill a call. The Tailscale address itself is deployment (the ADR), not contract; the REFUSALS are contract.",
+        "Authored before the impl: loom is stdio-only today. These criteria are proposed and carry no evidence — the fixtures are the target L3 builds to, then each is ratified active as it goes green."
+      ],
+      "governance": {
+        "timeoutDays": 30
+      },
+      "implementers": [
+        {
+          "name": "loom",
+          "roles": [
+            "author",
+            "maintainer",
+            "repo-owner"
+          ]
+        }
+      ],
+      "name": "loom-transport"
+    },
+    {
+      "record": "item",
+      "id": "it-lt-envelope",
+      "body": "loom answers MCP calls with a result envelope whose LOGICAL shape is identical whether the call arrived over stdio or over HTTP — the transport is a carrier, not a semantic. A tool call that returns content C over stdio returns the same content C over HTTP for the same inputs and store state (transport parity). Malformed input yields a typed error ENVELOPE (a structured { error, reason } result), never an uncaught throw that crosses the transport boundary, and never a 500 with a stack. This is the to-be generalization of loom's current single-transport surface.",
+      "title": "The envelope is transport-neutral"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-envelope-ok",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-envelope-ok",
+        "fx-lt-parity"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a well-formed tool call over HTTP and the identical call over stdio against the same store state\nWhen each is served\nThen both return a success envelope with the same logical content — the transport does not change the result (transport parity)",
+      "itemId": "it-lt-envelope",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "Same createLoomServer factory serves stdio and HTTP (src/transport/http-server.ts:81; src/cli/serve.ts:28-44), so results are transport-neutral; proven by src/transport/http-server.integration.test.ts ('serves a tool call over HTTP with the SAME result as the in-process tool (parity)')."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-envelope-bad-input",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-bad-input"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a tool call with malformed arguments\nWhen it is served over either transport\nThen loom returns a typed error envelope ({ error, reason }) — never an uncaught throw or a raw stack crossing the transport boundary",
+      "itemId": "it-lt-envelope",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "Malformed args yield a typed isError result envelope, not a throw across the boundary (SDK + zod input schemas in src/server.ts); test src/transport/http-server.integration.test.ts ('returns a typed error for malformed tool arguments', r.isError === true)."
+    },
+    {
+      "record": "item",
+      "id": "it-lt-dispatch",
+      "body": "Every registered tool name resolves to a handler or returns a typed 'unknown tool' error envelope — dispatch is a total function over the tool namespace, with no panic path. An unrecognized tool, a tool with a missing required arg, and a well-formed call are three distinct typed outcomes (refused-unknown, refused-bad-input, ok), each a value not a throw. Oversized request payloads (beyond a configured cap) are rejected with a typed envelope before the handler runs, so a hostile or accidental megabyte can't wedge the daemon.",
+      "title": "Dispatch is total; payloads are bounded"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-dispatch-total",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-envelope-ok",
+        "fx-lt-missing-arg",
+        "fx-lt-unknown-tool"
+      ],
+      "force": "MUST",
+      "gherkin": "Given an unknown tool name, a known tool missing a required argument, and a well-formed call\nWhen each is dispatched\nThen the unknown name returns a typed 'unknown tool' envelope, the missing-arg returns a typed bad-input envelope, and the well-formed call is served — three typed outcomes, no panic path",
+      "itemId": "it-lt-dispatch",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "Unknown tool -> typed isError envelope and the daemon keeps serving (no panic path); test src/transport/http-server.integration.test.ts ('returns a typed error for an unknown tool (dispatch totality)' + a subsequent good call)."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-oversized-guard",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-oversized"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a request payload larger than the configured cap\nWhen it arrives\nThen loom rejects it with a typed oversized envelope BEFORE the handler runs — a too-large request cannot wedge the daemon",
+      "itemId": "it-lt-dispatch",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/transport/guards.ts:104-110 (checkPayloadSize) enforced in src/transport/http-server.ts via Content-Length fast path + streaming collectBody cap (lines 54-72,108-130); test src/transport/guards.test.ts ('oversized guard')."
+    },
+    {
+      "record": "item",
+      "id": "it-lt-boundary",
+      "body": "loom's reachability boundary is expressed as behavior loom can be tested for. When a bearer token is configured, a call without it (or with a wrong one) is REFUSED with a typed unauthorized envelope, and a call with the correct token is served — the auth gate. loom refuses to bind a public or 0.0.0.0 interface: a configuration asking it to listen on a non-loopback, non-mesh interface is rejected at startup (bind-safety) — the 'never expose my brain to the internet' itch made a startup invariant. And loom never initiates an OUTBOUND network connection to fulfill a tool call (no cloud callback) — every answer is computed from local stores. Where it actually binds on the mesh is deployment; that it refuses the unsafe binds is contract.",
+      "title": "The boundary is refusals — auth, bind-safety, no callback"
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-auth-gate",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-auth-accept",
+        "fx-lt-auth-reject"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a bearer token is configured, and calls arriving with no token, a wrong token, and the correct token\nWhen each is served\nThen the no-token and wrong-token calls are refused with a typed unauthorized envelope and the correct-token call is served — the auth gate",
+      "itemId": "it-lt-boundary",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/transport/guards.ts:90-102 (checkBearer, constant-time) applied per request in src/transport/http-server.ts:99-100; tests src/transport/guards.test.ts ('auth gate') and http-server.integration.test.ts ('refuses no/wrong token', 'serves without a token when none is configured')."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-bind-safety",
+      "class": "behavioral",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-bind-mesh-ok",
+        "fx-lt-bind-public-refused"
+      ],
+      "force": "MUST",
+      "gherkin": "Given a startup configuration requesting a bind on a public/0.0.0.0 interface, and one requesting loopback or the mesh interface\nWhen loom starts\nThen the public/0.0.0.0 bind is REFUSED at startup (a hard invariant) and the loopback/mesh bind is accepted — loom cannot be made to expose itself to the internet by config alone",
+      "itemId": "it-lt-boundary",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "scenario",
+      "evidence": "src/transport/guards.ts:35-74 (isSafeBindHost/assertSafeBind: refuse 0.0.0.0/public, allow loopback + RFC1918 + Tailscale CGNAT) called at startup src/transport/http-server.ts:74; tests src/transport/guards.test.ts ('bind-safety') and http-server.integration.test.ts ('refuses to start on a public/0.0.0.0 bind')."
+    },
+    {
+      "record": "criterion",
+      "id": "ac-lt-no-cloud-callback",
+      "class": "judgment",
+      "contractId": "c-loom-transport",
+      "fixtures": [
+        "fx-lt-no-callback-witness"
+      ],
+      "force": "MUST",
+      "item": "loom never initiates an outbound network connection to fulfill a tool call: every tool answer is computed from local stores (memory.db, knowledge.db, identity markdown) with no fetch/callback to an external service. A conforming implementation has no code path where serving a call opens a socket to a remote host — the boundary is inbound-only.",
+      "itemId": "it-lt-boundary",
+      "source": "forethought",
+      "state": "proposed",
+      "type": "checklist",
+      "evidence": "Import audit: no node:http/https/net/dgram/fetch in src/tools or src/backends — every tool answers from local stores (memories.db, knowledge.db, identity markdown); the HTTP transport is inbound-only (src/transport/http-server.ts has no outbound client)."
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-auth-accept",
+      "contractId": "c-loom-transport",
+      "description": "Token configured; call with correct token is served.",
+      "expected": {
+        "ok": true
+      },
+      "format": "transport/auth@0",
+      "input": {
+        "presented": "<correct>",
+        "tokenConfigured": true
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-auth-reject",
+      "contractId": "c-loom-transport",
+      "description": "Token configured; call with no/wrong token is refused.",
+      "expected": {
+        "error": "unauthorized",
+        "ok": false
+      },
+      "format": "transport/auth@0",
+      "input": {
+        "presented": null,
+        "tokenConfigured": true
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-bad-input",
+      "contractId": "c-loom-transport",
+      "description": "Malformed args return a typed error envelope, not a throw.",
+      "expected": {
+        "error": "bad-input",
+        "ok": false,
+        "threw": false
+      },
+      "format": "transport/envelope@0",
+      "input": {
+        "args": {},
+        "tool": "remember"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-bind-mesh-ok",
+      "contractId": "c-loom-transport",
+      "description": "A loopback or mesh-interface bind is accepted.",
+      "expected": {
+        "started": true
+      },
+      "format": "transport/bind@0",
+      "input": {
+        "bind": "loopback-or-mesh"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-bind-public-refused",
+      "contractId": "c-loom-transport",
+      "description": "A 0.0.0.0/public bind is refused at startup.",
+      "expected": {
+        "error": "unsafe-bind",
+        "started": false
+      },
+      "format": "transport/bind@0",
+      "input": {
+        "bind": "0.0.0.0"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-envelope-ok",
+      "contractId": "c-loom-transport",
+      "description": "A well-formed call returns a success envelope.",
+      "expected": {
+        "envelope": "success",
+        "ok": true
+      },
+      "format": "transport/envelope@0",
+      "input": {
+        "args": {
+          "query": "x"
+        },
+        "tool": "recall"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-missing-arg",
+      "contractId": "c-loom-transport",
+      "description": "A known tool missing a required arg returns a typed bad-input envelope.",
+      "expected": {
+        "error": "bad-input",
+        "ok": false,
+        "threw": false
+      },
+      "format": "transport/dispatch@0",
+      "input": {
+        "args": {},
+        "tool": "knowledge_write"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-no-callback-witness",
+      "contractId": "c-loom-transport",
+      "description": "Witness: serving a call opens no outbound socket.",
+      "expected": {
+        "answeredFromLocalStores": true,
+        "outboundConnections": 0
+      },
+      "format": "transport/callback@0",
+      "input": {
+        "args": {
+          "query": "y"
+        },
+        "call": "knowledge_recall"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-oversized",
+      "contractId": "c-loom-transport",
+      "description": "A payload over the cap is rejected before the handler runs.",
+      "expected": {
+        "error": "oversized",
+        "handlerRan": false,
+        "ok": false
+      },
+      "format": "transport/dispatch@0",
+      "input": {
+        "capBytes": 1048576,
+        "payloadBytes": 9999999,
+        "tool": "remember"
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-parity",
+      "contractId": "c-loom-transport",
+      "description": "The same recall call over stdio and over HTTP returns the same logical content.",
+      "expected": {
+        "equalContent": true,
+        "http": "<contentC>",
+        "stdio": "<contentC>"
+      },
+      "format": "transport/parity@0",
+      "input": {
+        "args": {
+          "query": "x"
+        },
+        "call": "recall",
+        "store": "fixed",
+        "transports": [
+          "stdio",
+          "http"
+        ]
+      }
+    },
+    {
+      "record": "fixture",
+      "id": "fx-lt-unknown-tool",
+      "contractId": "c-loom-transport",
+      "description": "An unknown tool name returns a typed unknown-tool envelope.",
+      "expected": {
+        "error": "unknown-tool",
+        "ok": false,
+        "threw": false
+      },
+      "format": "transport/dispatch@0",
+      "input": {
+        "args": {},
+        "tool": "no_such_tool"
+      }
+    }
+  ],
+  "transition": {
+    "criterionId": "ac-lt-bind-safety",
+    "to": "active",
+    "requestedAt": "2026-06-15T00:00:00Z",
+    "requestedBy": "loom",
+    "acknowledgments": [
+      {
+        "implementer": "loom",
+        "decision": "ack",
+        "at": "2026-06-15T00:00:00Z",
+        "criterionHash": "sha256:578e3b2b38ce7c76e9ed95c529c6bbc1ca18781020168d90ef8c07162a908fac"
+      }
+    ]
+  }
+}

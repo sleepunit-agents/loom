@@ -1,0 +1,45 @@
+// Nothing on a page may take the app down: an icon nothing has becomes a plain one, and a part
+// that fails to draw says so (with a reload a tap away) instead of blanking everything.
+import { Alert, AlertActions, AlertBody, AlertDescription, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Component, type ReactNode } from 'react';
+import { Icon } from '@/components/ui/icon';
+import { Spinner } from '@/components/ui/spinner';
+
+/** A name to draw: the one asked for, or "circle" when there's none. Icon itself draws a plain one for a name nothing
+ * has (icon.tsx fallbackGeometry), once the Lucide pack is here to say so: its 1,700 names aren't on the first page. */
+export const iconFor = (name: string | undefined) => name || 'circle';
+
+type Tone = 'info' | 'ok' | 'warn' | 'danger';
+const TONE_ICON: Record<Tone, string> = { info: 'info', ok: 'circle-check', warn: 'triangle-alert', danger: 'circle-alert' };
+
+/** 000h's Alert as it's meant to be put together: its icon blob first (the first of its two columns is the blob's;
+ * without one the words land in that 40px column, a letter or two a line), then the words, then any buttons. */
+export function Callout({ tone = 'info', icon, title, children, actions, className, role, busy }: {
+  tone?: Tone; icon?: string; title?: ReactNode; children?: ReactNode; actions?: ReactNode; className?: string; role?: string;
+  /** Something is under way: a spinner in the icon's place, and a status a screen reader announces. */
+  busy?: boolean;
+}) {
+  return (
+    <Alert variant={tone} className={className} role={role ?? (busy ? 'status' : undefined)} aria-busy={busy || undefined}>
+      <AlertIcon>{busy ? <Spinner size="md" /> : <Icon name={iconFor(icon ?? TONE_ICON[tone]) as never} />}</AlertIcon>
+      <AlertBody>{title && <AlertTitle>{title}</AlertTitle>}{children && <AlertDescription>{children}</AlertDescription>}
+        {actions && <AlertActions>{actions}</AlertActions>}</AlertBody>
+    </Alert>
+  );
+}
+
+export class Boundary extends Component<{ children: ReactNode; where: string }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(e: unknown) { return { error: String((e as Error)?.message ?? e).slice(0, 200) }; }
+  componentDidUpdate(prev: { where: string }) { if (prev.where !== this.props.where && this.state.error) this.setState({ error: null }); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      // What broke is the app's to know (the console has it), not the reader's: plain words and a way out.
+      <Callout tone="warn" title="Part of this page couldn’t be shown" actions={<Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button>}>
+        Reloading usually fixes it.
+      </Callout>
+    );
+  }
+}

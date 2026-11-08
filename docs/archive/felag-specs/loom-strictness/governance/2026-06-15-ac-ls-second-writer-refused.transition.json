@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-ls-second-writer-refused",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:14446c6274698406fb3f314941167daeec9b5374c16ac72d7ba8e2a101b26f69"
+    }
+  ]
+}

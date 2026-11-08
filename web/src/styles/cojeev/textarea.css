@@ -1,0 +1,80 @@
+@layer cojeev-states {
+[data-slot="textarea"],
+[data-slot="textarea-composer"] {
+  transition:
+    background var(--t-micro),
+    box-shadow var(--t-micro);
+}
+[data-slot="textarea"]:hover:not(:focus) {
+  background: color-mix(in oklab, var(--input) 92%, var(--v-canvas));
+}
+[data-slot="textarea"]:focus,
+[data-slot="textarea-composer"]:focus-within {
+  outline: none;
+  background: var(--v-pink-soft);
+  box-shadow: inset 0 0 0 2px var(--v-brand);
+}
+[data-slot="textarea"]::-webkit-resizer {
+  display: none;
+}
+:root[data-mode="dark"]
+  :is([data-slot="textarea"], [data-slot="textarea-composer"]) {
+  background: var(--v-beige);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+}
+:root[data-mode="dark"] [data-slot="textarea"]:focus,
+:root[data-mode="dark"] [data-slot="textarea-composer"]:focus-within {
+  background: color-mix(in oklab, var(--v-pink) 14%, var(--v-canvas));
+  box-shadow: inset 0 0 0 2px var(--v-pink);
+}
+[data-slot="textarea-composer"] .v-textarea,
+[data-slot="textarea-composer"] .v-textarea:is(:focus, :hover) {
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--r-panel) var(--r-panel) 0 0;
+  min-height: 96px;
+  resize: none;
+  padding: var(--s-4) var(--s-5) var(--s-2);
+}
+[data-slot="textarea-composer-bar"] .v-meta {
+  flex: 1;
+  min-width: 0;
+}
+[data-slot="textarea-composer-bar"] .v-ibtn {
+  width: 36px;
+  height: 36px;
+  box-shadow: inset 0 0 0 1px var(--v-border);
+  background: var(--v-canvas);
+}
+[data-slot="textarea-composer-bar"] .v-ibtn:hover {
+  background: var(--v-beige);
+}
+[data-slot="textarea-composer-bar"] .v-ibtn:is(.-ink, .-pink) {
+  box-shadow: none;
+}
+[data-slot="textarea-composer-bar"] .v-ibtn.-pink {
+  background: var(--v-pink);
+  color: var(--v-on-accent);
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  width: 40px;
+  height: 40px;
+}
+[data-slot="textarea-composer-bar"] .v-ibtn.-pink:hover {
+  background: var(--v-pink-deep);
+}
+:root[data-mode="dark"] [data-slot="textarea-composer-bar"] .v-ibtn {
+  background: var(--v-beige-2);
+  box-shadow: none;
+}
+[data-slot="textarea"]:disabled {
+  background: var(--v-disabled-face);
+  color: var(--v-disabled-ink);
+  box-shadow: inset 0 0 0 1px var(--v-disabled-edge);
+  cursor: not-allowed;
+}
+
+.v-textarea-scroll { position:relative; min-width:0; width:100%; }
+.v-textarea-scroll > textarea { display:block; padding-inline-end:var(--s-8); }
+.v-textarea-scroll > textarea::-webkit-resizer { display:block; }
+
+}

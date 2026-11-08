@@ -1,0 +1,82 @@
+{
+  "name": "@jbarket/loomai",
+  "version": "0.16.1",
+  "description": "MCP server for persistent AI agent identity and memory. Single-file sqlite-vec + local ONNX embeddings; zero external services.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "loom": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sleepunit-agents/loom.git"
+  },
+  "homepage": "https://github.com/sleepunit-agents/loom#readme",
+  "bugs": {
+    "url": "https://github.com/sleepunit-agents/loom/issues"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/build-widgets.mjs && npm run build:web",
+    "prepare": "tsc",
+    "prepublishOnly": "npm run build && npm test",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:web": "npm --prefix web ci --no-audit --no-fund --silent && npm --prefix web run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "mcp",
+    "agent",
+    "identity",
+    "memory",
+    "persistent"
+  ],
+  "author": "Art E Fish + Jonathan Barket",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "@anush008/tokenizers": "0.6.0",
+    "@modelcontextprotocol/core": "^2.2.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.2.0",
+    "age-encryption": "0.3.1",
+    "better-sqlite3": "^13.0.3",
+    "markdown-it": "^14.3.3",
+    "onnxruntime-node": "1.21.0",
+    "preact": "^11.0.1",
+    "sqlite-vec": "^0.1.9",
+    "tar": "^7.5.22",
+    "web-push": "^3.6.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^26.4.0",
+    "@types/web-push": "^3.6.4",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.63.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true,
+    "onnxruntime-node": true
+  }
+}

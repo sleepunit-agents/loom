@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-atomic-backup",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:b086a71e9bdd8bf7f13638cfc8b9db54948bcbcaa71cf6f0c4cc64268c6c21c1"
+    }
+  ]
+}

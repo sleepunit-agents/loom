@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-ls-lint-rejection-typed",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:2713833aa8f2bec9b4e27be69ef210e8bc53b704a64c5e3f2052b455f1dea097"
+    }
+  ]
+}

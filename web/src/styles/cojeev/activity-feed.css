@@ -1,0 +1,565 @@
+@layer cojeev-states {
+.v-activity-feed[data-slot] {
+  min-width: 0;
+  width: 100%;
+  color: var(--v-text);
+  background: var(--v-paper);
+  padding: var(--s-7);
+  border: 1px solid var(--v-border);
+  border-radius: var(--r-panel) var(--r-panel) var(--r-sm) var(--r-panel);
+}
+.v-activity-feed__header {
+  display: grid;
+  gap: var(--s-2);
+  margin-block-end: var(--s-5);
+}
+.v-activity-feed__header :is(h3, p) {
+  margin: 0;
+}
+.v-activity-feed__heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.v-activity-feed__body {
+  position: relative;
+}
+.v-activity-feed__list {
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+/* Rows and labels carry no padding of their own, so each can close to nothing. */
+.v-activity-feed__entry,
+.v-activity-feed__group {
+  position: relative;
+  min-width: 0;
+}
+.v-activity-feed :is(.v-activity-feed__entry, .v-activity-feed__group)::marker {
+  content: none;
+}
+.v-activity-feed__entry {
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+.v-activity-feed__entry:focus-visible {
+  outline: 2px solid var(--v-blue);
+}
+.v-activity-feed__inner {
+  position: relative;
+  min-width: 0;
+}
+/* Only while a box springs open or closed: paint stays inside it. */
+.v-activity-feed [data-moving] {
+  overflow: clip;
+}
+.v-activity-feed__portrait {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.v-activity-feed__mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  isolation: isolate;
+}
+.v-activity-feed__mark > [data-slot] {
+  position: relative;
+  z-index: 1;
+}
+.v-activity-feed [data-mark="hidden"] .v-activity-feed__mark {
+  opacity: 0;
+}
+.v-activity-feed__group {
+  margin: 0;
+  color: var(--v-text-2);
+  font-size: var(--fs-caps);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps, 0.08em);
+  text-transform: uppercase;
+  z-index: 1;
+}
+/* A day's gap belongs to the day above it, so a new day's label never moves the one below. */
+.v-activity-feed__group-text {
+  padding: 0 0 var(--s-1);
+}
+.v-activity-feed:is([data-variant="thread"], [data-variant="bursts"])
+  .v-activity-feed__entry[data-day-end]::after {
+  content: "";
+  display: block;
+  block-size: var(--s-4);
+}
+.v-activity-feed:is([data-variant="thread"], [data-variant="bursts"])
+  .v-activity-feed__list {
+  margin-block-end: calc(-1 * var(--s-4));
+}
+.v-activity-feed__header
+  .v-activity-feed__heading
+  [data-slot="typography-title"] {
+  font-size: var(--fs-title);
+  letter-spacing: -0.035em;
+}
+/* The product's own entries carry the four-point brand star. */
+.v-activity-feed__marker svg {
+  display: block;
+  inline-size: 30px;
+  block-size: 30px;
+  margin: -1px;
+  overflow: visible;
+  flex: none;
+}
+.v-activity-feed__marker path {
+  fill: var(--v-olive);
+}
+.v-activity-feed__content[data-slot] {
+  position: relative;
+  z-index: 1;
+  row-gap: 2px;
+  min-width: 0;
+  align-content: start;
+  transition:
+    opacity var(--t-max) var(--enter),
+    translate var(--t-max) var(--enter);
+}
+.v-activity-feed [data-arriving] .v-activity-feed__content {
+  opacity: 0;
+}
+.v-activity-feed [data-slide] .v-activity-feed__content {
+  opacity: 0;
+  translate: 0 -8px;
+}
+/* A removed row fades inside its own closing height. */
+.v-activity-feed [data-leaving] > * {
+  opacity: 0;
+  transition: opacity var(--t-element) var(--exit);
+}
+.v-activity-feed__entry-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  min-width: 0;
+}
+.v-activity-feed__title[data-slot] {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.v-activity-feed__badge[data-slot] {
+  flex-shrink: 0;
+  max-width: 100%;
+  min-height: 20px;
+  height: auto;
+  padding-block: 3px;
+  white-space: normal;
+  line-height: 1.2;
+}
+.v-activity-feed__description[data-slot] {
+  font-size: var(--fs-control);
+  line-height: 1.55;
+  max-width: 68ch;
+  overflow-wrap: anywhere;
+}
+.v-activity-feed__description :first-child {
+  margin-block-start: 0;
+}
+.v-activity-feed__description :last-child {
+  margin-block-end: 0;
+}
+.v-activity-feed__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 var(--s-2);
+  color: var(--v-text-2);
+  min-width: 0;
+}
+/*
+ * The one breathing thing in the ledger and bursts: the newest entry while it is fresh.
+ * Its space is always kept, so the dot coming and going never rewraps a line.
+ */
+.v-activity-feed__live {
+  display: none;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: var(--v-pink-deep);
+  flex: none;
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__live {
+  display: inline-block;
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--t-element) var(--exit),
+    transform var(--t-element) var(--exit);
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  [data-breath]
+  .v-activity-feed__live {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--t-element) var(--enter),
+    transform var(--t-element) var(--enter);
+  animation: v-activity-dot var(--breath) ease-in-out infinite;
+}
+@keyframes v-activity-dot {
+  50% {
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
+}
+.v-activity-feed__meta :is(time, span) {
+  overflow-wrap: anywhere;
+}
+.v-activity-feed__details {
+  display: grid;
+  gap: var(--s-2);
+  margin-block-start: var(--s-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.v-activity-feed__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding-block-start: var(--s-4);
+  border-block-start: 1px solid var(--v-edge);
+}
+.v-activity-feed__footer > [data-slot="button"] {
+  min-height: 44px;
+  width: auto;
+}
+/* ---------- thread: one row per entry on a living thread ---------- */
+.v-activity-feed[data-variant="thread"] .v-activity-feed__group-text {
+  padding-inline-start: calc(36px + var(--s-4));
+}
+.v-activity-feed[data-variant="thread"] .v-activity-feed__inner {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: var(--s-4);
+  padding-block: var(--s-3) var(--s-4);
+}
+.v-activity-feed[data-variant="thread"] [data-breath] .v-activity-feed__mark::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border-radius: 43% 57% 49% 51% / 55% 44% 56% 45%;
+  background: var(--v-pink);
+  opacity: 0.2;
+  animation: v-activity-halo var(--breath) ease-in-out infinite;
+}
+@keyframes v-activity-halo {
+  50% {
+    opacity: 0.36;
+    transform: scale(1.1);
+  }
+}
+/* Paint only, never a hit target: the spine and the blooming seed. */
+.v-activity-feed__thread {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 3;
+}
+.v-activity-feed__spine {
+  fill: none;
+  stroke: var(--v-border);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.v-activity-feed__seed {
+  transition: fill 240ms var(--enter);
+}
+.v-activity-feed__seed[data-fill="pink"] {
+  fill: var(--v-pink);
+}
+.v-activity-feed__seed[data-fill="olive"] {
+  fill: var(--v-olive);
+}
+
+/* ---------- ledger and bursts share the compact row ---------- */
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__content[data-slot] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s-3);
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__content
+  > * {
+  grid-column: 1 / -1;
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__content
+  > .v-activity-feed__entry-heading {
+  grid-column: 1;
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__content
+  > .v-activity-feed__meta {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: baseline;
+  white-space: nowrap;
+}
+/* The run names the actor once; each row keeps it for assistive technology. */
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  :is(.v-activity-feed__who, .v-activity-feed__sep) {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.v-activity-feed:is([data-variant="ledger"], [data-variant="bursts"])
+  .v-activity-feed__title[data-slot] {
+  font-size: var(--fs-control);
+}
+
+/* ---------- ledger: dense runs, pinned day labels ---------- */
+.v-activity-feed[data-variant="ledger"] .v-activity-feed__group {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--v-paper);
+  box-shadow: 0 1px 0 var(--v-border);
+}
+.v-activity-feed[data-variant="ledger"] .v-activity-feed__group-text {
+  padding: var(--s-2) 0;
+}
+/* A run is its rows: the first carries the avatar and name, the edges carry the padding. */
+.v-activity-feed[data-variant="ledger"] .v-activity-feed__inner {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: var(--s-3);
+  padding-block: 3px;
+}
+.v-activity-feed[data-variant="ledger"]
+  .v-activity-feed__entry[data-first]
+  > .v-activity-feed__inner {
+  padding-block-start: calc(var(--s-3) + 3px);
+}
+.v-activity-feed[data-variant="ledger"]
+  .v-activity-feed__entry[data-last]
+  > .v-activity-feed__inner {
+  padding-block-end: calc(var(--s-3) + 3px);
+}
+.v-activity-feed[data-variant="ledger"]
+  .v-activity-feed__entry
+  + .v-activity-feed__entry[data-first]
+  > .v-activity-feed__inner {
+  box-shadow: inset 0 1px 0 var(--v-border);
+}
+.v-activity-feed[data-variant="ledger"] .v-activity-feed__portrait {
+  padding-block-start: 1px;
+}
+.v-activity-feed__body-cell {
+  min-width: 0;
+}
+.v-activity-feed__line {
+  position: relative;
+  min-width: 0;
+}
+.v-activity-feed__run-name {
+  margin: -3px 0 3px;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  color: var(--v-text);
+}
+/* The ink wash marks a new line, then fades within one draw. */
+.v-activity-feed__wash {
+  position: absolute;
+  inset: 0 calc(-1 * var(--s-2));
+  z-index: 0;
+  border-radius: var(--r-sm);
+  background: var(--sel-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-draw) var(--exit);
+}
+.v-activity-feed__wash[data-on] {
+  opacity: 1;
+  transition: none;
+}
+
+/* ---------- bursts: one card per actor's burst of updates ---------- */
+/* A card is its rows: each paints its own slice of the card, the edges round it off. */
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry {
+  --v-activity-gap: 0px;
+}
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry[data-last] {
+  --v-activity-gap: var(--s-3);
+}
+.v-activity-feed[data-variant="bursts"]
+  .v-activity-feed__entry[data-last][data-day-end] {
+  --v-activity-gap: calc(var(--s-3) + var(--s-4));
+}
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 var(--v-activity-gap);
+  background: var(--v-canvas);
+  border: 1px solid var(--v-border);
+  border-block-width: 0;
+}
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry[data-first]::before {
+  border-block-start-width: 1px;
+  border-start-start-radius: var(--r-card-sm);
+  border-start-end-radius: var(--r-card-sm);
+}
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry[data-last]::before {
+  border-block-end-width: 1px;
+  border-end-end-radius: var(--r-card-sm);
+  border-end-start-radius: var(--r-sm);
+}
+/* The gap to the next card, kept inside the last row's height. */
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__entry[data-last]::after {
+  content: "";
+  display: block;
+  block-size: var(--v-activity-gap);
+}
+.v-activity-feed__card {
+  position: relative;
+  padding-inline: var(--s-4);
+}
+.v-activity-feed__entry[data-first] > .v-activity-feed__card {
+  padding-block-start: var(--s-3);
+}
+.v-activity-feed__entry[data-last] > .v-activity-feed__card {
+  padding-block-end: var(--s-3);
+}
+.v-activity-feed__card-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--s-3);
+  min-height: 28px;
+  list-style: none;
+  border-radius: var(--r-sm);
+}
+.v-activity-feed__card-head::-webkit-details-marker {
+  display: none;
+}
+summary.v-activity-feed__card-head {
+  cursor: pointer;
+}
+summary.v-activity-feed__card-head:focus-visible {
+  outline: 2px solid var(--v-blue);
+  outline-offset: 2px;
+}
+.v-activity-feed__card-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-2);
+  min-width: 0;
+}
+.v-activity-feed__card-name {
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+.v-activity-feed__card-count {
+  font-size: var(--fs-meta);
+  color: var(--v-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.v-activity-feed__chevron {
+  inline-size: 16px;
+  block-size: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--v-text-2);
+  transition: rotate var(--t-element) var(--enter);
+}
+.v-activity-feed__fold[open]:not([data-closing]) .v-activity-feed__chevron {
+  rotate: 180deg;
+}
+.v-activity-feed[data-variant="bursts"] .v-activity-feed__inner {
+  margin-inline-start: calc(28px + var(--s-3));
+  padding-block: var(--s-2);
+}
+.v-activity-feed[data-variant="bursts"]
+  .v-activity-feed__entry[data-first]
+  .v-activity-feed__inner {
+  padding-block-start: calc(var(--s-1) + var(--s-2));
+}
+.v-activity-feed[data-variant="bursts"]
+  .v-activity-feed__entry[data-last]
+  .v-activity-feed__inner {
+  padding-block-end: 0;
+}
+.v-activity-feed[data-variant="bursts"]
+  .v-activity-feed__entry:not([data-first])
+  .v-activity-feed__inner {
+  box-shadow: inset 0 1px 0 var(--v-border);
+}
+
+/* Quiet and reduced motion: instant, nothing loops. */
+.v-activity-feed[data-motion-quiet] *,
+.v-activity-feed[data-motion-quiet] *::before {
+  animation: none;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v-activity-feed *,
+  .v-activity-feed *::before {
+    animation: none;
+    transition: none;
+  }
+}
+@media (max-width: 480px) {
+  .v-activity-feed[data-variant="thread"] .v-activity-feed__inner {
+    column-gap: var(--s-3);
+  }
+  .v-activity-feed[data-variant="thread"] .v-activity-feed__group-text {
+    padding-inline-start: calc(36px + var(--s-3));
+  }
+  .v-activity-feed__footer {
+    justify-content: flex-start;
+    gap: var(--s-3) var(--s-5);
+  }
+}
+@media (max-width: 600px) {
+  .v-activity-feed[data-slot] {
+    padding: var(--s-5);
+  }
+}
+@media (max-width: 560px) {
+  .v-activity-feed__card {
+    padding-inline: var(--s-3);
+  }
+}
+.v-activity-example {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: var(--s-6);
+}
+
+}

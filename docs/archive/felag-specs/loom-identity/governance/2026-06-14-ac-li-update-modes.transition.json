@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-li-update-modes",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:c440d6360d5413f6b8972557dd48abe06906c3106456f73f79ea57f25bc8fa60"
+    }
+  ]
+}

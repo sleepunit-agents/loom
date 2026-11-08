@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-auth-gate",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:b65f5438f86958ceb6804987c3b6bc4937276f66c94750bc5f2dcaee15ba12f3"
+    }
+  ]
+}

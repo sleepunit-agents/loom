@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-envelope-ok",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:fe143ea6904523ca5dfa42e9153f5386cc73a205af096a20a512c80312ddb90d"
+    }
+  ]
+}

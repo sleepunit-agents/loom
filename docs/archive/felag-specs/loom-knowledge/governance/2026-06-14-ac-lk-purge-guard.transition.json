@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-purge-guard",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:c474cb5ae85da30809ce0029ac3be1064cb9170c0bd6e503bbb3539624d258c3"
+    }
+  ]
+}

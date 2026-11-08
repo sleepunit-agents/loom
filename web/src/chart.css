@@ -1,0 +1,16 @@
+/* 000h's chart inside loom's section card: the section is the card, so the chart sheds its own frame; its caption
+   is a quiet label and its summary a number, not a panel. */
+.loom-chart .v-chart-frame[data-appearance] > div > [data-slot="card"] { padding: 0; border: 0; background: transparent; box-shadow: none; gap: var(--s-4); }
+.loom-chart .v-chart-frame [data-slot="card-title"] { font-family: inherit; font-size: var(--fs-small); font-weight: var(--fw-medium); letter-spacing: 0; color: var(--v-text-2); }
+.loom-chart .v-chart-summary { padding: var(--s-1) var(--s-4); gap: var(--s-1); }
+.loom-chart .v-chart-summary__scope { display: none; }
+/* A finger doesn't hover: on a touchscreen the hint goes (a tap inspects a point all the same). */
+@media (pointer: coarse) { .loom-chart .v-chart-frame__footer > span:first-child { display: none; } }
+/* In a side column: its legend keys wrap rather than push the column wider. */
+.loom-side-col .loom-chart .v-chart-legend { flex-wrap: wrap; }
+/* In a side column the brief's two columns (its number beside the plot) don't fit: one above the other, the number on
+   one line with its label, smaller, and never broken a digit to a line. */
+.loom-side-col .loom-chart .v-chart-frame[data-appearance="brief"] > div > [data-slot="card"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "heading" "summary" "plot" "footer" "values"; }
+.loom-side-col .loom-chart .v-chart-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 2px 12px; }
+.loom-side-col .loom-chart .v-chart-summary > strong { font-size: 28px; overflow-wrap: normal; white-space: nowrap; }
+.loom-side-col .loom-chart .v-chart-summary > p { flex-basis: 100%; line-height: 1.4; }

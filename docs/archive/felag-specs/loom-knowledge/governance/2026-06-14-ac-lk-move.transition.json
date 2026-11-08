@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lk-move",
+  "to": "active",
+  "requestedAt": "2026-06-14T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-14T00:00:00Z",
+      "criterionHash": "sha256:e8753d0429da12e9d2d6c874300b3527900572bcc5829ac063658a40734891df"
+    }
+  ]
+}

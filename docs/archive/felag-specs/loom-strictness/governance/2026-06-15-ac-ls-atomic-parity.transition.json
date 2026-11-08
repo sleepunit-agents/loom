@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-ls-atomic-parity",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:19bb1343f9c5420d19814144fe84e894eb4caabdf8b137ae556a702c1f4658c2"
+    }
+  ]
+}

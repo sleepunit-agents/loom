@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-loom-digest-assemble",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:4299310b9200f69979061b00ef2f9ec35e90ab6525cac3724ff99b4523f9e08c"
+    }
+  ]
+}

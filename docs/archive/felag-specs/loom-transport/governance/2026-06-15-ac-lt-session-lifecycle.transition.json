@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-session-lifecycle",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:a6d6fa4b2d167264ff8bd58b05371ab7487a37e06becd2a36ee3305a21a20707"
+    }
+  ]
+}

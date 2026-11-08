@@ -1,0 +1,33 @@
+@layer cojeev-states {
+/* Selection geometry is shared with radio and questionnaire; the button retains
+   the native checked/indeterminate and focus semantics. */
+.v-check[data-slot="checkbox"] { display:inline-flex; align-items:center; gap:var(--s-3); min-height:44px; min-width:0; padding:2px 0; border:0; box-shadow:none; background:transparent; color:var(--v-text); text-align:start; cursor:pointer; font-size:var(--fs-body); }
+[data-slot="checkbox-indicator"] { display:inline-grid; place-items:center; width:var(--selector-size,28px); height:var(--selector-size,28px); flex:none; }
+[data-slot="checkbox"]:focus-visible { outline:none; }
+[data-slot="checkbox"]:focus-visible [data-slot="checkbox-indicator"] { outline:2px solid var(--ring); outline-offset:3px; border-radius:var(--r-sm); }
+[data-slot="checkbox"][data-disabled] { color:var(--v-disabled-ink); cursor:not-allowed; }
+[data-slot="checkbox"].-block { display:grid; grid-template-columns:var(--selector-size,28px) minmax(0,1fr) auto; gap:var(--s-4); padding:var(--s-4) var(--s-4); border-radius:var(--r-card-sm); background:var(--card); box-shadow:inset 0 0 0 1px var(--v-border); }
+[data-slot="checkbox"].-block:not([data-disabled]):hover { background:var(--v-beige-2); }
+[data-slot="checkbox"].-block:is([data-state="checked"],[data-state="indeterminate"]) { background:color-mix(in oklab,var(--selector-accent) 16%,var(--v-canvas)); box-shadow:inset 0 0 0 1.5px var(--selector-accent); }
+[data-slot="checkbox-body"] { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; }
+[data-slot="checkbox-body"] b { font-size:var(--fs-body); font-weight:var(--fw-semibold); line-height:1.35; }
+[data-slot="checkbox-body"] small { color:var(--v-text-2); font-size:var(--fs-small); line-height:1.45; }
+[data-slot="checkbox"][data-disabled] [data-slot="checkbox-body"] small { color:var(--v-disabled-ink); }
+[data-slot="checkbox-group"] { display:grid; gap:var(--s-2); }
+@media(pointer:coarse) { [data-slot="checkbox"] { min-height:44px; } }
+
+/* The shared Button body engine owns the moving selector contour. The original
+   SVG is the immediate SSR/Off/reduced fallback; the mark stays above either. */
+[data-slot="selector-glyph"]:has([data-slot="selector-surface-host"] > svg.v-morph) [data-slot="selector-surface"] { opacity:0; }
+[data-slot="selector-drawing"] { position:relative; pointer-events:none; }
+
+/* Composition is a public prop; legacy glyph and -block contracts stay intact. */
+.v-check[data-slot="checkbox"][data-appearance] { padding:var(--s-3) var(--s-3); border-radius:var(--v-control-radius,12px); gap:var(--s-3); }
+.v-check[data-slot="checkbox"][data-appearance="row"] { border-radius:0; border-bottom:1px solid var(--v-border); width:100%; }
+.v-check[data-slot="checkbox"][data-appearance="card"] { display:grid; grid-template-columns:var(--selector-size,28px) minmax(0,1fr); align-items:start; width:100%; padding:var(--s-5); border-radius:min(var(--v-control-radius,16px),24px); background:var(--card); box-shadow:inset 0 0 0 1px var(--v-edge); }
+.v-check[data-slot="checkbox"][data-appearance="chip"] { width:fit-content; border-radius:var(--v-control-radius,999px); box-shadow:inset 0 0 0 1px var(--v-edge); gap:var(--s-2); }
+.v-check[data-slot="checkbox"][data-appearance]:not([data-disabled]):is([data-state="checked"],[data-state="indeterminate"]) { background:color-mix(in oklab,var(--selector-accent) 18%,var(--v-canvas)); }
+.v-check[data-slot="checkbox"][data-appearance]:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+.v-check[data-slot="checkbox"][data-appearance]:focus-visible [data-slot="checkbox-indicator"] { outline:none; }
+
+}

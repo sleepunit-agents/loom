@@ -1,0 +1,14 @@
+{
+  "criterionId": "ac-lt-no-cloud-callback",
+  "to": "active",
+  "requestedAt": "2026-06-15T00:00:00Z",
+  "requestedBy": "loom",
+  "acknowledgments": [
+    {
+      "implementer": "loom",
+      "decision": "ack",
+      "at": "2026-06-15T00:00:00Z",
+      "criterionHash": "sha256:1c36d76ef3cf04b504dd29016bde516a2c205ba7aa4d67ff5f435bd451ef0856"
+    }
+  ]
+}
