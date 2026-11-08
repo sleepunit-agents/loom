@@ -158,3 +158,22 @@
 :root[data-look] .loom-rscreen__meta{display:flex;align-items:baseline;gap:8px;min-width:0;padding:6px 12px 2px}
 :root[data-look] .loom-rscreen__meta b{font-family:var(--font-display);font-weight:600;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 :root[data-look] .loom-rscreen__meta small{font-size:11px;color:var(--v-text-3);white-space:nowrap}
+
+/* ---- hiding (tiles.tsx; docs/specs/agent-desk.md, "Hiding"): the rail's strip, its edge and the rail brought in over
+   the apps; the dock's strip and edge. A glowing dot while anything is unread or waiting on you. ---- */
+:root[data-look] .loom-glow{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--v-pink);box-shadow:0 0 10px 2px var(--v-pink)}
+@media (prefers-reduced-motion:no-preference){:root[data-look] .loom-glow{animation:loom-glow 1.6s ease-in-out infinite}}
+@keyframes loom-glow{50%{opacity:.45}}
+:root[data-look] .loom-rstrip{position:absolute;top:0;right:0;bottom:0;width:14px;cursor:pointer;background:color-mix(in srgb,var(--v-paper) 90%,transparent);box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-rstrip::after{content:"";position:absolute;left:5px;top:50%;width:3px;height:40px;margin-top:-20px;border-radius:2px;background:var(--v-edge)}
+:root[data-look] .loom-rstrip:is(:hover,:focus-visible){box-shadow:inset 0 0 0 1px var(--v-edge)}
+:root[data-look] .loom-rstrip .loom-glow{left:3px;top:10px}
+:root[data-look] .loom-redge{position:absolute;top:0;right:calc(-1 * var(--desk-gutter,24px));bottom:0;width:calc(var(--desk-gutter,24px) + 6px);z-index:30}
+:root[data-look] .loom-redge::after{content:"";position:absolute;right:0;top:0;bottom:0;width:2px;background:color-mix(in srgb,var(--v-pink) 30%,transparent)}
+:root[data-look] .loom-redge .loom-glow{right:4px;top:50%}
+@media (pointer:coarse){:root[data-look] .loom-redge{width:calc(var(--desk-gutter,24px) + 16px)}}
+/* over the apps, never moving them: from the right edge, the rail's own width */
+:root[data-look] .loom-tiles>.loom-arail.loom-arail--over{z-index:40;width:calc(var(--rail-over,320px) + 20px);padding:10px;background:color-mix(in srgb,var(--v-canvas) 94%,transparent);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px var(--v-edge),-20px 0 40px -10px rgba(0,0,0,.55)}
+@media (prefers-reduced-motion:no-preference){:root[data-look] .loom-tiles>.loom-arail.loom-arail--over{animation:loom-rail-in .22s ease-out}}
+@keyframes loom-rail-in{from{transform:translateX(calc(100% + 24px))}}

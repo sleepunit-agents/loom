@@ -47,3 +47,17 @@
 }
 @keyframes loom-boot-line{from{visibility:hidden}to{visibility:visible}}
 @keyframes loom-boot-flick{0%{opacity:0}30%{opacity:.7}45%{opacity:.15}60%,100%{opacity:1}}
+/* ---- the dock hidden (tiles.tsx; docs/specs/agent-desk.md, "Hiding"): minimized to a strip at the bottom's middle, or
+   auto-hiding (it comes up over the desktop from the bottom edge, never moving it); the desktop takes its room back. ---- */
+:root[data-desk-dock="strip"] .loom-desk,:root[data-desk-dock="auto"] .loom-desk{--desk-dock:22px}
+:root[data-desk-dock="strip"] .loom-desk .loom-dock-bar{display:none}
+:root[data-desk-dock="auto"] .loom-desk .loom-dock-bar{transform:translateY(calc(100% + 30px));transition:transform .22s ease-out}
+:root[data-desk-dock="auto"][data-desk-dock-peek] .loom-desk .loom-dock-bar{transform:none}
+:root[data-look] .loom-dstrip{position:fixed;left:50%;bottom:4px;width:min(420px,60vw);height:10px;transform:translateX(-50%);z-index:31;cursor:pointer;
+  background:color-mix(in srgb,var(--v-paper) 90%,transparent);box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-dstrip::after{content:"";position:absolute;left:50%;top:3px;width:60px;height:3px;margin-left:-30px;border-radius:2px;background:var(--v-edge)}
+:root[data-look] .loom-dstrip .loom-glow{right:-14px;top:1px}
+:root[data-look] .loom-dedge{position:fixed;left:0;right:0;bottom:0;height:10px;z-index:31}
+:root[data-look] .loom-dedge::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:color-mix(in srgb,var(--v-pink) 30%,transparent)}
+:root[data-look] .loom-dedge .loom-glow{left:50%;bottom:3px}
+@media (pointer:coarse){:root[data-look] .loom-dedge{height:20px}}
