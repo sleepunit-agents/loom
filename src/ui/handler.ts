@@ -381,7 +381,10 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
 async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult): Promise<ActResult> {
   if (!/^a-[0-9a-f]{8}$/.test(id)) return allowed;
   const a = (await pieceCheckers(env).approvals([id]).catch(() => undefined))?.[id];
-  if (!a || a.kind !== 'grant' || a.state !== 'allowed') return allowed;
+  // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for a
+  // grant would read as done while nothing was granted.
+  if (!a) return { ok: false, message: `${allowed.message} loom couldn't read that approval back, so if it gives an agent a piece, check it on Permissions: it may not be applied.` };
+  if (a.kind !== 'grant' || a.state !== 'allowed') return allowed;
   const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
   const target = typeof a.target === 'string' ? a.target : '';
   if (!owner || !target || !a.agent) return { ok: false, message: `${allowed.message} It wasn't applied: access to a piece is the household owner's to give.` };

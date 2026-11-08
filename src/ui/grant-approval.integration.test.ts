@@ -47,6 +47,7 @@ process.stdin.on('end', () => {
   }
   if (a[0] === 'api') {
     const req = JSON.parse(input);
+    if (fs.existsSync(process.env.LOOM_HOME + '/state-broken')) return console.log(JSON.stringify({ status: 503, body: { error: 'busy' } }));
     if (req.path !== 'state' || req.caller.kind !== 'owner') return console.log(JSON.stringify({ status: 403, body: { error: 'no' } }));
     const out = {};
     for (const id of req.body.ids) if (s[id]) out[id] = { state: s[id].state, agent: s[id].agent, kind: s[id].kind, ...(s[id].kind === 'grant' ? { target: s[id].target } : {}) };
@@ -231,6 +232,16 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     // A member who owns some agents doesn't get the household's Permissions.
     const sam = await inbox(await login('sam'));
     expect(sam.chrome.shell.permissions).toBeUndefined();
+  });
+
+  it('an Allow whose approval can\'t be read back never reads as done', async () => {
+    writeFileSync(join(h.home, 'state-broken'), '1');
+    const cookie = await login('jonathan');
+    const d = await inbox(cookie);
+    const r = await press(cookie, d, 'allow', { id: 'a-0000beef' });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/couldn't read that approval back.*may not be applied/);
+    expect(runtimeActs()).toEqual([]);
   });
 
   it('a relayed request says whose it is: Mark asks, via Art', async () => {
