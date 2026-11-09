@@ -1,3 +1,4 @@
+import { agentJobs } from './agent-jobs.js';
 /**
  * loom's web UI on the HTTP daemon (full scope only).
  *
@@ -163,11 +164,17 @@ function scopedPathOk(pathname: string): boolean {
  * The runtime is the one record of a body at work; this only says which conversation, and to whom.
  */
 export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member: Member | undefined): PieceInfo[] {
-  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
+  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation) || r.jobs?.length))) return pieces;
   const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(h.home, agent, cv); } catch { return undefined; } };
   const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
-  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, !r.doing ? r : {
-    ...r, doing: r.doing.flatMap((d) => {
+  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, {
+    ...r, jobs: (r.jobs ?? []).flatMap((j) => {
+      if (!member || !owns(member, a) || !h.agents.includes(a)) return [];
+      const t = j.conversation ? threadOf(a, j.conversation) : undefined;
+      if (t && t.member !== member.person) return [];
+      const label = j.conversation ? (t?.title ?? labelOf(a, j.conversation)) : undefined;
+      return [{ ...j, ...(['Working in a conversation', 'Waiting to continue'].includes(j.text) && label ? { text: label } : {}), ...(j.conversation ? { href: t ? threadPath(t.id) : `/a/${a}/conversation/${j.conversation}` } : {}) }];
+    }), doing: (r.doing ?? []).flatMap((d) => {
       if (!d.conversation) return [d];
       const t = threadOf(a, d.conversation);
       if (t) return member && t.member === member.person ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
@@ -975,15 +982,17 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     // What it has going, newest first; and only what's wrong (a reading marked bad or warn): no news is good news.
     const doing = reports.flatMap((x) => (x.r.doing ?? []).map((d) => ({ ...d, source: pieceSource(x.p.piece) })))
       .sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0)).slice(0, 8);
+    const jobs = agentJobs(reports.flatMap(({ p, r }) => (r.jobs ?? []).map((j) => ({ ...j, source: pieceSource(p.piece),
+      ...(j.page !== undefined && !j.href ? { href: pageHref(j.page, pieceSource(p.piece)) } : {}) }))));
     const problems = reports.flatMap((x) => x.r.readings.filter((r) => r.tone === 'bad' || r.tone === 'warn')
       .map((r) => ({ text: `${r.label}: ${r.value}`, tone: r.tone as 'bad' | 'warn', source: pieceSource(x.p.piece), ...(r.page !== undefined ? { page: r.page } : {}) })));
     if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
       problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
     }
     // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
-    const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
+    const state: AgentState = worst?.r.state ?? (doing.length || jobs.some((j) => j.status === 'running') ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
-    return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
+    return { id: a, ...marks[a], state, reason, doing, jobs, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -1862,7 +1871,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/pieces.json') {
     const m0 = await pieceManifests(scopedEnv);
-    const m = { ...m0, pieces: forOwner(m0.pieces, opts.ownerScope) };
+    const m = { ...m0, pieces: atWorkFor(forOwner(m0.pieces, opts.ownerScope), opts.household?.(), who?.member) };
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
       pieces: m.pieces.map((p) => ({ piece: p.piece, manifest: p.manifest })),

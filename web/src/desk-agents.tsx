@@ -25,10 +25,11 @@ const CardAsk = lazy(() => import('./inbox').then((m) => ({ default: m.CardAsk }
 
 /** One thing it has going; `href` is loom's link to it (a Comms thread, only for its member: handler.ts atWorkFor). */
 type Doing = { text: string; kind?: string; where?: string; since?: string; href?: string };
+type Job = Doing & { id: string; status: 'running' | 'waiting' | 'scheduled' | 'backlog'; at?: string };
 type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
-  doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[] };
+  jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[] };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 /** The member's own Comms, per agent (src/comms.ts agentsComms). */
 export type AgentComms = { agent: string; unread: number; first?: { thread: string; text: string | null };
@@ -72,15 +73,17 @@ export type DeskAgent = {
   /** in a conversation now (the runtime's `talk`) */
   talking: boolean;
   work: Doing[];
+  jobs: Job[];
   steps: { text: string; at: string; where: string }[];
 };
 
 /** How an agent is, in a word (precedence: trouble, an ask, work, unavailable, quiet). */
 function statusOf(c: Card | undefined, asks: number): { word: string; tone: Tone; face: MarkState } {
   const problems = c?.problems ?? [], doing = c?.doing ?? [];
+  const running = c?.jobs?.filter((j) => j.status === 'running').length ?? doing.length;
   if (problems.length) return c?.state === 'broken' ? { word: 'Something’s broken', tone: 'bad', face: 'error' } : { word: 'Needs a look', tone: 'warn', face: 'error' };
   if (asks > 0) return { word: 'Waiting on you', tone: 'ask', face: 'needs-input' };
-  if (c?.state === 'working' || doing.length) return { word: doing.length > 1 ? `Working · ${doing.length} things` : 'Working', tone: 'work', face: 'working' };
+  if (c?.state === 'working' || running) return { word: running > 1 ? `Working · ${running} things` : 'Working', tone: 'work', face: 'working' };
   if (c?.state === 'unavailable') return { word: 'Unavailable', tone: 'off', face: 'idle' };
   return { word: 'Quiet', tone: 'quiet', face: 'idle' };
 }
@@ -104,7 +107,7 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
       id: s.id, label: s.label, mark: s as unknown as Mark, color: markColor(s.bg), status: { word: st.word, tone: st.tone }, face: st.face, now: nowLine,
       ...(next ? { wake: [next.value, next.detail].filter(Boolean).join(' · ') } : {}),
       ...(last ? { last } : {}), unread: k?.unread ?? 0, ...(first ? { first } : {}), asks, ...(ask ? { ask } : {}),
-      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'), work: doing, steps: c?.steps ?? [],
+      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'), work: doing, jobs: c?.jobs ?? [], steps: c?.steps ?? [],
     };
   });
 }
@@ -302,10 +305,22 @@ export function BigCard({ a, flow }: { a: DeskAgent; flow?: boolean }) {
           <div><section aria-label="Next wakes"><h3>Next wake</h3><dl className="loom-bigcard__kv"><div data-row="wake"><dt>Next wake</dt><dd>{a.wake ?? 'No scheduled wake reported.'}</dd></div></dl></section>
           <section aria-label="Last steps"><h3>Last steps</h3>{a.steps.length ? a.steps.map((s, n) => <p key={n} className="loom-bigcard__item">{s.text}<small>{when(s.at)} · {s.where}</small></p>) : <p className="loom-bigcard__empty">No recent steps.</p>}</section></div>
         </div>
+        <Jobs a={a} />
         <Composer a={a} />
       </div>
     </article>
   );
+}
+
+/** Both sizes expose the same complete list; waiting and backlog never imply a running body. */
+function Jobs({ a, compact }: { a: DeskAgent; compact?: boolean }) {
+  if (!a.jobs.length) return null;
+  const list = <ul className="loom-jobs">{a.jobs.map((j) => <li key={j.id} data-job-status={j.status}>
+    <small>{({ running: 'Running', waiting: 'Waiting', scheduled: 'Scheduled', backlog: 'Backlog' })[j.status]}</small>
+    {j.href ? <Go href={j.href}>{j.text}</Go> : <span>{j.text}</span>}{j.at && <small>{when(j.at)}</small>}
+  </li>)}</ul>;
+  return compact ? <details className="loom-jobs-fold"><summary>All jobs · {a.jobs.length}</summary>{list}</details>
+    : <section aria-label="All jobs"><h3>All jobs · {a.jobs.length}</h3>{list}</section>;
 }
 
 function Unread({ a }: { a: DeskAgent }) {
@@ -334,7 +349,7 @@ export function RailCard({ a }: { a: DeskAgent }) {
   const { go } = useEnv();
   const what = [a.status.word, a.asks ? 'asks you' : '', a.unread ? `${a.unread} new` : ''].filter(Boolean).join(', ');
   return (
-    <button type="button" className="loom-rcard" data-tone={a.status.tone} data-agent={a.id} style={{ '--c': a.color } as React.CSSProperties}
+    <div className="loom-rcard-wrap"><button type="button" className="loom-rcard" data-tone={a.status.tone} data-agent={a.id} style={{ '--c': a.color } as React.CSSProperties}
       onClick={() => go(a.open)} aria-label={`${a.label}: ${what}. Open the thread`}>
       <span className="loom-rcard__top">
         <span className="loom-rcard__face"><AgentAvatar a={a.mark} size={96} state={a.face} /></span>
@@ -344,7 +359,7 @@ export function RailCard({ a }: { a: DeskAgent }) {
       {a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}
       {a.unread ? <span className="loom-rcard__ur"><b className="loom-data">{a.unread}</b><span>{a.first?.text ?? 'New in the thread'}</span></span>
         : <span className="loom-rcard__ur" data-none="">No new messages</span>}
-    </button>
+    </button><Jobs a={a} compact /></div>
   );
 }
 
@@ -360,7 +375,7 @@ export function ScreenCard({ a, slot }: { a: DeskAgent; slot?: (el: HTMLElement 
       <div className="loom-rscreen__meta"><b>{a.label}</b><small className="loom-data">on the line</small></div>
       <span className="loom-rcard__now" data-tone={a.now.tone}><i className="loom-data">NOW</i> {a.now.text}</span>
       {a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}
-      <span className="loom-rcard__ur" data-none="">Thread open in Comms</span>
+      <span className="loom-rcard__ur" data-none="">Thread open in Comms</span><Jobs a={a} compact />
     </section>
   );
 }
