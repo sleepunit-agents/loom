@@ -1156,7 +1156,7 @@ const STATE_RANK: Record<AgentState, number> = { broken: 3, unavailable: 2, work
 function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
   const reports = pieces.flatMap((p) => (p.manifest.agents?.[agent] ? [p.manifest.agents[agent]] : []));
   const worst = reports.filter((r) => r.state).sort((x, y) => STATE_RANK[y.state!] - STATE_RANK[x.state!])[0];
-  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
+  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0 || r.jobs?.some((j) => j.status === 'running')) ? 'working' : 'available');
 }
 
 /**
@@ -1189,7 +1189,7 @@ function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
 
 /** The one thing an agent is on, newest first, as its card's line says it (agentCards): for its window's pill. */
 function onOf(pieces: PieceInfo[], agent: string): { on?: { text: string; href?: string } } {
-  const d = pieces.flatMap((p) => p.manifest.agents?.[agent]?.doing ?? []).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
+  const d = pieces.flatMap((p) => { const r = p.manifest.agents?.[agent]; return r?.doing?.length ? r.doing : (r?.jobs ?? []).filter((j) => j.status === 'running'); }).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
   return d ? { on: { text: d.text, ...(d.href ? { href: d.href } : {}) } } : {};
 }
 

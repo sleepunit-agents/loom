@@ -96,8 +96,9 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
     const asks = s.asks ?? 0;
     const st = statusOf(c, asks);
     const problems = c?.problems ?? [], doing = c?.doing ?? [];
+    const active = doing[0] ?? c?.jobs?.find((j) => j.status === 'running');
     const nowLine = problems[0] ? { text: problems[0].text, tone: problems[0].tone }
-      : doing[0] ? { text: doing[0].text, ...(doing[0].href ? { href: doing[0].href } : {}) }
+      : active ? { text: active.text, ...(active.href ? { href: active.href } : {}) }
       : { text: c?.state === 'unavailable' && c.reason ? c.reason : 'Nothing right now' };
     const next = c?.readings?.find((r) => r.label === 'Next');
     const last = k?.last ? { title: k.last.title ?? 'New thread', at: when(k.last.at, now), href: threadHref(k.last.thread) } : undefined;
