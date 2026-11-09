@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { harnessInit, harnessDescribe } from './harness.js';
+import { harnessInit, harnessDescribe, harnessPatch } from './harness.js';
 
 describe('harnessInit (MCP)', () => {
   let ctx: string;
@@ -138,6 +138,52 @@ describe('harnessDescribe (MCP, peer-scoped)', () => {
 
   it('refuses when there is no connected peer', async () => {
     const text = await harnessDescribe(ctx, { content: 'body' }, undefined);
+    expect(text).toMatch(/Error/);
+    expect(text).toMatch(/clientInfo|connected peer/);
+  });
+});
+
+describe('harnessPatch (MCP, peer-scoped)', () => {
+  let ctx: string;
+  beforeEach(async () => { ctx = await mkdtemp(join(tmpdir(), 'loom-harness-patch-mcp-')); });
+  afterEach(async () => { await rm(ctx, { recursive: true, force: true }); });
+
+  it('patches the manifest keyed to the connected peer without the caller supplying the full body', async () => {
+    await harnessDescribe(ctx, { content: '## Hooks\n- hook-a\n' }, 'claude-code');
+    const text = await harnessPatch(ctx, { find: '- hook-a', replace: '- hook-a\n- hook-b' }, 'claude-code');
+    expect(text).toMatch(/claude-code/);
+    expect(text).toMatch(/patched/);
+    const body = await readFile(resolve(ctx, 'harnesses', 'claude-code.md'), 'utf-8');
+    expect(body).toContain('- hook-a\n- hook-b');
+  });
+
+  it('resolves the peer to an existing harness via answersTo, same as harnessDescribe', async () => {
+    await mkdir(resolve(ctx, 'harnesses'), { recursive: true });
+    await writeFile(
+      resolve(ctx, 'harnesses', 'claude-desktop.md'),
+      '---\nharness: claude-desktop\nanswersTo: claude-ai\n---\n\noriginal body\n',
+    );
+    const text = await harnessPatch(ctx, { find: 'original body', replace: 'patched body' }, 'claude-ai (via mcp-remote 0.1.37)');
+    expect(text).toMatch(/claude-desktop/);
+    const body = await readFile(resolve(ctx, 'harnesses', 'claude-desktop.md'), 'utf-8');
+    expect(body).toContain('patched body');
+  });
+
+  it('returns an Error string (does not throw) when find is not found', async () => {
+    await harnessDescribe(ctx, { content: 'body text' }, 'claude-code');
+    const text = await harnessPatch(ctx, { find: 'missing text', replace: 'x' }, 'claude-code');
+    expect(text).toMatch(/Error/);
+    expect(text).toMatch(/not found/);
+  });
+
+  it('returns an Error string when no manifest exists yet', async () => {
+    const text = await harnessPatch(ctx, { find: 'x', replace: 'y' }, 'claude-code');
+    expect(text).toMatch(/Error/);
+    expect(text).toMatch(/no existing manifest/);
+  });
+
+  it('refuses when there is no connected peer', async () => {
+    const text = await harnessPatch(ctx, { find: 'x', replace: 'y' }, undefined);
     expect(text).toMatch(/Error/);
     expect(text).toMatch(/clientInfo|connected peer/);
   });
