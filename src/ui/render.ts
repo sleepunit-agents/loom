@@ -309,6 +309,7 @@ export interface AgentCard {
   /** When it was last on the tape, and where. */
   seen?: { at: string; where: string };
   readings: Array<Reading & { source: Source }>;
+  steps?: Array<{ text: string; at: string; where: string }>;
 }
 
 export interface HouseHome {

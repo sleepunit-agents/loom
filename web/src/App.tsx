@@ -45,6 +45,7 @@ const ActivityView = lazy(() => import('./activity').then((m) => ({ default: m.A
 // An agent's window (agent-window.tsx): its header and its sections, around its pages. Its own chunk.
 const AgentWindow = lazy(() => import('./agent-window'));
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
+const PeopleView = lazy(() => import('./people').then((m) => ({ default: m.PeopleView })));
 const ProjectsView = lazy(() => import('./projects').then((m) => ({ default: m.ProjectsView })));
 // Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
 const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
@@ -498,7 +499,8 @@ export default function App() {
             )}
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
-                {own(data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
+                {own(data.view === 'page' && data.people ? <Suspense fallback={<Spinner size="lg" />}><PeopleView data={data.people} /></Suspense>
+                  : data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
                   : data.view === 'page' && data.page.changes ? <Suspense fallback={<Spinner size="lg" />}><ChangesView page={data.page} unscoped={data.unscoped} /></Suspense>
                   : data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
