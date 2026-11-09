@@ -1374,6 +1374,12 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     expect((await api(tok.runtime, 'comms/adapter', q)).body.id).toBe(id);
     const thread = await page(tok.jonathan, 'GET', `/comms/${id}`);
     expect(thread.body.thread).toMatchObject({ conversation: child.conversation, title: 'spawn test' });
+    expect(thread.body.messages[0]).toMatchObject({ kind: 'message', from: 'art' });
+    // Assigned ownership permits reading a job; it does not make it a personal chat.
+    expect((await page(tok.jonathan, 'GET', '/comms')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).toContain(id);
+    expect((await page(tok.sam, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms/agents')).body.agents.find((a: {agent: string}) => a.agent === 'art').last.thread).not.toBe(id);
     expect((await page(tok.sam, 'GET', `/comms/${id}`)).status).toBe(403);
     expect(JSON.stringify((await page(tok.jonathan, 'GET', `/comms/${parent.id}`)).body.messages)).toContain(id.replace(/^th:/, ''));
     const post = { op: 'post', agent: 'art', place: id, text: 'ok', run: 'run-0123456789ab', ref: 'spawn-run-0123456789ab' };
@@ -1384,6 +1390,8 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     await page(tok.jonathan, 'POST', `/comms/${id}/send`, { id: mid(n++), text: 'Try yes instead' });
     await settled(id);
     expect(deliveries().at(-1)).toMatchObject({ venue: 'spawn', place: 'sp-test', from: { kind: 'person', slug: 'jonathan' }, text: 'Try yes instead' });
+    expect((await page(tok.jonathan, 'GET', '/comms')).body.threads.map((t: Thread) => t.id)).toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
   });
 
 

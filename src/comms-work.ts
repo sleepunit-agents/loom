@@ -108,7 +108,7 @@ export async function backfillRefs(h: Household, env: NodeJS.ProcessEnv, now: Da
   if (existsSync(join(h.home, COMMS_DB))) {
     const seen = new Set<string>();
     for (const m of h.members) {
-      for (const t of [...threadsOf(h, m), ...threadsOf(h, m, { archived: true })]) {
+      for (const t of [...threadsOf(h, m, { background: 'include' }), ...threadsOf(h, m, { archived: true, background: 'include' })]) {
         if (seen.has(t.id)) continue;
         seen.add(t.id);
         for (let after = 0; ;) {

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep runtime job threads in Comms' Background work until their owner writes in them,
+  exclude them from personal unread counts and notifications, and attribute agent job briefs correctly.
+
+
 ### Fixed
 
 - **A device's notifications stopped without anyone turning them off** (t-1978). A subscription was kept under the
