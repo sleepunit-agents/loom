@@ -350,6 +350,7 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     PRIMARY KEY (thread, seq)
   );
   CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
+  CREATE INDEX IF NOT EXISTS comms_reply_ref ON comms_messages (id) WHERE kind = 'reply';
   CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);
   CREATE TABLE IF NOT EXISTS comms_asks (
     thread      TEXT NOT NULL,
@@ -636,18 +637,37 @@ const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
 export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
 
-function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending' }, now: Date): number {
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
+  let inserted = false;
   const seq = withMessages(home, (db) => db.transaction(() => {
+    // Check under the same writer transaction as insertion: two listeners must
+    // never both accept one stable report. Hash binds the complete payload.
+    if (m.deduplicate) {
+      const prior = continuationReceipt(db, m.id, m.hash!);
+      if (prior !== undefined) return prior;
+    }
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
     db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
       m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
+    inserted = true;
     return seq;
   }).immediate());
   // The work it names, as refs only, beside the thread (comms.md, "The refs index").
-  noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
+  if (inserted) noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
   return seq;
+}
+
+/** A continuation ref is runtime-issued, globally unique, and bound to all post
+ * fields, including destination. Keep its hash beside the encrypted reply, in the
+ * same transaction, so acceptance survives a lost HTTP receipt or process death.
+ */
+function continuationReceipt(db: Database, ref: string, hash: string): number | undefined {
+  const prior = db.prepare("SELECT seq, hash FROM comms_messages WHERE kind = 'reply' AND id = ?").get(ref) as { seq: number; hash: string | null } | undefined;
+  if (!prior) return undefined;
+  if (prior.hash !== hash) return fail('conflict: continuation ref already used for a different payload', 409);
+  return prior.seq;
 }
 
 /** Whether `slug` is one of `agent`'s live projects. */
@@ -1086,6 +1106,17 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   const r = liveThreadAt(h.home, agent, place);
   if (op === 'post') {
     const text = raw.text;
+    const continuation = typeof raw.ref === 'string' && raw.ref.startsWith('continuation-');
+    if (continuation && !/^continuation-[0-9a-f]{64}$/.test(raw.ref as string)) return fail('bad-input: malformed continuation ref');
+    const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
+    const run = typeof raw.run === 'string' ? raw.run : undefined;
+    const hash = continuation ? wordsHash(h.home, JSON.stringify({ agent, place, text, run: run ?? null, on: on ?? null })) : undefined;
+    // Exact retries return the original receipt even if the thread was archived
+    // or encryption is temporarily unavailable after the original acceptance.
+    if (continuation) {
+      const prior = withMessages(h.home, (db) => continuationReceipt(db, raw.ref as string, hash!));
+      if (prior !== undefined) return { ok: true, id: String(prior) };
+    }
     if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s (archived, deleted, or never one)`, permanent: true };
     if (typeof text !== 'string' || text.length < 1) return { ok: false, reason: 'the reply is empty', permanent: true };
     if (text.length > MAX_TEXT) return { ok: false, reason: `the reply is over ${MAX_TEXT} characters`, permanent: true };
@@ -1096,13 +1127,12 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     }
     // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
     // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
-    const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
-    const ref = typeof raw.ref === 'string' && /^spawn-run-[0-9a-f]{12}$/.test(raw.ref) ? raw.ref : undefined;
-    if (ref) {
+    const ref = continuation ? raw.ref as string : typeof raw.ref === 'string' && /^spawn-run-[0-9a-f]{12}$/.test(raw.ref) ? raw.ref : undefined;
+    if (ref && !continuation) {
       const prior = withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'reply' AND id = ?").get(r.id, ref) as { seq: number } | undefined);
       if (prior) return { ok: true, id: String(prior.seq) };
     }
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(continuation ? { hash, deduplicate: true } : {}), ...(run ? { run } : {}), ...(on ? { card: { on } } : {}) }, now);
     settleStarts(h.home, r.id);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };

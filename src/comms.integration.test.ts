@@ -4,7 +4,7 @@
  * age).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn as spawnChild, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -1360,6 +1360,69 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       expect(e.text).not.toMatch(/^\d{3}$/);
     });
   });
+  it('runtime continuation receipts survive retries and bind the entire payload behind runtime auth', async () => {
+    mode('ok');
+    const t = await open();
+    const other = await open();
+    const q = { op: 'post', agent: 'art', place: t.id, text: 'Continuation finished', run: 'run-0123456789ab', on: 'Codex', ref: `continuation-${'a'.repeat(64)}` };
+    // Neither an agent, owner-member, nor unrelated piece can use this adapter.
+    const pieceToken = createToken(h, { role: { kind: 'piece', piece: 'runtime', subject: 'x' }, label: 'continuation-negative' }).token;
+    for (const token of [tok.art, tok.jonathan, pieceToken]) {
+      expect((await api(token, 'comms/adapter', q)).status).toBe(403);
+    }
+    const first = await api(tok.runtime, 'comms/adapter', q);
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ ok: true, id: expect.any(String) });
+    const retries = await Promise.all(Array.from({ length: 4 }, () => api(tok.runtime, 'comms/adapter', q)));
+    for (const retry of retries) expect(retry).toEqual(first);
+    for (const change of [{ text: 'changed' }, { place: other.id }, { agent: 'mark' }, { run: 'run-ffffffffffff' }, { on: 'Claude' }]) {
+      expect((await api(tok.runtime, 'comms/adapter', { ...q, ...change })).status).toBe(409);
+    }
+    expect((await api(tok.runtime, 'comms/adapter', { ...q, ref: 'continuation-forged' })).status).toBe(400);
+    const messages = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ text: string }>;
+    expect(messages.filter(m => m.text === q.text)).toHaveLength(1);
+    // First submissions racing across requests also yield one row and one receipt.
+    const race = { ...q, ref: `continuation-${'b'.repeat(64)}`, text: 'Concurrent first submission' };
+    const answers = await Promise.all(Array.from({ length: 4 }, () => api(tok.runtime, 'comms/adapter', race)));
+    for (const answer of answers) expect(answer).toEqual(answers[0]);
+    const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true });
+    try { expect(db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE id = ?").get(race.ref)).toEqual({ n: 1 }); } finally { db.close(); }
+  }, 20000);
+  it('retries one continuation after killing the core writer after commit and before its reply', async () => {
+    mode('ok');
+    const t = await open();
+    const q = { op: 'post', agent: 'art', place: t.id, text: 'Durable acceptance before SIGKILL', ref: `continuation-${'c'.repeat(64)}` };
+    // Execute the actual core adapter/database in another process. Its caller
+    // receives no receipt: the worker stops at the post-commit boundary.
+    const worker = spawnChild(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
+      import { adapterCall } from './src/comms.ts';
+      import { loadHousehold } from './src/household.ts';
+      adapterCall(loadHousehold(process.env.LOOM_HOME), process.env, JSON.parse(process.env.CONTINUATION_TEST_POST));
+      process.stdout.write('committed\\n');
+      setInterval(() => {}, 1000);
+    `], { cwd: process.cwd(), env: { ...process.env, CONTINUATION_TEST_POST: JSON.stringify(q) }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    worker.stderr.on('data', b => { stderr += b; });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const deadline = setTimeout(() => reject(new Error(`writer never committed: ${stderr}`)), 15000);
+        worker.stdout.once('data', () => { clearTimeout(deadline); resolve(); });
+        worker.once('exit', code => { clearTimeout(deadline); reject(new Error(`writer exited ${code}: ${stderr}`)); });
+      });
+      const ended = new Promise<void>(resolve => worker.once('exit', (_code, signal) => { expect(signal).toBe('SIGKILL'); resolve(); }));
+      worker.kill('SIGKILL');
+      await ended;
+      // A different core process (the HTTP listener) reopens the database and
+      // recovers the original sequence, without any in-memory receipt cache.
+      const first = await api(tok.runtime, 'comms/adapter', q);
+      expect(first.status).toBe(200);
+      expect(await api(tok.runtime, 'comms/adapter', q)).toEqual(first);
+      const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true });
+      try {
+        expect(db.prepare("SELECT seq, COUNT(*) AS n FROM comms_messages WHERE id = ?").get(q.ref)).toEqual({ seq: Number(first.body.id), n: 1 });
+      } finally { db.close(); }
+    } finally { worker.kill('SIGKILL'); }
+  }, 25000);
   it('runtime spawns appear as their own Comms thread, return reports once, and owner steering reaches the same conversation', async () => {
     mode('ok');
     const parent = await open();
