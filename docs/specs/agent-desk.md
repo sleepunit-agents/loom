@@ -57,11 +57,16 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
   buttons. An approval, or buttons with lines of their own ("If you allow…"), are read whole before they're pressed
   (views.tsx ApprovalBox's rule), so those open in the Inbox, picked. Buttons wait until loom says, now, the ask is
   still open (ask-open.ts), and it's asked again right before a send. With nothing: "All clear."
-- **Big cards**: 1 across, 2, 3, then 2+2, 3+2, 3+3; more scroll in threes. The face is a whole-number scale of the
-  sprite chosen by the card's own box (96, 192 or 288 px). The face opens the agent's window; the composer starts a
-  thread (POST /comms/new) and opens it in Comms.
-- **Filling the card over time** (the owner wants the spare room used): a big card is `BIG_ROWS` (a label and a line
-  each) and `BIG_SECTIONS` (blocks the card's width) in desk-agents.tsx. A new fact is one entry there.
+- **Big cards**: 1 across, 2, 3, then 2+2, 3+2, 3+3; more scroll in threes. The face stays at a whole-number
+  sprite scale (96 or 192 px), beside the name and status words, with no separate status dot. It opens the agent's
+  window; the composer starts a thread (POST /comms/new) and opens it in Comms.
+- **Full questions first** (Jonathan agreed to the review mockup on November 9): the first question for this agent
+  uses the Inbox reader, including why, both consequences, the approval's own authority words, buttons and answer
+  receipt. Every send still checks `/inbox/open`; offline and stale questions cannot send.
+- **Use the room**: under the question, two columns show current work, the recent conversation and unread replies,
+  the next wake reported by the Clock, and the last three steps from the tape. Narrow cards stack these columns.
+  Empty sections say what is missing; nothing is invented. Full text wraps; a desktop card scrolls inside its box
+  while the phone card grows with its content. The composer stays after the content.
 
 ## Work
 

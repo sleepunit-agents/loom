@@ -1,0 +1,17 @@
+.loom-people[data-mode="three"] { grid-template-columns: 190px minmax(240px,300px) minmax(0,1fr); }
+.loom-people__letter { margin:0; padding:8px 16px; font:12px var(--loom-font-data); color:var(--v-text-3); background:var(--v-beige-2); }
+.loom-people__row { display:flex; gap:12px; padding:14px; align-items:center; }
+.loom-people__avatar { display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:8px; background:var(--sp-current); font-weight:600; }
+.loom-people__meta { display:block; font-size:12px; color:var(--v-text-3); overflow-wrap:anywhere; }
+.loom-people__detail { padding:24px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; min-width:0; }
+.loom-people__detail>section { min-width:0; overflow-wrap:anywhere; }
+.loom-people__detail>section[data-section="profile"] { grid-column:1/-1; }
+.loom-people__detail h2 { margin-bottom:12px; font-size:13px; text-transform:uppercase; letter-spacing:.1em; color:var(--v-text-3); }
+.loom-people:not([data-mode="three"]) .loom-people__detail { grid-template-columns:minmax(0,1fr); padding:16px; }
+.loom-people__row:focus-visible { outline:2px solid var(--v-blue); outline-offset:-2px; }
+/* A contact header, not a full-width showcase cover: leave room for their details. */
+.loom-people__detail .loom-profile__cover { height:58px; }
+.loom-people__detail .loom-profile__shape { display:none; }
+.loom-people__detail .loom-profile__cover + div { padding:12px 18px 18px; gap:12px; }
+.loom-people__detail .loom-profile__cover + div > div:first-child { margin-top:-32px; flex-wrap:wrap; }
+.loom-people__detail .loom-profile__avatar { width:72px; height:72px; }

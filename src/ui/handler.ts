@@ -69,7 +69,7 @@ import { activityView } from './activity.js';
 import { tapeRows, whereLabel, type TapeEntry } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
-import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPeopleApp, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
@@ -967,7 +967,8 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
     const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
-    const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
+    const recentSteps = tapeRows(agentDir(h, a), 72, nowMs).slice(0, 3);
+    const last = recentSteps[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
     if (last) readings.push({ label: 'Last seen', value: agoText(last.created, nowMs), detail: whereLabel(last.where), source: agentSource(a), page: '' });
@@ -982,7 +983,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
-    return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
+    return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -2021,6 +2022,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead, extra?: Record<string, unknown>) =>
       { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
         return view('page', { page, ctx, chrome: ch, head, ...extra }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
+    const contacts = (slug?: string) => {
+      const data = householdPeopleApp(hh, query, slug, { projects: !opts.ownerScope });
+      const m = who?.member;
+      const conversations = m && data.selected ? threadsOf(hh, m).filter((t) => t.agent === data.selected || t.member === data.selected).slice(0, 5)
+        .map((t) => ({ title: t.title ?? 'New thread', href: threadPath(t.id) })) : [];
+      const permissions = opts.ownerScope ? undefined : permissionsOf(opts.env).permissions;
+      return { ...data, conversations, ...(permissions ? { permissions: permissions + (data.selected && hh.agents.includes(data.selected) ? `/${data.selected}` : '') } : {}) };
+    };
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
@@ -2121,7 +2130,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         : 'Facts about the world, shared by every agent in the household.';
       return view('knowledge', { knowledge: k, title, intro, add: NEW_FACT_LINK, topic: query.topic ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
     }
-    if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
+    if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'), undefined, { people: contacts() });
     // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
     // not-found page here, never the single-agent route below.
     if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
@@ -2138,7 +2147,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
-      return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
+      return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug, { projects: !opts.ownerScope }) : notFound, 'people', ctxOf(`people/${slug}`), undefined, { people: contacts(slug ?? undefined) });
     }
     if (pathname === '/members') return send200(householdMembers(hh), 'members', ctxOf('members'));
     // A conversation (docs/specs/conversations.md, loom:conversation/<id>): whichever of this viewer's agents has it.

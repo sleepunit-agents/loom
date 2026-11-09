@@ -7,7 +7,7 @@
 // right before one is sent: a copy kept on this device (page.ts, the service worker) may be of an ask answered since.
 // Its own chunk, loaded when it opens.
 import { buzz, HapticLabel, useHaptics } from './haptic';
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useId, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Textarea } from '@/components/ui/textarea';
@@ -157,8 +157,18 @@ function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: strin
 }
 
 /** The open item, whole: who and what, why, what happens either way, the answer, where it lives and its trail. */
-function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; env: Env;
-  onAnswered: (i: InboxItem, said: string) => void; picks: number }) {
+/** The big agent card uses the Inbox's exact reader, including liveness, authority words and guarded sends. */
+export function CardAsk({ i, who }: { i: InboxItem; who: string }) {
+  const env = useEnv();
+  const replyId = useId();
+  const [said, setSaid] = useState<string | null>(null);
+  return said ? <p role="status" className="loom-bigcard__receipt">{said}. Recorded.</p>
+    : <Reader i={i} who={who} mark={env.ctx.agents?.[i.agent ?? '']} tasks={i.source.id === 'tasks' ? i.source : { id: 'tasks', base: '/p/tasks/' }}
+      env={env} onAnswered={(_, text) => setSaid(text)} picks={0} replyId={replyId} compact />;
+}
+
+function Reader({ i, who, mark, tasks, github, env, onAnswered, picks, replyId, compact }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; env: Env;
+  onAnswered: (i: InboxItem, said: string) => void; picks: number; replyId?: string; compact?: boolean }) {
   const p = plain(i, who);
   const from = cap(i.sourceLabel ?? i.source.id);
   // Anything still open with a way to answer it: counted in Needs you or only filed (attention: false), the same.
@@ -215,7 +225,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
           <div className="loom-inbox__answer">
             {i.approval && <ApprovalBox a={i.approval} size="default" />}
             {ans && <AnswerBox a={{ ...ans, say: async (v) => { lastSaid.current = v === 'yes' ? 'You said yes' : 'You said no'; await ans.say(v); },
-              reply: async () => { lastSaid.current = 'You replied'; await ans.reply(); } }} yesNo={yesNo} />}
+              reply: async () => { lastSaid.current = 'You replied'; await ans.reply(); } }} yesNo={yesNo} id={replyId} compact={compact} />}
             {!!i.actions?.length && (
               <As source={i.source}>
                 <div className="loom-split__buttons">
@@ -330,19 +340,12 @@ function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env, check
 
 /** Answer the agent: Yes or No (a yes/no question), or in words, posted as the owner's own message into its
  * conversation. */
-export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
+export function AnswerBox({ a, yesNo, id = 'loom-reply', compact }: { a: Answer; yesNo: boolean; id?: string; compact?: boolean }) {
   const haptics = useHaptics();
   const answer = (v: 'yes' | 'no') => { buzz(haptics, true); void a.say(v); };
-  return (
-    <section className="grid gap-3">
-      {yesNo && (
-        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Your answer">
-          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('yes')}>Yes<HapticLabel on={haptics && !a.busy} /></Button>
-          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('no')}>No<HapticLabel on={haptics && !a.busy} /></Button>
-        </div>
-      )}
-      <label htmlFor="loom-reply" className="text-xs font-semibold uppercase tracking-wide opacity-60">{yesNo ? 'Or answer in your own words' : a.label}</label>
-      <Textarea id="loom-reply" value={a.draft} rows={3} placeholder="What should it know or do?" onChange={(e) => a.setDraft(e.target.value)}
+  const words = <>
+     <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide opacity-60">{yesNo ? 'Or answer in your own words' : a.label}</label>
+      <Textarea id={id} value={a.draft} rows={3} placeholder="What should it know or do?" onChange={(e) => a.setDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void a.reply(); }} />
       <div className="flex items-center justify-end gap-3">
         {a.drafted && !a.busy && <span className="text-sm opacity-70">Not sent yet</span>}
@@ -351,6 +354,18 @@ export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
         <Button variant={yesNo ? 'outline' : 'default'} disabled={a.busy || a.stale || !a.drafted} onClick={() => void a.reply()}
           onMouseDown={(e) => e.preventDefault()}>{a.busy ? 'Sending…' : 'Send'}</Button>
       </div>
+  </>;
+  return (
+    <section className="grid gap-3">
+      {yesNo && (
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Your answer">
+          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('yes')}>Yes<HapticLabel on={haptics && !a.busy} /></Button>
+          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('no')}>No<HapticLabel on={haptics && !a.busy} /></Button>
+        </div>
+      )}
+      {compact && yesNo ? <details className="loom-bigcard__words" open={a.drafted || undefined}>
+        <summary>Answer in your own words</summary><div className="grid gap-3 pt-3">{words}</div>
+      </details> : words}
     </section>
   );
 }

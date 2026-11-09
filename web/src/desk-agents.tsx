@@ -8,7 +8,7 @@
 // thread, unread replies and the first one's line; read state is the member's alone).
 //
 // In the desk's own chunk (tiling/tiles.tsx imports it): a phone never fetches it.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, EnvContext, Nothing, useEnv, type Mark, type MarkState } from './blocks';
 import { guardedEnv, LIVE_SAYS, useAskLive } from './ask-open';
@@ -19,6 +19,7 @@ import { onLive } from './page';
 import { newId } from './comms-id';
 import type { Shell } from './loom';
 import './desk-agents.css';
+const CardAsk = lazy(() => import('./inbox').then((m) => ({ default: m.CardAsk })));
 
 // ---- what loom says about each agent -----------------------------------------------------------------------------
 
@@ -27,7 +28,7 @@ type Doing = { text: string; kind?: string; where?: string; since?: string; href
 type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
-  doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[] };
+  doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[] };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 /** The member's own Comms, per agent (src/comms.ts agentsComms). */
 export type AgentComms = { agent: string; unread: number; first?: { thread: string; text: string | null };
@@ -70,6 +71,8 @@ export type DeskAgent = {
   open: string;
   /** in a conversation now (the runtime's `talk`) */
   talking: boolean;
+  work: Doing[];
+  steps: { text: string; at: string; where: string }[];
 };
 
 /** How an agent is, in a word (precedence: trouble, an ask, work, unavailable, quiet). */
@@ -101,7 +104,7 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
       id: s.id, label: s.label, mark: s as unknown as Mark, color: markColor(s.bg), status: { word: st.word, tone: st.tone }, face: st.face, now: nowLine,
       ...(next ? { wake: [next.value, next.detail].filter(Boolean).join(' · ') } : {}),
       ...(last ? { last } : {}), unread: k?.unread ?? 0, ...(first ? { first } : {}), asks, ...(ask ? { ask } : {}),
-      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'),
+      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'), work: doing, steps: c?.steps ?? [],
     };
   });
 }
@@ -231,39 +234,11 @@ export function RailNeeds({ d }: { d: DeskHomeData | null }) {
 
 // ---- the big card -------------------------------------------------------------------------------------------------
 
-/** A row of a big card's facts (a label and one line), or null to leave it out. `tall`: only when the card has room. */
-export type BigRow = { id: string; label: string; tall?: boolean; draw: (a: DeskAgent) => React.ReactNode | null };
-/** A section under the facts, the card's width (an ask, what's unread): null to leave it out. */
-export type BigSection = { id: string; draw: (a: DeskAgent, go: (href: string) => void) => React.ReactNode | null };
-
 /** A link inside a card: its own page in a tile (the desk's go), and a real link for a new tab. */
 function Go({ href, className, children, label }: { href: string; className?: string; children: React.ReactNode; label?: string }) {
   const { go } = useEnv();
   return <a href={href} className={className} aria-label={label} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); go(href); }}>{children}</a>;
 }
-
-/**
- * The big card's facts, in order. The owner wants the card's spare room filled over time (2026-11-07): a new fact is a
- * row here, a new block a section below; the card lays them out and gives each its own line.
- */
-export const BIG_ROWS: BigRow[] = [
-  { id: 'now', label: 'now', draw: (a) => (a.now.href ? <Go href={a.now.href} className="loom-bigcard__link">{a.now.text}</Go> : a.now.text) },
-  { id: 'last', label: 'last thread', draw: (a) => (a.last ? <Go href={a.last.href} className="loom-bigcard__link">{a.last.title}<span className="loom-bigcard__at"> · {a.last.at}</span></Go> : null) },
-  { id: 'wake', label: 'next wake', tall: true, draw: (a) => a.wake ?? null },
-];
-export const BIG_SECTIONS: BigSection[] = [
-  { id: 'ask', draw: (a, go) => (a.ask ? (
-    <button type="button" className="loom-bigcard__strip" data-kind="ask" onClick={() => go(needHref(a.ask!))}>
-      <b className="loom-data">ASKS</b><span>{plain(a.ask, a.label).title}</span></button>
-  ) : null) },
-  { id: 'unread', draw: (a, go) => (a.unread ? (
-    <button type="button" className="loom-bigcard__strip" data-kind="unread" onClick={() => go(a.open)}>
-      <b className="loom-data">{a.unread} new</b><span>{a.first?.text ? `‘${a.first.text}’` : 'Open the thread to read it'}</span></button>
-  ) : a.ask ? null : <span className="loom-bigcard__strip" data-kind="none">No new messages</span>) },
-];
-
-/** The face's size for a card this big: whole-number scales of the 96 px sprite only (3x, 2x, 1x). */
-const faceFor = (w: number, h: number) => (w >= 720 && h >= 540 ? 288 : w <= 440 || h <= 300 ? 96 : 192);
 
 /** What each agent's composer holds, and its message id, kept while you move between Home and the apps: the id stays
  * with the draft until the send succeeds (comms.md, as Comms' own New thread keeps it), so a send tried again is the
@@ -301,43 +276,43 @@ function Composer({ a }: { a: DeskAgent }) {
   );
 }
 
-/** An agent, big (Home): its face as big as the card allows, how it is, its facts, its ask and what's new, a composer. */
-export function BigCard({ a, flow }: { a: DeskAgent; /** as tall as it needs (a phone's column), not a box the desktop sets */ flow?: boolean }) {
-  const env = useEnv();
-  const box = useRef<HTMLElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const fit = () => { const r = el.getBoundingClientRect(); setSize((s) => (Math.abs(s.w - r.width) < 1 && Math.abs(s.h - r.height) < 1 ? s : { w: r.width, h: r.height })); };
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const face = faceFor(size.w, size.h);
-  const tall = flow || size.h === 0 || size.h > 360;
-  const rows = BIG_ROWS.filter((r) => tall || !r.tall).map((r) => ({ r, v: r.draw(a) })).filter((x) => x.v !== null);
-  const sections = BIG_SECTIONS.map((s) => ({ s, v: s.draw(a, env.go) })).filter((x) => x.v !== null);
+/** The agreed large card: identity, the full question, then work and wakes. It scrolls inside its desktop box. */
+export function BigCard({ a, flow }: { a: DeskAgent; flow?: boolean }) {
+  const face = 96;
   return (
-    <article ref={box} className="loom-bigcard" data-tone={a.status.tone} data-size={face} style={{ '--c': a.color } as React.CSSProperties} aria-label={a.label} data-agent={a.id}>
+    <article className="loom-bigcard" data-tone={a.status.tone} data-size={face} data-flow={flow || undefined} style={{ '--c': a.color } as React.CSSProperties} aria-label={a.label} data-agent={a.id}>
       <div className="loom-bigcard__in">
-        <Go href={`/a/${a.id}`} className="loom-bigcard__face" label={`Open ${a.label}’s window`}>
-          <AgentAvatar a={a.mark} size={face} state={a.face} />
-          <span className="loom-bigcard__st" aria-hidden />
-        </Go>
-        <div className="loom-bigcard__info">
-          <span className="loom-bigcard__eb loom-data">{a.status.word}</span>
-          <h2 className="loom-bigcard__name">{a.label}{a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}</h2>
-          <dl className="loom-bigcard__kv">{rows.map(({ r, v }) => (
-            <div key={r.id} data-row={r.id} data-tone={r.id === 'now' ? a.now.tone : undefined}><dt className="loom-data">{r.label}</dt><dd>{v}</dd></div>
-          ))}</dl>
-          {sections.map(({ s, v }) => <div key={s.id} className="loom-bigcard__sec" data-sec={s.id}>{v}</div>)}
+        <header className="loom-bigcard__identity">
+          <Go href={`/a/${a.id}`} className="loom-bigcard__face" label={`Open ${a.label}’s window`}><AgentAvatar a={a.mark} size={face} state={a.face} /></Go>
+          <div className="loom-bigcard__info"><span className="loom-bigcard__eb loom-data">{a.status.word}</span>
+            <h2 className="loom-bigcard__name">{a.label}{a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}</h2>
+            <Go href={a.open} className="loom-bigcard__link">Open conversation →</Go>
+          </div>
+        </header>
+        {a.ask && <section className="loom-bigcard__question" data-kind="ask" aria-label="Needs your answer">
+          <h3>Needs your answer</h3><Suspense fallback={<p>{plain(a.ask, a.label).title}</p>}><CardAsk key={a.ask.key} i={a.ask} who={a.label} /></Suspense>
+        </section>}
+        <div className="loom-bigcard__columns">
+          <div><section aria-label="Current work"><h3>Current work</h3><dl className="loom-bigcard__kv">
+            <div data-row="now" data-tone={a.now.tone}><dt>Now</dt><dd>{a.now.href ? <Go href={a.now.href}>{a.now.text}</Go> : a.now.text}</dd></div>
+          </dl>{(a.now.tone ? a.work : a.work.slice(1)).map((w, n) => <p key={n} className="loom-bigcard__item">{w.href ? <Go href={w.href}>{w.text}</Go> : w.text}{w.where && <small>{w.where}</small>}</p>)}</section>
+          <section aria-label="Recent conversations"><h3>Recent conversations</h3><dl className="loom-bigcard__kv"><div data-row="last"><dt>Last thread</dt><dd>{a.last ? <Go href={a.last.href}>{a.last.title}<span className="loom-bigcard__at"> · {a.last.at}</span></Go> : 'No conversations yet.'}</dd></div></dl>
+            <Unread a={a} />
+          </section></div>
+          <div><section aria-label="Next wakes"><h3>Next wake</h3><dl className="loom-bigcard__kv"><div data-row="wake"><dt>Next wake</dt><dd>{a.wake ?? 'No scheduled wake reported.'}</dd></div></dl></section>
+          <section aria-label="Last steps"><h3>Last steps</h3>{a.steps.length ? a.steps.map((s, n) => <p key={n} className="loom-bigcard__item">{s.text}<small>{when(s.at)} · {s.where}</small></p>) : <p className="loom-bigcard__empty">No recent steps.</p>}</section></div>
         </div>
         <Composer a={a} />
       </div>
     </article>
   );
+}
+
+function Unread({ a }: { a: DeskAgent }) {
+  const { go } = useEnv();
+  return a.unread ? <button type="button" className="loom-bigcard__strip" data-kind="unread" onClick={() => go(a.open)}>
+    <b className="loom-data">{a.unread} new</b><span>{a.first?.text ? `‘${a.first.text}’` : 'Open the thread to read it'}</span></button>
+    : a.ask ? null : <span className="loom-bigcard__strip" data-kind="none">No new messages</span>;
 }
 
 /** Home: Needs you, then the agents, big. A household with none says how to make the first. */

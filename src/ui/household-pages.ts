@@ -12,6 +12,7 @@
  * page here may show every agent's relationship: an agent's own tools never
  * can.
  */
+import { listProjects } from '../tools/project.js';
 import { listProposals } from '../backends/proposals.js';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -299,6 +300,23 @@ export function householdPeople(h: Household, query: Record<string, string | und
   }
 }
 
+/** The contacts app shares the directory and person page with the classic view. No private agent memories are added. */
+export function householdPeopleApp(h: Household, query: Record<string, string | undefined> = {}, slug?: string, opts: { projects?: boolean } = {}) {
+  const page = householdPeople(h);
+  const list = page.sections.flatMap((s) => s.blocks).find((b) => b.type === 'list');
+  const dir = directory(h);
+  try {
+    const rows = list?.type === 'list' ? list.items.map((i) => {
+      const slug = i.page?.replace(/^loom:people\//, '') ?? '';
+      return { slug, name: i.text, meta: i.meta, badge: i.badge,
+        kind: dir && kindOf(dir.getRow(slug)?.card ?? { how: {} }) === 'agent' ? 'agent' : 'person' };
+    }).filter((i) => i.slug) : [];
+    const selected = slug ?? query.p;
+    return { rows, q: query.q ?? '', kind: query.kind ?? '',
+      ...(selected && /^[a-z0-9][a-z0-9-]*$/.test(selected) ? { selected, open: householdPerson(h, selected, opts) } : {}) };
+  } finally { dir?.close(); }
+}
+
 /** The start of a text, cut at a sentence (or a word) near n characters. */
 function gist(text: string, n: number): string {
   const one = text.replace(/\s+/g, ' ').trim();
@@ -308,7 +326,7 @@ function gist(text: string, n: number): string {
   return end > n / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
-export function householdPerson(h: Household, slug: string, opts: CoreOptions = {}): Page {
+export function householdPerson(h: Household, slug: string, opts: CoreOptions & { projects?: boolean } = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
   const dir = directory(h);
@@ -368,6 +386,11 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
       ...placed,
       ...facts.map(([k, v]) => ({ label: k, value: value(v) })),
     ] }] });
+    const projects = opts.projects === false ? [] : h.agents.flatMap((a) => {
+      try { return listProjects(agentDir(h, a)).filter((p) => own && a === slug || [p.slug, ...(p.links.aliases ?? [])].some((name) => Object.hasOwn(d.card.where, name.replace(/-/g, '_')) || Object.hasOwn(rels.get(a)?.row.card.where ?? {}, name.replace(/-/g, '_'))))
+        .map((p) => ({ text: p.name, meta: p.status, page: `loom:projects/${a}/${p.slug}` })); } catch { return []; }
+    });
+    if (opts.projects !== false) sections.push({ id: 'projects', title: 'Projects', blocks: projects.length ? [{ type: 'list', items: projects }] : [{ type: 'text', text: 'No linked projects.', tone: 'muted' }] });
     return { title: d.card.name, sections };
   } finally {
     dir.close();
