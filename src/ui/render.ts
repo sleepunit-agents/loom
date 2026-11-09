@@ -63,7 +63,8 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
+export interface TickerActivity { action: string; where?: string; observedAt: string; expiresAt: string; href?: string }
+export interface AgentView { activity?: TickerActivity; activityUnavailable?: boolean; id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
 
 export interface Shell {
   owner: string;

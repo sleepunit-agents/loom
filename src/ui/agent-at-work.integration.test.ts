@@ -132,7 +132,7 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
     await new Promise((res) => setTimeout(res, 1500));
     try {
       // The runtime: a body at work in the thread (its manifest names the conversation, never the title).
-      manifest([{ text: 'In a Comms thread', kind: 'talk', where: 'Comms', conversation: thread.conversation, since: new Date().toISOString() }]);
+      manifest([{ text: 'In a Comms thread', kind: 'talk', where: 'Comms', conversation: thread.conversation, since: new Date().toISOString(), activity: { action: 'Running a command', observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } }]);
       const heard = app.next();
       await changed();
       expect(await heard).toBeLessThan(5000);
@@ -147,6 +147,8 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
       const other = await card(tok.sam, 'mark');
       expect(other).toMatchObject({ state: 'available', doing: [] });
       expect(JSON.stringify(await get(tok.sam, '/'))).not.toContain('Plan the garden');
+      expect(JSON.stringify(await get(tok.sam, '/'))).not.toContain('Running a command');
+      expect((await get(tok.jonathan, '/')).chrome.shell.agents.find((a: any) => a.id === 'mark').activity.action).toBe('Running a command');
 
       // Its turn over: the runtime says nothing at work, and the card is quiet again within seconds.
       manifest(null);
