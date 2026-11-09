@@ -1,1 +1,3 @@
 Disposable nav-bench household and real Chromium evidence for t-1927. Baseline f5a1c383; implementation 69b279d. Comms morphs enabled on both comparison builds. Main code and reproduction: docs/performance/morph-mount.md on perf/batch-morph-mount. Compressed files are full CDP traces and CPU profiles, not summaries. Fixture final JSON preserves per-run layout/style events. No physical phone evidence.
+
+Exact committed executable69b279d reprofile is morph-nav-exact-head.json and matching trace/CPU files. Reopen39 style passes/19 layouts,442ms style work,1464ms main-thread tasks,40 paths,zero page errors. Timings rose under concurrent regression load; pass counts stay bounded.

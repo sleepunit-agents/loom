@@ -1,0 +1,41 @@
+{
+  "results": [
+    {
+      "row": 2,
+      "reopen": false,
+      "elapsed": 3717.966697,
+      "paths": 40,
+      "style": 45,
+      "layout": 23,
+      "styleMs": 700.571,
+      "layoutMs": 84.95400000000001,
+      "scriptMs": 1254.6029999999998,
+      "taskMs": 3293.0499999999997
+    },
+    {
+      "row": 3,
+      "reopen": false,
+      "elapsed": 2125.7777429999987,
+      "paths": 40,
+      "style": 44,
+      "layout": 23,
+      "styleMs": 757.7929999999999,
+      "layoutMs": 70.72700000000002,
+      "scriptMs": 876.8980000000001,
+      "taskMs": 2233.6710000000003
+    },
+    {
+      "row": 2,
+      "reopen": true,
+      "elapsed": 1449.2979979999982,
+      "paths": 40,
+      "style": 39,
+      "layout": 19,
+      "styleMs": 442.35599999999977,
+      "layoutMs": 49.125,
+      "scriptMs": 681.9860000000002,
+      "taskMs": 1464.3540000000003
+    }
+  ],
+  "errors": []
+}
