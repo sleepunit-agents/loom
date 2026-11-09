@@ -251,6 +251,8 @@ export interface InboxItem {
   reply?: HomeAsk['reply'];
   needs?: NeedsView;
   approval?: ApprovalView;
+  /** Approval dependency, even while its live card is unavailable. Never a conversational Yes/No. */
+  waitsOnApproval?: string;
   /** Exactly what its yes allows (a piece's machine fields: a kind and a target), as small print. */
   fine?: string;
   /** The agent whose request it passes on (HomeAsk's): who asks is them, via `agent`. */

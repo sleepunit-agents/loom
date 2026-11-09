@@ -198,7 +198,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks, replyId, 
   const own = i.page !== undefined && i.page !== '' && !conv;
   const words = (s: string) => bits(s, github).map((b, k) => <Ref key={k} b={b} tasks={tasks} />);
   const ans = useAnswer(i.reply && acts ? i : undefined, () => undefined, guard(env, true), check, sending);
-  const yesNo = n?.answers === 'yes-no' && !(i.approval && acts);
+  const yesNo = n?.answers === 'yes-no' && !i.waitsOnApproval && !(i.approval && acts);
   const ok = live === 'live';
   const trail = trailOf(i, who, p.answer ? [p.answer.verdict, p.answer.by && `by ${p.answer.by}`].filter(Boolean).join(' ') : i.outcome);
   return (

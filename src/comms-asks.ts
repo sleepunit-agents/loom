@@ -86,7 +86,7 @@ export function askRef(it: InboxItem, approvals?: string): { ref: string; approv
 export function wordsOf(it: InboxItem, lead = false): AskWords {
   const n = it.needs;
   const a = it.approval;
-  const permission = !!a || it.kind === 'permission';
+  const permission = !!a || !!it.waitsOnApproval || it.kind === 'permission';
   const why = n?.why ?? (it.meta && it.meta !== it.text ? it.meta : undefined);
   return {
     kind: permission ? 'permission' : 'question', text: it.text,
@@ -130,7 +130,7 @@ export function openView(it: InboxItem, lead: boolean, householdOwner: boolean, 
     return { ...base, ...(d.decide ? { decide: d.decide } : {}), ...(d.rest.length ? { buttons: { list: d.rest, source: it.source } } : {}) };
   }
   return { ...base,
-    ...(it.reply && it.needs?.answers === 'yes-no' && !waits ? { yesNo: true as const } : {}),
+    ...(it.reply && it.needs?.answers === 'yes-no' && !it.waitsOnApproval && !waits ? { yesNo: true as const } : {}),
     ...(it.reply ? { reply: { ...it.reply, source: it.source } } : {}),
     // A piece's own buttons on a card only the household owner may answer: none, for anyone else (a Needs you's Done and
     // Dismiss are the agent's, and stay).
