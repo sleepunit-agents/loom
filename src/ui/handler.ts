@@ -165,7 +165,12 @@ function scopedPathOk(pathname: string): boolean {
  */
 export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member: Member | undefined): PieceInfo[] {
   if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation) || r.jobs?.length))) return pieces;
-  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(h.home, agent, cv); } catch { return undefined; } };
+  const threads = new Map<string, ReturnType<typeof threadOfAgentConversation>>();
+  const threadOf = (agent: string, cv: string) => {
+    const key = `${agent}:${cv}`;
+    if (!threads.has(key)) { try { threads.set(key, threadOfAgentConversation(h.home, agent, cv)); } catch { threads.set(key, undefined); } }
+    return threads.get(key);
+  };
   const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
   return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, {
     ...r, jobs: (r.jobs ?? []).flatMap((j) => {

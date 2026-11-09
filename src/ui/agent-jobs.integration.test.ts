@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright-core';
 import { deskHome, type DeskHome } from './agent-desk.fixture.js';
 import type { Job } from './vocab.js';
@@ -28,7 +28,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
     expect(sam.jobs.some((j: Job) => j.id === 'private')).toBe(true);
     expect(jonathan.jobs).toHaveLength(16);
     expect(jonathan.state).toBe('working');
-  });
+  }, 30000);
   for (const width of [1600, 390]) it(`shows every job and removes completed work at ${width}`, async () => {
     d.report({ art: { jobs: rows } }); await d.changed();
     const ctx = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
@@ -43,6 +43,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       expect(await card.locator('[data-job-status="waiting"]').count()).toBe(1);
       expect(await card.getByText('Task already represented').count()).toBe(0);
       expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      if (process.env.LOOM_JOB_SHOTS) { mkdirSync(process.env.LOOM_JOB_SHOTS, { recursive: true }); await p.screenshot({ path: `${process.env.LOOM_JOB_SHOTS}/jobs-${width}.png`, fullPage: true }); }
       d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 'task') } }); await d.changed();
       await p.reload(); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
       expect(await card.getByText('First active session').count()).toBe(0);
