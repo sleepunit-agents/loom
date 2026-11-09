@@ -47,6 +47,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        # Supported by the pinned installer directly, independent of npm's
+        # deprecated forwarding of custom .npmrc settings. Embeddings use CPU.
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: npm ci
 
       # The household bundle (src/bundle.ts) encrypts with age; its tests run the real thing.
@@ -67,4 +71,19 @@ jobs:
           key: loom-embedding-model-fast-bge-small-en-v1.5-v1
 
       - name: Test
-        run: npm test
+        run: npm test -- --reporter=default --reporter=json --outputFile.json=artifacts/vitest.json
+
+      # Keep exact test names, durations and assertion failures after a red run;
+      # the console alone can be truncated or unavailable in the failed-job view.
+      # Matrix jobs must not race to upload the same artifact name.
+      - name: Keep failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-failure-node-${{ matrix.node-version }}-${{ github.run_attempt }}
+          path: |
+            artifacts/vitest.json
+            ~/.npm/_logs/*-debug-0.log
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
