@@ -690,6 +690,34 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
   });
 
   describe('criterion 9: history', () => {
+    it('finishes a journaled deletion after restart without reopening its target', async () => {
+      const t = await open();
+      const post = { op: 'post', place: t.id, agent: 'art', ref: `continuation-${'d'.repeat(64)}`, text: 'accepted before deletion' };
+      expect((await api(tok.runtime, 'comms/adapter', post)).body).toMatchObject({ ok: true });
+      const threads = new BetterSqlite3(join(h.home, 'household.db'));
+      try {
+        threads.transaction(() => {
+          threads.prepare('INSERT INTO comms_deleted (id, member, agent, channel, at) SELECT id, member, agent, channel, ? FROM comms_threads WHERE id = ?').run(new Date().toISOString(), t.id);
+          threads.prepare('INSERT INTO comms_delete_pending (id) VALUES (?)').run(t.id);
+          threads.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
+        })();
+      } finally { threads.close(); }
+      // A crash can leave ciphertext/receipts, but deletion rejects all posts.
+      expect((await api(tok.runtime, 'comms/adapter', post)).body).toMatchObject({ ok: false, permanent: true });
+      expect((await api(tok.runtime, 'comms/adapter', { ...post, ref: `continuation-${'e'.repeat(64)}` })).body).toMatchObject({ ok: false, permanent: true });
+      sweepComms(loadHousehold(h.home)!);
+      sweepComms(loadHousehold(h.home)!); // Recovery is idempotent.
+      expect((await api(tok.runtime, 'comms/adapter', post)).body).toMatchObject({ ok: false, permanent: true });
+      const words = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true });
+      const recovered = new BetterSqlite3(join(h.home, 'household.db'), { readonly: true });
+      try {
+        expect(words.prepare('SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ?').get(t.id)).toEqual({ n: 0 });
+        expect(words.prepare('SELECT COUNT(*) AS n FROM comms_asks WHERE thread = ?').get(t.id)).toEqual({ n: 0 });
+        expect(recovered.prepare('SELECT id FROM comms_deleted WHERE id = ?').get(t.id)).toEqual({ id: t.id });
+        expect(recovered.prepare('SELECT id FROM comms_delete_pending WHERE id = ?').get(t.id)).toBeUndefined();
+      } finally { words.close(); recovered.close(); }
+    });
+
     it('sweeps words past comms_days, keeps the row, and shows the digests in their place', async () => {
       const t = await open(tok.jonathan, 'art', 'old words');
       const db = new BetterSqlite3(join(h.home, COMMS_DB));

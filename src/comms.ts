@@ -331,7 +331,8 @@ const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
     agent   TEXT NOT NULL,
     channel INTEGER NOT NULL,
     at      TEXT NOT NULL
-  );`;
+  );
+  CREATE TABLE IF NOT EXISTS comms_delete_pending (id TEXT PRIMARY KEY);`;
 
 const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     thread    TEXT NOT NULL,
@@ -878,13 +879,29 @@ export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
 
 /** Delete a thread: its row and every message, words included, at once; a tombstone stays. */
 export function deleteThread(h: Household, t: Thread, now: Date = new Date()): void {
-  withMessages(h.home, (db) => { db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(t.id); db.prepare('DELETE FROM comms_asks WHERE thread = ?').run(t.id); });
+  // Publish revocation before removing the receipt. These stores are separate
+  // SQLite databases: removing words first permits a lost-receipt retry to
+  // recreate a reply if the process dies before the thread tombstone commits.
   withThreadsAt(h.home, (db) => db.transaction(() => {
     db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
+    db.prepare('INSERT OR IGNORE INTO comms_delete_pending (id) VALUES (?)').run(t.id);
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
-  dropRefs(h.home, t.id);
+  finishThreadDeletion(h.home, t.id);
   bump(h.home);
+}
+
+/** Idempotent deletion cleanup, resumed by the startup/minute sweep after a crash.
+ * The tombstone already fences the target. Clear the journal only after both
+ * words and references are gone; an interrupted cleanup remains retryable.
+ */
+function finishThreadDeletion(home: string, id: string): void {
+  withMessages(home, (db) => db.transaction(() => {
+    db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(id);
+    db.prepare('DELETE FROM comms_asks WHERE thread = ?').run(id);
+  }).immediate());
+  dropRefs(home, id);
+  withThreadsAt(home, (db) => db.prepare('DELETE FROM comms_delete_pending WHERE id = ?').run(id));
 }
 
 // ─── Asks kept on their thread (comms.md, "Asks inline") ──────────────────────
@@ -1114,6 +1131,8 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     // Exact retries return the original receipt even if the thread was archived
     // or encryption is temporarily unavailable after the original acceptance.
     if (continuation) {
+      if (withThreadsAt(h.home, (db) => db.prepare('SELECT 1 FROM comms_deleted WHERE id = ?').get(place)))
+        return { ok: false, reason: `${place} is a deleted thread`, permanent: true };
       const prior = withMessages(h.home, (db) => continuationReceipt(db, raw.ref as string, hash!));
       if (prior !== undefined) return { ok: true, id: String(prior) };
     }
@@ -1229,6 +1248,10 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
  * working for BUSY_MS gains its busy line once. Answers how many messages lost their words.
  */
 export function sweepComms(h: Household, now: Date = new Date()): number {
+  if (existsSync(join(h.home, 'household.db'))) {
+    const pending = withThreadsAt(h.home, (db) => db.prepare('SELECT id FROM comms_delete_pending').all() as Array<{ id: string }>);
+    for (const { id } of pending) finishThreadDeletion(h.home, id);
+  }
   const days = h.commsDays ?? COMMS_DAYS_DEFAULT;
   let swept = 0;
   if (existsSync(join(h.home, COMMS_DB))) {
