@@ -149,5 +149,7 @@ export const listening = () => clients.size;
 
 /** A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now. */
 export function piecesMoved(home: string): void {
+  // A producer's new observation also matters when no stream is open to watch the tick file.
+  expirePieceManifests();
   try { writeFileSync(join(home, PIECES_TICK), String(Date.now())); } catch { /* the pieces' own tick finds it */ }
 }

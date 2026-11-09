@@ -25,7 +25,7 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
 
   beforeAll(async () => {
     if (SHOTS) mkdirSync(SHOTS, { recursive: true });
-    d = await deskHome({ art: 'Art E Fish', mark: 'Mark' });
+    d = await deskHome({ art: 'Art E Fish with a very long agent name', mark: 'Mark' });
     d.report({}, { stat: '3 boxes · swap 94%', tone: 'warn' });
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   }, 90_000);
@@ -43,7 +43,7 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
   }
   const centre = (p: Page) => p.locator('.loom-top--one .loom-tick').evaluate((e) => { const r = e.getBoundingClientRect(); return r.left + r.width / 2; });
 
-  for (const look of ['neon', 'lowlight', 'daylight'] as const) for (const [w, h] of [[1280, 800], [1440, 900], [1920, 1080]] as const) {
+  for (const look of ['neon', 'lowlight', 'daylight'] as const) for (const [w, h] of [[1024, 768], [1280, 800], [1440, 900], [1920, 1080]] as const) {
     it(`at ${w}×${h} (${look}): the ticker stands in the middle of the screen, on Home and with a long page name`, async () => {
       const p = await screen(w, h, '/', look);
       expect(Math.abs((await centre(p)) - w / 2)).toBeLessThanOrEqual(1);
@@ -80,6 +80,48 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
     const copy = p.locator('.loom-tick__line[aria-hidden] a');
     expect(await copy.count()).toBeGreaterThan(0);
     expect(await copy.evaluateAll((as) => as.every((a) => a.getAttribute('tabindex') === '-1'))).toBe(true);
+    await p.context().close();
+  });
+
+  for (const width of [1024, 1280]) it(`fresh safe activity, expiry, idle and navigation at ${width}`, async () => {
+    const t = d.thread('jonathan', 'mark', 'Private words never belong in the ticker', 'A long conversation title');
+    const now = Date.now();
+    d.report({ mark: { readings: [], doing: [{ text: 'private raw text', kind: 'talk', where: 'Discord', conversation: t.conversation,
+      activity: { action: 'Running a command', observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 12000).toISOString() } }] } });
+    await d.changed();
+    const p = await screen(width, 800, '/');
+    const line = p.locator('.loom-top--one .loom-tick__line').first();
+    expect(await line.innerText()).toContain('Mark · Running a command · Comms');
+    expect(await line.innerText()).not.toContain('private raw text');
+    expect(await line.innerText()).not.toContain('Private words');
+    expect(await p.locator('.loom-top--one .loom-tick__live').first().isVisible()).toBe(false);
+    expect(await p.locator('.loom-top--one .loom-tick').getAttribute('data-run')).toBeNull();
+    // Its current activity opens the actual authorized conversation.
+    const link = line.locator('a', { hasText: 'Mark · Running' });
+    expect(await link.getAttribute('href')).toContain(t.id.replace(/^th:/, ''));
+    await link.click();
+    await expect.poll(() => p.url()).toContain(t.id.replace(/^th:/, ''));
+    await expect.poll(() => line.innerText(), { timeout: 16000 }).toContain('Mark · Activity unavailable');
+    d.report({ mark: { idle: { observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } } }); await d.changed();
+    await p.reload();
+    await expect.poll(() => line.innerText()).toContain('Mark · Idle');
+    await p.context().close();
+  });
+
+  it('a saved offline shell cannot keep its fresh-looking activity claim', async () => {
+    const t = d.thread('jonathan', 'mark', 'private', 'A conversation');
+    d.report({ mark: { doing: [{ text: 'private', kind: 'talk', conversation: t.conversation,
+      activity: { action: 'Reading a file', observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } }] } });
+    await d.changed();
+    const p = await screen(1280, 800, '/');
+    const line = p.locator('.loom-top--one .loom-tick__line').first();
+    await expect.poll(() => line.innerText()).toContain('Mark · Reading a file');
+    const cached = await (await p.context().request.get(d.base+'/', { headers: {accept:'application/json'} })).json();
+    await p.route(d.base+'/', route => route.request().headers().accept?.includes('application/json')
+      ? route.fulfill({json:cached,headers:{'x-loom-saved-at':new Date().toISOString()}}) : route.continue());
+    await p.evaluate(() => dispatchEvent(new Event('online')));
+    await expect.poll(() => line.innerText()).toContain('Mark · Activity unavailable');
+    expect(await line.innerText()).not.toContain('Mark · Reading a file');
     await p.context().close();
   });
 

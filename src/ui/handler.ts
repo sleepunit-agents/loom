@@ -183,7 +183,7 @@ export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member:
       if (!d.conversation) return [d];
       const t = threadOf(a, d.conversation);
       if (t) return member && t.member === member.person ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
-      if (!member || !owns(member, a) || !h.agents.includes(a)) return [d];
+      if (!member || !owns(member, a) || !h.agents.includes(a)) { const { activity, ...generic } = d; return [generic]; }
       const label = labelOf(a, d.conversation);
       return [{ ...d, ...(label ? { text: d.kind === 'talk' ? `Talking in ${label}` : label } : {}), href: `/a/${a}/conversation/${d.conversation}` }];
     }) }])) } });
@@ -1193,6 +1193,22 @@ function onOf(pieces: PieceInfo[], agent: string): { on?: { text: string; href?:
   return d ? { on: { text: d.text, ...(d.href ? { href: d.href } : {}) } } : {};
 }
 
+/** Only fresh producer observations, after atWorkFor has applied membership. Never job/episode timestamps. */
+export function tickerActivityOf(pieces: PieceInfo[], agent: string, now = Date.now()) {
+  const ds = pieces.flatMap(p => p.manifest.agents?.[agent]?.doing ?? [])
+    .filter(d => d.activity && Date.parse(d.activity.observedAt) <= now && Date.parse(d.activity.expiresAt) > now)
+    .sort((a, b) => Date.parse(b.activity!.observedAt) - Date.parse(a.activity!.observedAt));
+  const d = ds[0];
+  if (!d?.activity) {
+    const idle = pieces.flatMap(p => p.manifest.agents?.[agent]?.idle ? [p.manifest.agents[agent].idle!] : [])
+      .find(i => Date.parse(i.observedAt) <= now && Date.parse(i.expiresAt) > now);
+    return idle ? { activity: { action: 'Idle', ...idle } } : {};
+  }
+  // The venue is a fixed category, never a conversation label or excerpt.
+  const where = d.kind === 'lane' ? 'a wake' : ['Comms', 'Discord', 'Slack', 'Signal'].includes(d.where ?? '') ? d.where : d.kind === 'talk' ? 'a conversation' : 'a session';
+  return { activity: { ...d.activity, where, ...(d.href ? { href: d.href } : {}) } };
+}
+
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
@@ -1242,7 +1258,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
-          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a) })),
+          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a), ...tickerActivityOf(pieces, a), ...(!pieces.some(p => p.piece === 'runtime') || ['unavailable', 'broken'].includes(agentStateOf(pieces, a)) ? { activityUnavailable: true } : {}) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
