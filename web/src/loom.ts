@@ -140,7 +140,10 @@ export async function fetchView(url: string, etag?: string): Promise<{ status: n
   return { status: r.status, data: body, savedAt: r.headers.get('x-loom-saved-at') ?? undefined, etag: r.headers.get('etag') ?? undefined };
 }
 
-export interface ActResult { ok: boolean; message: string; from?: string; keep?: boolean; undo?: Flash['undo']; go?: string }
+export interface ActResult { ok: boolean; message: string; from?: string; keep?: boolean; undo?: Flash['undo']; go?: string; unsure?: true }
+
+/** Sent, but loom's answer couldn't be read (t-1995): it may have gone through, so the caller reads again, never retries blind. */
+export const UNSURE = 'Loom’s answer couldn’t be read, so it isn’t clear whether that went through. Look again before trying it twice.';
 
 /** An action, as loom's page posts it (src/ui/handler.ts: /act/<source> or /a/<agent>/act/<piece>). */
 export async function act(ctx: Ctx, csrf: string, action: string, fields: Record<string, string>, act?: string): Promise<ActResult> {
@@ -151,9 +154,16 @@ export async function act(ctx: Ctx, csrf: string, action: string, fields: Record
   }).catch(() => undefined);
   if (!r) return { ok: false, message: 'Can’t reach loom: nothing was sent. Try again when there’s a connection.' };
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) {
-    return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : 'That didn’t go through: loom had a problem. Try again in a moment.' };
+    if (r.status === 403) return { ok: false, message: 'That form is stale: reload and try again.' };
+    // A 2xx that isn't loom's JSON was answered by something; whether the action ran isn't known.
+    return r.ok ? { ok: false, message: UNSURE, unsure: true } : { ok: false, message: 'That didn’t go through: loom had a problem. Try again in a moment.' };
   }
-  return (await r.json()) as ActResult;
+  // A body that isn't JSON, or isn't an answer ({ok, message}), says nothing either way: never a silent spinner (t-1995).
+  let answer: unknown;
+  try { answer = await r.json(); } catch { return { ok: false, message: UNSURE, unsure: true }; }
+  if (!answer || typeof answer !== 'object' || typeof (answer as { ok?: unknown }).ok !== 'boolean') return { ok: false, message: UNSURE, unsure: true };
+  const res = answer as ActResult;
+  return { ...res, message: typeof res.message === 'string' ? res.message : '' };
 }
 
 function qs(q: Record<string, string>): string {
