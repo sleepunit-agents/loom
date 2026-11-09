@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import { existsSync, mkdirSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright-core';
 import { deskHome, type DeskHome } from './agent-desk.fixture.js';
+import { clearPieceCache } from './pieces.js';
 import type { Job } from './vocab.js';
 const chrome = process.env.LOOM_TEST_CHROME ?? '/usr/bin/google-chrome';
 const root = new URL('../../', import.meta.url).pathname;
@@ -19,7 +20,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
   afterAll(async () => { await browser?.close(); await d?.close(); });
   it('filters another member’s thread and its task labels before returning cards', async () => {
     const thread = d.thread('sam', 'art', 'Secret subject', 'Secret title');
-    d.report({ art: { jobs: [...rows, { id: 'private', status: 'running', conversation: thread.conversation, text: 'Secret task label' }] } }); await d.changed();
+    d.report({ art: { jobs: [...rows, { id: 'private', status: 'running', conversation: thread.conversation, text: 'Secret task label' }] } }); clearPieceCache(); await d.changed();
     const card = async (person: string) => (await (await fetch(d.base + '/', { headers: { accept: 'application/json', authorization: `Bearer ${d.tok[person]}` } })).json()).home.cards[0];
     const jonathan = await card('jonathan'), sam = await card('sam');
     expect(JSON.stringify(jonathan)).not.toContain('Secret');
@@ -30,7 +31,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
     expect(jonathan.state).toBe('working');
   }, 30000);
   for (const width of [1600, 390]) it(`shows every job and removes completed work at ${width}`, async () => {
-    d.report({ art: { jobs: rows } }); await d.changed();
+    d.report({ art: { jobs: rows } }); clearPieceCache(); await d.changed();
     const ctx = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
     await ctx.addInitScript(() => { sessionStorage.setItem('loom-booted', '1'); sessionStorage.setItem('loom-arrived', '1'); });
     const p = await ctx.newPage(); p.setDefaultTimeout(5000);
@@ -44,7 +45,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       expect(await card.getByText('Task already represented').count()).toBe(0);
       expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       if (process.env.LOOM_JOB_SHOTS) { mkdirSync(process.env.LOOM_JOB_SHOTS, { recursive: true }); await p.screenshot({ path: `${process.env.LOOM_JOB_SHOTS}/jobs-${width}.png`, fullPage: true }); }
-      d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 't-1') } }); await d.changed();
+      d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 't-1') } }); clearPieceCache(); await d.changed();
       await p.reload(); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
       expect(await card.getByText('First active session').count()).toBe(0);
       if (width === 1600) {
