@@ -235,12 +235,19 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, compact 
   // before the talking began (t-1925, loom#589's CI).
   useEffect(() => {
     if (!signal || !talk) return;
-    const t = setTimeout(() => {
-      setSignal(false); setTalkNow(talk);
-      // A drawn face has no beats to follow: its run is timed, a beat about 1.5 s and a breath about 0.8 s, then done.
-      if (!sprite) setPhase('talking');
-    }, 250);
-    return () => clearTimeout(t);
+    // Effects can flush before the DOM mutation has painted. Cross a frame boundary before starting
+    // the visible hold, so a busy commit cannot consume the signal's display time.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          setSignal(false); setTalkNow(talk);
+          // A drawn face has no beats to follow: its run is timed, then done.
+          if (!sprite) setPhase('talking');
+        }, 250);
+      });
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
   }, [signal, talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (sprite || !phase || !talkNow) return;
