@@ -83,6 +83,15 @@ function runtimePath(env: NodeJS.ProcessEnv): string | undefined {
   return named.length === 1 ? findPiece(named[0].name, env) ?? undefined : undefined;
 }
 
+/** Proxy an owner's thread preference through the runtime; never trust a client conversation id. */
+async function threadModel(c: CommsContext, t: Thread, member: Member, harness?: unknown): Promise<{ status: number; body: unknown }> {
+  if (harness !== undefined && (typeof harness !== 'string' || !['auto', 'claude', 'codex'].includes(harness))) return { status: 400, body: { error: 'model is auto, claude or codex' } };
+  const p = runtimePath(c.env);
+  if (!p) return { status: 503, body: { error: 'the runtime is unavailable' } };
+  return pieceApi(p, { caller: { kind: 'owner', agents: member.agents, who: member.person }, path: 'model-choice',
+    body: { agent: t.agent, conversation: t.conversation, ...(harness === undefined ? {} : { harness }) } }, c.env);
+}
+
 /** End the thread's body, through the runtime's `deliver end <conversation>` as the household owner. Never waits on it. */
 function endBody(env: NodeJS.ProcessEnv, t: Thread): void {
   const p = runtimePath(env);
@@ -238,6 +247,9 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         openThreadStream(res, c.headers, h.home, { thread: t.id, session: c.session, from, may: () => { const now = c.live(); return !!now && stillSees(now, person, t.id); } });
         return true;
       }
+      if (verb === 'model' && dir === undefined) {
+        const r = await threadModel(c, t, m!); send(r.status, r.body); return true;
+      }
       // Work in this thread (comms.md, "The panel"): live from the pieces, for this member only.
       if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!)), true;
       // The loom things it names, as chips (comms.md, "Chips"): each ref's card, or null where this member can't open it.
@@ -267,6 +279,10 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     const why = c.guard(req, body);
     if (why) return send(403, { error: why }), true;
     switch (verb) {
+      case 'model': {
+        if (typeof body.harness !== 'string') return send(400, { error: 'model is auto, claude or codex' }), true;
+        const r = await threadModel(c, t, m!, body.harness); send(r.status, r.body); return true;
+      }
       case 'send': {
         // Accepted once recorded (t-1881): the delivery goes on in the background, and the thread's live state says
         // what came of it. The same id again is Send again: a message not delivered goes again, once; one on its way
