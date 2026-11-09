@@ -353,6 +353,7 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
   CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
   CREATE INDEX IF NOT EXISTS comms_reply_ref ON comms_messages (id) WHERE kind = 'reply';
   CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);
+  CREATE TABLE IF NOT EXISTS comms_continuation_clock (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), highwater INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS comms_asks (
     thread      TEXT NOT NULL,
     ref         TEXT NOT NULL,
@@ -638,26 +639,48 @@ const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
 export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
 
-function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean }, now: Date): number {
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean; expiresAt?: number }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
   let inserted = false;
-  const seq = withMessages(home, (db) => db.transaction(() => {
+  const result = withMessages(home, (db) => db.transaction(() => {
     // Check under the same writer transaction as insertion: two listeners must
     // never both accept one stable report. Hash binds the complete payload.
     if (m.deduplicate) {
       const prior = continuationReceipt(db, m.id, m.hash!);
-      if (prior !== undefined) return prior;
+      if (prior !== undefined) return { seq: prior };
+      const clock = observeContinuationClock(db);
+      if (clock.rollback) return { problem: 'continuation clock moved backwards' };
+      if (m.expiresAt === undefined || clock.now >= m.expiresAt) return { problem: 'continuation deadline reached' };
     }
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
     db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
       m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
     inserted = true;
-    return seq;
+    return { seq };
   }).immediate());
+  // Refusals leave the highwater committed, including across a restart.
+  if (result.problem) return fail(result.problem, 409);
+  const seq = result.seq!;
   // The work it names, as refs only, beside the thread (comms.md, "The refs index").
   if (inserted) noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
   return seq;
+}
+
+/** Observed only while holding the same message writer lock as acceptance.
+ * A backwards clock holds new acceptance until wall time reaches the persisted mark. */
+function observeContinuationClock(db: Database): { now: number; rollback: boolean } {
+  const now = Date.now();
+  const prior = db.prepare('SELECT highwater FROM comms_continuation_clock WHERE singleton = 1').get() as { highwater: number } | undefined;
+  db.prepare('INSERT INTO comms_continuation_clock VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET highwater = MAX(highwater, excluded.highwater)').run(now);
+  return { now, rollback: prior !== undefined && now < prior.highwater };
+}
+
+function continuationDeadline(value: unknown): number | undefined {
+  if (value === undefined) return undefined; // legacy receipt lookup only
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > 8640000000000000)
+    return fail('bad-input: expiresAt is a positive integer Unix millisecond deadline');
+  return value;
 }
 
 /** A continuation ref is runtime-issued, globally unique, and bound to all post
@@ -959,7 +982,7 @@ function liveThreadAt(home: string, agent: string, place: string): ThreadRow | u
   return r && r.agent === agent && r.archived === null ? r : undefined;
 }
 
-export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true; trace?: ThreadTrace } | { ok: false; reason: string; permanent?: true };
+export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true; trace?: ThreadTrace; state?: 'delivered' | 'not-accepted' | 'unresolved' | 'deleted' } | { ok: false; reason: string; permanent?: true };
 
 /** One message of a thread as a trace shows it (t-1895): where it is and what it was, never its words. */
 export interface TraceMessage {
@@ -1109,7 +1132,7 @@ function spawnThread(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, u
 export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): AdapterAnswer {
   const { op, place, agent } = raw;
   if (op === 'spawn') return spawnThread(h, env, raw, now);
-  if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace') return fail('bad-input: op is post, describe, status or trace');
+  if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace' && op !== 'reconcile') return fail('bad-input: op is post, describe, status, trace or reconcile');
   if (typeof agent !== 'string' || !h.agents.includes(agent)) return fail('bad-input: agent names one of this household\'s agents');
   if (typeof place !== 'string') return fail('bad-input: place is a thread');
   // trace (t-1895): the thread's delivery facts for the runtime's reply trace, read only. An archived thread too (its
@@ -1121,13 +1144,31 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     return { ok: true, trace: traceOf(h.home, t) };
   }
   const r = liveThreadAt(h.home, agent, place);
-  if (op === 'post') {
+  if (op === 'post' || op === 'reconcile') {
     const text = raw.text;
     const continuation = typeof raw.ref === 'string' && raw.ref.startsWith('continuation-');
     if (continuation && !/^continuation-[0-9a-f]{64}$/.test(raw.ref as string)) return fail('bad-input: malformed continuation ref');
     const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
     const run = typeof raw.run === 'string' ? raw.run : undefined;
-    const hash = continuation ? wordsHash(h.home, JSON.stringify({ agent, place, text, run: run ?? null, on: on ?? null })) : undefined;
+    const expiresAt = continuation ? continuationDeadline(raw.expiresAt) : undefined;
+    const hash = continuation ? wordsHash(h.home, JSON.stringify({ agent, place, text, run: run ?? null, on: on ?? null, ...(expiresAt === undefined ? {} : { expiresAt }) })) : undefined;
+    if (op === 'reconcile') {
+      if (!continuation) return fail('bad-input: reconciliation requires a continuation ref');
+      if (withThreadsAt(h.home, (db) => db.prepare('SELECT 1 FROM comms_deleted WHERE id = ?').get(place)))
+        return { ok: true, state: 'deleted' };
+      try {
+        return withMessages(h.home, (db) => db.transaction((): AdapterAnswer => {
+          const clock = observeContinuationClock(db);
+          const prior = continuationReceipt(db, raw.ref as string, hash!);
+          if (prior !== undefined) return { ok: true, state: 'delivered', id: String(prior) };
+          // Legacy has no cutoff: a missing receipt never proves non-acceptance.
+          return { ok: true, state: !clock.rollback && expiresAt !== undefined && clock.now >= expiresAt ? 'not-accepted' : 'unresolved' };
+        }).immediate());
+      } catch (error) {
+        if ((error as { code?: string }).code === 'SQLITE_BUSY') return { ok: true, state: 'unresolved' };
+        throw error;
+      }
+    }
     // Exact retries return the original receipt even if the thread was archived
     // or encryption is temporarily unavailable after the original acceptance.
     if (continuation) {
@@ -1151,7 +1192,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
       const prior = withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'reply' AND id = ?").get(r.id, ref) as { seq: number } | undefined);
       if (prior) return { ok: true, id: String(prior.seq) };
     }
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(continuation ? { hash, deduplicate: true } : {}), ...(run ? { run } : {}), ...(on ? { card: { on } } : {}) }, now);
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(continuation ? { hash, deduplicate: true, expiresAt } : {}), ...(run ? { run } : {}), ...(on ? { card: { on } } : {}) }, now);
     settleStarts(h.home, r.id);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
