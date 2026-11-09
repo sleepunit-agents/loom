@@ -12,7 +12,8 @@ export function agentJobs(rows: CardJob[]): CardJob[] {
     if (!old || rank[j.status] < rank[old.status]) unique.set(key, j);
   }
   const jobs = [...unique.values()];
-  const represented = new Set(jobs.filter((j) => j.status !== 'backlog').flatMap((j) => j.tasks ?? []));
-  return jobs.filter((j) => j.status !== 'backlog' || !(j.tasks ?? []).some((t) => represented.has(t)))
+  const taskOnly = (j: CardJob) => j.tasks?.length === 1 && j.tasks[0] === j.id;
+  const represented = new Set(jobs.filter((j) => !taskOnly(j)).flatMap((j) => j.tasks ?? []));
+  return jobs.filter((j) => !taskOnly(j) || !represented.has(j.id))
     .sort((a, b) => rank[a.status] - rank[b.status] || (Date.parse(a.at ?? '') || 0) - (Date.parse(b.at ?? '') || 0) || a.id.localeCompare(b.id));
 }

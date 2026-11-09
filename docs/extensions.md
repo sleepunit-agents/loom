@@ -933,7 +933,7 @@ Each job has a producer-stable `id`, `text`, and `status`: `running` (observed a
 its producer; `run`, `wake`, `since`, and `at` carry identity and times. Bodies' private labels
 stay out of runtime manifests and core supplies them only after checking visibility.
 
-The Home cards merge all jobs, without the legacy eight-row cap. A task-only backlog row is
+The Home cards merge all jobs, without the legacy eight-row cap. A task-only row (backlog or waiting on its owner) is
 absorbed when a visible non-backlog job explicitly references it. Matching titles or conversation
 provenance never establish work identity; two concurrent runs remain two rows. Producers omit
 completed work on their next manifest. The complete list is on large/phone cards and under

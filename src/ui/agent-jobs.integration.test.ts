@@ -10,7 +10,7 @@ const rows: Job[] = [
   { id: 'run-two', status: 'running', text: 'Second active session' },
   { id: 'wait', status: 'waiting', text: 'Waiting for an answer' },
   { id: 'later', status: 'scheduled', text: 'Tomorrow follow-up', at: '2026-11-10T10:13:00Z' },
-  { id: 'task', status: 'backlog', text: 'Task already represented', tasks: ['t-1'] },
+  { id: 't-1', status: 'backlog', text: 'Task already represented', tasks: ['t-1'] },
   ...Array.from({ length: 12 }, (_, n): Job => ({ id: `task-${n}`, status: 'backlog', text: `Backlog job ${n}` })),
 ];
 describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('complete agent jobs', () => {
@@ -44,7 +44,7 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       expect(await card.getByText('Task already represented').count()).toBe(0);
       expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       if (process.env.LOOM_JOB_SHOTS) { mkdirSync(process.env.LOOM_JOB_SHOTS, { recursive: true }); await p.screenshot({ path: `${process.env.LOOM_JOB_SHOTS}/jobs-${width}.png`, fullPage: true }); }
-      d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 'task') } }); await d.changed();
+      d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 't-1') } }); await d.changed();
       await p.reload(); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
       expect(await card.getByText('First active session').count()).toBe(0);
       if (width === 1600) {
