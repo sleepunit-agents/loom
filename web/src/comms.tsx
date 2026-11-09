@@ -404,6 +404,35 @@ function Composer({ onSend, disabled, accent, placeholder, label, draft }: { onS
 
 // ---- the threads' drawer (t-1925 C) ------------------------------------------------------------
 
+/** The runtime owns preference and quota fallback; the thread supplies only its own choice. */
+function ThreadModelChoice({ thread, csrf }: { thread: string; csrf: string }) {
+  const [choice, setChoice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void getRead<{ threadChoice: string }>(`/comms/${thread}/model`).then((r) => {
+      if (!live) return;
+      if (r.ok && ['auto', 'claude', 'codex'].includes(r.body.threadChoice)) setChoice(r.body.threadChoice);
+      else setError('Model preference is unavailable.');
+    });
+    return () => { live = false; };
+  }, [thread]);
+  const save = async (harness: string) => {
+    setBusy(true); setError(null);
+    const r = await post(`/comms/${thread}/model`, csrf, { harness });
+    if (r.ok && r.body.threadChoice === harness) setChoice(harness);
+    else setError(String(r.body.error ?? 'The model preference was not saved.'));
+    setBusy(false);
+  };
+  return <>
+    {choice !== null && ['auto', 'claude', 'codex'].map((h) => <button key={h} role="menuitemradio" type="button" aria-checked={choice === h} disabled={busy} onClick={() => void save(h)}>
+      Model: {h === 'auto' ? 'Auto' : h === 'claude' ? 'Claude' : 'Codex'}{choice === h ? ' ✓' : ''}
+    </button>)}
+    {error && <span role="alert">{error}</span>}
+  </>;
+}
+
 /** In a box too narrow for two panes, the threads fold out over the thread from a menu button, as chat apps do. */
 type Drawer = { open: boolean; toggle: () => void };
 function DrawerButton({ open, toggle }: Drawer) {
@@ -733,6 +762,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
         {menu && (
           <div className="comms-menu__list" role="menu">
+            <ThreadModelChoice thread={thread.id} csrf={csrf} />
             <button role="menuitem" type="button" onClick={() => void verb(thread.pinned ? 'unpin' : 'pin')}>{thread.pinned ? 'Unpin' : 'Pin'}</button>
             <button role="menuitem" type="button" onClick={() => void verb(thread.archived ? 'unarchive' : 'archive')}>{thread.archived ? 'Unarchive' : 'Archive'}</button>
             <button role="menuitem" type="button" onClick={() => void project()}>Project</button>
