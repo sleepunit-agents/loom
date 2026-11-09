@@ -80,8 +80,8 @@ export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop,
   // One pane: opening an item takes focus into the reader; going back returns it to the row.
   useEffect(() => {
     if (mode !== 'one') return;
-    // A neighbouring tile opening can narrow this app to one pane. That layout change must not
-    // focus its reader and steal the active tile (and address) from the app just opened.
+    // A neighbouring tile can become narrower when another app opens. Its reader
+    // changing panes must not take focus away from the app the person just chose.
     const tile = box.current?.closest('.loom-tile');
     if (tile && !tile.hasAttribute('data-focused')) return;
     if (over) { readerRef.current?.focus({ preventScroll: true }); readerRef.current?.scrollTo?.({ top: 0 }); }
