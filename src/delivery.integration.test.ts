@@ -193,6 +193,23 @@ describe('POST /api/loom/deliver', () => {
       expect(calls().map((c) => c.stdin.source)).toEqual(['clock', 'runtime', 'runtime']);
     });
 
+    it('only authenticated clock carries opaque continuation fields, with payload conflict checking', async () => {
+      const continuation = { handle: `cont-${'a'.repeat(64)}`, wake: 'w-abcdef' };
+      const body = wake('continued', { continuation });
+      expect((await post(tok.w1, body)).status).toBe(403);
+      expect(calls()).toHaveLength(0);
+      expect((await post(tok.clock, body)).status).toBe(200);
+      expect(calls()[0].stdin.continuation).toEqual(continuation);
+      expect(calls()[0].stdin.source).toBe('clock');
+      expect((await post(tok.clock, body)).status).toBe(200);
+      expect(calls()).toHaveLength(1);
+      expect((await post(tok.clock, wake('continued', { continuation: { ...continuation, wake: 'w-123456' } }))).status).toBe(409);
+      for (const bad of [{ ...continuation, target: 'forged' }, { ...continuation, handle: 'bad' }, { ...continuation, wake: 'bad' }]) {
+        expect((await post(tok.clock, wake('invalid', { continuation: bad }))).status).toBe(400);
+      }
+      expect((await post(tok.clock, slackMsg('wrong-venue', { continuation }))).status).toBe(400);
+    });
+
     it('a label-less message is a delivery too', async () => {
       const { label: _l, ...noLabel } = slackMsg('m-nolabel');
       expect((await post(tok.slack, noLabel)).status).toBe(200);
