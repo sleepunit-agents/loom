@@ -161,6 +161,24 @@ place in one venue: who, where, when, and what came of it. Keyed by agent ·
 venue · place. A core record: it outlives the piece that carried it.
 _Avoid_: chat, session (that's a body's run), thread (that's a venue's word), transcript
 
+**Comms**:
+loom's app for talking with your own agents (docs/specs/comms.md): a list of threads, and one thread at a time. Only
+an agent's owners use it; everyone else reaches agents through the bridges.
+_Avoid_: chat app, messenger, console
+
+**Thread** (in Comms):
+One Comms conversation: a place in core's venue `loom`, with an agent, a title and the member who opened it.
+_Avoid_: chat, channel, session (that's a body's run)
+
+**Message** (in Comms):
+One entry in a thread, numbered by `seq`: the member's words, the agent's reply, an activity card, an ask or an error
+line.
+_Avoid_: turn (that's the conversation record's metadata entry), post
+
+**Activity**:
+What a body is doing in a thread's turn, as plain one-line cards ("Ran the tests"): a summary, never a tool's output.
+_Avoid_: log, trace, transcript
+
 **Venue**:
 Where conversations happen, and the adapter that carries them: `discord`,
 `slack`, `session` (an interactive harness), `wake`, `relay`. A venue has a
@@ -229,6 +247,16 @@ _Avoid_: tag (that's the memory field a name matches), key
 A managed piece's contribution to a hub: a command loom runs that returns grouped items for one project.
 _Avoid_: plugin, integration, widget
 
+**Repo selector**:
+A project card's `links.repos` entry, `<forge>:<locator>` (`github:acme/app`; a bare `acme/app` is GitHub's). Core
+checks its syntax and passes it to feeds as `--repo`; a piece reads the repo (docs/specs/changes.md).
+_Avoid_: repo link, remote
+
+**Change**:
+A proposed change to one repo, open for review, on whatever forge hosts it (a pull or merge request). The Changes
+piece lists them; a standing rule in the approvals piece says whether an agent asks before merging one.
+_Avoid_: PR (that's GitHub's word), patch
+
 **Conversation digest**:
 A body run's own summary of its conversation, a core record: see **Digest** under Conversations.
 _Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
@@ -290,6 +318,39 @@ _Avoid_: version, backup, history entry, diff
 A knowledge page that is really a memory (about the human or the work), or
 vice versa; `knowledge_maintain` reports them.
 _Avoid_: miscategorized, wrong bucket, drift
+
+## The desktop
+
+**Tile**:
+One app on a big screen, sharing the screen with others by the tiling rule (docs/specs/desk-tiling.md). It has its own
+page, its own history and its own frame.
+_Avoid_: window (the old single big frame, gone 2026-11-06), pane, panel
+
+**One window at a time**:
+An Accessibility choice: the same tiled desktop with one app tile at most; opening another sends the one there to the
+dock. Kept per person (`oneWindow`).
+_Avoid_: plain mode, single-window mode
+
+**Agent card**:
+An agent on the desktop (docs/specs/agent-desk.md): big on Home (its face, how it is, what it's on, its last thread, its
+next wake, what's unread, its ask, a composer), compact in the rail. The viewer's own agents only, always there,
+alphabetical by name.
+_Avoid_: widget (Home's small tiles, removed 2026-11-07), status card
+
+**Fit**:
+What an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
+it wants the big slot.
+_Avoid_: size hint, constraints
+
+**The big slot**:
+The first app tile, the large one on the left once there are three or more apps.
+
+**Home**:
+The desktop with no app open: the Needs you band, then a big card per agent.
+
+**The rail**:
+The fixed-width column on the right while apps are open: Needs you at the top, then a compact card per agent. Hidden
+to **the strip** (a thin bar that brings it back) or set to auto-hide, by a right-click on it.
 
 ## Relationships
 

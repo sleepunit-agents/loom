@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { SUBCOMMANDS } from './subcommands.js';
 import type { IOStreams } from './io.js';
+import { parseVerb } from './args.js';
 import { aliasTarget, describeSource, managedBinDir, pieceEnvFor, pieceOfPath, readRecord, type GithubSource, type PieceRecord, type PieceSource } from './pieces-managed.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
@@ -159,12 +160,12 @@ export async function runPiece(path: string, args: string[], io: IOStreams): Pro
 
 /** `loom pieces`: what's installed, and installing managed pieces (docs/specs/pieces-install.md). */
 export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<number> {
+  // Every flag checked, and --help answered, before anything is installed, removed or set (t-1950).
+  // The verbs below still read argv positionally; this only refuses what none of them knows.
+  const p = parseVerb(argv, { from: { type: 'string' }, yes: { type: 'boolean' }, purge: { type: 'boolean' } }, PIECES_USAGE, io, { keepJson: true });
+  if (typeof p === 'number') return p;
   const json = argv.includes('--json');
   const rest = argv.filter((a) => a !== '--json');
-  if (rest.includes('--help') || rest.includes('-h')) {
-    io.stdout(PIECES_USAGE);
-    return 0;
-  }
   const m = await import('./pieces-managed.js');
   const [verb, ...args] = rest;
   const out = (value: unknown, text: string) => io.stdout(json ? JSON.stringify(value, null, 2) + '\n' : text);

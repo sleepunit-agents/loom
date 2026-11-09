@@ -34,7 +34,7 @@
  * message is kept in memory under a random id for a minute.
  */
 import { changed, openStream, type Sees } from './live.js';
-import { backupFyi, backupProblem } from '../backup.js';
+import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -45,38 +45,49 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
+import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
+import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
-import { MANIFEST, SW_JS } from './pwa.js';
+import { askKey, needsAskText, publicKey, pushSub, pushTitle, sendTest, watch, type Announce } from './push.js';
+import { MANIFEST, swJs } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
 import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
+import { commsRoute, pageRefused } from './comms-routes.js';
+import { recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
+import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
-import { householdFind, householdSuggestPeople, householdThread } from './household-pages.js';
-import { surfaceOf, tapeRows, whereLabel } from './data.js';
+import { householdFind, householdPersonName, householdSuggestPeople, householdThread } from './household-pages.js';
+import { activityView } from './activity.js';
+import { tapeRows, whereLabel, type TapeEntry } from './data.js';
 import { listProposals } from '../backends/proposals.js';
-import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
+import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
+import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { owns, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
-import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
-import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
+import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
+import { resolveFrom } from '../comms-work.js';
 
 const COOKIE = 'loom_ui';
+/** Knowledge's Add a fact (its reader draws it over the list). */
+const NEW_FACT_LINK = { page: 'loom:new-fact', label: 'Add a fact' };
 const LOGIN_MAX_BYTES = 4096;
 const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
 const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
-const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
+const COOKIE_MAX_AGE_S = SESSION_MAX_AGE_S;
 const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
@@ -111,17 +122,30 @@ export interface UiOptions {
   ownerScope?: string[];
   /** The member signed in, for the account menu (docs/specs/owners.md). */
   viewer?: string;
+  /** The member signed in, whole: Comms is theirs (docs/specs/comms.md), so the dock's Comms key and its count are too. */
+  member?: Member;
+  /** The env owner token's sha256 (hex), when there is one: a passkey made from it says so. */
+  envOwnerDigest?: string;
 }
+
+/** An app's pixel icon (src/icon-set.ts): /pixel-icons/<app>.png, the app as ICON_APP has it. */
+const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\.png$`);
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
-    || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/appearance/prefs'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/inbox/open' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/passkeys/options' || pathname === '/account' || pathname === '/events'
+    || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
+    // The household's pixel icons: an agent owner is a member, and their shell names them as anyone's does.
+    || pathname.startsWith('/pixel-icons/')
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
-    || pathname.startsWith('/conversation/');
+    || pathname.startsWith('/conversation/')
+    // Comms (docs/specs/comms.md): every route checks the member owns the thread's agent itself.
+    || pathname === '/comms' || pathname.startsWith('/comms/')
+    // Notifications on their own device (t-1978): each route acts only on the caller's own subscription.
+    || pathname === '/push/key' || pathname === '/push/subscribe' || pathname === '/push/unsubscribe';
 }
 
 /**
@@ -129,6 +153,30 @@ function scopedPathOk(pathname: string): boolean {
  * each manifest cut to their agents' asks, notices, answered items and readings. An item that
  * names no agent is the household's, and a tile is a household figure, so both go.
  */
+/**
+ * What each agent has going, as this viewer may see it (t-1945). The runtime's rows for a delivered body name only its
+ * venue, kind and conversation (a label can carry who or what it's about); loom puts in what the viewer may see:
+ * - a Comms thread is its member's alone (docs/specs/comms.md, rule 4): for them, the thread's title and a link to it;
+ *   anyone else doesn't see the row at all;
+ * - any other conversation (a bridge's chat, a wake) is its agent's owners' (owners.md): for them, its label and a link
+ *   to its page; anyone else keeps the runtime's plain words ("Working · Slack", "On a wake").
+ * The runtime is the one record of a body at work; this only says which conversation, and to whom.
+ */
+export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member: Member | undefined): PieceInfo[] {
+  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
+  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(h.home, agent, cv); } catch { return undefined; } };
+  const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
+  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, !r.doing ? r : {
+    ...r, doing: r.doing.flatMap((d) => {
+      if (!d.conversation) return [d];
+      const t = threadOf(a, d.conversation);
+      if (t) return member && t.member === member.person ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
+      if (!member || !owns(member, a) || !h.agents.includes(a)) return [d];
+      const label = labelOf(a, d.conversation);
+      return [{ ...d, ...(label ? { text: d.kind === 'talk' ? `Talking in ${label}` : label } : {}), href: `/a/${a}/conversation/${d.conversation}` }];
+    }) }])) } });
+}
+
 function forOwner(pieces: PieceInfo[], own: string[] | undefined): PieceInfo[] {
   if (!own) return pieces;
   const mine = <T extends { agent?: string }>(xs: T[] | undefined) => (xs ?? []).filter((x) => x.agent !== undefined && own.includes(x.agent));
@@ -152,9 +200,16 @@ function readerFor(opts: UiOptions, who: Who): string | undefined {
   return !m || !h || m.person === firstOwner(h).person ? undefined : m.person;
 }
 
-/** A member's passkeys: those whose token is theirs. */
+/** A member's passkeys: those whose token is theirs, whether or not it still works (so a stopped one can be removed). */
 function passkeysOf(opts: UiOptions, m: Member) {
-  return storeFor(opts).passkeys().filter((k) => opts.auth.member?.(Buffer.from(k.secret, 'hex'))?.person === m.person);
+  const h = opts.household?.();
+  return storeFor(opts).passkeys().filter((k) => (opts.auth.member?.(Buffer.from(k.secret, 'hex'))?.person ?? (h ? passkeyPerson(h, k) : undefined)) === m.person);
+}
+
+/** Why a passkey no longer signs anyone in, in the words its row and a refused sign-in use. */
+function passkeyStopped(k: Passkey): string {
+  return k.tokenLabel ? 'it stopped working: its person isn\'t a member any more, or its token was revoked. Add a new one'
+    : 'it stopped working: the token it was added with was revoked. Sign in again and add a new one';
 }
 
 /** The household as an agent owner sees it: their agents only (the default, theirs too). */
@@ -168,6 +223,17 @@ const WEB_DIR = [new URL('../web/', import.meta.url), new URL('../../dist/web/',
   .map((u) => fileURLToPath(u)).find((d) => existsSync(join(d, 'index.html'))) ?? fileURLToPath(new URL('../web/', import.meta.url));
 const WEB_TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+/** The service worker for the app as built (pwa.ts swJs): its files under /app/assets/, read once per start. */
+let worker: string | undefined;
+function workerJs(): string {
+  if (worker === undefined) {
+    let built: string[] = [];
+    try { built = readdirSync(join(WEB_DIR, 'assets')).filter((f) => /\.(js|css|woff2)$/.test(f)).sort().map((f) => `/app/assets/${f}`); } catch { /* no build: nothing kept ahead */ }
+    worker = swJs(built);
+  }
+  return worker;
+}
+
 /** A file of the built app, or null: never outside its folder. */
 function webFile(rel: string): string | null {
   if (!rel || rel.includes('\0')) return null;
@@ -176,13 +242,22 @@ function webFile(rel: string): string | null {
   try { return existsSync(p) && statSync(p).isFile() ? p : null; } catch { return null; }
 }
 
+/** Whose a page's data is, for the service worker (pwa.ts): a hash of the session, never the session. A copy kept under
+ * another tag is another person's, and the worker drops every copy when the tag changes. */
+function whoTag(who: Who): Record<string, string> {
+  return who?.kind === 'session' ? { 'x-loom-who': createHash('sha256').update(`loom-who\0${who.cookie}`).digest('base64url').slice(0, 16) } : {};
+}
+
 /** Whose a live stream is, for its per-browser cap: the session, else the very credential presented (never a bucket two principals share). */
 function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
   if (who.kind === 'session') return `session:${who.cookie}`;
   return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
 }
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+/** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
+const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
+
+const PAGE_ROOTS = ['/app', '/faces', '/pixel-icons', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -249,9 +324,22 @@ function validSession(id: string, opts: UiOptions, nowS = Math.floor(Date.now() 
   const store = storeFor(opts);
   const s = store.get(id);
   if (!s) return false;
-  if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { store.delete(id); return false; }
+  // Past its time (a month; an agent's, hours: t-1936).
+  if (sessionEnded(s, nowS)) { store.delete(id); return false; }
   // A session dies with its token: rotate the token and old sessions stop.
-  return auth.live(s.secret);
+  if (!auth.live(s.secret)) return false;
+  // When it was last used, for the Account page's list (t-1871): at most every few minutes.
+  store.touch(id, nowS);
+  return true;
+}
+
+/**
+ * The sessions this person may see and end (t-1871), as passkeys: a household owner's are every live one; an agent
+ * owner's, their own. Live: unexpired, and its token still good.
+ */
+function sessionsOf(opts: UiOptions, m: Member | undefined, nowS = Math.floor(Date.now() / 1000)): SessionInfo[] {
+  return storeFor(opts).list().filter((s) => !sessionEnded(s, nowS) && opts.auth.live(s.secret)
+    && (!opts.ownerScope || (!!m && opts.auth.member?.(s.secret)?.person === m.person)));
 }
 
 function readCookie(req: IncomingMessage, name: string): string | undefined {
@@ -286,9 +374,100 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
   return { id: Buffer.from(createHash('sha256').update(seed).digest().subarray(0, 16)).toString('base64url'), name: m?.person ?? 'owner', displayName: 'loom' };
 }
 
+/** The asking agent's own wakes (1 to 12, `w-` and 6 hex, ascending, each once: the approvals piece's grammar). */
+const ownWakes = (t: string, agent: string): boolean => {
+  const m = /^([a-z][a-z0-9-]{0,39}):((?:w-[0-9a-f]{6},){0,11}w-[0-9a-f]{6})$/.exec(t);
+  if (!m || m[1] !== agent) return false;
+  const ids = m[2].split(',');
+  return ids.every((x, i) => i === 0 || ids[i - 1] < x);
+};
+
+/**
+ * The approvals the household owner's Allow applies (t-1970 grant; t-1975 vouch-wake and principal-reset: Jonathan,
+ * "It needs to have the site ask me"): each kind's piece and the action core posts it as the owner, the target it may
+ * have (never a confused deputy: a vouch or a reset names only the asking agent's own wakes or conversation, each id
+ * well formed; the clock and the runtime check the same on their side), and what to say when it isn't applied. The
+ * piece spends the approval (allowed, for exactly that target, once) and only then applies it.
+ */
+const OWNER_APPLIED: Record<string, { action: string; piece: (env: NodeJS.ProcessEnv) => string | undefined; target: (t: string, agent: string) => boolean; who: string; none: string; after: string }> = {
+  grant: { action: 'grant-approved', piece: (env) => grantsAuthority(env).piece, target: () => true, who: 'access to a piece is the household owner\'s to give.',
+    none: 'no runtime is installed to apply it.', after: 'You can give it on Permissions.' },
+  'vouch-wake': { action: 'vouch-approved', piece: (env) => pieceWithRole(env, 'clock')?.name, target: ownWakes, who: 'only the household owner says whose work a wake is.',
+    none: 'no clock is installed to apply it.', after: '' },
+  'principal-reset': { action: 'reset-approved', piece: (env) => deliveryPiece(env).piece, target: (t, agent) => { const m = /^([a-z][a-z0-9-]{0,39}):(cv-[0-9a-f]{12})$/.exec(t); return !!m && m[1] === agent; },
+    who: 'only the household owner says whose work a conversation is.', none: 'no runtime is installed to apply it.', after: '' },
+};
+
+/**
+ * The household-owner rule is checked here, by the approvals piece and by the applying piece too: three programs, each
+ * refusing on its own, so no one of them being wrong gives a piece away or makes someone's work the owner's (a
+ * trade-off against one shared helper, t-1970 review).
+ *
+ * After the household owner's Allow on an approval: if it's one of OWNER_APPLIED (a `grant`, its target
+ * `<piece>:<agent>[:<paths>]`; a `vouch-wake`, `<agent>:<w-id>,…`; a `principal-reset`, `<agent>:<cv>`), the piece that
+ * owns it applies it now, as the same owner. Read from the approvals piece itself (its `state`), never from the form:
+ * the id is all the page says. Only the household's owner (every agent's); a member who owns some agents can't (approvals
+ * refuses their Allow too, and the applying piece refuses their call). Any other approval, or one not allowed, leaves
+ * the answer as it was.
+ */
+export async function applyOwnerApproval(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult, hh: Household): Promise<ActResult> {
+  if (!/^a-[0-9a-f]{8}$/.test(id)) return allowed;
+  const a = (await pieceCheckers(env).approvals([id]).catch(() => undefined))?.[id];
+  // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for one
+  // of these would read as done while nothing was applied.
+  if (!a) {
+    // Only for a card that leads (the approvals piece marks those it applies), so a merge's or a relay's Allow isn't made a failure.
+    const src = pieceWithRole(env, 'approvals')?.name;
+    const leadCard = pieces.find((p) => p.piece === src)?.manifest.asks.some((x) => x.lead && x.actions?.some((b) => b.fields?.id === id));
+    // One past the cards loom was shown can't be told apart: never a bare "Allowed" for it either.
+    return leadCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Approvals.` }
+      : { ...allowed, message: `${allowed.message} (loom couldn't read it back: if it gives an agent a piece, check Permissions.)` };
+  }
+  const how = a.kind ? OWNER_APPLIED[a.kind] : undefined;
+  if (!how || !Object.hasOwn(OWNER_APPLIED, a.kind!) || a.state !== 'allowed') return allowed;
+  const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
+  const target = typeof a.target === 'string' ? a.target : '';
+  // Every way it isn't applied says so, and what happens next (his Allow can't be pressed again).
+  const unapplied = (why: string): ActResult => ({ ok: false, message: `${allowed.message} It wasn't applied: ${why}${how.after ? ` ${how.after}` : ''}` });
+  if (!owner) return unapplied(how.who);
+  if (!target || !a.agent) return unapplied('loom couldn\'t read what that approval allows.');
+  if (!how.target(target, a.agent)) return unapplied('that approval names something that isn\'t the asking agent\'s own.');
+  // A reset is for a conversation core has on record as the asking agent's own (a conversation id is that agent's:
+  // its turns are in its store); one core has nowhere, or as another agent's, is never posted.
+  if (a.kind === 'principal-reset') {
+    const cv = target.slice(target.indexOf(':') + 1);
+    let mine: unknown;
+    try { mine = hh.agents.includes(a.agent) ? conversationOf(agentDir(hh, a.agent), cv) : undefined; } catch { mine = undefined; }
+    if (!mine) return unapplied('that conversation is another agent\'s, or loom has no record of it.');
+  }
+  const name = how.piece(env);
+  const info = name ? pieces.find((p) => p.piece === name) : undefined;
+  if (!info) return unapplied(how.none);
+  const r = await pieceAct(info, { action: how.action, path: '', fields: { id, agent: a.agent, target } }, env, caller);
+  return r.ok ? { ...r, page: '' } : unapplied(r.message);
+}
+/** t-1970's name for it, kept for its callers. */
+export const applyGrant = applyOwnerApproval;
+
+/** The household's Permissions page: the grants authority's own (the runtime's `permissions`), when one is installed. */
+function permissionsOf(env: NodeJS.ProcessEnv): { permissions?: string } {
+  const piece = grantsAuthority(env).piece;
+  return piece ? { permissions: `/p/${piece}/permissions` } : {};
+}
+
 /** The caller a piece's page or action is told about: the member, and what they own. */
 function callerOf(who: Who): ApiCaller | undefined {
   return who?.member ? { kind: 'owner', who: who.member.person, agents: who.member.agents } : undefined;
+}
+
+/** A member's Comms threads with an unread reply (the dock key's count); 0 when the store can't say. */
+function commsUnread(h: Household, m: Member): number {
+  try { return threadsOf(h, m).filter((t) => t.unread).length; } catch { return 0; }
+}
+
+/** A GET for the app's page rather than its JSON or a stream (Comms' routes answer JSON; a page load gets the app). */
+function wantsPage(req: IncomingMessage): boolean {
+  return !/application\/json|text\/event-stream/i.test(String(req.headers.accept ?? ''));
 }
 
 /**
@@ -461,6 +640,25 @@ function agentTabOf(p: PieceInfo): { label: string } | undefined {
   return p.manifest.tab?.level === 'agent' ? { label: p.manifest.tab.label } : undefined;
 }
 
+/**
+ * A scoped piece's tile on an agent's Today (t-1925): the piece's word for this agent (its `agents` report: its first
+ * reading's detail, then each reading as a line), not its household summary ("Art: …" on Mark's window), opening the
+ * agent's own tab of it. A first reading named `Next` is a wake to come (docs/extensions.md, "agents"): under it, loom's
+ * own record of the agent's last wake. No report for the agent: the piece's tile, as it gave it.
+ */
+export function agentTile(p: PieceInfo, agent: string, lastWake: TapeEntry | undefined, nowMs: number): HomeTile {
+  const tile = p.manifest.tile!;
+  const source = pieceSource(p.piece);
+  const r = (p.manifest.agents?.[agent]?.readings ?? []).slice(0, 3);
+  if (!r.length) return { ...tile, source };
+  const [first] = r;
+  const lines = r.flatMap((x, n) => (n === 0 && !first.detail ? [] : [`${x.label}: ${x.value}`]));
+  if (first.label === 'Next' && lastWake) lines.push(`Last: ${lastWake.title}, ${agoText(lastWake.created, nowMs)}`);
+  const tone = r.find((x) => x.tone === 'bad')?.tone ?? r.find((x) => x.tone === 'warn')?.tone;
+  return { label: tile.label, value: first.detail ?? first.value, ...(lines.length ? { detail: lines.join('\n') } : {}), ...(tone ? { tone } : {}),
+    page: agentTabOf(p) ? `agent:${agent}` : tile.page ?? '', source };
+}
+
 /** A piece's pages as one agent's: links and actions stay under /a/<agent>/. */
 const agentPieceSource = (agent: string, piece: string): Source => ({ id: piece, base: `/a/${agent}/p/${piece}/`, act: `/a/${agent}/act/${piece}` });
 
@@ -482,6 +680,12 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string; face
   }));
 }
 
+/** The household's pixel icons, for the shell (src/icon-set.ts): none without a set in use. */
+function iconsView(h: Household): { icons?: { v: string; apps: Record<string, { line?: true }> } } {
+  const s = iconSetOf(h);
+  return s ? { icons: { v: s.v, apps: s.apps } } : {};
+}
+
 /** Each agent's name and mark, for drawing marks on rows that name an agent. */
 function agentsOf(h: Household | undefined): Record<string, { label: string; bg: string; fg: string; face: { shape: string; eyes: string } }> | undefined {
   if (!h) return undefined;
@@ -490,6 +694,8 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
 }
 
 const HOME_THREAD = 30;
+/** How many of what needs you a desktop's Home shows whole, to answer where it stands (web/src/desk.tsx). */
+const HOME_STACK = 4;
 
 function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): AgentHead['tabs'] {
   // People are the household's (the nav has them), so an agent's own pages are its day, its mind and how it runs,
@@ -509,9 +715,12 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
+/** Who loom's pushes are from (VAPID's subject): its public address, else a placeholder. */
+const pushSubject = (opts: UiOptions) => (opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost');
+
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
-export async function pushWatch(opts: UiOptions): Promise<number> {
-  const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
+export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
+  const subject = pushSubject(opts);
   const hh = opts.household?.();
   // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
   const ownersOk = new Set((await pieceManifests(opts.env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => pieceSource(p.piece).id));
@@ -522,11 +731,35 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
     if (!m) return false;
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
-  return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
+  return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
     key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), subject, undefined, hears);
+  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined),
+  // A device whose person left the household goes (t-1978); none is the first owner's, who always belongs.
+  (member) => !hh || member === undefined || !!memberOf(hh, member));
 }
+
+/**
+ * Comms replies to push (docs/specs/comms.md, "Notifications"): each thread's newest reply its member hasn't read,
+ * when no app of theirs has had that thread in front in the last 2 minutes. Its words never go: the title says who
+ * replied, the body is the thread's title (or "in a new thread"). Only its member's devices hear it.
+ */
+export function commsAnnouncements(h: Household, now = Date.now()): Announce[] {
+  const out: Announce[] = [];
+  for (const m of h.members) {
+    let threads: ReturnType<typeof threadsOf>;
+    try { threads = threadsOf(h, m); } catch { continue; }
+    for (const t of threads) {
+      if (!t.unread || (t.in_front !== null && now - t.in_front < COMMS_IN_FRONT_MS)) continue;
+      const name = agentName(agentDir(h, t.agent));
+      out.push({ key: `comms-${t.id}-${t.last_reply}`, title: t.title ? `${name} replied` : `${name} replied in a new thread`, body: t.title ?? '',
+        agent: t.agent, open: true, member: m.person, url: threadPath(t.id) });
+    }
+  }
+  return out;
+}
+/** A thread that's been in front this recently (its app's read calls) needs no push. */
+const COMMS_IN_FRONT_MS = 2 * 60_000;
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
 /** The longest drafted memory Home's card quotes whole, and so lets you ratify there. */
@@ -541,12 +774,12 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
     const one = n === 1 ? listProposals(agentDir(h, a)).find((p) => p.status === 'pending') : undefined;
     const said = (one?.content ?? '').replace(/\s+/g, ' ').trim();
     if (one && said && said.length <= CARD_QUOTE) {
-      return { text: `${name} wants to remember something`, meta: `“${said}”`,
+      return { text: `${name} wants to remember something`, meta: `“${said}”`, memory: true,
         page: `loom:a/${a}/mind`, agent: a, source: agentSource(a), sourceLabel: 'Mind', ...(one.created ? { at: one.created } : {}),
         actions: [{ action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(one.id) } },
           { action: 'reject', label: 'Reject', fields: { id: String(one.id) } }] };
     }
-    return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.',
+    return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.', memory: true,
       page: `loom:a/${a}/mind`, label: 'Review', agent: a, source: CORE, sourceLabel: 'Mind' };
   });
 }
@@ -587,12 +820,14 @@ export function conversationAsks(h: Household): HomeAsk[] {
       // (Jonathan, 2026-11-03: "I don't know wtf that wants from me"). A plain string reads as it always did.
       const plain = n && !n.legacy;
       return {
-        kind: 'alert', text: plain ? n.ask : `${name} needs you: ${d.needs_owner}`,
+        kind: 'alert', text: plain ? n.ask : needsAskText(name, d.needs_owner ?? '', true),
         meta: plain ? n.why ?? where : where,
         page: `loom:conversation/${c.id}`, label: 'Open the conversation', agent: a, at: d.at, source: agentSource(a), sourceLabel: 'Conversations',
         ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),
         ...(n ? { needs: { ...(plain && n.why ? { why: n.why } : {}), ...(n.if_yes ? { if_yes: n.if_yes } : {}), ...(n.if_no ? { if_no: n.if_no } : {}), answers: answersOf(n), refs: n.refs, details: where } } : {}),
         ...(n?.waits_on && 'approval' in n.waits_on ? { waitsOnApproval: n.waits_on.approval } : {}),
+        // Asked on another agent's relay (t-1970): it's that agent's request, passed on, so the Inbox says "Mark asks, via Art".
+        ...(c.venue === 'relay' && c.place !== a && h.agents.includes(c.place) ? { relayedFrom: c.place } : {}),
         reply: { action: 'needs-reply', label: `Reply to ${name}`, fields },
         actions: [{ action: 'needs-done', label: 'Done', tone: 'primary', fields }, { action: 'needs-dismiss', label: 'Dismiss', fields }],
       };
@@ -615,11 +850,11 @@ function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
       const text = d.needs && !d.needs.legacy ? d.needs.ask : `${name} needs you: ${d.needs_owner}`;
       // One that cleared itself (what it waited on was resolved) is a quiet FYI that says how.
       if (answer.verdict === 'resolved') {
-        return { key: askKey({ source, text, page: `resolved:${answer.at}` }), kind: 'fyi', attention: false, unread: false, text,
+        return { key: askKey({ source, text, page: `resolved:${answer.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false, text,
           meta: `Cleared itself: ${answer.reason ?? 'what it waited on was resolved'}`, at: answer.at, agent: a, source, sourceLabel: 'Conversations',
           page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
       }
-      return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', attention: false, unread: false, text,
+      return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', box: 'done', attention: false, unread: false, text,
         outcome: ANSWERED[answer.verdict] ?? 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
         at: answer.at, agent: a, source, sourceLabel: 'Conversations', page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
     });
@@ -656,6 +891,9 @@ async function needsAct(opts: UiOptions, hh: Household, agent: string, action: s
       return { ok: false, message: 'That ask isn\'t open any more: the agent wrote since, or it was answered.', page };
     }
     if (yesNo && answersOf(open.digest.needs) !== 'yes-no') return { ok: false, message: `That ask isn't a yes or no: answer ${name} in words.`, page };
+    // One that waits on an approval is answered with its Allow or Deny (t-1970): a Yes here would tell the agent yes while
+    // nothing was allowed (a grant never applied). Words still go: a reply is not a yes.
+    if (yesNo && open.digest.needs.waits_on && 'approval' in open.digest.needs.waits_on) return { ok: false, message: 'That one is answered with Allow or Deny, on the ask.', page };
     // One reply, once: the same words to the same ask are the same delivery.
     const id = `needs:${fields.digest}:${createHash('sha256').update(text).digest('hex').slice(0, 16)}`;
     const r = await deliverAsOwner(opts.env, hh, { id, agent, venue: c.venue, place: c.place, label: c.label, person, text });
@@ -694,7 +932,12 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
     const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
     taken.add(card);
-    return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source } };
+    // A card that leads (a grant, t-1970; a vouch or a reset, t-1975): what Allow gives is the piece's words, never the agent's; its ask is the why.
+    const lead = card.lead ? { text: card.text, meta: a.text, ...(a.needs ? { needs: { ...a.needs, why: a.text,
+      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}) } } : {}) } : {};
+    return { ...a, ...lead, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
+      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}), ...(card.fine ? { fine: card.fine } : {}), ...(card.details ? { details: card.details } : {}),
+      ...(card.conversation && /^cv-[0-9a-f]{12}$/.test(card.conversation) ? { conversation: card.conversation } : {}) } };
   });
   return out.filter((a) => !taken.has(a));
 }
@@ -708,7 +951,10 @@ function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
 function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
   return [
-    ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece }))),
+    ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece,
+      // An ask laid out (why, what happens either way, details): the Inbox and Home draw it as a Needs you's.
+      ...(a.why || a.if_yes || a.if_no ? { needs: { ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
+        answers: 'words' as const, refs: [], details: a.details ?? '' } } : {}) }))),
     ...piecesAsks(env).map((a) => ({ ...a, source: CORE, sourceLabel: 'Pieces', tone: 'warn' as const })),
   ];
 }
@@ -718,10 +964,9 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
  * and what loom itself knows: when it was last on the tape, and where.
  */
 function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number): AgentCard[] {
-  const rank: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
-    const worst = reports.filter((x) => x.r.state).sort((x, y) => rank[y.r.state!] - rank[x.r.state!])[0];
+    const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
     const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
@@ -734,10 +979,24 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
       problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
     }
+    // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
     return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
   });
+}
+
+/** The open Inbox item `match` finds, as the member answering sees it now (their Inbox's own), before an answer takes it
+ * out: what its Comms thread keeps (comms-asks.ts recordAnswer). Never fails an answer: none on any trouble. */
+function askBefore(hh: Household, pieces: PieceInfo[], opts: UiOptions, match: (it: InboxItem) => boolean): InboxItem | undefined {
+  try { return inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((it) => it.box !== 'done' && match(it)); } catch { return undefined; }
+}
+
+/** The approvals the household owner alone answers (the approvals piece's lead cards: a grant, a vouch, a reset). */
+export function leadIds(pieces: PieceInfo[], env: NodeJS.ProcessEnv): Set<string> {
+  const src = pieceWithRole(env, 'approvals')?.name;
+  const p = src ? pieces.find((x) => x.piece === src) : undefined;
+  return new Set((p?.manifest.asks ?? []).filter((a) => a.lead).flatMap((a) => (a.actions ?? []).map((b) => b.fields?.id).filter((x): x is string => typeof x === 'string')));
 }
 
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
@@ -746,24 +1005,26 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
-    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), box: inboxBox({ ...a, kind: askKind(a), attention: a.attention !== false }), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
-      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}) })),
+      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}),
+      ...(a.fine ? { fine: a.fine } : {}), ...(a.relayedFrom ? { relayedFrom: a.relayedFrom } : {}),
+      ...(a.conversation && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}) })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
       return [
-        ...(p.manifest.notices ?? []).map((n): InboxItem => ({ key: askKey({ source, text: n.text, page: `fyi:${n.at}` }), kind: 'fyi', attention: false, unread: false,
+        ...(p.manifest.notices ?? []).map((n): InboxItem => ({ key: askKey({ source, text: n.text, page: `fyi:${n.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false,
           text: n.text, meta: n.meta, at: n.at, agent: n.agent, source, sourceLabel, page: n.page })),
-        ...(p.manifest.answered ?? []).map((a): InboxItem => ({ key: askKey({ source, text: a.text, page: `answered:${a.at}` }), kind: 'answered', attention: false, unread: false,
+        ...(p.manifest.answered ?? []).map((a): InboxItem => ({ key: askKey({ source, text: a.text, page: `answered:${a.at}` }), kind: 'answered', box: 'done', attention: false, unread: false,
           text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
       ];
     }),
     ...answeredAsks(h),
     // The backup back to good (src/backup.ts): an FYI, the household owner's.
-    ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, attention: false, unread: false,
+    ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, box: 'done' as const, attention: false, unread: false,
       text: f.text, meta: f.meta, at: f.at, source: CORE, sourceLabel: 'Backup', page: `loom:a/${h.default}/setup` } satisfies InboxItem] : []; })(),
-    ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', attention: false, unread: false,
+    ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false,
       text: d.text, meta: d.ok ? 'You did this' : 'You tried this; it wasn’t done', at: new Date(d.at * 1000).toISOString(),
       source: d.source, sourceLabel: d.sourceLabel ?? 'loom', ...(d.page ? { page: d.page } : {}) })),
   ];
@@ -797,6 +1058,7 @@ function backFor(path: string, places: Array<{ label: string; href: string }>, h
   const seg = path.split('/').filter(Boolean);
   if (seg[0] === 'knowledge' && seg.length > 1) return { label: 'Knowledge', href: '/knowledge' };
   if (seg[0] === 'people' && seg.length > 1) return { label: 'People', href: '/people' };
+  if (seg[0] === 'projects' && seg.length > 1) return { label: 'Projects', href: '/projects' };
   if (seg[0] === 'memory') return { label: 'Mind', href: '/mind' };
   if (seg[0] === 'p' && seg.length > 2) {
     const top = places.find((x) => x.href === `/p/${seg[1]}`);
@@ -842,10 +1104,6 @@ function lastActive(dir: string, nowMs = Date.now()): string {
   return `active ${agoText(last.created, nowMs)}`;
 }
 
-function clockAt(ms: number): string {
-  return new Intl.DateTimeFormat('en-US', { timeZone: uiTimeZone(), hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
-}
-
 const SCOPE_COOKIE = 'loom_scope';
 
 /** The scope the owner chose (a cookie), if it still names an agent in the household. */
@@ -858,6 +1116,68 @@ function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
   return 'household';
 }
 
+/** An ask's kind: its own, else a decision only if it has something to choose with (its buttons), else an alert
+ * (docs/extensions.md; the Inbox's folders). */
+const askKind = (a: { kind?: AskKind; actions?: unknown[] }): AskKind => a.kind ?? (a.actions?.length ? 'decision' : 'alert');
+
+/** A piece's asks that say something's wrong (an alert, counted), for the system bar (web/src/system-bar.tsx). */
+function alertsOf(p: PieceInfo): { alerts?: number } {
+  const n = p.manifest.asks.filter((a) => askKind(a) === 'alert' && a.attention !== false).length;
+  return n ? { alerts: n } : {};
+}
+
+/** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). Its
+ * settings or state unreadable (a hand-edited household.json, a half-written state.json): no glyph, not a broken page. */
+function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] } {
+  try {
+    const r = backupRow(h, nowMs, (iso) => agoText(iso, nowMs) || 'a while ago');
+    return { backup: { tone: r.tone, text: r.text, href: `/a/${h.default}/setup` } };
+  } catch { return {}; }
+}
+
+/** An agent's state as its Home card says it (agentCards): the worst any piece reports, else working if a piece has
+ * something it's doing, else available. */
+const STATE_RANK: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
+function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
+  const reports = pieces.flatMap((p) => (p.manifest.agents?.[agent] ? [p.manifest.agents[agent]] : []));
+  const worst = reports.filter((r) => r.state).sort((x, y) => STATE_RANK[y.state!] - STATE_RANK[x.state!])[0];
+  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
+}
+
+/**
+ * The Profile app's head and its "Your agents" (web/src/account.tsx; t-1925): the member's name as People has it, when
+ * they became a member (their oldest owner token: the household keeps no other date for a member), and each agent they
+ * own with its mark and its state (agentStateOf). Nothing here is a secret: only names, a month and states.
+ */
+function profileOf(h: Household, m: Member, pieces: PieceInfo[], tz: string): { full?: string; since?: string; agents: Array<{ id: string; label: string; bg: string; fg: string; face: unknown; state: AgentState }> } {
+  const first = firstOwner(h).person === m.person;
+  let oldest: number | undefined;
+  try {
+    for (const t of loadTokens(h.home)) {
+      if (t.role !== 'owner' || !(t.member === m.person || (first && !t.member))) continue;
+      const at = Date.parse(t.created);
+      if (Number.isFinite(at) && (oldest === undefined || at < oldest)) oldest = at;
+    }
+  } catch { /* no tokens file readable: no date */ }
+  const since = oldest === undefined ? undefined : new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', year: 'numeric' }).format(new Date(oldest));
+  const full = householdPersonName(h, m.person);
+  const marks = agentMarks(h);
+  const owned = m.agents === '*' ? h.agents : h.agents.filter((a) => (m.agents as string[]).includes(a));
+  const agents = owned.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], state: agentStateOf(pieces, a) }));
+  return { ...(full ? { full } : {}), ...(since ? { since } : {}), agents };
+}
+
+/** An agent at work, as its Home card would say it (agentStateOf). */
+function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
+  return agentStateOf(pieces, agent) === 'working' ? { working: true } : {};
+}
+
+/** The one thing an agent is on, newest first, as its card's line says it (agentCards): for its window's pill. */
+function onOf(pieces: PieceInfo[], agent: string): { on?: { text: string; href?: string } } {
+  const d = pieces.flatMap((p) => p.manifest.agents?.[agent]?.doing ?? []).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
+  return d ? { on: { text: d.text, ...(d.href ? { href: d.href } : {}) } } : {};
+}
+
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
@@ -866,12 +1186,14 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const places = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place', ...(p.manifest.tab?.icon ? { icon: p.manifest.tab.icon } : {}),
-      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}) }))
+      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}),
+      ...(p.manifest.tab?.fit ? { fit: p.manifest.tab.fit } : {}),
+      ...alertsOf(p) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
-  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance', 'account'].includes(current) ? current : '';
+  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance', 'accessibility', 'account'].includes(current) ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
@@ -893,15 +1215,19 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         ...tabs,
       ],
       clock: clock(),
+      tz: uiTimeZone(),
       csrf,
       flash,
       skipped,
       shell: {
-        owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
+        owner: opts.viewer ?? h.owner ?? firstOwner(h)?.person ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
+        ...(opts.ownerScope ? {} : backupOf(h)),
+        ...(opts.ownerScope ? {} : permissionsOf(opts.env)),
+        ...iconsView(h),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
-          sub: lastActive(agentDir(h, a)) })),
+          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
@@ -909,7 +1235,11 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           ...(opts.ownerScope ? [] : [
             { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
             { label: 'People', href: '/people', current: current.startsWith('people') },
+            // The household's, like People (docs/specs/projects.md, "the Projects app").
+            { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
           ]),
+          // Comms (docs/specs/comms.md): a member who owns an agent talks with it here; its count is their unread threads.
+          ...(opts.member && h.agents.some((a) => owns(opts.member, a)) ? [{ label: 'Comms', href: '/comms', current: current.startsWith('comms'), count: commsUnread(h, opts.member) }] : []),
         ],
         pieces: places,
       },
@@ -926,6 +1256,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       ...tabs,
     ],
     clock: clock(),
+    tz: uiTimeZone(),
     csrf,
     flash,
     skipped,
@@ -935,6 +1266,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },
         { label: 'People', href: '/people', current: current.startsWith('people') },
+        { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
       ],
       pieces: places,
     },
@@ -996,12 +1328,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLoginLink(code));
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
-    const secret = storeFor(opts).useLink(code);
-    if (!secret || !opts.auth.live(secret)) {
+    const spent = storeFor(opts).spendLink(code);
+    if (!spent || !opts.auth.live(spent.secret)) {
       return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
     }
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label, via: 'link', signedInAt: spent.signedInAt, agent: spent.agent }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1009,7 +1341,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // Passkeys work only on the page at LOOM_PUBLIC_URL (their origin): offer one there.
   const onRp = !!rp && req.headers.host === new URL(rp.origin).host;
   const sessionCookie = (secret: Buffer) =>
-    `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
+    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), via: 'passkey' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 
   // loom's own fonts (OFL, assets/fonts): the two the page uses, nothing else.
   const font = /^\/fonts\/(instrument-sans-latin-wght-normal|jetbrains-mono-latin-wght-normal)\.woff2$/.exec(pathname);
@@ -1031,7 +1363,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   if (pathname === '/sw.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
-    return send(res, 200, 'text/javascript; charset=utf-8', SW_JS, { 'cache-control': 'no-cache' });
+    return send(res, 200, 'text/javascript; charset=utf-8', workerJs(), { 'cache-control': 'no-cache' });
   }
   // The app (docs/specs/ui-app.md): its built files, public like /app.js (no data in them).
   if (pathname.startsWith('/app/')) {
@@ -1068,10 +1400,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     try {
       const a = verifyAssertion(body, stored, rp);
       if (!store.useChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
+      // Its own token in a household (t-1969): live while the passkey is kept and its person is a member. Checked
+      // before the counter moves, so a refused passkey doesn't show as used.
+      if (!opts.auth.live(Buffer.from(stored.secret, 'hex'))) return sendJson(res, 401, { error: passkeyStopped(stored) });
       const used = store.usePasskey(stored.id, a.counter);
       if (!used) return sendJson(res, 401, { error: 'that passkey\'s counter went backwards: it may have been copied, so it was refused' });
       const secret = Buffer.from(used.secret, 'hex');
-      if (!opts.auth.live(secret)) return sendJson(res, 401, { error: 'the token that added this passkey was revoked; sign in with a link and add it again' });
+      if (!opts.auth.live(secret)) return sendJson(res, 401, { error: passkeyStopped(used) });
       return sendJson(res, 200, { ok: true, to: '/' }, { 'set-cookie': sessionCookie(secret) });
     } catch (err) {
       if (err instanceof PasskeyError) return sendJson(res, 401, { error: err.message });
@@ -1090,7 +1425,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1100,6 +1435,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const full = opts.household?.();
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
+  if (full && who?.member) opts = { ...opts, member: who.member };
   if (full && who?.member && who.member.agents !== '*') {
     const own = who.member.agents;
     if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
@@ -1108,6 +1444,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   // The agent the owner is looking at (an agent's own pages, else the chosen scope); pieces get it as LOOM_SCOPE.
   const hhScope = opts.household?.();
+  // A piece's page may say where a task or change came from: drawn here, for this member only (comms.md, "From").
+  const drawFrom = <T,>(p: T): T => (typeof p === 'string' || !p || typeof p !== 'object' || !('sections' in p) ? p
+    : resolveFrom(p as unknown as Page, hhScope?.home, who?.member) as unknown as T);
   const scope = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/|$)/.exec(pathname)?.[1] ?? scopeOf(req, hhScope);
   const scopedEnv: NodeJS.ProcessEnv = hhScope && scope !== 'household' && hhScope.agents.includes(scope) ? { ...opts.env, LOOM_SCOPE: scope } : opts.env;
   const csrf = who?.kind === 'session' ? csrfFor(who.cookie, storeFor(opts).key) : '';
@@ -1143,7 +1482,51 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
       return a ? [a] : '*';
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place });
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}) });
+  }
+
+  // Comms (docs/specs/comms.md): JSON routes, each checking the member owns the thread's agent and opened it.
+  if (full && (pathname === '/comms' || pathname.startsWith('/comms/'))) {
+    // Another site may link to Comms, never fetch it (allowedGet), as every page.
+    if ((req.method === 'GET' || req.method === 'HEAD') && !allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    // A page load of a thread is the app, but only for its member: anyone else gets the same 403 as the JSON (comms.md, rule 3).
+    if (req.method === 'GET' && wantsPage(req)) {
+      const no = pageRefused(pathname, full, who.member);
+      if (no) return send(res, no.startsWith('not-found') ? 404 : 403, 'text/plain', no);
+      // An old thread link (comms/th:…) reloads at its colon-free address (t-1918): the app's paths have no colon.
+      const old = /^\/comms\/th:([a-z2-7]{10})$/.exec(pathname);
+      if (old) return redirect(res, `/comms/${old[1]}${new URL(req.url ?? '/', 'http://loom.invalid').search}`);
+    }
+  }
+  if (full && (pathname === '/comms' || pathname.startsWith('/comms/')) && !(req.method === 'GET' && wantsPage(req))) {
+    const guard = (r: IncomingMessage, body: Record<string, unknown>): string | null => {
+      if (!sameOrigin(r)) return 'forbidden: cross-site request';
+      if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return 'forbidden: this page is stale; reload and try again';
+      return null;
+    };
+    const commsChrome = async (): Promise<Chrome & { prefs?: unknown }> => {
+      const { pieces: all, skipped } = await pieceManifests(scopedEnv);
+      const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full, who.member), skipped.map((x) => x.piece), 'comms', csrf);
+      return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
+    };
+    // The pieces this member may hear from, read once a request (a thread's read asks for them more than once).
+    let piecesOnce: Promise<PieceInfo[]> | undefined;
+    let inboxOnce: ReturnType<NonNullable<Parameters<typeof commsRoute>[3]['inbox']>> | undefined;
+    const commsPieces = () => (piecesOnce ??= pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)));
+    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
+      // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
+      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
+      // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
+      pieces: commsPieces, session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard,
+      // A thread's asks are the member's own Inbox items (comms.md, "Asks inline"): the same household, pieces and rule.
+      inbox: () => (inboxOnce ??= (async () => {
+        const seen = opts.household?.();
+        const ps = await commsPieces();
+        const appr = pieceWithRole(opts.env, 'approvals')?.name;
+        return { items: seen ? inboxItems(seen, ps, opts.env, [], !opts.ownerScope) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+          ...(appr ? { approvals: pieceSource(appr).id } : {}) };
+      })()) });
+    return;
   }
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
@@ -1160,9 +1543,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
     const sub = pushSub(body.sub);
     if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
-    if (pathname === '/push/unsubscribe') storeFor(opts).removePushSub(sub.endpoint);
-    else storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who));
-    return sendJson(res, 200, { ok: true });
+    if (pathname === '/push/unsubscribe') { storeFor(opts).removePushSub(sub.endpoint); return sendJson(res, 200, { ok: true }); }
+    // `again`: the device sending what it already holds, on each app load (t-1978): a device whose entry was lost gets
+    // it back by itself; one its person removed on Profile is told so, and turns itself off.
+    const got = storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who), { again: body.again === true, device: deviceOf(req.headers['user-agent']) });
+    if (got === 'agent') return sendJson(res, 403, { error: 'An agent\'s session gets no notifications.' });
+    return got === 'added' ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: got === 'removed' ? 'This device was removed from notifications on Profile.' : 'Sign in again.', removed: got === 'removed' });
   }
   if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
     if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
@@ -1174,6 +1560,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const store = storeFor(opts);
     const session = store.get(who.cookie);
     if (!session) return sendJson(res, 401, { error: 'signed out' });
+    // Only soon after signing in (t-1969): a browser left signed in can't quietly add a lasting way in.
+    if (staleForPasskey(session)) return sendJson(res, 403, { error: STALE_FOR_PASSKEY });
+    // In a household a session is always a member's; one that isn't (tokens.json unreadable) adds nothing, nor is told whose credentials exist.
+    if (opts.household && !who.member) return sendJson(res, 401, { error: 'this session isn\'t a member of the household; sign in again' });
     if (pathname === '/passkeys/options') {
       return sendJson(res, 200, {
         challenge: store.createChallenge('register', session.secret),
@@ -1183,7 +1573,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         user: passkeyUser(who.member, !!who.member && opts.household !== undefined && firstOwner(opts.household()).person === who.member.person, rp.rpId),
         pubKeyCredParams: ALGS.map((alg) => ({ type: 'public-key', alg })),
         authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
-        excludeCredentials: store.passkeys().map((p) => ({ id: p.id })),
+        // This member's own credentials only: another member's on a shared device mustn't block theirs, nor be shown.
+        excludeCredentials: (who.member && opts.household ? passkeysOf(opts, who.member) : store.passkeys()).map((p) => ({ id: p.id })),
         timeout: 300_000,
       });
     }
@@ -1194,7 +1585,25 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // It signs in as the token of the session that asked, and only that one.
       if (!c.secret.equals(session.secret)) return sendJson(res, 403, { error: 'that was started by another session' });
       const label = (typeof body.label === 'string' ? body.label.trim() : '').slice(0, 60) || 'A passkey';
-      store.addPasskey({ id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000), secret: session.secret.toString('hex') });
+      const added = { id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000) };
+      const hh = opts.household?.();
+      if (!hh || !who.member) {
+        store.addPasskey({ ...added, secret: session.secret.toString('hex') });
+        return sendJson(res, 200, { ok: true });
+      }
+      // In a household it signs its person in with a token of its own (t-1969, passkey-tokens.ts), not the session's:
+      // revoking the sign-in links, or whatever token this browser used, doesn't stop it. The token says which one it
+      // was made from. Refused before minting one it won't use.
+      if (store.passkey(r.id)) return sendJson(res, 409, { error: 'that passkey is already added' });
+      const from = originOf(hh, session.secret.toString('hex'), opts.envOwnerDigest);
+      if (!from) return sendJson(res, 401, { error: 'signed out' });
+      const minted = passkeyToken(hh, who.member.person, r.id, label, from);
+      try {
+        store.addPasskey({ ...added, secret: minted.secret, tokenLabel: minted.tokenLabel });
+      } catch (err) {
+        dropUnusedPasskeyToken(hh, store, minted);
+        throw err;
+      }
       return sendJson(res, 200, { ok: true });
     } catch (err) {
       if (err instanceof PasskeyError) return sendJson(res, 400, { error: err.message });
@@ -1231,6 +1640,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': file.endsWith('.png') ? 'image/png' : 'application/json',
       'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
     return void res.end(req.method === 'HEAD' ? undefined : body);
+  }
+  // An app's pixel icon (src/icon-set.ts): the household's art, so only for someone signed in (this is past the sign-in
+  // check), never public like the app's own icons under /icons/. The page asks with the set's version (?v=).
+  const pix = PIXEL_ICON.exec(pathname);
+  if (pix) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
+    const file = hh ? iconFile(hh, pix[1]) : undefined;
+    if (!file) return send(res, 404, 'text/plain', 'not found');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'image/png',
+      'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
+    return void res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
   }
   // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
   // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
@@ -1274,6 +1694,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (Object.keys(fields).length > LIMITS.fields + LIMITS.hidden) return send(res, 400, 'text/plain', 'too many fields');
     let source: Source;
     let result: ActResult;
+    // When this browser's person signed in, for a link it makes for them (signedInAt); a bearer proved a token now.
+    const mintedAt = () => { const s = who.kind === 'session' ? storeFor(opts).get(who.cookie) : null; return s ? signedInAt(s) : undefined; };
     // An answered Needs you is in the Inbox's history already (answeredAsks): its toast leaves no FYI as well.
     let quiet = false;
     if (agentAct && agentAct[2] !== 'loom') {
@@ -1285,33 +1707,79 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // The approvals piece answered from an agent's pages (should it ever have a tab there): its grant applied the same.
+      if (result.ok && hh && action === 'allow' && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
+        result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
+      }
     } else if (agentAct && action.startsWith('needs-')) {
       // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
       source = agentSource(agentAct[1]);
       const person = who?.member?.person ?? firstOwner(hh!).person;
+      // The ask as it was before it's answered: its Comms thread keeps how it was answered (comms.md, "Asks inline").
+      const seen = await pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)).catch(() => [] as PieceInfo[]);
+      const before = askBefore(hh!, seen, opts, (it) => it.agent === agentAct[1] && !!it.reply && it.reply.fields.digest === fields.digest && it.reply.fields.conversation === fields.conversation);
       result = ['needs-reply', 'needs-answer', 'needs-done', 'needs-dismiss'].includes(action)
         ? await needsAct(opts, hh!, agentAct[1], action, fields, person) : { ok: false, message: 'No such action.' };
       quiet = result.ok;
+      const verdict = verdictOf(action, fields);
+      const appr = pieceWithRole(opts.env, 'approvals')?.name;
+      if (result.ok && verdict) recordAnswer(hh!, opts.env, before, { verdict, by: person }, { lead: leadIds(seen, opts.env).has(before?.approval?.actions.find((b) => b.fields?.id)?.fields?.id ?? ''), approvals: appr ? pieceSource(appr).id : undefined });
     } else if (agentAct) {
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
-    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link') {
+    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link' && action !== 'session-revoke' && action !== 'push-test' && action !== 'push-remove') {
       // An agent owner's core actions are their agents' own (/a/<agent>/act/loom); the household's are refused.
       source = CORE;
       result = { ok: false, message: 'That\'s the household\'s to do: ask a household owner.' };
     } else if (sourceId === 'loom' && action === 'passkey-remove') {
       source = CORE;
       const own = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : undefined;
-      result = (!own || own.some((k) => k.id === fields.id)) && storeFor(opts).removePasskey(fields.id ?? '')
-        ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
-        : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
+      const id = fields.id ?? '';
+      const hhr = opts.household?.();
+      const mine = !own || own.some((k) => k.id === id);
+      // Its own token goes with it, and so do the sessions it opened (t-1969); asked to, the passkeys they made too.
+      let out: { removed: boolean; made: number } = { removed: false, made: 0 };
+      let failed: ActResult | undefined;
+      try {
+        if (mine && hhr) out = removePasskey(hhr, id, fields.made === 'with');
+        else if (mine) out = { removed: storeFor(opts).removePasskey(id), made: 0 };
+      } catch (e) {
+        failed = e instanceof PasskeyTokenLeft
+          ? { ok: false, message: `Removed, so it can't sign in again, but the token "${e.label}" couldn't be revoked (${e.message}): revoke it on Setup, or the browsers it signed in stay signed in.`, page: 'loom:passkeys' }
+          : { ok: false, message: `Not removed: ${(e as Error).message}. It still signs in; try again.`, page: 'loom:passkeys' };
+      }
+      const also = out.made ? ` ${ThePasskeys(out.made)} added from it ${out.made === 1 ? 'is' : 'are'} removed too.` : '';
+      result = failed ?? (out.removed ? { ok: true, message: `Removed. That device can't sign in with it any more.${also}`, page: 'loom:passkeys' }
+        : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' });
+    } else if (sourceId === 'loom' && action === 'session-revoke') {
+      // One session ended alone (t-1871): only one this person may see (sessionsOf), named by its ref.
+      source = CORE;
+      const ref = fields.ref ?? '';
+      const mine = REF.test(ref) && sessionsOf(opts, who?.member).some((x) => x.ref === ref);
+      result = mine && storeFor(opts).revoke(ref)
+        ? { ok: true, message: 'Signed out, and its notifications stopped. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
+        : { ok: false, message: 'No such session: it may have ended already.', page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'push-test') {
+      // Profile's "Send a test notification" (t-1978): to one of this person's own devices, pressed by them.
+      source = CORE;
+      const target = storeFor(opts).pushDevice(fields.ref ?? '', readerFor(opts, who));
+      const r = target ? await sendTest(storeFor(opts), target, pushSubject(opts)) : 'gone';
+      result = r === 'sent' ? { ok: true, message: 'Sent. It should show on that device in a few seconds.', page: 'loom:passkeys' }
+        : r === 'gone' ? { ok: false, message: 'That device no longer takes notifications: turn them on there again.', page: 'loom:passkeys' }
+        : { ok: false, message: `Not sent: ${r}. Try again in a minute.`, page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'push-remove') {
+      source = CORE;
+      result = storeFor(opts).removePushDevice(fields.ref ?? '', readerFor(opts, who))
+        ? { ok: true, message: 'Removed. That device gets no more notifications until it\'s turned on there again.', page: 'loom:passkeys' }
+        : { ok: false, message: 'No such device: it may be gone already.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
-      // A household session always is a member; one that isn't gets no link, rather than the first owner's.
+      // A household session always is a member; one that isn't gets no link, rather than the first owner's. The
+      // session it opens signed in when this one did (t-1969): a link can't make a stale session fresh to add a passkey.
       result = who?.member
-        ? { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who.member.person)}` }
+        ? { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who.member.person, undefined, mintedAt())}` }
         : { ok: false, message: 'This session isn\'t a member of the household; sign in again.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'member-link' && hh) {
       // A household owner makes a sign-in link for a member (Members): it opens a session as them.
@@ -1319,7 +1787,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
       const m = memberOf(hh, fields.person);
       result = m
-        ? { ok: true, keep: true, page: 'loom:members', message: `For ${m.person}, one sign-in within 10 minutes: ${base}/login/${signinLink(hh, 600, m.person)}` }
+        // It signed in when this browser did (t-1969), whoever it's for: a stale session can't make a fresh one for
+        // anyone, to add a lasting passkey through.
+        ? { ok: true, keep: true, page: 'loom:members', message: `For ${m.person}, one sign-in within 10 minutes: ${base}/login/${signinLink(hh, 600, m.person, undefined, mintedAt())}` }
         : { ok: false, message: 'No such member.', page: 'loom:members' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
@@ -1339,10 +1809,28 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = pieceSource(info.piece);
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
+      const approvalsName = pieceWithRole(opts.env, 'approvals')?.name;
+      const approvals = !!hh && approvalsName === info.piece;
+      // A piece's card as it was before it's answered (any piece's, by the id it names): its Comms thread keeps how it was
+      // answered (comms.md, "Asks inline").
+      const src = pieceSource(info.piece).id;
+      const pieceVerdict = action === 'allow' ? 'allowed' : action === 'deny' ? 'denied' : undefined;
+      const before = hh && pieceVerdict && fields.id
+        ? askBefore(hh, pieces, opts, (it) => [...(it.source.id === src ? it.actions ?? [] : []), ...(it.approval?.source.id === src ? it.approval.actions : [])].some((b) => b.action === action && b.fields?.id === fields.id)) : undefined;
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
-      // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
+      // The piece's answer is what counts (its own record): its thread keeps it after, whatever comes of the grant below.
+      const answered = result.ok && !!pieceVerdict;
       if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
+        // An Allow on a grant, a vouch or a reset applies it (t-1970, t-1975): the owner's yes does it, nothing left for him to do.
+        if (action === 'allow') result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
+        // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
         await resolveNeeds(hh, pieceCheckers(opts.env)).catch(() => undefined);
+      }
+      if (answered && hh) {
+        const by = who?.member?.person ?? firstOwner(hh).person;
+        const appr = approvalsName ? pieceSource(approvalsName).id : undefined;
+        recordAnswer(hh, opts.env, before, { verdict: pieceVerdict!, by }, { lead: approvals && leadIds(pieces, opts.env).has(fields.id ?? ''), approvals: appr });
+        if (approvals) recordApprovalAnswer(hh, fields.id ?? '', { verdict: pieceVerdict!, by });
       }
     }
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
@@ -1402,7 +1890,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (req.method === 'GET' && !asJson) return app();
   const flash = takeFlash(url.searchParams.get('_flash'));
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
-  const pieces = forOwner(allPieces, opts.ownerScope);
+  // Each agent's card and window, and the bar's agents at work, as this viewer may see them (atWorkFor).
+  const pieces = atWorkFor(forOwner(allPieces, opts.ownerScope), full, who?.member);
   const skippedNames = skipped.map((s) => s.piece);
   const view = (kind: string, data: Record<string, unknown>, status = 200) => {
     if (!asJson) return app(status);
@@ -1416,22 +1905,24 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return void res.end();
     }
     const out = encoded(req, Buffer.from(text));
-    res.writeHead(status, { 'content-type': 'application/json', ...SECURITY_HEADERS, etag, ...out.headers });
+    res.writeHead(status, { 'content-type': 'application/json', ...SECURITY_HEADERS, etag, ...whoTag(who), ...out.headers });
     res.end(out.body);
   };
 
-  // The shell's sheets (Scope, Places, Find, Setup, and Appearance, an app in Setup's grid: the person's look, kept by loom; Jonathan,
+  // The shell's sheets (Scope, Places, Find, Setup, and Appearance and Accessibility, apps in Setup's grid: the person's look, kept by loom; Jonathan,
   // 2026-11-03: a page of icons with loose controls under them is wrong): the app draws them as pages.
-  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance') {
+  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility') {
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
-    { const which = tab as 'scope' | 'places' | 'find' | 'setup' | 'appearance'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
+    { const which = tab as 'scope' | 'places' | 'find' | 'setup' | 'appearance' | 'accessibility'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
       // Find with nothing typed: who's in the household, for its suggestions (Knowledge and People are the household's).
       const hhNow = opts.household?.();
       const suggest = tab === 'find' && !q.trim() && hhNow && !opts.ownerScope
         ? { people: householdSuggestPeople(hhNow).map((p) => ({ label: p.name, href: `/people/${p.slug}` })) } : undefined;
-      return view('sheet', { which, chrome: ch, q, found, suggest }); }
+      // Accessibility's intro (the phone bar's name opens it, as a page's): what it's for, said once.
+      const intro = tab === 'accessibility' ? ACCESSIBILITY_INTRO : undefined;
+      return view('sheet', { which, chrome: ch, q, found, suggest, intro }); }
   }
 
   // The account (Jonathan, 2026-11-03): who's signed in, their passkeys, push on this device, signing out. The avatar
@@ -1441,18 +1932,69 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
     // An agent owner sees their own passkeys; a household owner, every one.
     const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
+    // Each passkey's own token (what it was made from), and how many passkeys its sessions added (passkey-tokens.ts).
+    const tokenByDigest = new Map(hh ? loadTokens(hh.home).map((t) => [t.sha256, t] as const) : []);
+    const made = hh ? passkeysMadeFrom(hh) : new Map<string, number>();
+    // Where you're signed in (t-1871): each browser on its own row, this one first, each ended alone. A household owner
+    // sees every session (an agent's screenshot session too); an agent owner, their own.
+    const sessionsSection = (): Page['sections'][number] => {
+      const here = who?.kind === 'session' ? storeFor(opts).refOf(who.cookie) : undefined;
+      const all = sessionsOf(opts, who?.member);
+      const list = [...all.filter((x) => x.ref === here), ...all.filter((x) => x.ref !== here)];
+      const tokens = hh ? loadTokens(hh.home) : [];
+      const tokenOf = (x: SessionInfo) => tokens.find((t) => t.sha256 === x.secret.toString('hex'))?.label;
+      return { id: 'sessions', title: 'Signed in', blocks: list.length ? [
+        { type: 'list', items: list.slice(0, 200).map((x) => {
+          const isHere = x.ref === here;
+          const name = [x.device ?? 'A browser', x.label ? `“${x.label}”` : ''].filter(Boolean).join(' ');
+          const token = tokenOf(x);
+          const how = [x.via === 'passkey' ? 'with a passkey' : x.via === 'link' ? 'with a sign-in link' : x.via === 'token' ? 'with a token' : '', token ? `as ${token}` : ''].filter(Boolean).join(' ');
+          return { text: isHere ? `${name} (this device)` : name,
+            meta: [`signed in ${when(x.issuedAt)}`, x.seenAt ? `last used ${when(x.seenAt)}` : '', how].filter(Boolean).join(' · '),
+            // This device signs out with the page's own Sign out, which also clears what it kept for offline (/logout).
+            ...(isHere ? {} : { act: { action: 'session-revoke', label: 'Sign out', tone: 'danger' as const,
+              confirm: 'That browser is signed out at once, and gets no more notifications. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } }) };
+        }) },
+        { type: 'text', text: 'Each browser signed in to this page. Signing one out ends only that one.', tone: 'muted' },
+      ] : [{ type: 'text', text: 'Only a script with a token is signed in.', tone: 'muted' }] };
+    };
+    // Which of this person's devices get notifications (t-1978), each with "Send a test notification", and a way to
+    // remove one (a lost phone): it's theirs and the device's, whatever happens to sessions.
+    const notificationsSection = (): Page['sections'][number] => {
+      const here = who?.kind === 'session' ? storeFor(opts).refOf(who.cookie) : undefined;
+      const devices = storeFor(opts).pushDevices(readerFor(opts, who));
+      const name = (d: (typeof devices)[number]) => `${d.device ?? 'A device'}${d.session === here ? ' (this device)' : ''}`;
+      return { id: 'notifications', title: 'Devices that get notifications', blocks: devices.length ? [
+        { type: 'list', items: devices.slice(0, 20).map((d) => ({ text: name(d),
+          meta: [`on since ${when(d.at)}`, d.seenAt ? `last checked in ${when(d.seenAt)}` : ''].filter(Boolean).join(' · '),
+          act: { action: 'push-test', label: 'Send a test notification', fields: { ref: d.ref } } })) },
+        { type: 'details', summary: 'Remove a device', blocks: [{ type: 'list', items: devices.slice(0, 20).map((d) => ({ text: name(d), meta: `on since ${when(d.at)}`,
+          act: { action: 'push-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device gets no more notifications until they\'re turned on there again.', fields: { ref: d.ref } } })) }] },
+      ] : [{ type: 'text', text: 'None yet: turn them on above, on each device you want them on.', tone: 'muted' }] };
+    };
     const page: Page = {
-      title: 'Account',
+      // "Profile" wherever it's seen (t-1925); its address stays /account (and /passkeys, its old name).
+      title: 'Profile',
       sections: [
         // The board's order: your passkeys, then adding one (loom's control, put in after this), then another device.
         { id: 'passkeys', title: 'Passkeys', blocks: keys.length
           ? [{ type: 'list', items: keys.slice(0, 200).map((k) => {
               const works = opts.auth.live(Buffer.from(k.secret, 'hex'));
-              return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}` : 'its token was revoked, so it no longer works',
+              const from = tokenByDigest.get(k.secret)?.from;
+              return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}${from ? ` from "${from}"` : ''}` : passkeyStopped(k),
                 ...(works ? {} : { tone: 'warn' as const }),
                 act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
-            }) }]
+            }) },
+            // A passkey whose sessions added others (t-1969): Remove leaves those working; this takes them too.
+            // Only a passkey with its own token: Remove takes what was added from that token (passkey-tokens.ts removePasskey).
+            ...(keys.some((k) => k.tokenLabel && made.get(k.secret)) ? [{ type: 'details' as const, summary: 'Remove a passkey with the ones added from it', blocks: [{ type: 'list' as const, items: keys.filter((k) => k.tokenLabel && made.get(k.secret)).slice(0, 50).map((k) => {
+              const n = made.get(k.secret)!;
+              return { text: k.label, meta: `${n} passkey${n === 1 ? '' : 's'} added from a browser it signed in`,
+                act: { action: 'passkey-remove', label: 'Remove with them', tone: 'danger' as const, confirm: `That device can't sign in with it any more, and ${thePasskeys(n)} added from it ${n === 1 ? 'is' : 'are'} removed too.`, fields: { id: k.id, made: 'with' } } };
+            }) }] }] : [])]
           : [{ type: 'text', text: 'None yet: add one from the device you want to sign in with.', tone: 'muted' }] },
+        sessionsSection(),
+        notificationsSection(),
         ...(hh ? [{ id: 'another', title: 'Another device', blocks: [
           { type: 'buttons' as const, items: [{ action: 'signin-link', label: 'Make a one-time sign-in link' }] },
           { type: 'text' as const, text: 'One sign-in, within 10 minutes, as the household\'s page sign-in links token. Open it on the other device.', tone: 'muted' as const },
@@ -1462,11 +2004,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const ch = chrome(req, opts, pieces, skippedNames, 'account', csrf, flash);
     // Who this is, as the account's head says it: their name, and what they are in the household.
     const member = who?.member;
-    const named = hh && member ? (member.agents === '*' ? 'Household owner' : `Owns ${member.agents.map((a) => agentName(agentDir(hh, a))).join(', ')}`) : hh ? 'Household owner' : 'Signed in';
-    const me = { name: ch.shell?.owner ?? 'owner', role: named };
+    const named = hh && member ? (member.agents === '*' ? 'Owner of the household' : `Owns ${member.agents.map((a) => agentName(agentDir(hh, a))).join(', ')}`) : hh ? 'Owner of the household' : 'Signed in';
+    const me = { name: ch.shell?.owner ?? 'owner', role: named, ...(hh ? profileOf(hh, member ?? firstOwner(hh), pieces, tz) : {}) };
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
+      : staleForPasskey(storeFor(opts).get(who.cookie)) ? { note: STALE_FOR_PASSKEY }
       : { csrf };
     // The app draws the list, and adds loom's own "add a passkey" control (WebAuthn) and the push switch beside it.
     return view('passkeys', { page, ctx: { source: CORE, path: 'passkeys', query, csrf }, chrome: ch, add, me });
@@ -1475,15 +2018,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (hh) {
     const hhAgents = agentsOf(hh);
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf, agents: hhAgents });
-    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
+    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead, extra?: Record<string, unknown>) =>
       { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
-        return view('page', { page, ctx, chrome: ch, head }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
+        return view('page', { page, ctx, chrome: ch, head, ...extra }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
       const waiting = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).filter((it) => it.attention);
       // Unread as the Inbox says it: Home's banner is the first one's row there.
-      if (waiting[0]) waiting[0].unread = !storeFor(opts).openedKeys(readerFor(opts, who)).has(waiting[0].key);
+      { const opened = storeFor(opts).openedKeys(readerFor(opts, who)); for (const w of waiting.slice(0, HOME_STACK)) w.unread = !opened.has(w.key); }
       const cards = agentCards(hh, pieces, agents, nowMs);
       const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
       const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
@@ -1494,52 +2037,53 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
       const d: HouseHome = {
         headline, needs: waiting.length, need: waiting[0], cards, moving,
+        // A desktop's Home answers the first few in place (web/src/desk.tsx); a phone's shows the first as its row.
+        stack: waiting.slice(0, HOME_STACK),
         // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
       { const ctx = { ...ctxOf(''), agents }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
         return view('house-home', { home: d, ctx, chrome: ch }); }
     }
-    // Activity: everything that happened (the household's thread), what Home was before it showed how the agents are.
+    // Activity (t-1972): what happened, a few days at a time, as entries to read: filters (who, where, what), the
+    // timeline with its day strip, and the open entry's whole story (src/ui/activity.ts; web/src/activity.tsx).
     if (pathname === '/activity') {
       const at = 'activity';
-      const nowMs = Date.now();
-      const store = storeFor(opts);
-      const reader = readerFor(opts, who);
-      const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000), reader) : store.lookedAt(Math.floor(nowMs / 1000), reader)) * 1000;
-      const t = householdThread(hh, 24, nowMs);
-      // Thread chips: All, each agent (when there's more than one), then each place it happened.
-      // A row with no where ("?") is under All only: a pill for it says nothing.
-      const surfaces = [...new Set(t.items.map((r) => surfaceOf(r.where)))].filter((w) => w !== '?').sort();
-      const from = query.who && (hh.agents.includes(query.who) || surfaces.includes(query.who)) ? query.who : '';
-      const agents = agentsOf(hh)!;
-      const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
-        ...(surfaces.length > 1 ? surfaces.filter((s) => !hh.agents.includes(s)).map((s) => ({ value: s, label: whereLabel(s) })) : [])];
-      // Activity is the thread, and the house's tiles beside it: what Home was before it showed how the agents are.
-      const d: Dashboard = {
-        label: 'Activity',
-        title: 'Everything today',
-        asks: [],
-        tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
-        thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
-          .map((r) => ({ agent: r.agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),
-        sinceMs, sinceLabel: clockAt(sinceMs),
-        filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
-      };
-      { const ctx = { ...ctxOf(at), agents }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
-        return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
+      const person = who?.member?.person ?? firstOwner(hh).person;
+      const named = householdPersonName(hh, person) ?? (person === firstOwner(hh).person && hh.owner ? hh.owner : person);
+      const ownerLabel = named.split(/[\s-]+/)[0].replace(/^./, (x) => x.toUpperCase());
+      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github });
+      { const ctx = { ...ctxOf(at), agents: agentsOf(hh)! }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
+        return view('activity', { activity, ctx, chrome: ch }); }
+    }
+    // Is this ask still open (t-1925)? The Inbox asks it, fresh, before it shows an ask's buttons as live and again
+    // before it sends one: a copy kept on the device (page.ts, the service worker) may be of an ask answered since.
+    // Never a cached answer: no-store, and the app treats one stamped x-loom-saved-at as "can't tell".
+    if (pathname === '/inbox/open') {
+      // By its Inbox key (k), or, for an approval asked from a Comms thread, by the approval's id (a): an approval a
+      // need waits on is drawn on that need (absorbApprovals), so its own card, and that card's key, aren't in the Inbox.
+      const key = query.k ?? '', approval = query.a ?? '';
+      if (!/^[0-9a-f]{16}$/.test(key) && !/^a-[0-9a-f]{4,32}$/.test(approval)) return sendJson(res, 400, { error: 'bad item' });
+      const names = (it: InboxItem) => [...(it.actions ?? []), ...(it.approval?.actions ?? [])].some((b) => b.fields?.id === approval);
+      const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => (key ? x.key === key : names(x)) && x.box !== 'done');
+      // Open: still there and not history, whether it's counted in Needs you or only filed (attention: false).
+      return sendJson(res, 200, { open: !!it }, { 'cache-control': 'no-store' });
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();
       const store = storeFor(opts);
       const reader = readerFor(opts, who);
       const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
-      const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
+      const folder: InboxFolder = folderOf(query.f);
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it; nothing else is ever unread.
       if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
-      const opened = store.openedKeys(reader);
-      for (const it of items) it.unread = it.attention && !opened.has(it.key);
+      const opened = store.openedAt(reader);
+      for (const it of items) {
+        it.unread = it.attention && !opened.has(it.key);
+        const at = opened.get(it.key);
+        if (at) it.seen = new Date(at * 1000).toISOString();
+      }
       // The open item's own page (a task's, for a task), drawn in the Inbox: only a piece's ask that links to
       // one of its pages (not its main page) and has no buttons of its own.
       // The open item as the page draws it: the one asked for when it's in this folder, else the folder's first.
@@ -1549,7 +2093,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const info = shown && !shown.actions?.length && shown.kind !== 'answered' && shown.page ? pieces.find((p) => pieceSource(p.piece).id === shown.source.id && hasPages(p)) : undefined;
       const sp = info ? splitPage(shown!.page!) : null;
       if (info && sp && !sp.core && sp.path !== '') {
-        const pg = await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who)));
         if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
       const ch = chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash);
@@ -1558,14 +2102,39 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
+        // A From folder (?f=from:<agent>) is the app's own (its items are all here); its address is kept, so a reload keeps it.
+        const from = typeof query.f === 'string' && /^from:[a-z][a-z0-9-]{0,39}$/.test(query.f) && hh.agents.includes(query.f.slice(5)) ? query.f : undefined;
+        return view('inbox', { items, folder: from ?? folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
-    if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
-    if (pathname.startsWith('/knowledge/')) {
-      const slug = decode(pathname.slice('/knowledge/'.length));
-      return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
+    // Knowledge, a reader (t-1925): topics, every page's line with its freshness, and the one asked for whole
+    // (/knowledge?p=<slug>, or its own address /knowledge/<slug>). The app filters and searches the lines itself.
+    if (pathname === '/knowledge' || pathname.startsWith('/knowledge/')) {
+      const own = pathname.startsWith('/knowledge/') ? decode(pathname.slice('/knowledge/'.length)) : undefined;
+      const slug = own ?? (query.p || undefined);
+      if (slug !== undefined && !(slug && validPath(`knowledge/${slug}`) && !slug.includes('/'))) return send200(notFound, 'knowledge', ctxOf('knowledge'));
+      const k = knowledgeView(hh, slug);
+      if (own !== undefined && !k.open) return send200(notFound, 'knowledge', ctxOf('knowledge'));
+      const ch = chrome(req, opts, pieces, skippedNames, 'knowledge', csrf, flash);
+      // `t` is the desktop's (its tiles, docs/specs/desk-tiling.md): a topic is `?topic=`.
+      const title = k.open?.title ?? 'Knowledge';
+      const intro = k.open ? (k.open.verified_at ? `Verified ${k.open.verified_at.slice(0, 10)}` : 'Not verified yet') + (k.open.by ? ` · written by ${k.open.by}` : '')
+        : 'Facts about the world, shared by every agent in the household.';
+      return view('knowledge', { knowledge: k, title, intro, add: NEW_FACT_LINK, topic: query.topic ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
+    // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
+    // not-found page here, never the single-agent route below.
+    if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
+    if (pathname === '/projects' || pathname.startsWith('/projects/')) {
+      const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
+      // The index's cards ride beside its page (web/src/projects.tsx draws them; docs/specs/projects.md, "The index").
+      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
+      const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
+      const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
+      const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
+      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env }) : null;
+      return send200(page ?? notFound, 'projects', ctxOf(pathname.slice(1)));
+    }
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
@@ -1589,6 +2158,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const rest = decode(a[2] ?? '') ?? '\0';
       const dir = agentDir(hh, agent);
       const src = agentSource(agent);
+      // Its window's header (t-1925 D): its description as the household wrote it (never its creed), whether this viewer
+      // may change it (a household owner), whether it's been asked to write one, and whether it's working now.
+      const windowFacts = () => {
+        const about = aboutOf(hh, agent);
+        const perms = opts.ownerScope ? undefined : permissionsOf(opts.env).permissions;
+        return { ...(about ? { about } : {}), ...(!opts.ownerScope ? { edit: true } : {}), ...(perms ? { permissions: `${perms}/${agent}` } : {}), ...(aboutAskOf(hh, agent) ? { asked: true } : {}),
+          ...(workingOf(pieces, agent).working ? { working: true, ...onOf(pieces, agent) } : {}), active: lastActive(agentDir(hh, agent)) };
+      };
       if (rest === '' ) {
         // The agent's Today: its asks, Memories and its pieces' tiles (scope-aware ones), its own thread.
         const nowMs = Date.now();
@@ -1598,19 +2175,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const d: Dashboard = {
           label: agents[agent].label,
           agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
-            id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
+            id: agent, today: t.items.length,
             waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
-            ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })() },
+            ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts() },
           asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
-            ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
+            ...(() => { const lastWake = tapeRows(agentDir(hh, agent), 24 * 7, nowMs).find((r) => r.where.split(':')[0] === 'wake');
+              return scoped.filter((p) => p.manifest.tile).map((p) => agentTile(p, agent, lastWake, nowMs)); })()],
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),
         };
         { const ctx = { ...ctxOf('', src), agents }; const ch = chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash);
           return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
-      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces) });
+      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces), id: agent, ...windowFacts() });
       // A piece's tab for this agent: its pages, called with LOOM_SCOPE=<agent>, links and actions kept here.
       const pp = /^p\/([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(rest);
       if (pp) {
@@ -1618,7 +2196,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const path = pp[2] ?? '';
         const asrc = agentPieceSource(agent, pp[1]);
         if (!info || !validPath(path)) return send200(notFound, `a/${agent}`, ctxOf('', asrc), head(`p/${pp[1]}`));
-        const pg = await piecePage(info, path, query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
         if (typeof pg === 'string') {
           return send200({ title: agentTabOf(info)!.label, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${pp[1]} couldn't show this page (${pg}).` }] }] },
             `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
@@ -1660,7 +2238,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, 404); }
-    const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
+    const page = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       { const err = { title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout' as const, tone: 'bad' as const, text: `${piece} couldn't show this page (${page}).` }] }] };
@@ -1675,6 +2253,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const page = piecesPage(opts.env, query);
     { const ctx = { source: CORE, path: 'pieces', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash);
       return view('page', { page, ctx, chrome: ch }); }
+  }
+
+  if (pathname === '/projects' || /^\/projects\/[a-z0-9][a-z0-9-]*$/.test(pathname)) {
+    const owner = { dir: opts.contextDir };
+    const ix = pathname === '/projects' ? await projectsApp([owner], { env: opts.env }) : undefined;
+    const page = ix ? ix.page : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
+    const ctx = { source: CORE, path: pathname.slice(1), query, csrf };
+    const ch = chrome(req, opts, pieces, skippedNames, 'projects', csrf, flash);
+    return view('page', { page: page ?? notFound, ctx, chrome: ch, ...(ix?.cards ? { projects: ix.cards } : {}) }, page ? 200 : 404);
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';

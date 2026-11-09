@@ -40,6 +40,7 @@ Commands:
   pieces            Installed pieces; install, update, roll back, remove them
   household         The household: agents and the default (docs/specs/household.md)
   token             Mint, list and revoke the household's tokens
+  sessions          The page's browser sessions: list them, sign one out alone
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
   backup            The nightly backup: set it, run one, see how it's going
@@ -236,6 +237,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'token': {
       const { runToken } = await import('./household.js');
       return runToken(rest, io);
+    }
+    case 'sessions': {
+      const { runSessions } = await import('./household.js');
+      return runSessions(rest, io);
     }
     case 'export': {
       const { runExport } = await import('./bundle.js');

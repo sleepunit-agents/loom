@@ -34,7 +34,9 @@ export interface Field {
 /** A button: posts its action (with fields) to the piece; danger asks first, with confirm. */
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
 
-export type Block =
+/** Every block: `cut` when loom cut one of its texts short to fit LIMITS (parsePage), so the page says so beside it. */
+export type Block = BlockShape & { cut?: true };
+type BlockShape =
   // A tile may carry a small trend (`spark`, up to 30 numbers, oldest first) or how full something is (`meter`, 0 to 1).
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string; spark?: number[]; meter?: number }> }
   // A status screen's headline: how things are, in plain words, at a glance ("All good", "One bridge is down").
@@ -47,7 +49,9 @@ export type Block =
       stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string } & Target> }
   // A row's lead says who: `agent` (an agent's mark; `loom` is loom's own), `person` (a People slug: their avatar) or
   // `avatar` (initials in a plain circle). A list where some rows say who, or that says `who`, draws the rest as nobody's yet.
-  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button } & Target> }
+  // A row with `more` opens in place to those label and value pairs (a task's goal, why and done-when); its `page` or
+  // `href` is then a link inside what opened, named `more.open` ("Open task"), rather than where a tap goes.
+  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button; more?: RowMore } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -55,7 +59,11 @@ export type Block =
   // busy: something is under way (a sign-in being checked): drawn with a spinner in place of its tone's icon.
   | { type: 'callout'; text: string; title?: string; tone?: Tone; busy?: boolean }
   | ({ type: 'link'; text: string } & Target)
-  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
+  /** Where a task or change came from: core draws it per viewer before the page is drawn (comms.md, "From"). */
+  | { type: 'from'; conversation: string }
+  // `switch`: the options drawn as one segmented switch (2 to 4, a sort) rather than pills. `chips`: rows of chips under
+  // it, each its own query key, any number on at once (`?<param>=a,b`; none on means all), each row one line.
+  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string; switch?: boolean; chips?: ChipRow[] }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
       /** More ways to send it, beside `submit`: each posts the form's fields with its own (Yes and No over a box of words). */
@@ -82,6 +90,12 @@ export interface PanelRow extends Target {
   act?: Button;
 }
 
+/** What a list row opens to in place (docs/extensions.md, "Blocks", list): up to LIMITS.more label and value pairs, and
+ * what its link is called there. */
+export interface RowMore { items: Array<{ label: string; value: string }>; open?: string }
+/** One row of a filters block's chips: a query key, a label for a screen reader, its chips. */
+export interface ChipRow { param: string; label: string; options: Array<{ value: string; label: string }> }
+
 export type ChartKind = 'bar' | 'area' | 'line';
 export type ChartVariant = 'grouped' | 'stacked' | 'smooth' | 'step';
 export type ChartColor = 'pink' | 'blue' | 'olive' | 'yellow' | 'ink';
@@ -90,10 +104,16 @@ const CHART_VARIANTS: Record<string, Set<string>> = { bar: new Set(['grouped', '
 const CHART_COLORS = new Set(['pink', 'blue', 'olive', 'yellow', 'ink']);
 const SERIES_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 
+/** Where a section stands on its page (docs/extensions.md, "Pages"): the main column, the default, or the side column.
+ * On a desktop window 1280 px and wider the side column is the window's right-hand column; narrower, and on a phone,
+ * the side sections fold together into one block at the top of the page, closed. */
+export type SectionPlace = 'main' | 'side';
+
 export interface Section {
   id: string;
   title?: string;
-  side?: boolean;
+  /** `side` puts it in the side column; absent is the main one. (A piece may still send the older `"side": true`.) */
+  place?: Exclude<SectionPlace, 'main'>;
   tone?: Tone;
   /** Folds under its title: `open` starts open, `closed` folded. The viewer's choice then sticks. */
   fold?: 'open' | 'closed';
@@ -102,7 +122,14 @@ export interface Section {
   blocks: Block[];
 }
 
+export interface ChangesData {
+  groups: { id: string; label: string }[];
+  rows: { id: string; group: string; title: string; repo: string; number: string; author: string; ago: string; status: string }[];
+  selected: string;
+  reader?: Page | null;
+}
 export interface Page {
+  changes?: ChangesData;
   title: string;
   intro?: string;
   sections: Section[];
@@ -126,7 +153,19 @@ export const ASK_KINDS: ReadonlySet<string> = new Set(['permission', 'decision',
  * waits on); otherwise it needs the owner: it counts, and may push. `expires` (ISO) is when it stops mattering.
  */
 export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[];
-  kind?: AskKind; attention?: false; expires?: string }
+  kind?: AskKind; attention?: false; expires?: string;
+  /** The ask laid out (docs/extensions.md, "asks"): why, one line; what happens if the owner says yes (its first,
+   * primary button) and if no (its danger one), drawn beside those buttons; longer details for its sheet; and the fine
+   * print, exactly what the yes allows (the machine's kind and target), under the rest. */
+  why?: string; if_yes?: string; if_no?: string; details?: string; fine?: string;
+  /** The conversation it was asked from (a cv- id: the approvals piece's, docs/specs/comms.md "Asks inline"): a Comms
+   * thread shows it, when its agent is the thread's too. */
+  conversation?: string;
+  /** Its own words are what the owner decides on (an approval whose Allow does something lasting, like the approvals
+   * piece's grant: t-1970): wherever a Needs you absorbs it, its text heads the item and its if-lines are the ones beside
+   * Allow and Deny; the agent's own ask becomes the item's why. It also marks a card only the household owner may
+   * answer: a Comms thread offers its Allow to nobody else (comms.md, "Asks inline"; core also reads the approval's kind). */
+  lead?: true }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
 export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
 /** One the owner already answered (or that expired): the Inbox's history. */
@@ -141,7 +180,11 @@ export interface Reading { label: string; value: string; detail?: string; tone?:
  * body is in, a lane or a wake running, a task, a remote session. The card lists them, simply; the details are a
  * tap away (`page`). `since` is when it started (ISO 8601).
  */
-export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string }
+export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string;
+  /** The conversation a delivered body is in (cv-…; the runtime's): loom says which one, and links it, for whoever may see it. */
+  conversation?: string;
+  /** Where loom links it (loom's own, never a piece's): a Comms thread's page, for its member (handler.ts, atWorkFor). */
+  href?: string }
 export type DoingKind = 'talk' | 'lane' | 'task' | 'session' | 'other';
 export const DOING_KINDS: ReadonlySet<string> = new Set(['talk', 'lane', 'task', 'session', 'other']);
 export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
@@ -152,6 +195,13 @@ export type Level = 'loom' | 'agent';
  * (each palette and light or dark has its own) and the ink on it stays readable. */
 export const ACCENTS = ['pink', 'blue', 'yellow', 'olive'] as const;
 export type Accent = typeof ACCENTS[number];
+/** A piece's own fit (docs/specs/desk-tiling.md, "Fit"): a minimum width and height, an ideal width, a maximum width
+ * (null: it can use any), and whether it wants the big slot. Every key optional. */
+export type TabFit = { min?: [number, number]; ideal?: number; max?: number | null; big?: boolean };
+/** The default row a fit's missing keys fall back to (web/src/tiling/fit.ts DEFAULT_FIT), and the least it may ask. */
+export const FIT_DEFAULT = { min: [420, 300] as [number, number], ideal: 720, max: null as number | null };
+export const FIT_LEAST = { w: 320, h: 240 };
+const FIT_MOST = 10000;
 
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
@@ -165,8 +215,10 @@ export interface Manifest {
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages.
    * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one.
    * accent: its colour everywhere it's drawn (tile, dock, its page's header), one of loom's palette (ACCENTS), so it
-   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name. */
-  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent };
+   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name.
+   * fit: the room its pages can use on a tiled desktop (docs/specs/desk-tiling.md, "Fit"); a key left out is the default
+   * row's (min [420, 300], ideal 720, no max, not big). */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent; fit?: TabFit };
   /**
    * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
    * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
@@ -212,6 +264,13 @@ export const LIMITS = {
   // A form's extra submits: a Yes, a No, and one more.
   formSubmits: 3,
   options: 50,
+  /** A list row's `more`: a few facts, not a page. */
+  more: 6,
+  /** A filters block's chip rows, and the chips in one. */
+  chipRows: 3,
+  chips: 12,
+  /** A chip's value: a row of LIMITS.chips of them, joined with commas, stays inside queryValue. */
+  chipValue: 15,
   query: 10,
   queryValue: 200,
   path: 200,
@@ -231,7 +290,9 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|comms\/(?:th:)?[a-z2-7]{10}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+
+const COMMS_THREAD_PAGE = /^comms\/th:[a-z2-7]{10}$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
@@ -245,6 +306,46 @@ function str(v: unknown, what: string): string {
   if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   if (typeof v !== 'string') throw new Invalid(`${what} must be a string`);
   if (v.length > LIMITS.string) throw new Invalid(`${what} is longer than ${LIMITS.string}`);
+  return v;
+}
+
+/** An ask's laid-out words (Ask.why, if_yes, if_no, details, fine), each a string within its cap. */
+function plainOf(a: Record<string, unknown>): Pick<Ask, 'why' | 'if_yes' | 'if_no' | 'details' | 'fine'> {
+  const out: Pick<Ask, 'why' | 'if_yes' | 'if_no' | 'details' | 'fine'> = {};
+  for (const [k, cap] of [['why', 300], ['if_yes', 300], ['if_no', 300], ['details', 2000], ['fine', 400]] as const) {
+    const v = a[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.length > cap) throw new Invalid(`ask.${k} is text, at most ${cap} characters`);
+    if (v.trim()) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * A block's own words (a code block's text, a list row's, a cell): over `max` they're cut short, not refused, ending
+ * in "…", and the block says so (`cut`, block()). One long record shouldn't blank a whole page (t-1861: Approvals went
+ * blank when its record passed 2000 characters). Names, labels, actions and paths stay strict (str).
+ */
+function long(v: unknown, what: string, max: number = LIMITS.string): string {
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  if (typeof v !== 'string') throw new Invalid(`${what} must be a string`);
+  if (v.length <= max) return v;
+  cuts.all.push(`${what} (${v.length} characters, at most ${max})`);
+  cuts.open++;
+  let kept = v.slice(0, max - 1);
+  // Not half of a surrogate pair.
+  if (/[\uD800-\uDBFF]$/.test(kept)) kept = kept.slice(0, -1);
+  return `${kept}…`;
+}
+function optLong(v: unknown, what: string): string | undefined {
+  return v === undefined || v === null ? undefined : long(v, what);
+}
+/** What this parse cut short (`all`, for the caller to log), and how many cuts no block has claimed yet (`open`). */
+let cuts: { all: string[]; open: number } = { all: [], open: 0 };
+
+/** A conversation's id as a piece names it (docs/specs/conversations.md): cv- and twelve hex. */
+function conversationRef(v: unknown): string {
+  if (typeof v !== 'string' || !/^cv-[0-9a-f]{12}$/.test(v)) throw new Invalid('doing.conversation is a conversation id (cv- and 12 hex)');
   return v;
 }
 
@@ -295,6 +396,17 @@ function tone(v: unknown): Tone | undefined {
   return v as Tone;
 }
 
+/** A list row's `more`: its label and value pairs, and what its link is called there. */
+function rowMore(v: unknown): RowMore {
+  const o = obj(v, 'list.more');
+  const items = arr(o.items, 'list.more.items', LIMITS.more).map((x) => {
+    const i = obj(x, 'list.more item');
+    return { label: str(i.label, 'list.more.label'), value: str(i.value, 'list.more.value') };
+  });
+  if (!items.length) throw new Invalid('list.more needs an item');
+  return { items, ...(o.open !== undefined ? { open: str(o.open, 'list.more.open') } : {}) };
+}
+
 function arr(v: unknown, what: string, max: number): unknown[] {
   if (!Array.isArray(v)) throw new Invalid(`${what} must be an array`);
   if (v.length > max) throw new Invalid(`${what} has more than ${max} entries`);
@@ -332,7 +444,8 @@ export function splitPage(s: string): { core: boolean; path: string; query: Reco
   const rest = core ? s.slice(5) : s;
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);
-  if (!validPath(path)) return null;
+  // A Comms thread's page (comms.md, "From"): loom's own, and its id carries a colon no other path may.
+  if (!(core && COMMS_THREAD_PAGE.test(path)) && !validPath(path)) return null;
   // Into loom, only pages: loom's own and, as loom:p/<piece>/<path>, another piece's (a conversation's page
   // naming the task it closed, 2026-10-29: a page is only a look, and that piece still says who may see it);
   // never login, logout, actions or the JSON endpoints.
@@ -492,7 +605,16 @@ function pages(v: unknown): Pages {
   return { param, at, count, ...(total !== undefined ? { total } : {}) };
 }
 
+/** A block, marked `cut` when one of its own texts was cut short (a block inside it marks itself, not this one). */
 function block(v: unknown, depth = 0): Block {
+  const before = cuts.open;
+  const out = blockShape(v, depth);
+  if (cuts.open === before) return out;
+  cuts.open = before;
+  return { ...out, cut: true };
+}
+
+function blockShape(v: unknown, depth: number): BlockShape {
   const b = obj(v, 'block');
   switch (b.type) {
     case 'stats':
@@ -543,10 +665,11 @@ function block(v: unknown, depth = 0): Block {
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
-            text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
+            text: long(o.text, 'list.text'), meta: optLong(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
             tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...(o.person !== undefined ? { person: personSlug(o.person, 'list.person') } : {}),
             avatar: avatarOf(o.avatar), ...target(o, 'list item'),
             ...(o.act !== undefined ? { act: button(o.act) } : {}),
+            ...(o.more !== undefined ? { more: rowMore(o.more) } : {}),
           };
         }),
       };
@@ -554,10 +677,10 @@ function block(v: unknown, depth = 0): Block {
       const columns = arr(b.columns, 'table.columns', LIMITS.columns).map((c) => str(c, 'table column'));
       const rows = arr(b.rows, 'table.rows', LIMITS.items).map((r) =>
         arr(r, 'table row', columns.length).map((c): Cell => {
-          if (typeof c === 'string' || typeof c === 'number') return str(c, 'table cell');
+          if (typeof c === 'string' || typeof c === 'number') return long(c, 'table cell');
           const o = obj(c, 'table cell');
           const p = page(o.page, 'table cell.page');
-          return p !== undefined ? { text: str(o.text, 'table cell.text'), page: p } : str(o.text, 'table cell.text');
+          return p !== undefined ? { text: long(o.text, 'table cell.text'), page: p } : long(o.text, 'table cell.text');
         }));
       return { type: 'table', columns, rows, ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}) };
     }
@@ -566,19 +689,22 @@ function block(v: unknown, depth = 0): Block {
         type: 'kv',
         items: arr(b.items, 'kv.items', LIMITS.items).map((i) => {
           const o = obj(i, 'kv item');
-          return { label: str(o.label, 'kv.label'), value: str(o.value, 'kv.value'), page: page(o.page, 'kv.page') };
+          return { label: str(o.label, 'kv.label'), value: long(o.value, 'kv.value'), page: page(o.page, 'kv.page') };
         }),
       };
     case 'text':
-      return { type: 'text', text: str(b.text, 'text'), tone: tone(b.tone) };
+      return { type: 'text', text: long(b.text, 'text'), tone: tone(b.tone) };
     case 'prose': {
       if (typeof b.text !== 'string') throw new Invalid('prose.text must be a string');
-      if (b.text.length > LIMITS.prose) throw new Invalid(`prose.text is longer than ${LIMITS.prose}`);
-      return { type: 'prose', text: b.text };
+      return { type: 'prose', text: long(b.text, 'prose.text', LIMITS.prose) };
     }
     case 'callout':
       if (b.busy !== undefined && typeof b.busy !== 'boolean') throw new Invalid('callout.busy must be true or false');
-      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
+      return { type: 'callout', text: long(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
+    case 'from': {
+      if (typeof b.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(b.conversation)) throw new Invalid('from.conversation is a conversation id (cv- and 12 hex digits)');
+      return { type: 'from', conversation: b.conversation };
+    }
     case 'link': {
       const t = target(b, 'link');
       if (t.page === undefined && t.href === undefined) throw new Invalid('link needs page or href');
@@ -587,16 +713,35 @@ function block(v: unknown, depth = 0): Block {
     case 'filters': {
       const param = str(b.param, 'filters.param');
       if (!QUERY_KEY.test(param)) throw new Invalid('filters.param must be a query key');
+      const options = arr(b.options, 'filters.options', LIMITS.options).map((x) => {
+        const o = obj(x, 'filter option');
+        const value = str(o.value, 'filter.value');
+        if (value.length > LIMITS.queryValue) throw new Invalid('filter.value is too long');
+        return { value, label: str(o.label, 'filter.label') };
+      });
+      if (b.switch !== undefined && typeof b.switch !== 'boolean') throw new Invalid('filters.switch must be true or false');
+      if (b.switch === true && (options.length < 2 || options.length > 4)) throw new Invalid('filters.switch needs 2 to 4 options');
+      const keys = new Set([param, 'q']);
+      const chips = b.chips === undefined ? undefined : arr(b.chips, 'filters.chips', LIMITS.chipRows).map((x) => {
+        const r = obj(x, 'chip row');
+        const key = str(r.param, 'chips.param');
+        if (!QUERY_KEY.test(key) || keys.has(key)) throw new Invalid('chips.param must be a query key of its own (not q, nor another row\'s)');
+        keys.add(key);
+        const ops = arr(r.options, 'chips.options', LIMITS.chips).map((y) => {
+          const o = obj(y, 'chip');
+          const value = str(o.value, 'chip.value');
+          if (value === '' || value.includes(',') || value.length > LIMITS.chipValue) throw new Invalid(`chip.value is 1 to ${LIMITS.chipValue} characters, no comma`);
+          return { value, label: str(o.label, 'chip.label') };
+        });
+        if (!ops.length) throw new Invalid('a chip row needs a chip');
+        if (new Set(ops.map((o) => o.value)).size !== ops.length) throw new Invalid('a chip row\'s values are distinct');
+        return { param: key, label: str(r.label, 'chips.label'), options: ops };
+      });
       return {
-        type: 'filters',
-        param,
-        options: arr(b.options, 'filters.options', LIMITS.options).map((x) => {
-          const o = obj(x, 'filter option');
-          const value = str(o.value, 'filter.value');
-          if (value.length > LIMITS.queryValue) throw new Invalid('filter.value is too long');
-          return { value, label: str(o.label, 'filter.label') };
-        }),
+        type: 'filters', param, options,
         search: optStr(b.search, 'filters.search'),
+        ...(b.switch === true ? { switch: true } : {}),
+        ...(chips?.length ? { chips } : {}),
       };
     }
     case 'details':
@@ -635,14 +780,14 @@ function block(v: unknown, depth = 0): Block {
         }),
       };
     case 'code':
-      return { type: 'code', text: str(b.text, 'code.text'), label: optStr(b.label, 'code.label') };
+      return { type: 'code', text: long(b.text, 'code.text'), label: optStr(b.label, 'code.label') };
     case 'status':
       return {
         type: 'status',
         items: arr(b.items, 'status.items', LIMITS.items).map((i) => {
           const o = obj(i, 'status item');
           return {
-            label: str(o.label, 'status.label'), tone: tone(o.tone), text: optStr(o.text, 'status.text'),
+            label: str(o.label, 'status.label'), tone: tone(o.tone), text: optLong(o.text, 'status.text'),
             meta: optStr(o.meta, 'status.meta'), page: page(o.page, 'status.page'),
           };
         }),
@@ -652,7 +797,7 @@ function block(v: unknown, depth = 0): Block {
     case 'health': {
       const t = tone(b.tone);
       if (!t) throw new Invalid('health.tone is ok, warn, bad or muted');
-      return { type: 'health', tone: t, text: str(b.text, 'health.text'), ...(b.detail !== undefined ? { detail: str(b.detail, 'health.detail') } : {}) };
+      return { type: 'health', tone: t, text: str(b.text, 'health.text'), ...(b.detail !== undefined ? { detail: long(b.detail, 'health.detail') } : {}) };
     }
     case 'panel':
       return {
@@ -763,12 +908,21 @@ function section(v: unknown): Section {
   return {
     id,
     title: optStr(o.title, 'section.title'),
-    side: bool(o.side),
+    ...(placeOf(o) === 'side' ? { place: 'side' as const } : {}),
     tone: tone(o.tone),
     ...(o.fold !== undefined ? { fold: fold(o.fold, o.title) } : {}),
     ...(o.level !== undefined ? { level: level(o.level, 'section.level') } : {}),
     blocks: arr(o.blocks, 'section.blocks', LIMITS.blocks).map((x) => block(x)),
   };
+}
+
+/** A section's place: `place` ("main" or "side"), or the older `side` (true or false). Both, saying different things, is
+ * a mistake in the page, not a guess. */
+function placeOf(o: Record<string, unknown>): SectionPlace {
+  if (o.place !== undefined && o.place !== 'main' && o.place !== 'side') throw new Invalid('section.place must be main or side');
+  const old = bool(o.side) ? 'side' : 'main';
+  if (o.place !== undefined && o.side !== undefined && o.place !== old) throw new Invalid('section.place and section.side disagree: send place alone');
+  return (o.place as SectionPlace | undefined) ?? old;
 }
 
 function fold(v: unknown, title: unknown): 'open' | 'closed' {
@@ -782,10 +936,36 @@ function sections(v: unknown): Section[] {
 }
 
 function attempt<T>(f: () => T): T | string {
+  // Each parse counts its own cuts (long()).
+  cuts = { all: [], open: 0 };
   try { return f(); } catch (err) {
     if (err instanceof Invalid) return err.message;
     throw err;
   }
+}
+
+/** A tab's fit: each key optional (the default row's otherwise; an ideal left out is the default's or the min's width,
+ * whichever is wider); a min under 320×240, an ideal it gives under the min's width, or a max under the ideal is refused,
+ * naming the field. Keys it doesn't know are left alone, as `tab`'s are. Empty, it's no fit at all (loom's row stands). */
+function tabFit(v: unknown): TabFit | undefined {
+  const f = obj(v, 'tab.fit');
+  const px = (x: unknown, what: string) => {
+    if (typeof x !== 'number' || !Number.isInteger(x) || x <= 0 || x > FIT_MOST) throw new Invalid(`${what} must be a whole number of pixels, at most ${FIT_MOST}`);
+    return x;
+  };
+  const out: TabFit = {};
+  if (f.min !== undefined) {
+    if (!Array.isArray(f.min) || f.min.length !== 2) throw new Invalid('tab.fit.min must be [width, height]');
+    out.min = [px(f.min[0], 'tab.fit.min width'), px(f.min[1], 'tab.fit.min height')];
+    if (out.min[0] < FIT_LEAST.w || out.min[1] < FIT_LEAST.h) throw new Invalid(`tab.fit.min must be at least [${FIT_LEAST.w}, ${FIT_LEAST.h}]: a tile narrower or shorter can't be used beside others`);
+  }
+  if (f.ideal !== undefined) out.ideal = px(f.ideal, 'tab.fit.ideal');
+  if (f.max !== undefined) out.max = f.max === null ? null : px(f.max, 'tab.fit.max');
+  if (f.big !== undefined) { if (typeof f.big !== 'boolean') throw new Invalid('tab.fit.big must be true or false'); out.big = f.big; }
+  const min = out.min ?? FIT_DEFAULT.min, ideal = out.ideal ?? Math.max(FIT_DEFAULT.ideal, min[0]);
+  if (out.ideal !== undefined && ideal < min[0]) throw new Invalid(`tab.fit.ideal (${ideal}) must be at least its min's width (${min[0]})`);
+  if (out.max != null && out.max < ideal) throw new Invalid(`tab.fit.max (${out.max}) must be at least its ideal (${ideal})`);
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Validate a piece's `ui --json` answer (v2, or a first-version `{sections}`). */
@@ -813,8 +993,9 @@ export function parseManifest(value: unknown): Manifest | string {
       if (icon !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(icon)) throw new Invalid('tab.icon must be a lucide icon name (alarm-clock)');
       const accent = optStr(t.accent, 'tab.accent');
       if (accent !== undefined && !(ACCENTS as readonly string[]).includes(accent)) throw new Invalid(`tab.accent must be one of loom's palette: ${ACCENTS.join(', ')}`);
+      const fit = t.fit === undefined ? undefined : tabFit(t.fit);
       m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}),
-        ...(accent ? { accent: accent as Accent } : {}) };
+        ...(accent ? { accent: accent as Accent } : {}), ...(fit ? { fit } : {}) };
     }
     if (top.agentTab !== undefined) {
       const t = obj(top.agentTab, 'agentTab');
@@ -837,6 +1018,9 @@ export function parseManifest(value: unknown): Manifest | string {
           ...(a.kind !== undefined ? { kind: askKind(a.kind, 'ask.kind') } : {}),
           ...(a.attention !== undefined ? attention(a.attention) : {}),
           ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
+          ...(typeof a.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}),
+          ...(a.lead === true ? { lead: true as const } : {}),
+          ...plainOf(a),
         };
       });
     }
@@ -876,7 +1060,8 @@ export function parseManifest(value: unknown): Manifest | string {
             const since = optStr(d.since, 'doing.since');
             if (since !== undefined && !Number.isFinite(Date.parse(since))) throw new Invalid('doing.since is a time (ISO 8601)');
             return { text: str(d.text, 'doing.text'), ...(d.kind ? { kind: d.kind as DoingKind } : {}), ...(d.where !== undefined ? { where: str(d.where, 'doing.where') } : {}),
-              ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}) };
+              ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}),
+              ...(d.conversation !== undefined ? { conversation: conversationRef(d.conversation) } : {}) };
           }) } : {}),
         };
       }
@@ -885,16 +1070,41 @@ export function parseManifest(value: unknown): Manifest | string {
   });
 }
 
-/** Validate a piece's `ui page --json` answer. */
-export function parsePage(value: unknown): Page | string {
-  return attempt(() => {
+function changesData(value: unknown): ChangesData {
+  const c = obj(value, 'changes');
+  if (c.reader != null && obj(c.reader, 'reader').changes !== undefined) throw new Invalid('nested changes reader');
+  const r = c.reader == null ? null : obj(c.reader, 'reader');
+  const reader = r ? { title: str(r.title, 'reader.title'), intro: optStr(r.intro, 'reader.intro'), sections: sections(r.sections) } : null;
+  return {
+    groups: arr(c.groups, 'changes.groups', 12).map((v) => { const g = obj(v, 'group'); return { id: name(g.id, 'group.id'), label: str(g.label, 'group.label') }; }),
+    rows: arr(c.rows, 'changes.rows', 500).map((v) => {
+      const r = obj(v, 'change');
+      return { id: page(r.id, 'change.id') ?? '', group: name(r.group, 'change.group'), title: str(r.title, 'change.title'),
+        repo: str(r.repo, 'change.repo'), number: str(r.number, 'change.number'), author: str(r.author, 'change.author'),
+        ago: str(r.ago, 'change.ago'), status: str(r.status, 'change.status') };
+    }), selected: c.selected === '' ? '' : page(c.selected, 'changes.selected') ?? '', reader,
+  };
+}
+
+/**
+ * Validate a piece's `ui page --json` answer. A block's own words over their limit are cut short and the block marked
+ * (long()); `onCut` hears which, to log. Anything else out of bounds (too many sections, blocks or rows; a bad name or
+ * path) still refuses the page.
+ */
+export function parsePage(value: unknown, onCut?: (fields: string[]) => void): Page | string {
+  const out = attempt(() => {
     const top = obj(value, 'page');
     const r = top.refresh;
     if (r !== undefined && (typeof r !== 'number' || !Number.isInteger(r) || r < 2 || r > 300)) throw new Invalid('refresh must be whole seconds from 2 to 300');
     const add = top.add === undefined ? undefined : obj(top.add, 'add');
     return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}),
+      ...(top.changes === undefined ? {} : { changes: changesData(top.changes) }),
       ...(add ? { add: { page: page(add.page, 'add.page') ?? '', label: str(add.label, 'add.label') } } : {}) };
   });
+  const cut = cuts.all;
+  cuts = { all: [], open: 0 };
+  if (cut.length && typeof out !== 'string') onCut?.(cut);
+  return out;
 }
 
 /** Validate a piece's `ui act --json` answer. */

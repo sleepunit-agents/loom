@@ -181,7 +181,7 @@ own schema:
 
 | Key | What core does with it | Its schema |
 |---|---|---|
-| `sections` | runs `sections.project` as a project's section feed | [specs/projects.md](specs/projects.md), "Section feeds (the seam)" |
+| `sections` | runs `sections.project` as a project's section feed, and `sections.thread` as a Comms thread's work | [specs/projects.md](specs/projects.md), "Section feeds (the seam)"; [specs/comms.md](specs/comms.md), "The thread feed" |
 | `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
@@ -268,11 +268,12 @@ own data. Core only runs the feed and shows what it answers, keyed
 `piece:<name>`, after the core sections, by piece name.
 
 - **The arguments**, in this order: `--project <slug> --since <iso>`, then
-  `--epic <id>` when the card has one, `--name <alias>` for each alias and
-  `--venue <v>` for each venue, in the card's order. `since` is no earlier than
+  `--epic <id>` when the card has one, `--name <alias>` for each alias,
+  `--venue <v>` for each venue and `--repo <r>` for each repo selector, in the
+  card's order. `since` is no earlier than
   8 days ago and is passed as UTC, `YYYY-MM-DDTHH:MM:SSZ`.
-- **The answer** is `{"groups": [{"title", "items": [{"title", "when", "who",
-  "person", "status", "ref", "body"}]}]}`: at most 8 groups and 50 items, every
+- **The answer** is `{"groups": [{"title", "waiting", "items": [{"title", "when", "who",
+  "person", "status", "ref", "page", "href", "body"}]}]}`: at most 8 groups and 50 items, every
   key known, each string within its cap (projects.md, "Output"). `{"groups": []}`
   is a present, empty section.
 - **A failure is that section's alone.** An answer that isn't valid, a non-zero
@@ -280,6 +281,10 @@ own data. Core only runs the feed and shows what it answers, keyed
   returns.
 - **`unfiled: true`** says the feed can also be asked `--unfiled --since <iso>`
   (7 days ago) for items that belong to no project: Home's "Unfiled" list.
+- **`sections.thread`** (`label`, `argv`) is a Comms thread's work: run with `--conversation <cv>` and a `--ref`
+  per ref the thread named, `{caller}` on stdin, answering `{"items": [{"title", "ref", "status", "tone", "when",
+  "page", "href", "made"}]}` ([specs/comms.md](specs/comms.md), "The thread feed"). A piece declaring it also
+  accepts `--conversation <cv>` on its project feed, for the project's filed threads.
 - The feeds run through the one runner above, each time a hub is asked for
   (`project_hub`, `loom project hub`), never for the project list, and are
   not cached (`src/project-feeds.ts`).
@@ -341,6 +346,23 @@ that ignores it keeps working. Outside a household there's no `caller`.
   ```json
   { "tab": { "label": "Garden", "icon": "sprout", "accent": "olive" } }
   ```
+  Optional `fit`: how much room the piece's pages can use when apps share a big
+  screen as tiles (Appearance → Desktop → Tiling; `docs/specs/desk-tiling.md`,
+  "Fit"). `min` is `[width, height]` in pixels, the least a tile of it can be
+  (narrower and it goes to the dock rather than be drawn cramped); `ideal` is the
+  width it looks best at, which sets its share of a split; `max` is the width past
+  which it gains nothing (`null`: it can use any); `big: true` asks for the big
+  slot on the left. Every key is optional and falls back to loom's default row
+  (`min` `[420, 300]`, `ideal` `720`, or the `min`'s width when that's wider, no
+  `max`, not `big`); a piece's own fit wins over loom's row for its label, and an
+  empty `fit` is none. Sizes are whole pixels, at most 10000. A `min` under
+  `[320, 240]`, an `ideal` under the min's width, or a `max` under the `ideal` is
+  refused with the manifest, naming the field. A tab on each agent's pages
+  (`level: "agent"`, or `agentTab`) is drawn as that agent's pages, whose room is
+  loom's own: `fit` applies to the household's tab.
+  ```json
+  { "tab": { "label": "Garden", "fit": { "min": [420, 300], "ideal": 760, "max": 1000, "big": false } } }
+  ```
 - **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
   too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
   the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying
@@ -382,9 +404,22 @@ that ignores it keeps working. Outside a household there's no `caller`.
     asking to join). `"decision"` means a choice. `"reply"` means words, not a button. `"alert"` means
     something is wrong and worth a look, with nothing to choose (a bridge gone dark). `"todo"` means a
     task waiting on the owner. With no `kind`, an ask with `actions` is a decision; one without is an alert.
+    The Inbox's folders (t-1925) group the kinds by what they want from the owner: **Questions** (`decision`, `reply`,
+    `todo`), **Approvals** (`permission`, or an ask that holds one), **Alerts** (`alert`), **Memory reviews** (loom's
+    own memory proposals), and **Done** (what's answered, and news). An open ask is read whole in the Inbox's reading
+    pane beside the list, with its buttons.
   - `expires` (an ISO date-time) is when it stops mattering.
-  - `attention: false` files the ask without counting it as unread. Use it for a memory proposal
-    that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
+  - `attention: false` files the ask in its folder without counting it in Needs you or as unread (its
+    buttons still work). Use it for a memory proposal that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
+  - **Laid out** (Jonathan, 2026-11-05: "explain the whole thing in human friendly text"): `text` is the one plain
+    question, read whole; `why` (≤ 300) is one line; `if_yes` and `if_no` (≤ 300 each) say what happens on its primary
+    button (Allow, Yes) and on its danger one (Deny), and loom draws each beside its button on Home and in the Inbox;
+    `details` (≤ 2,000) is longer text for the Inbox's reading pane; `fine` (≤ 400) is the small print, exactly what the yes allows
+    (the machine's kind and target), under "Exactly what this allows". An ask with buttons is never drawn cut.
+  - `conversation` (a `cv-` id) is the conversation the ask was made from: a Comms thread shows a permission ask
+    inline when its `conversation` is the thread's and its `agent` is the thread's agent ([specs/comms.md](specs/comms.md),
+    "Asks inline"). Its first action's `fields.id` names it. The id is the requesting body's claim: loom binds it by
+    the agent it authenticated, and draws it only for pieces the viewer may hear from (as the Inbox does).
 - **`notices`** (at most 20) are news the owner may want: a box joined, a bridge
   restarted. Each needs `text` and `at`, and may carry `meta`, `agent` and `page`.
   They're filed under FYI and are never unread. Breakage is a state, so a piece
@@ -402,6 +437,13 @@ that ignores it keeps working. Outside a household there's no `caller`.
     Home's card lists them, simply ("are they up, are they working, what's happening, but that's it"); the
     details are the piece's own page. A reading marked `bad` or `warn` is the card's trouble line; the rest
     stay off the card.
+    A row may name the `conversation` (`cv-…`) a delivered body is in: loom then says which one and links it,
+    for whoever may see it. Such a row carries only the venue, kind and conversation, never a label (a label can
+    name who or what it's about): a Comms thread's row is shown only to the thread's member, as the thread's title
+    and a link to it (comms.md, rule 4); any other conversation's label and link only to the agent's owners, and
+    everyone else sees the piece's plain words ("Working · Slack", "On a wake"). A piece whose rows
+    move tells loom at once with `POST /api/loom/pieces/changed` (the runtime's, today), so a card goes working,
+    and back to quiet, within seconds rather than at loom's next look at the pieces.
 
   ```json
   "agents": { "art": { "state": "working", "reason": "house h-52 on one",
@@ -409,6 +451,11 @@ that ignores it keeps working. Outside a household there's no `caller`.
   ```
 
   Loom combines the pieces, taking the worst state: broken, then unavailable, then working, then available.
+
+  On an agent's own Today, a `scope` piece's tile is its word for that agent, not its household summary: the
+  first reading's `detail` (else its `value`) as the tile's value, each reading as a line under it, opening the
+  agent's own tab of the piece. A first reading labelled `Next` is a wake to come; under it loom adds the agent's
+  last wake, from its own record. A piece with no report for the agent keeps its `tile` there.
   A piece says nothing about an agent it doesn't know.
 - **`add`** (optional): `{ "page": "new", "label": "New task" }`. loom draws it as
   a "+" beside the page's title, linking to that page (one of the piece's, or
@@ -428,7 +475,7 @@ a fetch from another site, but a link can still open one.) It answers:
 { "title": "Work", "intro": "One line under the title.",
   "sections": [
     { "id": "yours", "title": "Your call", "tone": "warn", "blocks": [ ... ] },
-    { "id": "facts", "side": true, "blocks": [ ... ] }
+    { "id": "facts", "place": "side", "blocks": [ ... ] }
   ] }
 ```
 
@@ -440,7 +487,24 @@ something is changing (an install running, a sign-in being checked), and drop
 it once it's settled. A `callout` with `"busy": true` says what's under way,
 with a spinner in its icon's place.
 
-A section with `"side": true` goes in the side column. One with `"fold": "open"` or
+A section with `"place": "side"` goes in the side column (`"main"`, the
+default, is the page itself; the older `"side": true` still means the side, and
+the two disagreeing refuses the page). Put there what helps with the page rather
+than what the page is: its filters and sort, a small chart, what changed lately.
+On a desktop window 1280 px wide or more, the side column is the window's own
+right-hand column, a fixed width, scrolling down on its own beside the page.
+Narrower, and on a phone, the side sections fold together into one block at the
+top of the page, closed until it's opened ("Filters & more" when one of them
+holds a `filters` block, else "Details & more"). A chart there is drawn shorter,
+without a Show data button: there the chart is the point (its numbers stay in a
+visually hidden table for a screen reader). Nothing in the side column scrolls
+sideways but a filters block's chip rows: words wrap and long ones break. A
+side section is only a placement: it's checked, gated and drawn block by block
+exactly as a main one is. A page that puts nothing in its side column gets
+Recent here in a desktop window instead: the pages of the same app opened lately
+on that device.
+
+One with `"fold": "open"` or
 `"closed"` folds under its title (it needs one), starting that way; the viewer's
 last open or close on that page sticks, on that device. `tone` gives the whole
 section that tone's look, such as amber for "needs you".
@@ -455,7 +519,7 @@ characters. A path the piece doesn't know should answer with
 
 Every section is a list of blocks. A link inside a block is either `page`
 (a page of the same piece, or `loom:<path>` for one of loom's own pages:
-Home, `mind`, `people`, `people/<slug>` or `memory/<ref>`; either with an
+Home, `mind`, `people`, `people/<slug>`, `memory/<ref>` or a Comms thread, `comms/<thread>`; either with an
 optional `?key=value` query, such as `?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
 outside the page).
 
@@ -464,16 +528,17 @@ outside the page).
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`, `spark` (up to 30 numbers, oldest first: a small trend line under the value), `meter` (0 to 1: a bar under the value, like a disk's use). One item alone is the page's hero (its number at the top size) |
 | `health` | `tone` (required), `text`, optional `detail`. A status screen's headline: how things are in a word or two ("All good", "One bridge is down"), big, with an icon for its tone (never colour alone). Put it first, tiles (`stats`) under it, and the engineering proof in a `details` |
 | `panel` | `rows`, optional `title`, `action` (one `buttons` item: the panel's primary action, at its foot). Settings as an app's panel; see Panels below |
-| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
+| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first), `more` (`{items, open?}`: up to 6 `label`/`value` pairs the row opens to in place, such as a task's goal, why and done-when; its `page` or `href` is then a button inside what opened, named `open`, "Open" by default) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
-| `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters. Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
+| `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters (more is cut short). Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
 | `callout` | `text`, optional `title`, `tone`, `busy` (true: something is under way, drawn with a spinner). A boxed note |
 | `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
-| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
+| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=`; `switch` (true, with 2 to 4 options: a sort) draws the options as one segmented switch instead; `chips` (up to 3 rows of `param`, `label` (for a screen reader), `options` of up to 12 `value`/`label`, a value 1 to 15 characters with no comma) adds rows of chips under it, each row its own query key (not `q` nor `param`), any number on at once as `?<param>=a,b` (none on means all). Each chip row is one line, sliding sideways when it doesn't fit, never wrapping |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
+| `from` | `conversation` (a `cv-` id). Where a task or change came from: loom draws it for each viewer, as a link "From: <thread title>" for the Comms thread's own member, "From a Comms thread" for another owner of its agent, and "From a conversation" for everyone else ([specs/comms.md](specs/comms.md), "From"). The piece never sees which |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value), `submits` (up to 3 more ways to send it, beside `submit`: `label`, optional `fields` (name → value, sent with the form's) and `tone`; a task's Yes and No over a box of words). Words typed in a `textarea` are kept on the device until the form is sent, and the form says "Not sent yet" meanwhile, so leaving the page or pressing another button loses nothing |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
@@ -498,6 +563,10 @@ what the setting is now, in words people use, and holds **at most one** way to c
 | `page` or `href` | a tap goes there |
 | `act` | one button at the row's end (a danger one asks first) |
 
+A panel longer than 15 rows is drawn a page at a time, like a list (below): its first 15 rows, then numbered pages,
+with its `action` under the pager. Put what needs attention first; a panel that's really a long list of things (a
+store's secrets) is better as a summary that links to them, and paging is the floor under it, not the design.
+
 A row with two of these is refused, and so is the page it's on. Raw ids, hashes and JSON never go in a
 `label` or `value`: name things the way people do, and put the id in a `sheet` for whoever asks for it.
 
@@ -508,6 +577,8 @@ or fewer, like the days of a week) is drawn as a row of chips.
 
 A row in a `list` runs to two lines; a row that goes nowhere opens to its whole text when tapped, and
 `wrap` shows it whole from the start (comments, notes). A row that goes somewhere shows it all there.
+A row with `more` opens in place instead, to its whole text and its pairs, with its link (`page` or
+`href`) as a button under them: read the gist without leaving the list, then open it.
 
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
@@ -566,7 +637,12 @@ short.
   in the footer as "no page"; a page that doesn't validate shows an error in
   its place.
 - **Limits:** 10 sections a page, 20 blocks a section, 200 items or rows, 12
-  columns, 2000 characters a string. 512 KB per answer. 3 seconds for the
+  columns, 2000 characters a string. A page's text over its limit (a `text`,
+  `code`, `callout` or `prose` block's text, a `list` row's text or meta, a
+  table cell, a `kv` value, a `status` text, a `health` detail) is cut short
+  with "…" and its block says it was cut, and loom logs the piece and the field;
+  a name, label, action or path over it still refuses the page, and so does any
+  count over its limit. 512 KB per answer. 3 seconds for the
   manifest and a page, 15 for an action. After every run, the piece's whole
   process group is killed, so nothing it started outlives its answer (a piece
   that calls `setsid` on purpose escapes that). At most 6 pieces run at
@@ -606,7 +682,10 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   (with `"service": "slack"` when it's a service house's token, and
   `"house": "h-104"` when it's a house's: role `agent:art/slack@h-104`. A piece
   can then tell the agent's bridge from its other bodies, or grant one house
-  something and none of the agent's others), or
+  something and none of the agent's others; and `"granted": true` when a
+  grants authority allowed the call, [specs/agent-runtime.md](specs/agent-runtime.md)
+  "Agent grants": the piece then doesn't consult its own agent list, which
+  stays the fallback for a household without an authority), or
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing
@@ -699,6 +778,11 @@ passes its answer back (`src/delivery.ts`).
     declares (not `relay`); `from: {kind: agent}` only from the runtime, the
     installed piece offering `delivery` (a block's `role` alone isn't it).
     A second `role: runtime` piece is refused at install.
+  - core's own delivery (source `loom`: the owner's words from loom's page, the Inbox's Reply and Comms;
+    `deliverAsOwner` in `src/delivery.ts`) isn't a piece's. It skips two piece checks above: a declared venue, and
+    `from: {kind: person}` only from an adapter. The agent must still be the household's. It comes only from a
+    signed-in member's page action. Comms delivers only for a member who owns the agent
+    ([specs/comms.md](specs/comms.md)).
 - **No delivery piece installed:** a 503 with the reason.
 - **Idempotent:** the same calling piece and `id` within 24 hours,
   whichever of the piece's credentials calls (the runtime has two), gets the
@@ -717,8 +801,9 @@ passes its answer back (`src/delivery.ts`).
   contract's, is a 502, a timeout a 504, the delivery pool full a 503. None of them is
   kept, so the source may retry with the same `id`.
 - **`GET /api/loom/venues`,** for the runtime's token only: every venue,
-  `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own
-  (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
+  `{"venues": [{name, label, kind, piece, send?, adapter?, orphaned?}]}`. Core's own
+  (`session`, `wake`, `loom`) come first, with piece `loom`. `loom` (Comms threads) has `adapter: "core"` in place of
+  `send`: the runtime posts to it through `POST /api/loom/comms/adapter` ([specs/comms.md](specs/comms.md)). `send` is the venue's
   declared argv while its piece is installed, so the runtime never reads
   another piece's piece.json.
 
@@ -818,6 +903,22 @@ LOOM_IMPORT_IDENTITY=/path/owner.key loom-<piece> bundle import < part   # stdin
 | secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
 | shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's the Bridges page only |
 | runtime | `loom box` | [loom-box](https://github.com/sleepunit-agents/loom-box) (boxes and houses) | [specs/runtime.md](specs/runtime.md) and its README; the first piece on the piece API |
+| clock | `loom clock` | [loom-clock](https://github.com/sleepunit-agents/loom-clock) (`wake`) | its README; core posts it `vouch-approved` on the owner's Allow of a `vouch-wake` (specs/agent-runtime.md, t-1975) |
+| approvals | `loom approvals` | [loom-approvals](https://github.com/sleepunit-agents/loom-approvals) | its README; core reads `state` and applies owner-applied kinds (`grant`, `vouch-wake`, `principal-reset`) |
 
-Roles under consideration: `wake` (a clock that starts the agent) and an
-approval page. Each one gets its contract when it gets built.
+Roles are matched by exact name (`role: clock`, not `wake`): a piece that declares another name isn't found for its
+role's work. Each new role gets its contract when it gets built.
+
+### Changes list and reader
+
+A Changes page can include `changes: { groups, rows, selected, reader }` beside
+its sections. loom draws it with the shared split panes, including inside a tile.
+`groups` is up to 12 `{id, label}` entries; `rows` is up to 500
+`{id, group, title, repo, number, author, ago, status}` entries. A row's `id` is
+its piece page path. `selected` is that path (empty for no reader); `reader` is
+null or a page with title, intro and sections using the existing block vocabulary.
+Nested Changes readers are refused. All strings and reader blocks retain the
+usual validation and limits. The top page's sections appear above the list for
+notices and existing actions. `group`, `repo` and `author` query parameters keep
+the selection and filters in the address. The piece still owns all authorization
+and action handling, including the selected reader's buttons.

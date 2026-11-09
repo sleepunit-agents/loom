@@ -144,6 +144,15 @@ an agent's persistent state:
 - **`conversation`** — one conversation: its record, digests, findings and render
   (the venue's own, else core's generic one).
 - **`conversation_findings`** — graders' findings on the agent's own turns.
+- **`comms_title`** — name a Comms thread (a conversation in loom's own app), at
+  most 60 characters, for the conversation given to `identity`; never over the
+  owner's own name for it (docs/specs/comms.md).
+- **`comms_thread`** — read, read only, a Comms thread of the agent's own: its
+  messages as the owner sees them (words for the household's `comms_days`, 14 at most), its replies, tool cards and
+  error cards. This body's own thread, or one named by id; never another agent's.
+- **`describe_self`** — write the agent's own description on its loom profile (its
+  window's header), one or two plain sentences, only when the household's owner has
+  asked for it from the agent's window (Regenerate); never its creed or its memories.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
@@ -733,6 +742,10 @@ loom token create --agent art --label "Art · house on wunder"   # printed once
 loom token create --owner --label "Jonathan · page"
 loom token list
 loom token revoke "Art · house on wunder"
+loom token link --agent --label "screenshots t-1871"   # an agent's one-time page sign-in, its session named
+loom sessions list                  # every browser signed in to the page, by ref
+loom sessions revoke 3f9a0c1d2e4b5a69   # sign that one browser out; every other stays
+loom sessions revoke --label "screenshots t-1871"   # an agent ends its own sessions when done
 ```
 
 Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:

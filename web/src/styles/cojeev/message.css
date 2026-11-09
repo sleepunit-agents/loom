@@ -1,0 +1,18 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+.v-msg[data-slot].-me{flex-direction:row-reverse}
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-msg[data-slot].-me .v-msg__stack{justify-items:end}
+.v-prov[data-slot]{box-shadow:none;border:0}
+.v-msg[data-slot]{box-shadow:none;border:0}
+.v-msg__stack[data-slot]{box-shadow:none;border:0}
+.v-msg[data-slot] { max-width:100%; }
+.v-msg__stack[data-slot] { max-width:min(100%,65ch); overflow-wrap:anywhere; }
+.v-msg[data-slot] > :is([data-slot="avatar"],svg) { flex-shrink:0; }
+.v-prov[data-slot] { line-height:1.5; }
+.v-msg__stack[data-slot] .v-bubble{border-radius:var(--r-card)}
+.v-msg__stack[data-slot] .v-bubble:last-of-type{border-radius:var(--r-card) var(--r-card) var(--r-card) var(--r-xs)}
+.v-msg[data-slot].-me .v-msg__stack .v-bubble:last-of-type{border-radius:var(--r-card) var(--r-card) var(--r-xs) var(--r-card)}
+
+}

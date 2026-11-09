@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useEnv } from './blocks';
 import { pageHref, type Block, type Field } from './loom';
+import './filters.css';
 
 export default function Filters({ b }: { b: Extract<Block, { type: 'filters' }> }) {
   const { ctx, go } = useEnv();
@@ -13,14 +14,27 @@ export default function Filters({ b }: { b: Extract<Block, { type: 'filters' }> 
   const [q, setQ] = useState(ctx.query.q ?? '');
   const current = ctx.query[b.param] ?? '';
   return (
-    <div className="grid gap-3">
+    <div className="loom-filters grid min-w-0 gap-3">
       {b.search !== undefined && (
         <form role="search" onSubmit={(e) => { e.preventDefault(); go(to({ ...ctx.query, q })); }}>
           <Input type="search" placeholder={b.search} aria-label={b.search} value={q} onChange={(e) => setQ(e.target.value)} />
         </form>
       )}
-      <ToggleGroup type="single" aria-label="Filter" value={current || '_'} onValueChange={(v) => { if (v) go(to({ ...ctx.query, [b.param]: v === '_' ? '' : v })); }}>
+      {/* A switch (a sort): one segmented line, its choices sharing the width. Else pills. */}
+      <ToggleGroup type="single" aria-label={b.switch ? 'Sort' : 'Filter'} className={b.switch ? 'v-seg loom-switch' : undefined} value={current || '_'}
+        onValueChange={(v) => { if (v) go(to({ ...ctx.query, [b.param]: v === '_' ? '' : v })); }}>
         {b.options.map((o) => <ToggleGroupItem key={o.value || '_'} value={o.value || '_'}>{o.label}</ToggleGroupItem>)}</ToggleGroup>
+      {/* Rows of chips, each its own query key, any on at once (none on is all): one line each, sliding sideways when
+          they don't fit, never wrapping. */}
+      {b.chips?.map((r) => {
+        const on = (ctx.query[r.param] ?? '').split(',').filter(Boolean);
+        return (
+          <ToggleGroup key={r.param} type="multiple" aria-label={r.label} className="loom-chip-row" value={on}
+            onValueChange={(v: string[]) => go(to({ ...ctx.query, [r.param]: r.options.map((o) => o.value).filter((x) => v.includes(x)).join(',') }))}>
+            {r.options.map((o) => <ToggleGroupItem key={o.value} value={o.value}>{o.label}</ToggleGroupItem>)}
+          </ToggleGroup>
+        );
+      })}
     </div>
   );
 }

@@ -18,8 +18,34 @@ export const chartColors: ChartColor[] = [
   "yellow",
   "ink",
 ];
-export const chartColor = (color: ChartColor | undefined, index = 0) =>
-  `var(--v-${color ?? chartColors[index % chartColors.length]})`;
+/**
+ * loom: each series its own colour (Jonathan, 2026-11-05: Tasks' "opened and done are the same color"). A series keeps
+ * the colour it names unless an earlier one already has it; one that names none, or a taken one, gets the first of the
+ * palette nobody has. Only past five series does a colour come round again.
+ */
+export function distinctColors<T extends { color?: ChartColor }>(series: T[]): (T & { color: ChartColor })[] {
+  const taken = new Set<ChartColor>();
+  const named: (ChartColor | undefined)[] = [];
+  for (const s of series) {
+    const keep = s.color && !taken.has(s.color) ? s.color : undefined;
+    if (keep) taken.add(keep);
+    named.push(keep);
+  }
+  return series.map((s, i) => {
+    let color = named[i];
+    if (!color) {
+      color = chartColors.find((c) => !taken.has(c)) ?? chartColors[i % chartColors.length];
+      taken.add(color);
+    }
+    return { ...s, color };
+  });
+}
+/** loom: the palette as the root has it (index.css --loom-tint-*), where no app's tint reaches: an app's accent
+ * re-points --v-pink at its own colour (index.css [data-accent]), and Tasks' pink series drew as olive as its olive one. */
+export const chartColor = (color: ChartColor | undefined, index = 0) => {
+  const c = color ?? chartColors[index % chartColors.length];
+  return `var(--loom-tint-${c}, var(--v-${c}))`;
+};
 export const finiteValue = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 export const clamp = (value: number, low: number, high: number) =>

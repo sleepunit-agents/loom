@@ -43,6 +43,7 @@ import { callOfferedTool, offeredTools, type OfferedTool, type ToolCaller } from
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
+import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
 import { spawnBackupTick } from '../backup-tick.js';
@@ -55,10 +56,15 @@ import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { askGrant } from '../grants.js';
+import { grantsAuthority } from '../offers-registry.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
+import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
+import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { piecesMoved } from '../ui/live.js';
+import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
@@ -268,6 +274,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The runtime piece is read per request, so removing it (or installing a second) ends its tokens at once.
   const resolver = live ? new TokenResolver(live, { runtimePieces: () => runtimePieces(process.env) }) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
+  // Passkeys made before t-1969 signed in as the adding session's token: each moves to a token of its own, once.
+  if (live) {
+    try {
+      const { moved, failed } = migratePasskeys(live(), ownerDigest?.toString('hex'));
+      if (moved.length) process.stderr.write(`loom: gave ${moved.length} passkey${moved.length === 1 ? '' : 's'} a sign-in token of its own (t-1969)\n`);
+      for (const f of failed) process.stderr.write(`loom: a passkey (added as ${f.id.slice(0, 8)}…) kept its old token: ${f.error}\n`);
+    } catch (e) { process.stderr.write(`loom: the passkey migration didn't run: ${(e as Error).message}\n`); }
+  }
   /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
   const ownerCaller = (member: string | undefined): ApiCaller => {
     const m = live ? memberOf(live(), member) : undefined;
@@ -383,6 +397,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   sweepAll();
   const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
   sweepTimer.unref();
+  // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
+  // listener watches for thread moves, so a member's own shared stream hears of their threads.
+  const commsTimer = live && !opts.createServer ? setInterval(() => { try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
+  commsTimer?.unref();
+  if (live && !opts.createServer) {
+    try { sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
+    watchComms(live().home);
+    // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
+    void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
+  }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
@@ -561,8 +585,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         // The grants authority, if one is installed, decides before the piece runs (src/grants.ts).
         // A piece that isn't there is still its 404 below, asked or not.
         if (piece !== 'loom' && findPiece(piece, process.env)) {
+          // Read before asking: an authority installed mid-call leaves the piece's own list to decide.
+          const decided = grantsAuthority(process.env).piece !== undefined;
           const no = await askGrant(process.env, { agent: role.agent, piece, path: subpath });
           if (no) return sendError(res, no.status, no.error);
+          // The authority said yes, so the piece doesn't consult its own agent list (agent-runtime.md section 6, t-1971).
+          if (decided) caller = { ...caller, granted: true };
         }
         break;
       }
@@ -695,7 +723,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
   /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
-  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+  const bodyCap = (subpath: string) => subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' || subpath === 'comms/activity' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
@@ -742,6 +770,22 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
     if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // Its manifest moved (docs/extensions.md, "agents"; t-1945): the open apps ask the pieces again now. No body to read.
+    if (subpath === 'pieces/changed' && role.kind === 'runtime') {
+      piecesMoved(live!().home);
+      return sendJson(res, 200, { ok: true });
+    }
+    // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.
+    if ((subpath === 'comms/adapter' || subpath === 'comms/activity') && role.kind === 'runtime') {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return sendError(res, 400, 'bad-input: a JSON object');
+      try {
+        return sendJson(res, 200, subpath === 'comms/adapter' ? commsAdapter(live!(), process.env, body as Record<string, unknown>) : postActivity(live!(), process.env, body as Record<string, unknown>));
+      } catch (e) {
+        if (e instanceof CommsError) return sendError(res, e.status, e.message.startsWith(`${statusWord(e.status)}:`) ? e.message : `${statusWord(e.status)}: ${e.message}`);
+        process.stderr.write(`loom: a Comms runtime call failed: ${(e as Error).name}\n`);
+        return sendError(res, 503, 'unavailable: Comms couldn\'t answer; see the daemon log');
+      }
     }
     // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
     if (role.kind === 'review') {
@@ -884,6 +928,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           auth: uiAuth,
           env: process.env,
           household: live,
+          ...(ownerDigest ? { envOwnerDigest: ownerDigest.toString('hex') } : {}),
         });
       }
 
@@ -1056,6 +1101,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
+      if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

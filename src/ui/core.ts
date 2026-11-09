@@ -31,14 +31,7 @@ export function uiTimeZone(): string {
   return 'UTC';
 }
 
-/** The agent's name: IDENTITY.md's first heading, else the context dir's name. */
-export function agentName(contextDir: string): string {
-  try {
-    const line = readFileSync(join(contextDir, 'IDENTITY.md'), 'utf-8').split('\n').find((l) => /^#\s+\S/.test(l));
-    if (line) return line.replace(/^#\s+/, '').trim();
-  } catch { /* no identity file */ }
-  return contextDir.split('/').filter(Boolean).pop() ?? 'loom';
-}
+export { agentName } from './data.js';
 
 export interface CoreOptions { timeZone?: string; nowMs?: number }
 
@@ -189,7 +182,7 @@ export function homePage(contextDir: string, query: Record<string, string>, opts
     {
       id: 'mind',
       title: 'On my mind',
-      side: true,
+      place: 'side' as const,
       blocks: heat.rows.length
         ? [{ type: 'list', items: heat.rows.map((m) => ({ text: m.title, meta: `${m.category} · ${m.heat.toFixed(2)}`, page: memoryPage(m.ref) })) },
           { type: 'link', text: 'Why these?', page: 'mind' }]
@@ -200,7 +193,7 @@ export function homePage(contextDir: string, query: Record<string, string>, opts
     sections.push({
       id: 'people',
       title: 'People',
-      side: true,
+      place: 'side' as const,
       blocks: attention.length
         ? [{
             type: 'list',
@@ -350,7 +343,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
     sections.push({
       id: 'heat',
       title: 'Heat',
-      side: true,
+      place: 'side' as const,
       blocks: [
         { type: 'stats', items: [{ label: 'now', value: m.heat.toFixed(2), tone: heatTone(m.heat) }, { label: 'half-life', value: `${m.halfLifeDays}d` }] },
         { type: 'text', text: why(m, tz, nowMs, names), tone: 'muted' },
@@ -358,7 +351,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
     });
   }
   // The rest is machine detail, a tap away (HANDOFF: machine text goes behind a details).
-  sections.push({ id: 'record', side: true, blocks: [{ type: 'details', summary: 'Machine details', meta: m.ref, blocks: [record] }] });
+  sections.push({ id: 'record', place: 'side' as const, blocks: [{ type: 'details', summary: 'Machine details', meta: m.ref, blocks: [record] }] });
   return { title: m.title, sections };
 }
 

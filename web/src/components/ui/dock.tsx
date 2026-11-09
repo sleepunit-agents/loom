@@ -220,8 +220,13 @@ export function Dock({
         : null;
     if (!target) return;
     const index = Number(target.dataset.dockIndex);
-    setFocusIndex(index);
-    setScales(focusScales(index));
+    // loom: only focus you can see grows a key (:focus-visible: the keyboard's, or a script's after the keyboard). A
+    // key a click or a tap focused, or one focus is sent back to after a click (desk.tsx: a window that shrank into
+    // it), would otherwise stay grown, engaged and named until something else took focus, the pointer long gone
+    // (Jonathan, 2026-11-05: "the dock key stays magnified").
+    const seen = target.matches(":focus-visible");
+    setFocusIndex(seen ? index : null);
+    setScales(focusScales(seen ? index : pointerIndex));
     if (!pointerPress.current)
       target.scrollIntoView({
         block: "nearest",
@@ -338,6 +343,8 @@ export function Dock({
                     type="button"
                     data-part="item"
                     data-dock-index={index}
+                    data-value={item.value}
+                    data-prefetch={item.value.startsWith("/") ? item.value : undefined}
                     disabled={item.disabled}
                     aria-label={item.label}
                     aria-pressed={item.value === activeValue}

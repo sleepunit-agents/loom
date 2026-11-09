@@ -50,9 +50,35 @@ without touching a piece.
   at the bottom**, above the home indicator (safe-area insets). On an agent's
   pages the dock holds Today and three of its tabs, and **More** (a drawer with
   the rest and the switch to another agent). On the household's: Home, Inbox
-  (with its count), Places, Find, and More.
+  (with its count), Places, Find, and More. A member who owns an agent also has
+  **Comms** ([comms.md](comms.md)), with its count of unread threads.
 - **Desktop:** the same dock as its labelled **rail** down the left side,
   every tab in it.
+- **Inside an app** (Jonathan, 2026-11-05: "back/breadcrumbs/etc first … menus is
+  something we can do but I don't know if we need to"; no menu bar): each app keeps
+  its own history in the tab (`web/src/trail.ts`). A desktop window's title strip
+  has **Back ‹** and **Forward ›** through it, and a **trail** (the app, the page
+  this one is under, this one) whose crumbs go up, each to that page as it was last
+  left (the list with its query). Back from a task is the list you came from, at
+  its query and its scroll. **Alt+←** and **Alt+→** are the window's Back and
+  Forward while the window has the keys and has somewhere to go that way; in a
+  field, a sheet or a menu, from the dock or Find, or at the start of the app's
+  history, the keys stay the browser's own. The window's Back is a new page in the
+  browser's history, so the browser's Back undoes it, and the browser's Back and
+  Forward that land on the app's page before or after this one move its history
+  too. A long trail folds its middle into "…" before the page's own name is cut
+  short, and the strip never scrolls. A minimized window opens again where its
+  history stands; Close forgets it. On a phone, a page under another has the bar's
+  **back chevron**: it goes to the page before this one in the same app, as it was
+  left, and to the page it's under only when there's none (a page opened from a
+  link, Find or the Inbox).
+- **The side column**: a page's `"place": "side"` sections
+  ([extensions.md](../extensions.md), "Pages"). From 1280 px wide (the common laptop
+  widths get it; narrower, the page itself would drop under about 700 px), a desktop
+  window's own right-hand column, 300 px, scrolling down by itself; a page with none
+  gets **Recent here** (this app's pages opened lately on the device), never the
+  whole household's. Narrower, and on a phone, they fold together at the top of the
+  page, closed. Nothing in it scrolls sideways.
 - **Installable:** loom's existing manifest and service worker (`src/ui/pwa.ts`)
   get the app's icons and `display: standalone`; added to a home screen it opens
   without the browser's chrome. Push stays as it is.
@@ -78,6 +104,59 @@ asked to say. The rules that the shootout settled:
 A block a version of the app doesn't know is drawn as plain text with a note, never
 dropped, so an old app and a new piece can't lose data between them.
 
+### Master/detail (t-1925)
+
+An app whose page is "pick one of many, then read it" is drawn as a mail client (`web/src/split.tsx`, `Split`): folders,
+a list, and the open item beside it. The Inbox, Knowledge and Activity use it (Jonathan's approved mocks, 2026-11-06 and 2026-11-08). It is
+one generic piece of the app, not an app's own: other apps use it the same way.
+
+- **Its own width, not the screen's.** A `ResizeObserver` on its box picks the panes: **three** from 900 px (folders |
+  list | reader, the reader the widest), **two** from 640 px (the folders as a row of chips over the list | reader), and
+  **one** under that (chips and the list; the open item slides over the list, with a back button named for the folder).
+  A tile gets the same rule at any size, and a phone (390) is one pane.
+- **In a tile it fills the tile** edge to edge, each pane scrolling on its own; on a phone's page the list scrolls with the
+  page and the reader replaces it.
+- **Picking an item never reloads.** It's the app's own state; the list stays where it was.
+- **Keys:** ↑ and ↓ move through the rows (beside the reader, the row moved to opens); Escape in a one-pane reader goes
+  back, and focus returns to the row it came from. Focus is always visible (the app's tint). Reduced motion (`data-motion`)
+  drops the slide; higher contrast (`data-contrast`) draws the lines and the open row's edge in the stronger edge colour.
+- **Folders** are `{id, label, count?, icon?, loud?}` or a `{heading}` between groups ("From", "Topics"); `loud` puts the
+  count in a filled pill (Needs you).
+
+**Knowledge** (`view: 'knowledge'`, `/knowledge`, `/knowledge?p=<slug>`, `/knowledge/<slug>`): every active page's line
+(title, domain, freshness) comes in one answer and the app filters it (All pages, Recently verified: a check in the last
+7 days, Due a check, and the topic tree from the domains: each first part, then each whole domain under it); the page
+picked is fetched whole (body, sources, the pages that cite it, its last check). Freshness: **fresh**, **getting old**
+(two thirds of the 30 days), **due a check** (30 days unchecked, or its last check found it stale). **Still true** is a
+confirmed check (moves its verified date); **Check again** is a stale one (`knowledge-recheck`): the date stays and the
+page is due a check until someone confirms it.
+
+**Activity** (`view: 'activity'`, `/activity`; t-1972, Jonathan's approved design 2026-11-08): what happened in the
+household, a few days at a time. Its folders are **filters** (`isOn`: toggles, `aria-pressed`, several at once): **Who**
+(the viewer's agents and the owner), **Where** (Comms, Discord, Slack, Terminal, Wakes, and any other venue present),
+**What** (Conversations, Work done, System), alphabetical in each group, each with the shown day's count. Within a group
+any matches, across groups all must; they live in the address (`?who=art,owner&where=slack&what=work`), with the open
+entry (`?e=`) and the day (`?day=`). Over the rows a **day strip** (`listTop`) draws the shown day's entries per hour;
+an hour jumps the list to it. In two and one pane the filters are one menu (`narrow`), not chips.
+
+- **An entry** is a conversation's run (its digest: the conversation's label as the title, the summary's first sentence as
+  its line), a conversation that moved with no digest, or an episode no conversation covers (a body's own episode beside
+  its run's digest, minutes apart in the same venue, is the same run told twice: shown once). Never a body's prompt: an
+  episode titled with the runtime's spawn preamble takes its conversation's label (`src/ui/episode-title.ts`).
+- **The reader** has what was asked, what happened, what was decided, the tasks and pull requests it names, where to read
+  more (the Comms thread, the memory) and, for a Comms run, its steps as the thread shows them.
+- **Who sees what** is the household page's, never more: only the viewer's agents (an agent owner's household is
+  narrowed first), and a Comms thread (and its steps, and an episode about one) only to its own member.
+- Loom answers three days (`?to=` for an earlier three, "Earlier" asks for them without moving the address); rows off
+  screen skip layout (`content-visibility`).
+
+**The Inbox's asks are live only when loom says so.** The list may be a copy kept on the device (the last answer of the
+page, `page.ts`; the service worker's when offline). So the reader asks `GET /inbox/open?k=<key>` (`{open}`, `no-store`)
+when an item is picked and again right before any of its buttons is sent; until it answers "open", the buttons aren't
+drawn ("Checking it's still open…"), and an answer stamped `x-loom-saved-at` (a cached copy) counts as "can't tell".
+An item answered elsewhere says so and sends nothing. Any cache added in front of the app's fetches must pass
+`/inbox/open` through untouched.
+
 ### Motion
 
 000h's own motion, and its rules: reduced motion respected everywhere (things
@@ -89,8 +168,8 @@ targets, nothing important only in a tooltip.
 The shootout's 000h build was heavy: 242 KB of JS and 341 KB of CSS gzipped,
 because each component brings its whole stylesheet. Budget for the real app:
 under 250 KB of JS and 120 KB of CSS gzipped for the first page, enforced in CI.
-We install only the components we use, and trim their CSS. The default look's
-own stylesheet (Neon Noir, `web/src/looks/neon.css`) counts toward the CSS, and
+We install only the components we use, and trim their CSS. The looks
+(`web/src/looks/looks.css`, in the app's stylesheet) count toward the CSS, and
 the script that puts the look on before first paint (`web/src/looks/boot.js`)
 stays under 1 KB gzipped (`src/ui/look-boot.test.ts`).
 
@@ -107,10 +186,29 @@ information as it updates, limited page refresh based on what needs to change, a
   and carries a fingerprint (`ETag`): asked again with it, an unchanged page is a 304.
 - **Instant back and forth.** The app keeps the last copy of each page it showed and opens it at once on a tap,
   asking loom behind it.
+- **Only what changes is replaced** (t-1925 F; Jonathan, 2026-11-06: "if I'm on comms and I click a conversation
+  the whole app page reloads"). A page with no copy kept yet is asked for while the one shown stays, mounted: an
+  app's list, its scroll and a draft hold, and the new page's answer patches in what differs. After 150 ms a line
+  along the top says it's on its way. Only with nothing on screen (a first page, an error) is there a skeleton, and
+  that too waits 150 ms. Comms opens a pressed thread in its pane at once from what the list knows of it, the list
+  lit and kept beside it; a draft in a thread's composer is kept for the tab, by thread. `scripts/nav-bench.ts`
+  times the flows.
+- **Asked ahead, never acted on stale.** On a desktop a link, row or dock key the pointer rests on (70 ms) or
+  focus reaches is fetched into the tab's copy, two at a time (never an Inbox item: opening one reads it). A page
+  drawn from the tab's copy, or told by the live stream that something moved, offers its actions only once loom
+  has answered again, so an ask answered elsewhere never shows a live Allow.
+- **The worker keeps the app ahead** (`src/ui/pwa.ts`): every built script, stylesheet and font when it installs,
+  answered from the worker after that; pixel faces and icons by version. Kept pages are per session (`x-loom-who`)
+  and go at sign-out or when another session's answer arrives.
 - **Live.** One stream per open app (`GET /events`, server-sent events, `src/ui/live.ts`) says `change` when an
   agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
   differently (asked every 15s while an app is open); and after any action. The app asks again for the page it
   shows. While the stream is open, the old timer is a 60s fallback.
+  - A Comms thread has its own stream while it's on screen (`GET /comms/<thread>/events`, [comms.md](comms.md)),
+    owner-checked like its other routes. The shared stream's `change` for a thread goes only to that thread's member.
+  - Comms is its own chunk, loaded only when it opens, so it adds nothing to the first page's budget.
+  - The face states gain `talking`, for a reply landing. A manifest without it plays `done`'s animation, then
+    `working`'s.
 - **What's new arrives** (`web/src/arrive.tsx`): a row, a thread line, an Inbox item, an ask, a tile or a
   reading that wasn't there at this page's last answer resolves out of glyph noise (000h's decode), comes into
   focus out of a blur, and glows once. A page you open draws still. Reduced motion: it simply appears.
@@ -156,6 +254,10 @@ been used.
   console errors and no sideways scroll, the dock and rail reach every tab, and
   each pop-up opens and closes.
 - With reduced motion, nothing moves.
+- Reduced motion and more contrast are the person's (the Accessibility app: Follow the
+  phone, On, Off), worn as `<html data-motion>` and `<html data-contrast>`; the build
+  rewrites every `prefers-reduced-motion` and `prefers-contrast: more` query onto them
+  (`web/vite.config.ts` accessMedia), and JS asks `web/src/access.ts`, never the query.
 - The JS and CSS stay inside the budget.
 
 ## Open questions
@@ -164,11 +266,15 @@ been used.
   sign-in, on a LAN or a tailnet, and the app shell is cached by the service
   worker). Revisit if first loads feel slow on a phone.
 - **loom's looks** (Jonathan, 2026-11-04: "neon noir with a few things borrowed
-  from terminal hud"): Neon Noir is the default, dark only, a stylesheet of its
-  own over 000h's tokens (`web/src/looks/`); 000h stays a choice and the light
-  look. The look, light or dark, the ground and sound are the person's, kept by
-  loom per member and carried on every page's chrome (`POST /appearance/prefs`).
-- **loom's own look inside 000h**: 000h's look, whole. Each agent's pages take
+  from terminal hud"; 2026-11-05: "give them a less severe version of neon instead
+  where we can just swap colors"): one structure, Neon Noir's, and a look is only
+  a set of tokens over 000h's (`web/src/looks/looks.css`): Neon Noir (the
+  default, dark), Low Light (dark, calm: 000h's soft dark colours) and Daylight
+  (light). A look kept as 000h before then is Daylight if it was light, else Low
+  Light. The look, the ground and sound are the person's, kept by
+  loom per member and carried on every page's chrome (`POST /appearance/prefs`);
+  so is Accessibility's (Allow zoom, Reduce motion, Higher contrast).
+- **loom's own look inside 000h's components**: Each agent's pages take
   their own accent from 000h's palette (Jonathan, accepting: "agents could get
   different accents if you guys like the 000h options"): an agent's mark color
   becomes one of 000h's accents, and its pages, its dock and its sheets wear it.

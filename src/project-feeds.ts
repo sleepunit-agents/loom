@@ -6,7 +6,8 @@
  *
  * The arguments, in this order: `--project <slug> --since <iso>`, then
  * `--epic <id>` when the card has one, `--name <alias>` for each alias and
- * `--venue <v>` for each venue, each in the card's order. `since` is clamped
+ * `--venue <v>` for each venue and `--repo <r>` for each repo selector (the bare `owner/repo` as `github:…`), each in
+ * the card's order. `since` is clamped
  * to 8 days ago (a longer one still reaches the core sections) and passed as
  * UTC `YYYY-MM-DDTHH:MM:SSZ`. Every failure (a non-zero exit, a timeout, an
  * answer that isn't valid) is that piece's `{key, error}` alone.
@@ -16,7 +17,10 @@
  */
 import { piecesOffering, runOffer } from './offers-registry.js';
 import { parseFeed, type FeedGroup } from './offers.js';
-import type { ProjectCard } from './backends/projects.js';
+import { normalizeRepo, type ProjectCard } from './backends/projects.js';
+import { filedThreads } from './comms.js';
+import { homeFor } from './conversations.js';
+import { householdOf } from './household.js';
 
 const DAY_MS = 86_400_000;
 /** Feeds get at most 8 days, so a day-grouped feed never needs more than 8 groups. */
@@ -42,20 +46,24 @@ export function feedArgs(card: Pick<ProjectCard, 'slug' | 'links'>, since: strin
   if (card.links?.epic) args.push('--epic', card.links.epic);
   for (const n of card.links?.aliases ?? []) args.push('--name', n);
   for (const v of card.links?.venues ?? []) args.push('--venue', v);
+  for (const r of card.links?.repos ?? []) args.push('--repo', normalizeRepo(r) ?? r);
   return args;
 }
 
 const byKey = (a: { key: string }, b: { key: string }) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
-async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unfiled: boolean }) => boolean): Promise<FeedSection[]> {
-  const pieces = piecesOffering(env, 'sections').filter((p) => p.offers.sections && (!only || only(p.offers.sections.project)));
+async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unfiled: boolean }) => boolean, threadArgs: string[] = []): Promise<FeedSection[]> {
+  const pieces = piecesOffering(env, 'sections').filter((p) => p.offers.sections?.project && (!only || only(p.offers.sections.project)));
   // runOffer's pool keeps it to 6 at once; never throws.
   const out = await Promise.all(
     pieces.map(async ({ piece, offers }): Promise<FeedSection> => {
-      const { label, argv } = offers.sections!.project;
+      const { label, argv } = offers.sections!.project!;
       const key = `piece:${piece}`;
       try {
-        const r = await runOffer(env, piece, argv, { args, parse: parseFeed });
+        // A piece that declares sections.thread knows --conversation (comms.md, "Project hubs"); an older feed
+        // refuses a flag it doesn't know, so only such a piece is passed it.
+        const extra = offers.sections!.thread ? threadArgs : [];
+        const r = await runOffer(env, piece, argv, { args: [...args, ...extra], parse: parseFeed });
         return r.ok ? { key, label, groups: r.value.groups } : { key, error: r.error };
       } catch (e) {
         return { key, error: (e as Error).message ?? String(e) };
@@ -70,8 +78,20 @@ async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unf
  * the managed pieces installed under `env`'s LOOM_HOME.
  */
 export function managedPieceSections(env: NodeJS.ProcessEnv = process.env) {
-  return async ({ card, since, nowMs }: { card: ProjectCard; since: string; nowMs?: number }): Promise<FeedSection[]> =>
-    runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()));
+  return async ({ card, since, nowMs, contextDir }: { card: ProjectCard; since: string; nowMs?: number; contextDir?: string }): Promise<FeedSection[]> =>
+    runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir ? threadFeedArgs(contextDir, card.slug, env) : []);
+}
+
+/** `--conversation <cv>` for each of the project's filed Comms threads (comms.md, "Project hubs"), at most 200. */
+export function threadFeedArgs(contextDir: string, slug: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  try {
+    const home = homeFor(contextDir, env);
+    const agent = householdOf(contextDir)?.agent;
+    if (!home || !agent) return [];
+    return filedThreads(home, agent, slug).slice(0, 200).flatMap((cv) => ['--conversation', cv]);
+  } catch {
+    return [];
+  }
 }
 
 /**

@@ -86,6 +86,14 @@ type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
+ * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
+ */
+export function expirePieceManifests(): void {
+  cache.clear();
+}
+
 export function clearPieceCache(path?: string): void {
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
@@ -344,6 +352,12 @@ export function clearPiecePages(path: string): void {
 }
 
 /** Every installed piece's manifest, plus the ones that had nothing to show and why. */
+/** The installed pieces whose manifest says they understand agent owners (owners: 2), whatever else they show. */
+export async function ownersAwarePieces(env: NodeJS.ProcessEnv, nowMs = Date.now()): Promise<Set<string>> {
+  const results = await Promise.all(shownPieces(env).map((p) => manifestFor(p.name, p.path, env, nowMs)));
+  return new Set(results.filter((r): r is PieceInfo => 'manifest' in r && r.manifest.owners === 2).map((r) => r.piece));
+}
+
 export async function pieceManifests(
   env: NodeJS.ProcessEnv,
   nowMs = Date.now(),
@@ -359,6 +373,9 @@ export async function pieceManifests(
     skipped: [...results.filter((r): r is PieceSkip => 'reason' in r), ...empty.map((p) => ({ piece: p.piece, reason: 'nothing to show' }))],
   };
 }
+
+/** The cuts already logged (piece, page, fields): a page asked for again doesn't say it again. */
+const cutSaid = new Set<string>();
 
 /** One page from a piece, or why it couldn't be had. */
 export async function piecePage(
@@ -379,7 +396,14 @@ export async function piecePage(
     if (!r.ok) return r.reason;
     const parsed = json(r.stdout);
     if (parsed === undefined) return 'not JSON';
-    return parsePage(parsed);
+    // A block's words over loom's limit are cut short, not the page refused (t-1861); the log says which piece and field.
+    return parsePage(parsed, (cut) => {
+      const said = `${info.piece}\0${path}\0${cut.join('; ')}`;
+      if (cutSaid.has(said)) return;
+      if (cutSaid.size > 200) cutSaid.clear();
+      cutSaid.add(said);
+      process.stderr.write(`loom: piece ${info.piece} page "${path}": cut short ${cut.join('; ')}\n`);
+    });
   };
   const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);
@@ -446,7 +470,8 @@ export const API_MAX_BYTES = 8 * 1024 * 1024;
 export type ApiCaller =
   /** `who`: the member (a People slug); `agents`: what they own, `*` for a household owner (docs/specs/owners.md). */
   | { kind: 'owner'; who?: string; agents?: '*' | string[] }
-  | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string }
+  /** `granted`: the grants authority allowed this call, so the piece doesn't consult its own agent list (agent-runtime.md section 6). */
+  | { kind: 'agent'; agent: string; service?: string; house?: string; granted?: true } | { kind: 'piece'; subject: string }
   /** No token, on a path the piece declared open (loom.strangers): a box asking to join. */
   | { kind: 'stranger'; address: string };
 

@@ -12,8 +12,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A device's notifications stopped without anyone turning them off** (t-1978). A subscription was kept under the
+  session it was turned on in, and dropped when that session went. Agents' screenshot sign-ins filled the 50-session cap
+  every two or three days, each evicting the oldest session, so a person's phone lost its notifications within days
+  while it still said On. A subscription is now its person's and the device's: housekeeping (the cap, a session past
+  its time, signing out and in again on the device, a plain token revoke) keeps it, and the app sends it again on each
+  load. It goes when turned off there, removed on Profile, that device signed out on purpose (Profile's Sign out on its
+  row, `loom sessions revoke`), its token revoked as compromised (`loom token revoke --with-devices`, or
+  `--with-passkeys`), gone at the push service (404/410), or its person leaves the household. An agent's session can't
+  turn notifications on. A push no longer carries the ask's words or a thread's title: only what it is, who it's from,
+  and where a tap opens. Profile lists the devices that get notifications, each with **Send a test notification**.
+  Agent owners can turn notifications on (`/push/*` was refused for them).
+- **Agents' screenshot sign-ins pushed people's own sessions out** (t-1936). `loom token link --agent --label <text>`
+  marks the session it opens as an agent's (a headless browser's counts too): listed as `(agent)`, ended six hours
+  after it signed in, and first to go at the cap, after sessions already ended. `loom sessions revoke --label <text>`
+  ends an agent's own sessions when it's done.
+
 ### Added
 
+- **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
+  other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner
+  token naming its member, labeled `Passkey: <name> · <person> · …`, and says what it was made from. `loom token revoke
+  <label> --with-passkeys` (Setup: "Revoke a token with its passkeys") takes the passkeys made from it too; plain revoke
+  keeps them. Profile's "Remove a passkey with the ones added from it" does the same for a passkey. A passkey is added
+  only within 10 minutes of signing in. Passkeys made before move onto their own token when loom-http starts if their
+  token is live; one whose token was revoked stays stopped and is replaced by adding a new one. Agent owners can add
+  passkeys (`/passkeys/options` was refused for them).
+
+- **Needs you is the Inbox shrunk** (t-1925). On the desktop, Needs you's **Expand** grows it into the Inbox's tile on
+  its Needs you folder, as an agent's card grows into its window (the same code: `tiling/widgets.ts` `pairOf`); an ask in
+  it opens in the Inbox with that ask picked. While an Inbox tile is open, Needs you stands aside and the other widgets
+  fill its room; the Inbox's **Shrink to widget** folds it back. Reduced motion: instant. Phones are unchanged.
+
+- **A Comms thread says when an agent couldn't start, even after "queued"** (t-1946). The runtime can now tell core
+  `status: start-retry` (with its attempt and next try) or `start-failed` on the adapter route, for a start that failed
+  after it had already answered `queued`. The thread keeps one line per message, updated as attempts go by ("couldn't
+  start (2 tries so far); retrying. Next try at 14:32."), the busy line no longer follows, and a late or repeated
+  notice never brings a settled line back.
+- **Sign one browser out alone** (t-1871). Profile's **Signed in** lists each browser session you may see (a household
+  owner, all of them; an agent owner, their own): what it is (from its User-Agent), its sign-in link's label, how and
+  when it signed in, when it was last used, and its token. **Sign out** on a row ends that session and its
+  notifications only; other sessions of the same "page sign-in links" token stay. On loom's machine, `loom sessions
+  list` and `loom sessions revoke <ref>`; `loom token link --label` names the session a link opens.
+- **Asks answered only while open, everywhere** (t-1925). The asks inside a Comms thread and the desktop's Needs you
+  now use the Inbox's rule (`web/src/ask-open.ts`): no buttons until loom confirms the ask is open now, checked again
+  right before a send, and none when loom can't be reached or the copy came from this device's cache.
+- **Comms' band** (Jonathan, 2026-11-07; `docs/specs/comms.md`, "Desktop"). A desktop thread has a band of fixed
+  height over the chat: the comm screen at its own 2× size on the left, who's in the conversation and the thread's
+  work on the right, scrolling inside the band. The chat takes the rest. The list sits beside the thread only where
+  Comms is 1100 px or wider; narrower, it's the drawer from the thread's header. The comm screen never stretches.
+- **An agent's window** (t-1925 D; `docs/specs/desk-tiling.md`, "An agent's window"). An agent's pages wear one header:
+  its face in a Neon frame (no 000h shapes, no clock element), its name with a working pill, and a plain description
+  of what it does (household.json `about`, never its creed) that a household owner edits in place or asks the agent to
+  rewrite (the new `describe_self` MCP tool, refused unless asked). Its sections are a sidebar inside its window (an
+  icon rail when narrow), so the desktop's dock no longer swaps; its window's corner wears its letter. Its desk card
+  and its window are one app: Expand grows the card into the window, Shrink to widget folds it back. Phones keep the
+  dock's swap, with the new header.
+- **The Inbox is a mail client** (t-1925; `docs/specs/ui-app.md`, "Master/detail"). Folders (Needs you, Questions,
+  Approvals, Alerts, Memory reviews, Done, and who it's from), the list, and the open ask beside it whole: why, if yes /
+  if no, its buttons, a reply, where it lives and its trail. Answering moves it to Done and opens the next. In a narrow
+  tile or on a phone the folders are chips and the ask slides over the list. Its buttons are live only once loom says
+  the ask is still open (`GET /inbox/open`), and loom is asked again before any is sent. Old `?f=` folder addresses land
+  on the new folders. The master/detail layout (`web/src/split.tsx`) is generic.
+- **Comms polish** (t-1918, t-1925 C; `docs/specs/comms.md`). A thread's address has no colon (`/comms/<id>`), so a
+  reload works; old `comms/th:…` links redirect. The comm screen's channel line says what the agent is doing
+  (THINKING, WORKING, TALKING, WAITING ON YOU, DONE, NO CARRIER, plus ON CODEX), and the separate thinking blob is
+  gone. A body that couldn't start says "couldn't start; retrying" with What happened, not "busy". The thread follows
+  the bottom only while you're there; scrolled up, a New messages pill counts what's new, and a working line shows the
+  step the agent is on. The Enter hint is faint and only on focus; in a narrow tile the threads are a drawer; the list
+  wears the agents' letters.
+- **The launcher** (t-1925 G; `docs/specs/desk-tiling.md`, "The launcher"). On a desktop the dock's last key, All apps, or
+  Ctrl+Shift+Space opens every app in one grid, grouped as Work, People & agents, Library, System, Look & feel and
+  Pieces, each tile with its live state. Search is focused at once and filters as you type; Enter opens the first match
+  as a tile, Esc closes, the arrow keys move. It replaces Setup's dock key and the account key on the desktop; Setup and
+  More are no longer tiles there (an old link opens the launcher), and Appearance, Accessibility, Members and Pieces each
+  open in a tile of their own. Phones keep More and Places.
+- **Tiling is the only desktop** (t-1884; `docs/specs/desk-tiling.md`, "A fresh desktop", "One window at a time"). At
+  1024 px and wider, apps share the screen as tiles for everyone: Appearance's Desktop choice and the old single window
+  are gone. A device with no saved layout starts with Needs you, each agent's card, Vitals, Backup and the ticker
+  (`web/src/tiling/widgets.ts` `SEED`). One window at a time is now an Accessibility choice inside tiling, off unless
+  turned on: one app tile at most, and opening another sends the one there to the dock, said in a toast. Whoever had
+  One window at a time saved under Appearance has it on; the old `tiling` field is still taken, so an older app gets
+  no error.
+  A tile now does what the old window did: its page wears its app's colour, its pages reach Find's Recent, the bar's ⓘ
+  is its page's, and the dock lights its key. Comms in a tile under 760 px keeps its comm screen to a strip's height,
+  so the messages always have room.
+- **Desk tiling: widgets are tiles** (t-1884, phase 4 of `docs/specs/desk-tiling.md`). With Tiling chosen
+  (Appearance → Desktop), Home's widgets (Needs you, each agent's card, Vitals, Backup, the ticker) are the desktop
+  with no app open, and move to the right edge beside the apps: in columns, a rail, or a strip of keys. Chat on an
+  agent's card opens its latest Comms thread beside them; an agent's tile pins its card; the dock's + key and Find add
+  widgets; × removes one. The set rides in the address (`w=`). A wide tile has Recent here.
+- **Comms: asks inline** (t-1876). A thread shows its agent's pending approvals that were asked from it (the approvals
+  piece's `--conversation`, kept beside the agent loom authenticated), with the ask, why, If you allow, If you deny
+  and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.
+  An ask naming a thread but from another agent never shows there.
+
+- **Pixel icons** (t-1880). A household can install its own pixel icon set (`loom household icons install <dir>`, kept
+  at `icons/<set>/`, served only to someone signed in), and a member can wear it with Appearance's "Pixel icons" (off
+  unless turned on; not offered without a set). Each icon keeps its light and shade, recoloured to its key's ramp in
+  each look, normal and lit, stronger with Higher contrast, by an SVG filter the page builds once from the look's own
+  colours. The dock, the launcher's tiles, an app's tile in its header and in Find, and a window's title strip wear
+  them; a 16 px row keeps its line icon, as does an app the set has none for.
+- **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
+  thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
+  thread"), never the reply's words. A tap opens the thread.
+
+- **Comms, the app** (t-1876). A Comms key in the dock (for a member who owns an agent, with their unread threads),
+  the thread list leading to a thread on a phone and the two side by side on a desktop, and each thread's comm screen:
+  the agent's pixel portrait at 2x in a Neon OS frame (`NAME · CH nn · LINK OK`, a signal meter, a YOU panel on a
+  desktop), its face following the thread (thinking, working, talking, done, waiting, error), a burst of static
+  when a reply lands, and talking as a bounded run of 1-4 beats with a breath between. Pixel faces gain `talking`,
+  which a manifest without it plays as `done`, then `working`. Activity cards fold to one line per run.
+- **Comms: `comms_title`, and threads in their project's hub** (t-1876). A body names its Comms thread with
+  `comms_title` (60 characters, one line, never over the owner's own name for it), and a thread's title is its
+  conversation's label. A thread filed under a project is its digests' project when they name none, ahead of
+  `links.venues`, and the hub's `conversations` section lists it from its first message.
+- **Comms, core: talk with your own agents in loom, in threads** (t-1876, docs/specs/comms.md). A new core venue,
+  `loom`, which core adapts itself (`adapter: "core"` in `GET /api/loom/venues`). Its threads live in
+  `household.db`, and their words in `comms.db`, each age-encrypted to `comms.key`, kept `comms_days` (household.json,
+  1-14, default 14) and never in a bundle. The page's `/comms` routes reach only a member's own threads with agents
+  they own: anyone else, and a thread that never existed, gets the same 403. There's a live stream per thread
+  (`/comms/<thread>/events`, `{seq}` only), and the runtime's `POST /api/loom/comms/adapter` and `/comms/activity`.
+  The app comes in a later change.
+
+- **One structure, three looks: Neon Noir, Low Light, Daylight** (t-1875).
+  000h is no longer a look of its own: Neon Noir's structure (the phone bar
+  and system bar, the dock's keys, cut-corner cards, the desktop at 1024 px
+  and wider, Find as a command bar, the sheet's title bar, the power-on) is
+  every look's, and a look is only tokens (colours, a few corners, glow,
+  type) in `web/src/looks/looks.css`, part of the app's own stylesheet. Low
+  Light is dark and calm (000h's soft dark colours, no glow but a face's,
+  Figtree titles); Daylight is light (ink on warm paper, the tints deepened).
+  A saved `look: '000h'` is worn as Daylight if its light or dark was light,
+  else as Low Light; it stays on disk as it was until the person chooses, and
+  an app from before may still save it. Appearance's Light/Dark/Auto row is
+  gone. Every look meets the contrast floors with and without Higher
+  contrast; no exception is named any more.
+- **Pixel faces wherever an agent's face shows.** Under 36 px (Inbox rows, the
+  desktop's widgets, a window's title, the side panel), an agent with a sprite
+  sheet now wears a still pixel avatar: a crop of its rest frame, 24 sheet
+  pixels square over the top of what's drawn (or the manifest's own
+  `"avatar": {"x", "y", "w", "h"}`), at a whole-pixel scale, never smoothed,
+  never moving. Agents without a sheet, and everyone with Pixel faces off, keep
+  the drawn face; letter badges stay.
+- **Neon on a big screen boots** (t-1868). With the app's arrival, once a
+  session and never under reduced motion, a desktop shows a second or two of
+  LOOM//OS™ coming up, licensed to the household owner by name, with chatter
+  that is what loom has (the link, the agents and how each is, the pieces,
+  what needs you) and the one joke: "validating LOOM//OS™ license …
+  compliant". Any key or tap skips it; it never takes focus, and a screen
+  reader doesn't hear it.
+- **Neon on a big screen: apps open in a window** (t-1868). Every page but
+  Home opens in one big framed window over the ground: a title strip in the
+  app's colour with its key, its name and where it is, cut corners, a ruled
+  edge, and Close. Close or Esc goes back to the desktop (not while a sheet,
+  a dialog or a field has Esc), the window grows out of its dock key and
+  shrinks back into it (View Transitions; never under reduced motion), focus
+  lands on the window's title and goes back to the key it came from. The page
+  inside reads at up to 72rem and scrolls inside the window; sheets and
+  dialogs stay above it. From 1600 px, where you've been lately beside it.
+- **Neon on a big screen: Home is a desktop** (t-1868). Under Neon at 1024 px
+  and wider, Home is widgets on the ground instead of a scrolling page: what
+  needs you (the first four, each answered where it stands: Yes and No for a
+  yes/no ask, Allow and Deny under the approval's own words, else its own
+  buttons; one asked in words opens its sheet), a card per agent with its face
+  big and the one thing it's on, box vitals (the Boxes place's count and open
+  alerts, and any place in trouble, from the shell every page has) and the
+  nightly backup. One screen's height: a column with more than fits scrolls
+  inside itself. The dock moves to the bottom centre (the phone's keys, the
+  rail gone), and every other page scrolls in the space between the bars and
+  the dock. Home's answer carries the first few waiting items whole
+  (`stack`). Its own chunk, fetched only
+  at that width under Neon. Phones, 000h and screens under 1024 px are
+  unchanged.
+- **A phone's Home with many agents is a row each** (t-1869). Up to four
+  agents keep their big cards. Past four, a phone's Home lists them one row
+  each (face, name, how it is in words, its last line), something wrong
+  first, each a tap to that agent's page. Wider screens keep their cards.
+- **Neon on a desktop wears the phone's bar** (t-1865). Wider than a phone,
+  Neon's top is the phone's bar (the page's name and its ⓘ, the ticker,
+  LOOM//OS and the count) in place of the old status line and big header,
+  under a thin system bar where a phone's own would be: loom's clock (loom's
+  time, from its answers' Date, in loom's time zone) on the left, and on the
+  right a signal (live or offline), the agents at work, the boxes (how many,
+  dimmed while one has an alert) and the nightly backup (its last good one, or
+  what's wrong: a household owner's only), each with its words on hover and as
+  its accessible name. Both span the page's column. The shell now carries
+  loom's time zone, each piece's open alerts, which agents a piece reports at
+  work, and the backup's state. A name with its ⓘ is no longer cut short on a phone
+  ("Boxes", not "Bo…"). 000h is unchanged.
+- **A long panel pages like a list.** A piece's panel of more than 15 rows
+  shows 15 at a time, with numbered pages and its action under them. The
+  Secrets page's 61-row store had been one 6,500 px wall; it's now 2,500 px
+  and the sections under it can be reached.
+- **An Accessibility app, beside Appearance** (t-1867). Its own tile in More
+  and in Find, its own page and intro. **Allow zoom** moves there from
+  Appearance (a choice already made carries over). **Reduce motion** (Follow
+  the phone, On, Off) is one switch for everything that moves: On crossfades
+  pages, stills the ticker, skips the opening animation, holds faces on their
+  rest frame, fades the dock swap and drops the follow-the-finger swipes, even
+  where the phone allows motion; Off runs them all, even where the phone asks
+  for less. **Higher contrast** (Follow the phone, On, Off) raises Neon's and
+  000h's light and dark tokens to 7:1 for text and 4.5:1 for the quieter texts
+  and control edges, unfades hint text, thickens focus rings, puts solid
+  ground behind words that sat on see-through surfaces, and turns Neon's glows
+  off. Both are the person's, kept by loom on every device, and worn before
+  the first paint. Under the hood every `prefers-reduced-motion` and
+  `prefers-contrast: more` query, 000h's own included, is rewritten at build
+  onto `<html data-motion>` and `<html data-contrast>`, and scripts ask
+  `web/src/access.ts`.
+- **Neon on a phone: a page's info is behind its name** (t-1863). The line
+  under the phone bar is gone; when a page has a line or an intro, its name
+  in the bar wears a small ⓘ and opens a sheet with both (with a haptic tick).
+  A page without either has a plain name. 000h and wide screens are as they
+  were.
+- **loom on a phone holds still like an app** (t-1862). No pinch or
+  double-tap zoom, no zoom-in when a field takes focus (every field is 16 px
+  or more on a touch screen), no long-press menu or link preview on the bars,
+  the dock, buttons, links and images, no selecting the app's own chrome (a
+  message's or a note's words still select), no grey flash on a tap, and no
+  rubber band or pull to refresh past the page's ends. Appearance gains
+  **Allow zoom** (off by default) for anyone who needs to zoom to read. The
+  browser's bar wears the look as it's worn (000h's light or dark as chosen),
+  and the installed app holds portrait.
 - **A phone's gestures, page moves and haptics** (t-1855). Swipe sideways to
   move between Home, Inbox, Places and More in the dock's order; swipe up from
   the dock for Find. A page change slides by the dock's order (a push into a
@@ -75,7 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Look: Neon Noir (dark only: a night-city control room, light from edges and
   states) or 000h (light or dark, as before). Neon is what a person who hasn't
   chosen sees, so everyone's page changes on update; 000h is one tap away and
-  draws exactly as it did. Its stylesheet is its own file, put on before first
+  draws exactly as it did (until the same week's one structure, above). Its stylesheet is its own file, put on before first
   paint by a 0.5 KB script in the page's head (loom's CSP allows no inline
   script), so a page never flashes the other look. A person's Appearance (the
   look, light or dark, the background) is theirs on every device: kept by loom
@@ -222,6 +445,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A Comms thread opens without an age process per message** (t-1926). Reading a thread decrypts its words in
+  loom's own process with the age library (`age-encryption`, BSD-3-Clause), not one `age` process per message, so
+  GET /comms/<thread> for 40 messages drops from over a second to well under 300 ms. The `age` program stays the
+  fallback for a message the library can't read, and is logged without its words. Nothing decrypted is cached.
+  `scripts/nav-bench.ts --server-only` times it, and fails at a median of 300 ms or more (`docs/specs/comms.md`,
+  "The rules for the kept words").
+
+- **Desktop right-click** (t-1925 E; `docs/specs/desk-tiling.md`, "Context menus"). Adding a widget moves from the
+  dock's + key (gone) to a right-click on the desktop, or the Menu key or Shift+F10. Short menus on a tile's strip
+  (Minimize, Make it the big one, Pin its card on an agent's, Close), an agent's card (Chat, Open, Unpin), a dock key (Open, Minimize, Close) and
+  an Inbox row (Open, Mark done). Keyboard-operable, Esc and Tab close, focus never trapped.
+
+- **Desktop tiles: strip, room, loader, moves** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
+  app's name twice ("COMMS › COMMS" is "COMMS", the way up to the app's start). The only app tile on the desktop, with no
+  side of its own, has no Recent here: its page takes the room. One loader replaces every spinner: four neon segments
+  lit in turn, 16, 24 or 40 px, never sized by the text around it. Opening, closing, minimizing, making a tile the
+  big one and bringing it back from the dock each have their own short effect (a CRT's power-on and -off, a scanline
+  wipe, a glitch); reduced motion has none.
+
+- **The desktop's bar is one line** (t-1925 A; `docs/specs/desk-tiling.md`, "The bar"). At 1024 px and wider: loom's
+  clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the ticker scrolling between, 34
+  px tall, where there were two bars. The ticker widget is gone (the bar has the same feed): a layout or an address
+  that has it loads without it, and the device's copy is written again without it. The desktop draws no headline
+  ("Everyone's fine"): just widgets and tiles. Phones and screens under 1024 px keep their bars.
+
+- **Desktop Home: the three columns line up, and no Moving strip** (t-1884). How everyone is ("Everyone's fine")
+  reads across the top, above all three columns, so Needs you, the first agent card and Vitals share a top edge; it
+  used to sit in the middle column and push the agents down. The Moving strip under the agent cards is gone: each
+  card already says what its agent is on.
+
 - **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line
   header that says it carries none of the person's authority.
 - **Catalog: shuttle at df79324.** Relay: a body asks the body that owns
@@ -296,6 +549,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The desktop's boot tests failed whenever the machine was busy** (t-1949): 732 ms against a 600 ms limit on CI, 3491
+  against 3200 locally, and with the merge queue each failure ejected a PR. They now hold the page's own clock
+  (Playwright's) and move it on by hand, so they check what the boot does, and in what order, with no time limits left:
+  it stands until 2.2 s on its clock, leaves then, is gone after its 0.25 s fade, and a key or tap ends it with no time
+  passing at all. A fresh session is now cleared from a page that isn't the app, so an arrival still running can't mark
+  it again. `expect.poll` waits up to 10 s (vitest's default gave up after 1 s, a limit no test meant to set).
+- **`loom token link --help` minted a live sign-in link** (t-1950). `token`, `sessions` and `household` found
+  their flags by looking for the ones they knew, so `--help` was ignored and `link` went ahead and printed a working
+  link. They, and `backup`, `export`, `restore`, `store` and `pieces`, now parse every flag first (`src/cli/args.ts`,
+  `parseVerb`): `-h`/`--help` prints usage and exits 0, and a flag the verb doesn't know is refused with 2, before
+  anything is minted, revoked, written or installed. `harness init` checks `--help` before stamping a fresh context
+  dir, and `knowledge`/`memory` honour `--help` anywhere after the verb. `src/cli/help-no-side-effects.test.ts` runs
+  every verb that changes something with `--help` and with an unknown flag, and checks the household's files are
+  unchanged.
+- **A window's page ran over its frame** (t-1925; Jonathan, 2026-11-06). A tile's ring was a shadow under its page, and
+  the page reached the tile's edge, so a page with a background (Activity's feed) covered the bottom edge, and every
+  page sat a pixel over the sides. The ring is drawn over the page and its sheets now (the cut corner's diagonal too),
+  and the page sits inside it; `src/ui/desk-window-overflow.integration.test.ts` holds every app to it.
+- **The desktop's bar** (Jonathan, 2026-11-06): a quiet dot between the clock and the page's name, and between LOOM//OS
+  and the status glyphs; the ticker's words stand in the middle of the room between them when they fit.
+- **A reply's signal on the comm screen played for less than its 250 ms** (t-1925). The 250 ms counted from when the
+  static was asked for, not from when it showed, so a busy render ate into it: 190-240 ms on a loaded machine, as
+  little as 33 ms on CI, where the Comms test failed on main and on loom#589. They count from the screen now.
+  Two backup tick tests no longer fail when run in a ten-minute window each day (02:45-02:55 or 20:45-20:55 in
+  Chicago): they pin when the backup was set instead of taking it from the wall clock.
+- **A restore could write into the live machine's piece stores** (t-1846). The backup drill (loom#488) restored
+  into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
+  it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it
+  restores to, with that piece's settings from the restored household or its defaults, never the caller's
+  environment, and refuses a piece whose setting names a path outside that home (its part waits in
+  `pieces-pending/`, its services don't start). `loom restore --allow-outside`, for the owner's own restore onto a
+  new machine, lets one name a path that isn't there yet; one that is, a live store, is refused even then. A piece found on PATH keeps its part pending too.
+  And a restore starts services only into this machine's own household: a piece's units are named for it in the
+  caller's systemd dir, so a restore into a throwaway `--to` would have repointed the live household's units.
 - **Adding an agent kept only `agents`, `default` and `owner`** in
   household.json, dropping `marks` and anything else. It now keeps them.
 - **An agent's Setup per its board.** Health first (Memory, Last active, Tokens

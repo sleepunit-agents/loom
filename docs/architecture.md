@@ -38,7 +38,7 @@ flowchart LR
       PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
-      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
+      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings · comms_title · comms_thread · describe_self<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
@@ -248,6 +248,7 @@ have fallen behind.
 | `src/backends/people.ts` | Person cards: validation, render, store, the identity room block |
 | `src/backends/projects.ts` | Project cards: validation, render, store, names (project_names), the hub's memory reads, the identity project block |
 | `src/backends/cards.ts` | What person and project cards share: validation primitives, where envelopes and staleness markers, merge one level deep, no-op detection, the row store (revisions, archive/restore, revision restore, BEGIN IMMEDIATE) |
+| `src/icon-set.ts`, `src/png.ts` | A household's pixel icon sets (docs/specs/household.md): `icons/<set>/` (a manifest and 32×32 PNGs), `loom household icons`, which icons are line-only, and the set in use for the shell and `/pixel-icons/`; a PNG reader on node:zlib alone |
 | `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
 | `src/backends/people-merge.ts` | Merge two person cards into one (person_merge, POST /api/loom/people/merge, `loom person merge`): the union of the cards in the directory and every agent's copy, every memory, proposal, conversation and turn re-tagged, and from left as an archived redirect to into |
 | `src/backends/people-ensure.ts` | Ensure a person card: a minimal card when there's none, only the missing `where` values when there is one, and a value already on another card refused (POST /api/loom/people/ensure, `loom person ensure`) |
@@ -271,5 +272,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`, `backup`. Any other name runs an
+`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `sessions`, `export`, `restore`, `store`, `backup`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

@@ -69,8 +69,9 @@ import {
 } from './tools/project.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
-import { conversationsList, conversationView } from './conversations.js';
-import { householdOf } from './household.js';
+import { conversationsList, conversationView, homeFor } from './conversations.js';
+import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
+import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
 function agentOfDir(contextDir: string): string {
@@ -1475,7 +1476,96 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (input) => convText(() => writeDigest(contextDir, here ?? { conversation: '', run: '' }, input)),
+    async (input) => convText(() => {
+      // A Comms thread's own project is the fallback for a digest that names none (comms.md, "Project").
+      const home = here ? homeFor(contextDir) : undefined;
+      const self = householdOf(contextDir)?.agent;
+      const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
+      return writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
+    }),
+  );
+
+  server.registerTool(
+    'describe_self',
+    {
+      description:
+      'Write your own description on your loom profile, when your household\'s owner has asked you to (their agent ' +
+      'window\'s Regenerate; refused otherwise, and the ask closes once you write it). One or two short sentences in plain ' +
+      'words, for the household: what you do and for whom. Not your creed, nothing from your private memories, no ids.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(300).describe('The description: one or two plain sentences, at most 300 characters.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ text }) => {
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const mine = householdOf(contextDir);
+      const fail = (error: string) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ error }) }], isError: true });
+      if (!mine) return fail('only an agent in a household has a profile description');
+      if (!aboutAskOf(mine.household, mine.agent)) return fail('nobody asked: your owner asks for this from your window in loom (Regenerate)');
+      const t = text.replace(/\s+/g, ' ').trim();
+      if ((t.match(/[.!?](\s|$)/g) ?? []).length > 2) return fail('keep it to one or two sentences');
+      setAbout(mine.household, mine.agent, t);
+      setAboutAsk(mine.household, mine.agent, null);
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };
+    },
+  );
+
+  server.registerTool(
+    'comms_title',
+    {
+      description:
+      'Name this Comms thread (a conversation in loom\'s own app, venue loom), once you know what it\'s about: a short ' +
+      'title of at most 60 characters on one line, written for its owner to read in their thread list. For the ' +
+      'conversation given to identity; refused anywhere else, and once the owner has named the thread themselves.',
+      inputSchema: z.object({
+        title: z.string().max(60).describe('The thread\'s title: at most 60 characters, one line, plain words.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ title }) => {
+      const home = homeFor(contextDir);
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!here || !home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
+      try {
+        const t = titleFromAgent(home, self, here.conversation, title);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };
+      } catch (e) {
+        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+        throw e;
+      }
+    },
+  );
+
+  server.registerTool(
+    'comms_thread',
+    {
+      description:
+      'Read a Comms thread of your own agent\'s (a conversation in loom\'s own app, venue loom): its messages as its ' +
+      'owner sees them, oldest first, with the owner\'s words, your replies, tool cards and any error card such as ' +
+      '"your reply couldn\'t be shown". Words go after the household\'s comms_days (14 at most); the message stays. With no thread, the one ' +
+      'of the conversation given to identity. Never another agent\'s thread. Read only.',
+      inputSchema: z.object({
+        thread: z.string().max(20).optional().describe('A thread id of yours, th:… (its place). Left off: this body\'s own thread.'),
+        before: z.number().int().positive().optional().describe('Only messages before this seq: scrolling back.'),
+        limit: z.number().int().min(1).max(100).optional().describe('How many of the newest messages (default 30, at most 100).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ thread, before, limit }) => {
+      const home = homeFor(contextDir);
+      // Whose thread: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'no household here' }) }], isError: true };
+      try {
+        const r = await agentThreadRead(home, process.env, self, { conversation: here?.conversation, thread, before, limit });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
+      } catch (e) {
+        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+        throw e;
+      }
+    },
   );
 
   server.registerTool(

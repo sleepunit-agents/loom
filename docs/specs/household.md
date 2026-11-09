@@ -64,6 +64,7 @@ $LOOM_HOME/                     (default ~/.config/loom)
 ├── household.json              agents, owner, the default agent
 ├── tokens.json                 every token: sha256, label, role, created, last used, revoked
 ├── faces/<agent>/              an agent's pixel face, if it has one: manifest.json and its sheets (PNG)
+├── icons/<set>/                a pixel icon set, if one is installed: manifest.json and its icons (PNG)
 ├── commons/
 │   ├── knowledge.db            facts about the world
 │   └── people.db               the directory: one entry per human
@@ -86,7 +87,8 @@ $LOOM_HOME/                     (default ~/.config/loom)
   dashes; 40 at most).
 - **An agent's pixel face** (`faces/<agent>/`, web/src/pixel-face.tsx): a
   manifest and the sprite sheets it names. Per state (`idle`, `working`,
-  `thinking`, `waiting`, `done`, `error`) and facing (`south`, `south-east`,
+  `thinking`, `waiting`, `done`, `error`, and optionally `talking`, which a face
+  without it plays as `done`, then `working`: [comms.md](comms.md)) and facing (`south`, `south-east`,
   `south-west`; `waiting` is south only), a list of animations, each a row of a
   sheet (`sheet.png` unless it names another), its frame count and a weight:
   `{"cell": [56, 84], "states": {"idle": {"south": [{"row": 7, "frames": 17,
@@ -109,6 +111,20 @@ $LOOM_HOME/                     (default ~/.config/loom)
   `--variant "Crack Neck=idle:15:rare"` place the rest); `--manifest` replaces it.
   Served at `/faces/<agent>/` to someone signed in who sees that agent, only
   the manifest and the sheets it names.
+- **Pixel icons** (`icons/<set>/`, src/icon-set.ts, web/src/app-icon.tsx): the
+  household's art for its apps' keys, never loom's (it isn't in the repo). A
+  manifest, `{ "icons": { "home": "home.png", … }, "line": ["home", …] }`, and
+  each icon a 32×32 PNG; an app is its label in lowercase, dashes for spaces.
+  `line` names the line-only icons (mostly dark ink): install works it out from
+  the pixels when the manifest doesn't say. household.json's `icons` names the
+  set in use. `loom household icons install <dir> [--name <set>]` installs a
+  folder (its manifest, or every `<app>.png` in it) and wears it;
+  `icons set <app> <file.png>` swaps one icon; `icons use <set>|none`;
+  `icons list`. Served at `/pixel-icons/<app>.png` to someone signed in. A
+  member sees them with Appearance's "Pixel icons" on (off unless they turn it
+  on; the choice isn't offered without a set): each icon recoloured to its
+  key's ramp per look and state (web/src/pixel-ramp.ts) at 32 px on keys and
+  tiles; a 16 px row keeps its line icon.
 
 ## Who's asking: tokens
 
@@ -218,7 +234,19 @@ out of a fire.
   opens the whole household. For the secrets piece, the bundle's key is the
   recovery copy t-1482 asked for.
 - **`loom restore <file>`** on an empty `$LOOM_HOME` lays the household back
-  down, then hands each piece its part through `import`.
+  down, then hands each piece its part through `import`. Only a piece the
+  restore installed into that home gets a part, with its settings from the
+  restored household (or its defaults, under its home), never the caller's
+  environment; one whose setting names a path outside the home gets
+  nothing, and its services don't start. A bundle is encrypted, not signed,
+  so one anyone made could name a new file for a part to land in: the owner's
+  own restore onto a new machine passes `--allow-outside` to keep their paths,
+  and a path that's already there (a live store, when the drill runs on the
+  live machine) is refused even then. A refused part waits in
+  `pieces-pending/` with the reason. Services start only when the home is
+  this machine's household (`$LOOM_HOME`, or `~/.config/loom`): a piece's
+  units live in the caller's systemd dir under its name, so a restore into a
+  throwaway `--to` would otherwise repoint the live household's (t-1846).
 - **On a schedule,** offsite. The page shows the last bundle's age and the
   last restore drill.
 - **The drill:** restore into a throwaway `$LOOM_HOME` and compare it with

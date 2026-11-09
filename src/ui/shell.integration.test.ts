@@ -57,7 +57,7 @@ describe('the app shell', () => {
     expect(sh).toMatchObject({ tab: 'home', home: '/', household: false, scope: 'agent' });
     // The agent's mark: its initial on its color.
     expect(sh.agents).toEqual([expect.objectContaining({ label: 'Art E Fish', bg: '#B8A6FF', fg: '#1D1240', href: '/', current: true })]);
-    expect(sh.core.map((c: { label: string }) => c.label)).toEqual(['Mind', 'People']);
+    expect(sh.core.map((c: { label: string }) => c.label)).toEqual(['Mind', 'People', 'Projects']);
     // Sign out (the app's form posts it with the session's form token) needs that token on every page.
     expect(home.chrome.csrf).toMatch(/^[0-9a-f]{64}$/);
     expect((await view('/people', cookie)).chrome.shell).toMatchObject({ tab: '', home: '/' });
@@ -84,7 +84,12 @@ describe('the app shell', () => {
     expect(swText).toContain("searchParams.has('_flash')");
     expect(swText).toMatch(/NEVER = .*login\|logout/);
     // What it keeps changed shape (the app's one page, under one key): a new cache, the old one dropped.
-    expect(swText).toContain("'loom-3-pages'");
+    expect(swText).toContain("'loom-5-pages'");
+    // The built app's files are kept ahead, under a name that changes with the build (t-1925 F).
+    expect(swText).toMatch(/BUILT = 'loom-5-built-[A-Za-z0-9_-]{10}'/);
+    expect(swText).toMatch(/const AHEAD = \["\/app\/assets\//);
+    // A Comms thread's live reads never come from a kept copy (t-1881).
+    expect(swText).toContain(String.raw`/^\/comms\/[^/]+\/(since|before)\//`);
     expect(swText).toContain("const APP = new URL('/__app', location.origin).href");
     expect(swText).toContain('c.put(APP,');
     // The app's JSON views are kept the same way, and dropped with the pages.

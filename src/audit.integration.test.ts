@@ -261,7 +261,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
   describe('criterion 7: reading the audit log', () => {
     it('the routes: review takes, finishes, scores and finds; runtime writes audit and reads scorecards', () => {
       expect(ROLE_ROUTES.review).toEqual(['audit/take', 'audit/done', 'scores', 'findings']);
-      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge']);
+      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge', 'comms/adapter', 'comms/activity', 'pieces/changed']);
       expect(AGENT_ROUTES).toEqual(['conversations/turn', 'audit']);
       expect(GET_ROUTES).toEqual(['scorecards', 'review/config']);
     });
@@ -755,11 +755,17 @@ describe('criterion 9: one decrypt path', () => {
     // The key's name, as a constant or a string, is the audit module's alone.
     const keyed = all.filter((f) => /\bREVIEW_KEY\b|review\.key/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(keyed).toEqual(['audit.ts']);
-    // An age decrypt (-d / --decrypt) runs in two places: the bundle's, of a bundle with the owner's
-    // key, which never names the review key; and the audit module's, inside decryptAuditText only.
+    // An age decrypt (-d / --decrypt) runs in three places: the bundle's, of a bundle with the owner's
+    // key; Comms', of a thread's words with comms.key (docs/specs/comms.md); neither names the review
+    // key; and the audit module's, inside decryptAuditText only.
     const decrypting = all.filter((f) => /['"](?:-d|--decrypt)['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(decrypting).toEqual(['audit.ts', 'bundle.ts']);
+    expect(decrypting).toEqual(['audit.ts', 'bundle.ts', 'comms.ts']);
+    // And the in-process way (t-1926): only Comms imports the age library, so nothing decrypts with the review key
+    // that way either.
+    const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
+    expect(library).toEqual(['comms.ts']);
     expect(code(join(srcDir, 'bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|AUDIT_FILES\s*\[/);
+    expect(code(join(srcDir, 'comms.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     const audit = code(join(srcDir, 'audit.ts'));
     const spawns = [...audit.matchAll(/['"](?:-d|--decrypt)['"]/g)].map((m) => m.index!);
     expect(spawns).toHaveLength(1);
@@ -819,6 +825,8 @@ describe('model families (the mapping core reads)', () => {
 });
 
 describe('the metadata measures (computeMeasures)', () => {
+  // Some twenty writes, each its own transaction (open, commit, fsync): ~0.3 s alone, but past vitest's 5 s default
+  // when the disk is shared with other runs (seen on CI and on a ZFS box under load, t-1886). Its time is the disk's.
   it('computes each kind\'s measures for one UTC day, attributed to the measured turn\'s model', () => {
     const h = household('loom-measures-');
     piece(h.home, 'shuttle', { role: 'runtime', venues: VENUES });
@@ -872,7 +880,7 @@ describe('the metadata measures (computeMeasures)', () => {
     } finally {
       rmSync(h.home, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 // ─── Who a conversation is with: sticky (criterion 10's non-owner rule) ─────

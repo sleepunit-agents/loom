@@ -38,20 +38,71 @@ const ago = (iso?: string) => {
  * each thing it has going (a conversation, a lane, a task, a session), simply. Trouble shows only when there is some.
  * The details are a tap away.
  */
+/** How an agent is, in words: its card's eyebrow, and its row's status. */
+function statusWords(c: AgentCard): string {
+  const doing = c.doing ?? [];
+  const state = c.state ?? 'available';
+  return state === 'broken' ? 'Something’s broken' : (c.problems ?? []).length ? 'Needs a look'
+    : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
+    : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
+}
+
+/** A face's state: wrong (broken, or a problem), working, or idle. The card's and the row's. */
+const faceState = (c: AgentCard): 'error' | 'working' | 'idle' => (c.state === 'broken' || (c.problems ?? []).length ? 'error' : c.state === 'working' || (c.doing ?? []).length ? 'working' : 'idle');
+/** The dot on a face: its state's colour. */
+const dotColor = (state: string) => (state === 'working' ? 'bg-[var(--loom-live)]' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]');
+
+/** Up to this many agents a phone's Home is a card each; past it, a row each (Jonathan, 2026-11-05, t-1869). */
+const CARDS_UP_TO = 4;
+
+/** Worst first: something wrong, then unavailable, then working, then quiet; else as the household lists them. */
+function rowRank(c: AgentCard): number {
+  const state = c.state ?? 'available';
+  return (c.problems ?? []).length || state === 'broken' ? 0 : state === 'unavailable' ? 1 : state === 'working' || (c.doing ?? []).length ? 2 : 3;
+}
+
+/** An agent in a line, for a phone's Home with many of them: its face, its name, how it is, and its last line. */
+function AgentRow({ c }: { c: AgentCard }) {
+  const { go } = useEnv();
+  const doing = c.doing ?? [];
+  const problems = c.problems ?? [];
+  const state = c.state ?? 'available';
+  const wrong = faceState(c) === 'error';
+  const line = problems[0]?.text ?? doing[0]?.text ?? c.reason;
+  const href = `/a/${c.id}`;
+  return (
+    <Arrive as="li" k={`row:${c.id}`} className="min-w-0">
+      <a href={href} className="flex min-w-0 items-center gap-3 px-4 py-3 text-left no-underline"
+        onClick={(e) => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); go(href); }}>
+        <span className="relative shrink-0">
+          <AgentAvatar a={c} size={40} shape="circle" state={faceState(c)} />
+          <span aria-hidden className={`absolute bottom-0 right-0 size-3 rounded-full border-2 border-[var(--v-paper)] ${dotColor(state)}`} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate font-semibold">{c.label}</span>
+            <span className={`shrink-0 truncate text-xs font-medium ${wrong ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{statusWords(c)}</span>
+          </span>
+          {line && <span className="block truncate text-sm opacity-70">{line}</span>}
+        </span>
+        <span className="shrink-0 opacity-50"><AnimatedIcon name={iconFor('chevron-right')} size="sm" /></span>
+      </a>
+    </Arrive>
+  );
+}
+
 function AgentIdentity({ c }: { c: AgentCard }) {
   const { go } = useEnv();
   const doing = c.doing ?? [];
   const problems = c.problems ?? [];
   const state = c.state ?? 'available';
-  const eyebrow = problems.length ? (state === 'broken' ? 'Something’s broken' : 'Needs a look')
-    : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
-    : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
+  const eyebrow = statusWords(c);
   return (
     <Card className="loom-identity cursor-pointer gap-0 p-0" style={{ '--acc': markColor(c.bg) } as React.CSSProperties} onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
         <span className="loom-identity__face relative shrink-0">
-          <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
-          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
+          <AgentAvatar a={c} size={72} shape="circle" state={faceState(c)} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
+          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${dotColor(state)}${state === 'working' ? ' loom-dot-live' : ''}`} />
         </span>
         <div className="min-w-0 flex-1">
           <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
@@ -82,16 +133,41 @@ function AgentIdentity({ c }: { c: AgentCard }) {
   );
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
-type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string; approval?: Approval };
+type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string; approval?: Approval;
+  if_yes?: string; if_no?: string; fine?: string };
 /** The approval a Needs you waits on, absorbed into it: that card's words and its Allow and Deny, posted to its piece. */
-export type Approval = { text: string; meta?: string; actions: Btn[]; source: Source };
+export type Approval = { text: string; meta?: string; actions: Btn[]; source: Source; if_yes?: string; if_no?: string; fine?: string };
+
+/** What a button does, said beside it: the primary (Allow, Yes) with "If you allow", the danger one (Deny) with "If you
+ * deny" (Jonathan, 2026-11-05: "I don't know what this is even asking yet"). A button with no line is drawn alone. */
+export function lineFor(b: Btn, lines: { if_yes?: string; if_no?: string }): string | undefined {
+  return b.tone === 'danger' ? lines.if_no : b.tone === 'primary' ? lines.if_yes : undefined;
+}
+/** The small print: exactly what a yes allows (a piece's machine fields), the same words wherever it's drawn. */
+export function Fine({ text, className = 'break-words text-xs opacity-60' }: { text?: string; className?: string }) {
+  return text ? <p className={className}>Exactly what this allows: {text}</p> : null;
+}
+export function AnswersWithLines({ actions, lines, size = 'sm', onDone }: { actions: Btn[]; lines: { if_yes?: string; if_no?: string }; size?: 'sm' | 'default'; onDone?: () => void }) {
+  if (!lines.if_yes && !lines.if_no) return <div className="flex flex-wrap gap-2 pt-1">{actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div>;
+  return (
+    <div className="loom-answers grid gap-2 pt-1">{actions.map((b) => {
+      const line = lineFor(b, lines);
+      return (
+        <div key={b.action + b.label} className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+          <ActButton b={b} size={size} onDone={onDone} />
+          {line && <p className="break-words text-sm opacity-80">{b.tone === 'danger' ? 'If you deny' : 'If you allow'}: {line}</p>}
+        </div>);
+    })}</div>
+  );
+}
 type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 /** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
 export type Ground = 'contours' | 'depth' | 'wash';
 
 const useEnv = () => useContext(EnvContext)!;
-const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'error'; word: string }> = {
+/** An agent's state as a person reads it, and its face's expression (also Profile's agents, account.tsx). */
+export const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'error'; word: string }> = {
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };
@@ -115,6 +191,7 @@ export function PressCard({ onPress, className, children }: { onPress: () => voi
 export function HouseHomeView({ home }: { home: { headline: string; needs: number; need?: InboxItem; cards: AgentCard[]; moving: { agent?: string; text: string; meta?: string }[] } }) {
   const { go } = useEnv();
   const open = useOpenItem();
+  const rows = home.cards.length > CARDS_UP_TO;
   return (
     <div className="grid gap-4">
       <h2 className="text-2xl font-semibold">{home.headline}</h2>
@@ -132,7 +209,17 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
       )}
       {home.cards.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one.">
         <Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
-      <div className="grid items-start gap-4 md:grid-cols-2">
+      {/* Up to four agents, a card each. Past that, a phone's Home is a row each, worst first, a tap to the agent's own
+          page (Jonathan, 2026-11-05, t-1869: "fine if you've got 1 of something and a nightmare if you exceed that").
+          Wider screens keep their cards. */}
+      {rows && (
+        <Card className="gap-0 p-0 md:hidden">
+          <ul aria-label="Agents" className="divide-y">
+            {[...home.cards].sort((x, y) => rowRank(x) - rowRank(y)).map((c) => <AgentRow key={c.id} c={c} />)}
+          </ul>
+        </Card>
+      )}
+      <div className={`${rows ? 'hidden md:grid' : 'grid'} items-start gap-4 md:grid-cols-2`}>
         {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
     </div>
@@ -141,7 +228,9 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
 
 // ---- an Inbox item's row (the Inbox's, and Home's banner) ---------------------------------------
 
-export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
+export type InboxItem = { fine?: string; key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered';
+  /** Its Inbox folder (src/ui/render.ts inboxBox), and when this reader opened it. */
+  box?: 'question' | 'approval' | 'alert' | 'memory' | 'done'; seen?: string; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
   /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
   href?: string; reply?: { action: string; label: string; fields: Record<string, string> };
   /** A Needs you laid out (its text is the ask), and the approval it waits on. */
@@ -191,15 +280,17 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
 function Asks({ asks }: { asks: Ask[] }) {
   if (!asks.length) return null;
   return (
-    <div className="grid gap-3">{asks.map((a, n) => (
+    <div className="loom-asks grid gap-3">{asks.map((a, n) => (
       <As key={n} source={a.source}><Arrive k={`ask:${a.source.id}\0${a.text}`} className="rounded-3xl">
-        <Card className={a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'}>
+        <Card data-band className={a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'}>
           <CardContent className="grid gap-2 py-4">
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
             {a.approval && <ApprovalBox a={a.approval} />}
-            {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
+            {a.actions && (a.if_yes || a.if_no ? <AnswersWithLines actions={a.actions} lines={a} />
+              : <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>)}
+            <Fine text={a.fine} />
           </CardContent>
         </Card>
       </Arrive></As>))}
@@ -221,7 +312,8 @@ export function ApprovalBox({ a, size = 'sm', onDone }: { a: Approval; size?: 's
       <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">You're allowing</h3>
       <p className="whitespace-pre-wrap break-words font-medium">{text}</p>
       {a.meta && <p className="whitespace-pre-wrap break-words text-sm opacity-70">{a.meta}</p>}
-      <As source={a.source}><div className="flex flex-wrap gap-2 pt-1">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div></As>
+      <As source={a.source}><AnswersWithLines actions={a.actions} lines={a} size={size} onDone={onDone} /></As>
+      <Fine text={a.fine} />
     </section>
   );
 }
@@ -234,24 +326,25 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
         <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-[var(--r-card)]"><Card lift className="gap-0 p-0"><Link page={t.page} className="grid gap-0.5 p-4 no-underline">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="loom-data text-xl font-semibold">{t.value}</span>
-          {t.detail && <span className="line-clamp-3 break-words text-xs opacity-60">{t.detail}</span>}
+          {/* A tile's lines (an agent's Clock: its next wake, then its last) each start their own; four at most. */}
+          {t.detail && <span className="line-clamp-4 whitespace-pre-line break-words text-xs opacity-60">{t.detail}</span>}
         </Link></Card></Arrive>
       </As>))}
     </div>
   );
 }
 
-export function DashboardView({ d, now }: { d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
+export function DashboardView({ d, now, bare }: { /** in the agent's window: its header is the window's, not a profile card */ bare?: boolean; d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
   const { go } = useEnv();
   return (
-    <div className="grid gap-4">
+    <div className="loom-dash grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
         <Button variant="secondary" className="justify-start" onClick={() => go('/inbox')}>{d.inbox.first ?? `${d.inbox.count} in the Inbox`}</Button>
       )}
       {d.filters && <BlockView b={{ type: 'filters', ...d.filters }} />}
       {/* An agent's Today opens on its profile (Jonathan, 2026-10-29: "lets do this to the agent pages too. we can merge
           the memory and clock and shit into it"): its colour, its identity's opening, how it is, and its tiles as stats. */}
-      {d.agent?.id ? (
+      {d.agent?.id && !bare ? (
         <Suspense fallback={<div className="min-h-64" />}><Profile p={{
           type: 'profile', name: d.agent.label, agent: d.agent.id, ...(d.agent.bio ? { summary: d.agent.bio } : {}),
           badges: [d.agent.waiting ? `${d.agent.waiting} waiting on you` : 'Ready', ...(d.agent.active ? [d.agent.active] : [])],
@@ -260,10 +353,12 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
         }} /></Suspense>
       ) : null}
       <Asks asks={d.asks} />
-      {!d.agent?.id && <Tiles tiles={d.tiles} />}
+      {/* An agent's window keeps its tiles (Memories, its pieces': their links into its sections); a profile card had
+          them as its stats. */}
+      {(!d.agent?.id || bare) && <Tiles tiles={d.tiles} />}
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
-        <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
+        <Suspense fallback={<div className="grid place-items-center py-8"><Spinner size="lg" /></div>}>
         <Ledger rows={d.thread} title={d.title ?? 'Thread'} now={now} />
         </Suspense>
       </div>

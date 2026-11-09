@@ -11,9 +11,7 @@
 @import "@/styles/cojeev/badge.css";
 @import "@/styles/cojeev/control-appearance.css";
 @import "@/styles/cojeev/label.css";
-@import "@/styles/cojeev/separator.css";
 @import "@/styles/cojeev/drawer.css";
-@import "@/styles/cojeev/agent-state.css";
 @import "@/styles/cojeev/item.css";
 @import "@/styles/cojeev/spinner.css";
 @import "@/styles/cojeev/switch.css";
@@ -35,7 +33,6 @@
 @import "@/styles/cojeev/dialog.css";
 @import "@/styles/cojeev/alert-dialog.css";
 @import "@/styles/cojeev/toast.css";
-@import "@/styles/cojeev/theme-toggle.css";
 @import "@/styles/cojeev/code-block.css";
 @import "@/styles/cojeev/item-adornment.css";
 @import "@/styles/cojeev/empty.css";
@@ -47,6 +44,14 @@
 @import "@/styles/cojeev/breadcrumb.css";
 @import "@/styles/cojeev/avatar.css";
 @import "@/styles/cojeev/activity-feed.css";
+@import "@/styles/cojeev/agent-state.css";
+@import "@/styles/cojeev/message.css";
+@import "@/styles/cojeev/message-scroller.css";
+@import "@/styles/cojeev/attachment.css";
+@import "@/styles/cojeev/bubble.css";
+@import "@/styles/cojeev/input-group.css";
+@import "@/styles/cojeev/questionnaire.css";
+@import "@/styles/cojeev/agent-chat.css";
 @import "@/styles/cojeev/table.css";
 @import "@/styles/cojeev/pagination.css";
 @import "@/styles/cojeev/navigation-menu.css";
@@ -57,8 +62,8 @@
 @import "@/styles/cojeev/toggle-group.css";
 @import "@/styles/cojeev/alert.css";
 @import "@/styles/cojeev/dropdown-menu.css";
-
-@custom-variant dark (&:is(.dark *));
+/* The looks (Neon Noir, Low Light, Daylight): Neon's structure and each look's tokens. */
+@import "@/looks/looks.css";
 
 @theme inline {
     --font-heading: var(--font-sans);
@@ -68,32 +73,6 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-accent: var(--sidebar-accent);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -101,210 +80,6 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
-    --color-v-pink: var(--v-pink);
-    --color-v-olive: var(--v-olive);
-    --color-v-blue: var(--v-blue);
-    --color-v-yellow: var(--v-yellow);
-    --color-v-canvas: var(--v-canvas);
-    --color-v-paper: var(--v-paper);
-    --color-v-beige: var(--v-beige);
-    --color-v-beige-2: var(--v-beige-2);
-    --color-v-cream-pill: var(--v-cream-pill);
-    --color-v-ink: var(--v-ink);
-    --color-v-structure: var(--v-structure);
-    --color-on-structure: var(--on-structure);
-    --color-structure-quiet: var(--structure-quiet);
-    --color-structure-line: var(--structure-line);
-    --color-structure-text: var(--structure-text);
-    --color-v-ink-soft: var(--v-ink-soft);
-    --color-v-on-ink: var(--v-on-ink);
-    --color-v-text: var(--v-text);
-    --color-v-text-2: var(--v-text-2);
-    --color-v-text-3: var(--v-text-3);
-    --color-v-skel-face: var(--v-skel-face);
-    --color-v-skel-sheen: var(--v-skel-sheen);
-    --color-v-skel-edge: var(--v-skel-edge);
-    --color-v-disabled-ink: var(--v-disabled-ink);
-    --color-v-disabled-face: var(--v-disabled-face);
-    --color-v-disabled-edge: var(--v-disabled-edge);
-    --color-v-danger: var(--v-danger);
-    --color-v-danger-ink: var(--v-danger-ink);
-    --color-v-danger-fill: var(--v-danger-fill);
-    --color-v-olive-ink: var(--v-olive-ink);
-    --color-v-accent-ink: var(--v-accent-ink);
-    --color-v-brand: var(--v-brand);
-    --color-v-border: var(--v-border);
-    --color-v-edge: var(--v-edge);
-    --color-switch-knob: var(--switch-knob);
-    --color-switch-knob-on: var(--switch-knob-on);
-    --color-surface-quiet: var(--surface-quiet);
-    --color-surface-work: var(--surface-work);
-    --color-surface-automation: var(--surface-automation);
-    --color-surface-memory: var(--surface-memory);
-    --color-surface-library: var(--surface-library);
-    --color-surface-ai: var(--surface-ai);
-    --color-surface-alert: var(--surface-alert);
-    --color-sel-bg: var(--sel-bg);
-    --color-sel-edge: var(--sel-edge);
-    --color-sel-ink: var(--sel-ink);
-    --color-status-ok-bg: var(--status-ok-bg);
-    --color-status-ok-ink: var(--status-ok-ink);
-    --color-status-warn-bg: var(--status-warn-bg);
-    --color-status-warn-ink: var(--status-warn-ink);
-    --color-status-danger-bg: var(--status-danger-bg);
-    --color-status-danger-ink: var(--status-danger-ink);
-    --color-status-info-bg: var(--status-info-bg);
-    --color-status-info-ink: var(--status-info-ink);
-    --color-status-pending-bg: var(--status-pending-bg);
-    --color-status-pending-ink: var(--status-pending-ink);
-    --color-v-scrim: var(--v-scrim);
-    --color-v-disabled-fill: var(--v-disabled-fill);
-    --color-v-pink-deep: var(--v-pink-deep);
-    --color-v-olive-deep: var(--v-olive-deep);
-    --color-v-blue-deep: var(--v-blue-deep);
-    --color-v-yellow-deep: var(--v-yellow-deep);
-    --color-v-pink-soft: var(--v-pink-soft);
-    --color-v-olive-soft: var(--v-olive-soft);
-    --color-v-blue-soft: var(--v-blue-soft);
-    --color-v-yellow-soft: var(--v-yellow-soft);
-    --color-v-danger-soft: var(--v-danger-soft);
-    --color-card-2: var(--card-2);
-    --color-destructive-foreground: var(--destructive-foreground);
-    --color-sidebar-muted: var(--sidebar-muted);
-    --color-cat-work: var(--cat-work);
-    --color-cat-automations: var(--cat-automations);
-    --color-cat-memory: var(--cat-memory);
-    --color-cat-library: var(--cat-library);
-    --color-cat-ai-apps: var(--cat-ai-apps);
-    --color-cat-free-models: var(--cat-free-models);
-    --color-cat-settings: var(--cat-settings);
-    --color-cat-needs-you: var(--cat-needs-you);
-    --color-cat-runs: var(--cat-runs);
-    --color-status-ok: var(--status-ok);
-    --color-status-warn: var(--status-warn);
-    --color-status-danger: var(--status-danger);
-    --color-status-info: var(--status-info);
-    --color-status-pending: var(--status-pending);
-    --color-status-off: var(--status-off);
-    --text-v-hero: var(--fs-hero);
-    --text-v-display: var(--fs-display);
-    --text-v-section: var(--fs-section);
-    --text-v-title: var(--fs-title);
-    --text-v-lead: var(--fs-lead);
-    --text-v-reading: var(--fs-reading);
-    --text-v-body: var(--fs-body);
-    --text-v-control: var(--fs-control);
-    --text-v-small: var(--fs-small);
-    --text-v-meta: var(--fs-meta);
-    --text-v-caps: var(--fs-caps);
-    --font-weight-v-regular: var(--fw-regular);
-    --font-weight-v-medium: var(--fw-medium);
-    --font-weight-v-semibold: var(--fw-semibold);
-    --font-weight-v-bold: var(--fw-bold);
-    --spacing-s-1: var(--s-1);
-    --spacing-s-2: var(--s-2);
-    --spacing-s-3: var(--s-3);
-    --spacing-s-4: var(--s-4);
-    --spacing-s-5: var(--s-5);
-    --spacing-s-6: var(--s-6);
-    --spacing-s-7: var(--s-7);
-    --spacing-s-8: var(--s-8);
-    --spacing-s-10: var(--s-10);
-    --spacing-s-12: var(--s-12);
-    --spacing-s-16: var(--s-16);
-    --spacing-shell-inset: var(--shell-inset);
-    --spacing-sidebar-w: var(--sidebar-w);
-    --spacing-sidebar-w-mini: var(--sidebar-w-mini);
-    --spacing-sidebar-gap: var(--sidebar-gap);
-    --spacing-rail-w: var(--rail-w);
-    --spacing-rail-gap: var(--rail-gap);
-    --spacing-topbar-h: var(--topbar-h);
-    --spacing-content-max: var(--content-max);
-    --spacing-card-pad: var(--card-pad);
-    --radius-v-xs: var(--r-xs);
-    --radius-v-sm: var(--r-sm);
-    --radius-v-md: var(--r-md);
-    --radius-v-card-sm: var(--r-card-sm);
-    --radius-v-card: var(--r-card);
-    --radius-v-panel: var(--r-panel);
-    --radius-v-sheet: var(--r-sheet);
-    --radius-v-frame: var(--r-frame);
-    --radius-v-pill: var(--r-pill);
-    --spacing-disk-sm: var(--disk-sm);
-    --spacing-disk-md: var(--disk-md);
-    --spacing-disk-lg: var(--disk-lg);
-    --spacing-icon-sm: var(--icon-sm);
-    --spacing-icon-md: var(--icon-md);
-    --spacing-icon-lg: var(--icon-lg);
-    --spacing-icon-stroke: var(--icon-stroke);
-    --spacing-ctl-sm: var(--ctl-sm);
-    --spacing-ctl-md: var(--ctl-md);
-    --spacing-ctl-lg: var(--ctl-lg);
-    --spacing-ctl-xl: var(--ctl-xl);
-    --color-pulse-c: var(--pulse-c);
-    --color-c: var(--c);
-    --color-hue: var(--hue);
-    --color-hue-deep: var(--hue-deep);
-    --color-hue-ink: var(--hue-ink);
-    --color-wm: var(--wm);
-    --color-skel: var(--skel);
-    --color-sw: var(--sw);
-    --color-dot: var(--dot);
-    --color-disk-bg: var(--disk-bg);
-    --color-mfill: var(--mfill);
-    --color-mstroke: var(--mstroke);
-    --color-glide-bg: var(--glide-bg);
-    --color-glide-fg: var(--glide-fg);
-    --color-v-on-accent: var(--v-on-accent);
-    --color-ink-fixed: var(--ink-fixed);
-    --color-cream-fixed: var(--cream-fixed);
-    --color-mask-ink: var(--mask-ink);
-    --color-unavail-ink: var(--unavail-ink);
-    --color-alert-ink: var(--alert-ink);
-    --color-btn-disabled-ink: var(--btn-disabled-ink);
-    --color-nav-group-ink: var(--nav-group-ink);
-    --color-muted-foreground-ink: var(--muted-foreground-ink);
-    --color-muted-foreground-tinted: var(--muted-foreground-tinted);
-    --color-danger-deep: var(--danger-deep);
-    --color-legacy-on-brand: var(--legacy-on-brand);
-    --color-legacy-accent-5: var(--legacy-accent-5);
-    --color-legacy-success: var(--legacy-success);
-    --color-legacy-warning: var(--legacy-warning);
-    --color-legacy-info: var(--legacy-info);
-    --color-legacy-danger-fill: var(--legacy-danger-fill);
-    --color-legacy-success-fill: var(--legacy-success-fill);
-    --color-rail-sel: var(--rail-sel);
-    --color-rail-hover: var(--rail-hover);
-    --color-surface-page: var(--surface-page);
-    --color-surface-card: var(--surface-card);
-    --color-surface-raised: var(--surface-raised);
-    --color-surface-sunken: var(--surface-sunken);
-    --color-surface-inverse: var(--surface-inverse);
-    --color-text-primary: var(--text-primary);
-    --color-text-secondary: var(--text-secondary);
-    --color-text-muted: var(--text-muted);
-    --color-border-strong: var(--border-strong);
-    --color-border-subtle: var(--border-subtle);
-    --color-brand: var(--brand);
-    --color-action: var(--action);
-    --color-accent-1: var(--accent-1);
-    --color-accent-2: var(--accent-2);
-    --color-accent-3: var(--accent-3);
-    --color-accent-4: var(--accent-4);
-    --color-accent-1-soft: var(--accent-1-soft);
-    --color-accent-2-soft: var(--accent-2-soft);
-    --color-accent-3-soft: var(--accent-3-soft);
-    --color-accent-4-soft: var(--accent-4-soft);
-    --color-danger: var(--danger);
-    --color-success-soft: var(--success-soft);
-    --color-warning-soft: var(--warning-soft);
-    --color-danger-soft: var(--danger-soft);
-    --color-info-soft: var(--info-soft);
-    --color-ring-offset: var(--ring-offset);
-    --spacing-card-padding: var(--card-padding);
-    --spacing-topbar-height: var(--topbar-height);
-    --font-cojeev-text: var(--font-text);
-    --font-cojeev-display: var(--font-display);
 }
 
 :root {
@@ -340,40 +115,6 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
@@ -420,7 +161,6 @@
     --sidebar-primary: var(--v-pink);
 }
 
-  @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
 /* loom: an icon in a dock tile is the tile's size, not the SVG default (300px). */
 /* A phone's dock labels sit under their tiles (dock.css's touch block), but the hover popup's own rules still applied
    over it: an engaged middle label kept translate(-50%) and slid half its width left until the tap went stale, and the
@@ -453,7 +193,7 @@
 [data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
 /* loom's own colours that were literals (Neon Noir's sweep, 2026-11-04): a status dot (ok, warn, bad, muted), a working
    agent's dot and its pulse, a section's warning ring, a count's badge, an unread dot, and how far the dark dims the
-   ground. Tailwind's own values, so 000h draws as it did; a look (src/looks/) re-points them. */
+   ground. Tailwind's own values, the base under every look; each re-points some or all of them (src/looks/looks.css). */
 :root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
   --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
   --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
@@ -463,12 +203,9 @@
   /* An app's tile's corners (a phone's launcher, a header's tile, a state's mark): a look can square them. */
   --loom-r-launch: 22%; --loom-r-tile: 28%; --loom-r-state: 30%; --loom-r-side: 24px; --loom-r-soft: 14px; --loom-r-icon: 12px; }
 :root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
-/* The page's ground: 000h's docs wash (three soft pools on the canvas); quieter in the dark. */
-.loom-wash { background: radial-gradient(at 18% 35%, color-mix(in srgb, var(--v-pink) 65%, transparent), transparent 62%),
-  radial-gradient(at 82% 72%, color-mix(in srgb, var(--v-blue) 60%, transparent), transparent 62%),
-  radial-gradient(at 56% 8%, color-mix(in srgb, var(--v-yellow) 40%, transparent), transparent 56%), var(--v-canvas); }
+/* The page's ground: three soft pools on the canvas (looks/looks.css); quieter in the dark. */
+.loom-wash { background: var(--v-canvas); }
 [data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: var(--loom-wash-dim); }
-[data-mode="dark"] .loom-wash { background-color: var(--v-canvas); }
 body { background: var(--v-canvas); }
 /* No top bar: the page's head sits on the ground and scrolls with it. */
 .loom-top { background: none; }
@@ -501,6 +238,11 @@ body { background: var(--v-canvas); }
 .loom-skel-line { background: color-mix(in oklab, var(--v-text) 9%, transparent); }
 @keyframes loom-skel { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .loom-skel { animation: none; } }
+/* Nothing at all for the first 150 ms, then the shape (t-1925 F): a page that lands quickly never flashes one. */
+.loom-skel-wait { animation: loom-skel-wait 0s 150ms both; }
+@keyframes loom-skel-wait { from { visibility: hidden; } to { visibility: visible; } }
+/* A page on its way while the one shown stays (page.ts pending): after 150 ms, a line along the top says so. */
+main[data-pending]::before { content: ''; position: fixed; inset: 0 0 auto; height: 2px; z-index: 60; background: var(--v-pink); animation: loom-skel-wait 0s 150ms both; }
 
 /* The arrival, once a session (arrive.tsx arriveOnce): the ground first, then the header and the cards in turn, the
    dock or the side last; under a second. arriveOnce never sets it under reduced motion. */
@@ -548,8 +290,8 @@ body { background: var(--v-canvas); }
 /* An agent's pixel face (pixel-face.tsx): whole pixels, centred on its place (a 2x face is wider than a card's slot). */
 .loom-pixel-face { position: relative; display: block; overflow: visible; }
 .loom-pixel-face canvas { position: absolute; left: 50%; top: 50%; translate: -50% -50%; image-rendering: pixelated; max-width: none; pointer-events: none; }
-/* Neon Noir's sheet title bar (inbox.tsx): only a look that draws it shows it (looks/neon.css). */
-.loom-sheet-bar { display: none; }
+/* A small one (PixelAvatar, under 36 px): its crop at a whole-pixel scale, cut to its box where the scale overshoots it. */
+.loom-pixel-avatar { overflow: hidden; }
 /* An app's tile (app-header.tsx AppTile): its header, Find's rows. */
 .loom-app-tile { color: var(--v-on-accent); box-shadow: 0 6px 12px -8px rgb(17 17 17 / .45), inset 0 1px rgb(255 255 255 / .4); }
 .loom-head-action { background: color-mix(in oklab, var(--v-canvas) 70%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
@@ -652,7 +394,13 @@ html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top)
 html[data-gestures] :is(main, .loom-top) { touch-action: pan-y pinch-zoom; }
 /* Every part of them: the dock's keys sit in a scroll area of its own, where a touch's own rules start again. */
 html[data-gestures] :is(.loom-dock-bar, .loom-dock-bar *, .loom-find-pill, .loom-find-pill *) { touch-action: none; }
-html[data-gestures][data-look="neon"] .loom-dock-bar { pointer-events: auto; }
+html[data-gestures][data-look] .loom-dock-bar { pointer-events: auto; }
+/* ...but only the bar's own box and the stage in it (the keys and the strip over them). The dock's scroller reaches its
+   reserved lift (48 px, looks.css) past the bar's top, room for a grown key's glow; taking touches there it lay over
+   Comms' composer, its field and its Send, which then took no tap (Jonathan, 2026-11-05: "Hard to get the input to
+   take and then ... I can't get send to work"). */
+html[data-gestures][data-look] .loom-dock-bar :is(.v-dock, .v-dock__scroll, [data-part="viewport"]) { pointer-events: none; }
+html[data-gestures][data-look] .loom-dock-bar [data-part="stage"] { pointer-events: auto; }
 .loom-haptic { position: absolute; inset: 0; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
 /* The fallback lean (gestures.ts, where pages don't move) never widens the page. */
 html[data-gestures] .loom-page-clip { overflow-x: clip; }
@@ -688,8 +436,8 @@ html[data-move="pop"]::view-transition-new(loom-page) { animation-name: loom-mov
 @keyframes loom-move-in-left { from { transform: translateX(-100%); } }
 @keyframes loom-move-off-right { to { transform: translateX(100%); } }
 @keyframes loom-move-under-left { from { transform: translateX(-25%); filter: brightness(.72); } }
-/* Neon: the incoming name catches once, a single frame, as a tube does. */
-html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
+/* The incoming name catches once, a single frame, as a tube does. */
+html[data-look]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
 @keyframes loom-move-name-in { from { opacity: 0; } }
 @keyframes loom-move-flick { 0%, 40%, 100% { filter: none; } 34% { filter: brightness(1.7); } }
 /* Reduced motion: a short crossfade, nothing slides. */
@@ -705,6 +453,18 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
 .loom-dock-swap { display: grid; justify-items: center; }
 .loom-dock-swap > * { grid-area: 1 / 1; min-width: 0; }
 .loom-dock-gone { pointer-events: none; }
+/* loom: a dock never shows a scrollbar (Jonathan, 2026-11-05: "that tiny scroll bar ... above the dock, lets murder
+   that"). Its scroll area always mounts a vertical bar, so Radix writes overflow-y: scroll on the viewport (inline,
+   over dock.css's own overflow-y: hidden): whenever the stage ran a pixel taller (a key growing, the keys rising in), the dock scrolled up
+   and down and drew its thumb, grip and all, at the row's end. Up and down it never scrolls; sideways it scrolls,
+   when it must, with no bar, as a phone's does. Unlayered, so a swap's overflow: visible (just below, while the keys slide) still wins. */
+.v-dock:not([data-variant="rail"]) [data-part="viewport"] {
+  overflow-y: hidden !important;
+}
+.v-dock:not([data-variant="rail"])
+  :is([data-slot="scroll-area-scrollbar"], [data-slot="scroll-area-corner"]) {
+  display: none !important;
+}
 .loom-dock-swap[data-swap] :is(.v-dock__scroll, [data-part="viewport"], [data-radix-scroll-area-viewport]) { overflow: visible !important; }
 .loom-dock-swap [data-part="lane"]:nth-child(1) { --i: 0; } .loom-dock-swap [data-part="lane"]:nth-child(2) { --i: 1; }
 .loom-dock-swap [data-part="lane"]:nth-child(3) { --i: 2; } .loom-dock-swap [data-part="lane"]:nth-child(4) { --i: 3; }
@@ -722,3 +482,110 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
   .loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-move-fade-out 120ms ease both; }
   .loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-move-name-in 120ms ease both; }
 }
+
+/* A phone's app, not a web page (immersion.ts; Jonathan, 2026-11-05: "We need to disable anything that lets me break the
+   illusion"). What a page does that an app doesn't: zoom, a long-press menu or a selection on the app's own chrome, the
+   grey flash on a tap, a rubber band past the page's ends and pull to refresh. Content (a message, a note, a task's
+   words, code) stays selectable, for copying. A desktop keeps its browser's ways, except chrome's words not selecting. */
+
+/* The page: no rubber band past its ends and no pull to refresh; inner scrollers keep their own momentum. Where iOS
+   bounces anyway, what shows past the edge is the app's canvas: body's (above), which the browser paints past the page
+   because <html> has none of its own. Keep it that way: a background on <html> would make body paint its own, over the
+   ground and wash under it (-z-10). The page doesn't move into an inner scroller: the document still scrolls, so the
+   iOS home-screen fix above (301108), the dock and the page moves are as they were. */
+html, body { overscroll-behavior: none; }
+
+/* Zoom (immersion.ts allowZoom): pinch and double-tap zoom are off unless the person allows zoom (Accessibility), and then
+   left alone. A touch screen's only: a desktop keeps its zoom. The page pans; main's and the bar's pan-y (gestures, above) narrow it further. */
+@media (pointer: coarse) { html:not([data-zoom="on"]) { touch-action: pan-x pan-y; } }
+/* Allowed, zoom is the person's whole: the page and its bar take every touch the browser would (double-tap, and
+   panning a zoomed page sideways), over a phone's sideways swipe between pages. The dock keeps its own (a swipe up). */
+html[data-zoom="on"][data-gestures] :is(main, .loom-top) { touch-action: auto; }
+
+/* No grey flash on a tap (base.css keeps the browser's on its components; this is unlayered, so it wins): a press shows
+   as the control's own. A plain button or link with no pressed state of its own dims while it's held. */
+:where(html, html *) { -webkit-tap-highlight-color: transparent; }
+@media (hover: none) {
+  :where(button, a[href], [role="button"], [role="option"], summary):not(.v-btn, .v-ibtn, .v-toggle, [data-part="item"], [data-slot="toggle-group-item"], :disabled, [aria-disabled="true"]):active { opacity: .72; }
+}
+
+/* Chrome doesn't select, and a long press on it opens no menu: the bars, the dock, Find's pill, the side panel, buttons,
+   tabs and chips, badges, labels, and a card's head. -webkit-touch-callout inherits, so it covers what's inside.
+   immersion.ts NO_MENU is the same list, for Android's Chrome: change both. */
+:is(.loom-top, .loom-dock-bar, .loom-find-pill, .loom-fade, .loom-side, .loom-sheet-bar, .loom-app-tile, .loom-launch-tile, .loom-r-tile,
+  button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="switch"], [role="checkbox"], [role^="menuitem"],
+  [data-slot="badge"], [data-slot="card-header"], [data-slot="toggle-group"], [data-slot="dock"], label, summary) {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Links, images and icons, wherever they are: no preview or "Open in new tab" on a long press (Android's Chrome:
+   immersion.ts noTouchMenus), and an image doesn't drag away. */
+:is(a[href], img, svg) { -webkit-touch-callout: none; }
+img { -webkit-user-drag: none; }
+/* What's typed and what's read stays selectable, even inside chrome, with iOS's own long-press menu (Paste, Copy, Look
+   Up): a field (iOS won't type into one under user-select: none; Find's sits in a label), prose and code. A link in
+   prose still has none: its own rule above is its own, over what it inherits. */
+:is(input, textarea, [contenteditable]:not([contenteditable="false"]), .loom-prose, pre, code, [data-slot="code-block"]) {
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+/* A field's words are at least 16 px on a touch screen, or iOS zooms in when it takes focus. A component's own size wins
+   (its layer comes later), so its small sizes are 16 px on a field; a field that only inherits its size gets 16 px. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) { font-size: 16px; }
+  }
+}
+@media (pointer: coarse) {
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) {
+    --fs-caps: 16px; --fs-meta: 16px; --fs-small: 16px; --fs-control: 16px; --fs-body: 16px; --text-xs: 16px; --text-sm: 16px; --text-base: 16px; }
+}
+
+/* A phone's chrome scrolls without a bar (the dock's own already has none); a desktop keeps its scrollbars. */
+@media (pointer: coarse) {
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick), :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) * { scrollbar-width: none; }
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick)::-webkit-scrollbar, :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) *::-webkit-scrollbar { display: none; }
+}
+
+/* Higher contrast (Accessibility, access.ts: <html data-contrast="more">, the person's choice or the phone's own
+   prefers-contrast: more while they follow it): each look's tokens raised (looks/looks.css), measured by
+   src/ui/look-contrast.test.ts. */
+/* Every look: no faded words (Tailwind's opacity steps on text), stronger focus rings, solid ground behind words that
+   sat on a see-through surface (the wash, the side, Find's pill, the header's buttons, a state's card), and full
+   hairlines where they were mixed toward transparent. */
+:root[data-contrast="more"] :is(.opacity-40, .opacity-50, .opacity-60, .opacity-70, .opacity-75, .opacity-80, .opacity-90) { opacity: 1; }
+/* A press shows as a darker press, not faded words (the tap dimming, "A phone's app", below). */
+@media (hover: none) { :root[data-contrast="more"] :where(button, a[href], [role="button"], [role="option"], summary):active { opacity: 1; } }
+:root[data-contrast="more"] :focus-visible { outline: 3px solid var(--v-text); outline-offset: 2px; }
+:root[data-contrast="more"][data-look] .loom-wash { background: var(--v-canvas); opacity: 1; }
+:root[data-contrast="more"] .loom-ground { opacity: .45; }
+:root[data-contrast="more"] :is(.loom-state, .loom-skel, .loom-head-action, .loom-head-more, .loom-find-pill) { background: var(--v-canvas); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search) { background: var(--v-paper); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search, .loom-menu) { border-color: var(--v-border); }
+:root[data-contrast="more"] .loom-find-scrim { backdrop-filter: none; }
+
+/* A page's side sections (App.tsx PageView; docs/extensions.md "Pages"): in a column of a fixed width, or folded
+   together at the top of the page. Nothing in them ever scrolls sideways: words wrap (a long id or address breaks
+   where it must), a table keeps to the column, and whatever cuts itself short does so with an ellipsis. */
+.loom-side-col { min-width: 0; max-width: 100%; overflow-x: hidden; overflow-wrap: anywhere; }
+.loom-side-col > *, .loom-side-col [data-slot="card"], .loom-side-col [data-slot="card-content"] { min-width: 0; max-width: 100%; }
+.loom-side-col table { display: table; table-layout: fixed; width: 100%; }
+.loom-side-col pre, .loom-side-col .v-code-block pre { width: auto; max-width: 100%; white-space: pre-wrap; overflow-x: hidden; }
+.loom-side-col :is(pre, table, [data-radix-scroll-area-viewport]) { overflow-x: hidden !important; }
+.loom-side-fold { min-width: 0; border-radius: var(--r-card, 16px); box-shadow: inset 0 0 0 1px var(--v-border); background: color-mix(in srgb, var(--v-paper) 70%, transparent); }
+.loom-side-fold > summary { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.loom-side-fold > summary::-webkit-details-marker { display: none; }
+.loom-side-fold > summary::before { content: "›"; flex: none; display: inline-block; width: 10px; color: var(--v-text-3); transition: rotate .15s; }
+.loom-side-fold[open] > summary::before { rotate: 90deg; }
+.loom-side-fold__name { flex: none; font-weight: 600; }
+.loom-side-fold__what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--v-text-3); }
+.loom-side-fold > .loom-side-col { padding: 0 8px 8px; }
+@media (prefers-reduced-motion: reduce) { .loom-side-fold > summary::before { transition: none; } }
+
+/* The dock's last key: nine lit dots (the mockups' "All apps"). */
+.loom-apps-dots{display:grid;grid-template-columns:repeat(3,5px);gap:4px}
+.loom-apps-dots i{width:5px;height:5px;background:currentColor;box-shadow:var(--glow-key,0 0 0 0) currentColor}
+
+/* A letter avatar (t-1925 D): an agent in a small place (a window's corner, a list's row), its initial in its colour.
+   The pixel face is the one big picture (the agent's window). */
+.loom-letter{--c:var(--v-pink);--ls:26px;width:var(--ls);height:var(--ls);flex:none;display:inline-grid;place-items:center;border-radius:calc(var(--ls)*.27);
+  font:700 calc(var(--ls)*.5)/1 var(--font-display);color:var(--c);background:color-mix(in srgb,var(--c) 14%,var(--v-paper));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,transparent)}
+:root[data-contrast="more"] .loom-letter{box-shadow:inset 0 0 0 1.5px var(--c)}

@@ -7,6 +7,7 @@ import { getMotionSettings, getMorphProfile, getSettingsSnapshot, subscribeMotio
 import { resolveMorphHost, resolveMorphTier, registerMorphHost } from "@/lib/cojeev-motion/category"
 import { createMorphOverlays, morphColor } from "@/lib/cojeev-motion/morph-paint"
 import { motionClock, registerMotionClock } from "@/lib/cojeev-motion/clock"
+import {motionQuery} from "@/access"
 export { motionClock } from "@/lib/cojeev-motion/clock"
 export { enableMorph, disableMorph } from "@/lib/cojeev-motion/category"
 
@@ -73,7 +74,7 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
  React.useLayoutEffect(()=>{
   if(!host)return
   const el=host,ac=new AbortController(),opts={signal:ac.signal}
-  const mq=matchMedia("(prefers-reduced-motion: reduce)")
+  const mq=motionQuery()
   let destroyBody:()=>void=()=>{},retuneProfile:()=>void=()=>attach()
   let retainedBody:Body|undefined,repairBody=()=>{},signature='',autoMode:string|undefined,lastPaint:{fill:string;stroke:string}|null=null
   // Internal aria/class retunes rebuild decoration, but do not re-tag the host.

@@ -1,0 +1,268 @@
+/* Comms (docs/specs/comms.md, "The app"): Neon OS chat. A real chat with a terminal's flavour: mono timestamps and a
+   prompt line, the agent's accent on its frame and its prompt. Loaded with the Comms chunk only. */
+
+.comms { --comms-face: 192px; --comms-band-h: 232px; --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
+.comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: calc(100dvh - 300px); min-height: 440px; border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
+.comms[data-phone] { padding-bottom: calc(var(--dock-h) + 84px + env(safe-area-inset-bottom)); }
+
+/* ---- the list ---- */
+.comms-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 12px 10px; }
+.comms[data-wide] .comms-list { border-right: 1px solid var(--comms-line); }
+/* One pane at a time in a narrow box (comms.tsx ONE_PANE_BELOW): the list, or the thread with its way back. */
+.comms[data-wide][data-one] { grid-template-columns: minmax(0, 1fr); }
+.comms[data-wide][data-one] .comms-list { border-right: 0; }
+.comms-list__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px 10px; }
+.comms-list__head h2 { font-size: 12px; letter-spacing: .14em; color: var(--v-text-2); }
+.comms-new { font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--v-pink) 60%, transparent); color: var(--v-text); background: color-mix(in srgb, var(--v-pink) 12%, transparent); min-height: 36px; }
+.comms-group { margin-top: 6px; }
+.comms-group__label { font-size: 10px; letter-spacing: .16em; color: var(--v-text-3); padding: 8px 8px 4px; }
+.comms-group ul { list-style: none; margin: 0; padding: 0; }
+.comms-row__btn { width: 100%; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 10px; text-align: left; position: relative; min-height: 52px; }
+.comms-row__btn:hover { background: color-mix(in srgb, var(--v-text) 6%, transparent); }
+.comms-row[data-current] .comms-row__btn { background: color-mix(in srgb, var(--v-pink) 14%, transparent); }
+.comms-row__face { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; color: var(--v-on-accent); background: var(--c, var(--v-pink)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c, var(--v-pink)) 60%, transparent), 0 0 12px -2px var(--c, var(--v-pink)); }
+.comms-row__avatar { justify-self: center; }
+.comms-row__main { display: flex; flex-direction: column; min-width: 0; }
+.comms-row__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--v-text); }
+.comms-row[data-unread] .comms-row__title { font-weight: 650; }
+.comms-row__sub { font-size: 11px; color: var(--v-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comms-row__time { font-size: 11px; color: var(--v-text-3); }
+.comms-row__pin { position: absolute; top: 6px; right: 6px; font-size: 8px; color: var(--v-text-3); }
+.comms-row__dot { position: absolute; right: 8px; bottom: 12px; width: 8px; height: 8px; border-radius: 99px; background: var(--v-pink); box-shadow: 0 0 8px var(--v-pink); }
+.comms-empty { color: var(--v-text-2); font-size: 14px; padding: 16px 8px; }
+.comms-archived { margin-top: auto; align-self: flex-start; font-size: 12px; color: var(--v-text-3); padding: 12px 8px; min-height: 44px; }
+.comms-blank { display: grid; place-items: center; color: var(--v-text-3); font-size: 12px; letter-spacing: .14em; }
+
+/* ---- a thread ---- */
+.comms-thread { display: flex; flex-direction: column; min-height: 0; min-width: 0; container: comms-thread / inline-size; }
+.comms-thread__head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--comms-line); position: relative; }
+.comms-back { font-size: 24px; line-height: 1; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; }
+.comms-thread__title { flex: 1; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; min-height: 40px; }
+.comms-thread__project { font-size: 11px; color: var(--v-text-2); border: 1px solid var(--comms-line); border-radius: 6px; padding: 2px 6px; }
+.comms-stop { font-size: 12px; border: 1px solid var(--v-danger, #f55); color: var(--v-danger, #f55); border-radius: 8px; padding: 4px 10px; min-height: 36px; }
+.comms-menu { width: 40px; height: 40px; border-radius: 10px; font-size: 18px; }
+.comms-menu__list { position: absolute; right: 10px; top: 52px; z-index: 30; display: flex; flex-direction: column; min-width: 160px; padding: 6px; border-radius: 12px; border: 1px solid var(--comms-line); background: var(--v-paper); box-shadow: 0 12px 30px -12px rgba(0, 0, 0, .6); }
+.comms-menu__list button { text-align: left; padding: 10px 12px; border-radius: 8px; min-height: 44px; font-size: 14px; }
+.comms-menu__list button:hover { background: color-mix(in srgb, var(--v-text) 7%, transparent); }
+.comms-danger { color: var(--v-danger, #f55); }
+
+.comms-thread__body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+.comms-thread[data-wide] .comms-thread__body { overflow: hidden; }
+/* A desktop's thread: the band over the chat (Jonathan, 2026-11-07). The band's height is fixed (the comm screen's,
+   whose glass is the face's own 96 × 84 at 2×), so the chat under it never moves when work is added. */
+.comms-thread[data-wide] .comms-thread__body { grid-template-rows: var(--comms-band-h) minmax(0, 1fr); }
+/* A thread on its way has no band yet: its shape takes the whole body. */
+.comms-thread--opening[data-wide] .comms-thread__body { grid-template-rows: minmax(0, 1fr); }
+/* A short tile (Comms' least is 360 tall): the band folds to the screen's one-line strip, so the chat keeps its room. */
+.comms-thread[data-wide][data-short] { --comms-band-h: 76px; }
+.comms-thread[data-short] .comms-band .comms-people { display: none; }
+.comms-thread[data-wide] .comms-msgs { overflow-y: auto; }
+.comms-thread__strip { position: sticky; top: 0; z-index: 5; padding: 8px 12px 0; background: linear-gradient(var(--v-canvas, transparent) 70%, transparent); }
+
+/* ---- messages: the 000h agent chat thread, inside Comms' own panes ---- */
+.comms .comms-chat[data-slot="agent-chat"] { max-width: none; height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.comms-thread[data-wide] .comms-chat[data-slot="agent-chat"] { height: 100%; overflow: hidden; }
+/* The chat's breathing room (Jonathan, 2026-11-07): the scrollbar's rail is 24 px (--s-6, scroll-area.css) laid over the
+   scroller's right edge, so the words stop a gap short of it; and the last message ends clear of the composer's divider.
+   The rail itself is inset top and bottom, so the thumb never runs into the band or the divider. Every width, every look.
+   (The native scrollbar is hidden, scrollbar-width none; scrollbar-gutter would reserve nothing, so the padding does it.) */
+.comms .comms-msgs.v-agent-chat__thread[data-slot] { gap: var(--s-4); padding: var(--s-4) calc(var(--s-6) + var(--s-3)) var(--s-8) var(--s-4); }
+.comms .comms-chat > .v-message-scroll-root > [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] { margin-block: var(--s-2) var(--s-3); }
+.comms[data-phone] .comms-msgs.v-agent-chat__thread[data-slot] { overflow: visible; }
+/* On a phone the page scrolls, not the thread: its scroll area takes its words' height (the strip above still collapses). */
+.comms[data-phone] .comms-chat > .v-message-scroll-root[data-slot] { flex: none; height: auto; overflow: visible; }
+.comms[data-phone] .comms-chat [data-radix-scroll-area-viewport] { overflow: visible !important; height: auto; }
+.comms .v-agent-chat__message[data-from="user"] { flex-direction: row-reverse; }
+.comms .v-agent-chat__message[data-from="user"] .v-agent-chat__message-content { align-items: flex-end; }
+/* One measure for both sides (Jonathan, 2026-11-07): like most messaging apps, a message takes at most about three
+   quarters of the log, the agent's on the left and yours on the right; never wider than a line reads (65ch, the
+   bubble's own cap in agent-chat.css). A phone gives it a little more. */
+.comms { --comms-msg-max: min(65ch, 75%); }
+.comms[data-phone] { --comms-msg-max: 80%; }
+/* A phone's page scrolls, not the log, so there's no rail to clear: its words keep the even --s-4 each side. */
+.comms[data-phone] .comms-msgs.v-agent-chat__thread[data-slot] { padding-right: var(--s-4); }
+.comms .v-agent-chat__message .v-agent-chat__message-content { max-width: var(--comms-msg-max); }
+.comms .v-agent-chat__message[data-from="user"] .v-agent-chat__author { justify-content: flex-end; }
+.comms .v-agent-chat__message[data-from="agent"] .v-agent-chat__message-body { border-left: 2px solid color-mix(in srgb, var(--c, var(--v-pink)) 55%, transparent); }
+.comms .v-agent-chat__message[data-undelivered] .v-agent-chat__message-body { box-shadow: inset 0 0 0 1px var(--v-danger, #f55); }
+.comms .v-agent-chat__message .comms-reply > :last-child { margin-bottom: 0; }
+.comms .v-agent-chat__author .loom-data { font-size: 11px; letter-spacing: .04em; }
+.comms-msg { display: flex; flex-direction: column; gap: 3px; max-width: min(640px, 86%); min-width: 0; }
+.comms-msg__meta, .comms-msg > .loom-data { font-size: 10.5px; letter-spacing: .06em; color: var(--v-text-3); }
+.comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }
+.comms-msg__gone { color: var(--v-text-3); font-style: italic; font-size: 13px; }
+.comms-msg--error { align-self: stretch; max-width: none; border-left: 2px solid var(--v-danger, #f55); padding: 4px 10px; color: var(--v-text-2); font-size: 13px; }
+.comms-refused p { margin: 0 0 4px; }
+.comms-refused__retry { margin-top: 2px; font: inherit; color: var(--v-text); background: none; border: 1px solid currentColor; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+.comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
+.comms-earlier { border: 1px dashed var(--comms-line); border-radius: 10px; padding: 10px 12px; color: var(--v-text-2); font-size: 13px; }
+.comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }
+.comms-steps { align-self: flex-start; font-size: 12.5px; color: var(--v-text-2); max-width: 100%; }
+.comms-steps__line { text-align: left; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--comms-line); min-height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.comms-resend button { font-size: 12px; color: var(--v-danger, #f55); padding: 4px 0; min-height: 36px; }
+
+/* ---- the composer: above the dock on a phone, clear of the keyboard ---- */
+/* The 000h agent chat composer (styles/cojeev/agent-chat.css), fitted: one line that grows, no resize grip, no
+   chatter line, the agent's accent on Send. */
+.comms .comms-composer { padding: 10px 12px 8px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
+.comms .comms-composer .v-agent-chat__draft[data-slot] { flex-direction: row; flex-wrap: nowrap; height: auto; align-items: flex-end; gap: 6px; padding: 4px; border-radius: 14px; }
+.comms .comms-composer .v-agent-chat__draft[data-slot]:focus-within { outline: none; }
+.comms .comms-composer .v-agent-chat__input[data-slot] { flex: 1 1 0; width: auto; min-width: 0; min-height: 44px; max-height: 180px; resize: none; field-sizing: content; padding: 10px 12px; border-radius: 10px;
+  background: transparent; box-shadow: none; font-size: 16px; line-height: 1.4; }
+.comms .comms-composer .v-agent-chat__input[data-slot]:focus, .comms .comms-composer .v-agent-chat__input[data-slot]:focus-visible { background: transparent; box-shadow: none; outline: none; }
+.comms .comms-composer .v-agent-chat__draft .v-agent-chat__composer-bar[data-slot] { width: auto; flex: 0 0 auto; padding: 0 0 2px; }
+.comms .comms-composer .v-agent-chat__composer-note { display: none; }
+.comms .comms-composer .v-agent-chat__send[data-slot] { --v-brand: var(--c, var(--v-pink)); min-height: 40px; }
+.comms .comms-composer .v-agent-chat__hint { margin-top: 4px; justify-content: flex-start; padding-left: 14px; }
+.comms[data-phone] .comms-composer .v-agent-chat__hint { display: none; }
+.comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 25; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px));
+  /* Its surface runs down behind the dock, so no message shows through between them. */
+  box-shadow: 0 var(--dock-h) 0 0 var(--v-paper); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.comms-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 14px; }
+.comms-pick__agent { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 12px; border: 1px solid var(--comms-line); min-height: 48px; }
+.comms-pick__agent[data-on] { border-color: var(--c, var(--v-pink)); box-shadow: 0 0 0 1px var(--c, var(--v-pink)) inset; }
+.comms-new-thread { min-height: 50dvh; }
+
+/* ---- the comm screen ---- */
+.comms-screen { display: flex; flex-direction: column; gap: 10px; }
+.comms-screen__frame { position: relative; padding: 8px; border-radius: 6px; background: linear-gradient(135deg, color-mix(in srgb, var(--c) 30%, #000), #05060a 60%);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 70%, transparent), 0 0 24px -8px var(--c); }
+.comms-screen__frame::before { content: ""; position: absolute; inset: 3px; pointer-events: none; clip-path: inherit; border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.comms-screen__glass { position: relative; display: grid; place-items: center; overflow: hidden; aspect-ratio: 96 / 84; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--c) 22%, #020308), #020308 75%); image-rendering: pixelated; }
+.comms-screen__glass .loom-pixel-face { width: auto !important; height: auto !important; }
+.comms-screen__scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, .28) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; }
+.comms-screen__static { position: absolute; inset: 0; pointer-events: none; animation: comms-static 250ms steps(5) 1;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .18) 0 2px, transparent 2px 4px), radial-gradient(circle, color-mix(in srgb, var(--c) 50%, transparent), transparent 70%); }
+@keyframes comms-static { 0% { transform: translateY(-100%); opacity: 1 } 60% { opacity: .9 } 100% { transform: translateY(100%); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .comms-screen__static { display: none; } }
+.comms-screen__initial { font-size: 48px; font-weight: 800; color: var(--c); }
+.comms-screen__label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px; letter-spacing: .12em; color: color-mix(in srgb, var(--c) 85%, white); text-shadow: 0 0 6px color-mix(in srgb, var(--c) 60%, transparent); white-space: nowrap; overflow: hidden; }
+.comms-screen__label > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.comms-screen__meter { display: inline-flex; gap: 2px; align-items: flex-end; flex: none; }
+.comms-screen__meter i { width: 3px; background: color-mix(in srgb, var(--c) 30%, transparent); }
+.comms-screen__meter i:nth-child(1) { height: 4px } .comms-screen__meter i:nth-child(2) { height: 7px } .comms-screen__meter i:nth-child(3) { height: 10px } .comms-screen__meter i:nth-child(4) { height: 13px }
+.comms-screen__meter i[data-on] { background: var(--c); box-shadow: 0 0 4px var(--c); }
+.comms-screen[data-face="error"] .comms-screen__meter i[data-on] { animation: comms-flicker 1s steps(2) infinite; }
+@keyframes comms-flicker { 50% { opacity: .3 } }
+/* The phone's strip: a band at the top of the thread, collapsing to the small face once the messages scroll under. */
+.comms-screen[data-compact] { flex-direction: row; }
+.comms-screen[data-compact] .comms-screen__frame { flex: 1; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px; }
+.comms-screen[data-compact] .comms-screen__glass { width: 56px; height: 56px; aspect-ratio: auto; }
+.comms-msg__face { display: inline-grid; vertical-align: middle; margin-right: 6px; }
+/* The chat log's avatars are 32 px (t-1925): an agent's head at 1x, whole (pixel-face.tsx avatarFit), and yours beside it. */
+:is(.comms-msg--mine, .comms-msg--agent) .v-agent-chat__avatar[data-slot] { width: 32px; height: 32px; }
+.comms-screen[data-compact] .comms-screen__label { margin-top: 0; }
+.comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { aspect-ratio: auto; height: min(30dvh, 240px); }
+
+/* ---- an ask, inline (comms.md, "Asks inline"): its words whole, Allow once and Deny beside what each does ---- */
+.comms-ask { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+.comms-ask .v-agent-chat__permission { border-left: 3px solid var(--v-yellow); }
+.comms-ask__either { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 13px; }
+.comms-ask__either dt { color: var(--v-text-3); }
+.comms-ask__fine { font-size: 11px; color: var(--v-text-3); overflow-wrap: anywhere; }
+.comms-ask__said { font-size: 13px; color: var(--v-text-2); }
+.comms-ask__who { font-size: 11px; color: var(--v-text-3); }
+.comms-ask[data-state="answered"] .v-agent-chat__permission { border-left-color: var(--v-border); }
+.comms-ask__question { border-left: 3px solid var(--v-yellow); }
+.comms-ask__question h3 { margin: 0; font: var(--fw-semibold) var(--fs-body)/1.4 var(--font-text); overflow-wrap: anywhere; }
+.comms-ask :is(h3, .v-agent-chat__permission > p) { overflow-wrap: anywhere; }
+.comms-ask__refs { margin: 6px 0 0; font-size: 11.5px; color: var(--v-text-2); }
+.comms-ask__reply { display: grid; gap: 6px; }
+.comms-ask__label { font-size: 11px; color: var(--v-text-3); letter-spacing: .04em; }
+.comms-ask__words { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--v-text-2); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.comms-ask__row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.comms-ask__live { font-size: 12.5px; color: var(--v-text-2); margin: 0; }
+
+/* ---- the loom things a thread names (comms.md, "Chips"): words until loom says this viewer may open them ---- */
+.comms-reply [data-ref]:not([data-chip]) { color: inherit; text-decoration: none; pointer-events: none; cursor: text; }
+.comms-reply [data-ref][data-chip], .comms-chip {
+  display: inline; padding: 0 5px; margin: 0 1px; border-radius: 5px; font: inherit; font-size: .94em; line-height: inherit;
+  color: var(--v-text); text-decoration: none; cursor: pointer; vertical-align: baseline;
+  background: color-mix(in srgb, var(--chip, var(--v-blue)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--chip, var(--v-blue)) 40%, transparent);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone; overflow-wrap: anywhere;
+}
+.comms-reply [data-chip] code { background: none; padding: 0; }
+:is(.comms-reply [data-chip], .comms-chip):is(:hover, :focus-visible) { background: color-mix(in srgb, var(--chip, var(--v-blue)) 26%, transparent); outline: none; }
+:is(.comms-reply [data-chip], .comms-chip):focus-visible { box-shadow: 0 0 0 2px var(--chip, var(--v-blue)); }
+:is(.comms-reply [data-chip], .comms-chip)[data-tone="warn"] { --chip: var(--v-yellow); }
+:is(.comms-reply [data-chip], .comms-chip)[data-tone="bad"] { --chip: var(--v-pink); }
+:is(.comms-reply [data-chip], .comms-chip)[data-kind="approval"] { --chip: var(--v-yellow); }
+.comms-refcard {
+  position: fixed; z-index: 60; width: min(300px, calc(100vw - 32px)); display: grid; gap: 4px; padding: 12px 14px; border-radius: var(--r-md, 10px);
+  background: var(--surface-raised, var(--v-paper)); color: var(--v-text); border: 1px solid var(--v-border); box-shadow: var(--shadow-float);
+}
+.comms-refcard__kind { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--v-text-3); }
+.comms-refcard__title { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.comms-refcard__status { justify-self: start; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--tone, var(--v-text-3)) 55%, transparent); color: var(--tone, var(--v-text-2)); }
+.comms-refcard__status[data-tone="warn"] { --tone: var(--v-yellow); }
+.comms-refcard__status[data-tone="bad"] { --tone: var(--v-pink); }
+.comms-refcard__open { justify-self: end; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--v-text); text-decoration: underline; text-underline-offset: 3px; }
+.comms-refcard__none { font-size: 11px; color: var(--v-text-3); }
+/* A thread on its way (comms.tsx ThreadOpening): a few lines of its shape, after 150 ms, where its messages will be. */
+.comms-thread--opening .comms-chat { display: grid; align-content: end; gap: 18px; padding: 18px; flex: 1 1 auto; min-height: 0; }
+.comms-opening__line { display: grid; gap: 8px; }
+.comms-opening__line:nth-child(even) { justify-items: end; }
+.comms-opening__line .loom-skel-line { display: block; height: 12px; width: 60%; border-radius: 999px; }
+.comms-opening__line .loom-skel-line + .loom-skel-line { width: 40%; }
+
+/* ---- t-1918 / t-1925 C ---- */
+/* A row's agent: its letter (the pixel face is the comm screen's). */
+.comms-row__letter { justify-self: center; }
+/* The working line: under the thread, what the agent's on as it happens. */
+.comms-live { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 40px; font-size: 12px; color: var(--v-text-2); min-width: 0; }
+.comms-live i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c, var(--v-blue)); box-shadow: 0 0 8px var(--c, var(--v-blue)); animation: comms-live-beat 1.4s ease-in-out infinite; }
+.comms-live__step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 46ch; display: inline-block; vertical-align: bottom; color: var(--v-text); }
+@keyframes comms-live-beat { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .comms-live i { animation: none; } }
+/* The thread's own "Latest" button gives way to the pill, which counts what came in below. */
+.comms .v-agent-chat__jump { display: none !important; }
+.comms-chat { position: relative; }
+.comms-newpill { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 5; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--v-on-accent); background: var(--c, var(--v-pink)); box-shadow: 0 6px 18px -6px rgba(0, 0, 0, .6), 0 0 16px -4px var(--c, var(--v-pink)); }
+.comms[data-phone] .comms-newpill { position: fixed; bottom: calc(var(--dock-h) + 96px + env(safe-area-inset-bottom)); }
+/* Enter to send: faint, and only while you're typing (t-1925 C), over the composer's top edge so it takes no line. */
+.comms .comms-composer { position: relative; }
+.comms .comms-composer .v-agent-chat__hint { position: absolute; right: 16px; top: -20px; margin: 0; padding: 0; font-size: 11px; color: var(--v-text-3); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.comms .comms-composer:focus-within .v-agent-chat__hint { opacity: .8; }
+@media (prefers-reduced-motion: reduce) { .comms .comms-composer .v-agent-chat__hint { transition: none; } }
+/* The threads' drawer: one pane in a narrow box (t-1925 C), the list folding out over the thread. */
+.comms[data-wide][data-one] { position: relative; }
+.comms-drawer-btn { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: var(--v-text-2); flex: none; }
+.comms-drawer-btn:hover, .comms-drawer-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--v-text) 8%, transparent); color: var(--v-text); }
+.comms-drawer { position: absolute; inset: 0; z-index: 40; display: grid; grid-template-columns: min(300px, 85%) 1fr; }
+.comms-drawer__panel { min-height: 0; overflow-y: auto; display: flex; background: var(--v-paper); box-shadow: 1px 0 0 var(--comms-line), 12px 0 32px -12px rgba(0, 0, 0, .6); animation: comms-drawer-in .18s ease-out; }
+.comms-drawer__panel .comms-list { flex: 1; }
+.comms-drawer__scrim { background: var(--v-scrim, rgba(4, 3, 10, .6)); animation: comms-drawer-fade .18s ease-out; }
+@keyframes comms-drawer-in { from { transform: translateX(-24px); opacity: .4; } }
+@keyframes comms-drawer-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .comms-drawer__panel, .comms-drawer__scrim { animation: none; } }
+
+/* ---- the band (a desktop's thread, Jonathan 2026-11-07) ---- */
+.comms-band { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; height: var(--comms-band-h); min-height: 0; padding: 10px 12px; border-bottom: 1px solid var(--comms-line); overflow: hidden; }
+/* The comm screen never stretches: its glass is the sprite's own 96 × 84 at a whole 2×; any width left goes to the side. */
+.comms-band .comms-screen { width: max-content; min-height: 0; }
+.comms-band .comms-screen__glass { width: var(--comms-face); height: calc(var(--comms-face) * 84 / 96); aspect-ratio: auto; }
+/* The band's height: its padding (10 + 10), the frame's (8 + 8), the glass (168) and the label (7 + 14), with a hair. */
+.comms-band__side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.comms-people__head { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
+.comms-people ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.comms-people li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.comms-people__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.comms-people__what { margin-left: auto; flex: none; font-size: 11px; color: var(--v-text-3); }
+/* Three columns when the thread is wide enough (Jonathan, 2026-11-07): the comm screen, who's in the conversation, the
+   thread's work, each column scrolling inside the band. Below it, the two-column stack above. The breakpoint is the
+   band's padding (--s-3 × 2), the screen (192 glass + --s-2 × 2 frame), two gaps (--s-3) and the columns' least widths:
+   --comms-people-min for a name and its word, --comms-work-min for a work row's badge and a readable title. */
+.comms-band { --comms-people-min: 180px; --comms-work-min: 300px; }
+@container comms-thread (min-width: 760px) {
+  .comms-band__side { display: grid; grid-template-columns: minmax(var(--comms-people-min), 1fr) minmax(var(--comms-work-min), 2fr); gap: var(--s-3); overflow: hidden; padding-right: 0; }
+  .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .comms-band .comms-people { padding-right: var(--s-2); }
+}
+/* The comm screen in the agents' rail (desk-agents.tsx ScreenCard): the band is who's in it and the work, shorter. */
+.comms-thread[data-wide]:has(.comms-band[data-noav]) { --comms-band-h: 140px; }
+.comms-band[data-noav] { grid-template-columns: minmax(0, 1fr); }
+.comms-thread[data-wide][data-short]:has(.comms-band[data-noav]) { --comms-band-h: 76px; }
+.comms-band[data-noav] .comms-band__side { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr); gap: 12px; overflow: hidden; padding-right: 0; }
+.comms-band[data-noav] .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

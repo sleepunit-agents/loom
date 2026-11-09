@@ -56,6 +56,11 @@ export interface Household {
    */
   review?: ReviewSetting;
   /**
+   * household.json's `comms_days` (docs/specs/comms.md, "History"): how long a Comms thread keeps its words, 1-14
+   * whole days (the continuity slot's window); loadHousehold defaults it to 14.
+   */
+  commsDays?: number;
+  /**
    * household.json's `github`: the GitHub owner (a user or an organization) the household's repos are under, so a bare
    * `repo#12` in what an agent says links to github.com/<github>/repo/issues/12. Absent: only `owner/repo#12` links.
    */
@@ -148,6 +153,13 @@ export interface TokenRecord {
   sha256: string;
   /** An owner token's member (a People slug), when it names one. */
   member?: string;
+  /**
+   * A passkey's own owner token (docs/specs/passkeys.md, t-1969): the sha256 of the credential id it's for, and the
+   * token it was made from (the adding browser's, by label and sha256), so revoking that one can take its passkeys too.
+   */
+  passkey?: string;
+  from?: string;
+  from_sha256?: string;
   created: string;
   /** ISO-8601. Past it the token is refused everywhere, and the next token write drops the record. */
   expires?: string;
@@ -193,6 +205,7 @@ export function loadHousehold(home: string): Household | null {
     ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
     tz: parseTz(raw.tz, path),
     review: parseReview(raw.review, path),
+    commsDays: parseCommsDays(raw.comms_days, path),
     ...(raw.github !== undefined ? { github: parseGithub(raw.github, path) } : {}),
   };
 }
@@ -208,6 +221,12 @@ function parseTz(v: unknown, path: string): string {
   const bad = new HouseholdError(`${path}: tz is an IANA time zone name (e.g. America/Chicago)`);
   if (typeof v !== 'string' || !v.length || v.length > 64) throw bad;
   try { new Intl.DateTimeFormat('en-US', { timeZone: v }); } catch { throw bad; }
+  return v;
+}
+
+function parseCommsDays(v: unknown, path: string): number {
+  if (v === undefined) return 14;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 14) throw new HouseholdError(`${path}: comms_days is a whole number of days from 1 to 14 (how long a Comms thread keeps its words)`);
   return v;
 }
 
@@ -375,7 +394,10 @@ function validRecord(t: unknown): t is TokenRecord {
   return typeof r.label === 'string' && typeof r.role === 'string' && typeof r.sha256 === 'string' && SHA_HEX.test(r.sha256)
     && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string')
     && (r.expires === undefined || (typeof r.expires === 'string' && Number.isFinite(Date.parse(r.expires))))
-    && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)));
+    && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)))
+    && (r.passkey === undefined || (typeof r.passkey === 'string' && SHA_HEX.test(r.passkey)))
+    && (r.from === undefined || (typeof r.from === 'string' && r.from.length <= 120 && !/[\x00-\x1f\x7f]/.test(r.from)))
+    && (r.from_sha256 === undefined || (typeof r.from_sha256 === 'string' && SHA_HEX.test(r.from_sha256)));
 }
 
 /**
@@ -455,7 +477,10 @@ function checkRole(h: Household, role: Role, runtimePieces?: readonly string[]):
  * cli/pieces-managed.ts); a runtime token needs it. A review token isn't minted here:
  * mintReviewToken.
  */
-export function createToken(h: Household, input: { role: Role; label: string; runtimePieces?: readonly string[] }, now = new Date()): { token: string; record: TokenRecord } {
+export function createToken(h: Household, input: { role: Role; label: string; runtimePieces?: readonly string[]; passkey?: { credential: string; from: string; from_sha256?: string } }, now = new Date()): { token: string; record: TokenRecord } {
+  if (input.passkey && !(input.role.kind === 'owner' && input.role.member && SHA_HEX.test(input.passkey.credential) && (input.passkey.from_sha256 === undefined || SHA_HEX.test(input.passkey.from_sha256)))) {
+    throw new HouseholdError('a passkey\'s token is an owner token naming its member');
+  }
   checkRole(h, input.role, input.runtimePieces);
   const label = input.label.trim();
   if (!label || label.length > 120 || /[\x00-\x1f\x7f]/.test(label)) throw new HouseholdError('a token needs a label (120 printable characters at most)');
@@ -466,6 +491,7 @@ export function createToken(h: Household, input: { role: Role; label: string; ru
     const record: TokenRecord = {
       label, role: roleString(input.role), sha256: sha(token),
       ...(input.role.kind === 'owner' && input.role.member ? { member: input.role.member } : {}),
+      ...(input.passkey ? { passkey: input.passkey.credential, from: input.passkey.from, ...(input.passkey.from_sha256 ? { from_sha256: input.passkey.from_sha256 } : {}) } : {}),
       created: now.toISOString(),
     };
     saveTokens(h.home, [...tokens, record]);
@@ -763,17 +789,21 @@ export function faceOf(h: Household, agent: string): AgentFace {
  *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15, "rare": true }], "south-east": [...] }, "waiting": { "south": [...] } } }
  * A variant's sheet is "sheet.png" unless it names another; a rare one never plays twice running (after a rare beat the
  * next is never rare). "scale" (0.5-1.2) and "offset" ([x, y] in the sheet's pixels) tune where a face sits and how big
- * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). An agent without a manifest keeps its drawn face.
+ * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). "avatar" ({ x, y, w, h } in the cell's
+ * pixels) is where a small avatar (under 36 px) is cut from the rest frame; without it, a 24-pixel square over the top of
+ * what's drawn there. An agent without a manifest keeps its drawn face.
  */
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
-export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
+export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error', 'talking'] as const;
 export type SpriteFacing = typeof SPRITE_FACINGS[number];
 export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; /** the frame it rests on (default: 0; error's, 4 from its end) */ rest?: number };
 export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>>;
   /** Drawn smaller or larger than the others (0.5 to 1.2; default 1: past 1.2 a 2x face overruns its card's room), so a sprite that fills more of its cell reads the same size. */
   scale?: number;
   /** Moved, in the sheet's own pixels (x right, y down; each -32 to 32), so it sits where the others do. */
-  offset?: [number, number] };
+  offset?: [number, number];
+  /** A small avatar's crop of the rest frame (idle, south, frame 0), in the cell's pixels. */
+  avatar?: { x: number; y: number; w: number; h: number } };
 const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
 const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -788,10 +818,20 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
   const cell = m.cell;
   if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
   if (!m.states || typeof m.states !== 'object') bad('needs "states"');
-  const { scale, offset } = m as { scale?: unknown; offset?: unknown };
+  const { scale, offset, avatar } = m as { scale?: unknown; offset?: unknown; avatar?: unknown };
   if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.2)) bad('has a "scale" that isn\'t a number from 0.5 to 1.2');
   if (offset !== undefined && !(Array.isArray(offset) && offset.length === 2 && offset.every((n) => Number.isInteger(n) && n >= -32 && n <= 32))) bad('has an "offset" that isn\'t [x, y], whole pixels from -32 to 32');
+  const [cw, ch] = cell as [number, number];
+  let crop: SpriteManifest['avatar'];
+  if (avatar !== undefined) {
+    const { x, y, w, h } = (avatar ?? {}) as Record<string, unknown>;
+    const whole = [x, y, w, h].every((n) => Number.isInteger(n));
+    const [ax, ay, aw, ah] = [x, y, w, h] as number[];
+    if (!whole || ax < 0 || ay < 0 || aw < 8 || ah < 8 || ax + aw > cw || ay + ah > ch) bad('has an "avatar" that isn\'t { x, y, w, h }: whole pixels inside the cell, 8 or more across');
+    crop = { x: ax, y: ay, w: aw, h: ah };
+  }
   const out: SpriteManifest = { cell: cell as [number, number], states: {},
+    ...(crop ? { avatar: crop } : {}),
     ...(scale !== undefined && scale !== 1 ? { scale: scale as number } : {}),
     ...(offset !== undefined && (offset as number[]).some((n) => n !== 0) ? { offset: offset as [number, number] } : {}) };
   for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {
@@ -886,7 +926,7 @@ export function setFace(h: Household, agent: string, face: AgentFace): void {
 }
 
 /** Set (or, undefined, remove) one top-level key of household.json, under the household's lock. Core's own keys only. */
-export function writeHouseholdKey(h: Household, key: 'backup', value: unknown): void {
+export function writeHouseholdKey(h: Household, key: 'backup' | 'icons', value: unknown): void {
   withLock(h.home, () => {
     const raw = { ...rawHousehold(h.home) };
     if (value === undefined) delete raw[key]; else raw[key] = value;
@@ -911,6 +951,30 @@ export function setAbout(h: Household, agent: string, text: string): void {
     const about = raw.about && typeof raw.about === 'object' && !Array.isArray(raw.about) ? { ...(raw.about as Record<string, unknown>) } : {};
     if (t) about[agent] = t; else delete about[agent];
     writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, about }, null, 2) + '\n');
+  });
+}
+
+/** How long an owner's "write your description" (aboutAsk) stays open for the agent to answer (describe_self). */
+export const ABOUT_ASK_MS = 24 * 3_600_000;
+
+/** When the household's owner last asked an agent to write its own description (the agent window's Regenerate), while
+ * that ask is open: an agent may write its description itself (describe_self) only then, once. */
+export function aboutAskOf(h: Household, agent: string, now = Date.now()): string | undefined {
+  const a = rawHousehold(h.home).aboutAsk;
+  const v = a && typeof a === 'object' && !Array.isArray(a) ? (a as Record<string, unknown>)[agent] : undefined;
+  return typeof v === 'string' && now - Date.parse(v) < ABOUT_ASK_MS && now >= Date.parse(v) ? v : undefined;
+}
+
+/** Open (at `at`) or close (null) the owner's ask for an agent's own description. */
+export function setAboutAsk(h: Household, agent: string, at: string | null): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const ask = raw.aboutAsk && typeof raw.aboutAsk === 'object' && !Array.isArray(raw.aboutAsk) ? { ...(raw.aboutAsk as Record<string, unknown>) } : {};
+    if (at) ask[agent] = at; else delete ask[agent];
+    const next: Record<string, unknown> = { ...raw, aboutAsk: ask };
+    if (!Object.keys(ask).length) delete next.aboutAsk;
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify(next, null, 2) + '\n');
   });
 }
 

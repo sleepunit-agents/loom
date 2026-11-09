@@ -140,7 +140,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   // Subcommand-level --help, honoured BEFORE any side effect. Without this,
   // the subcommands that take no flags (recompute-salience, digest) fell
   // through to their body and ran: asking for help mutated the store.
-  if (subRest[0] === '--help' || subRest[0] === '-h') {
+  if (subRest.includes('--help') || subRest.includes('-h')) {
     io.stdout(USAGE);
     return 0;
   }

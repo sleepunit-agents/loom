@@ -18,7 +18,10 @@ import { agentDir, type Household } from './household.js';
 import { pieceApi } from './ui/pieces.js';
 
 /** An approval as the approvals piece tells core: its state, and whose it is. */
-export interface ApprovalState { state: string; agent?: string }
+export interface ApprovalState { state: string; agent?: string; kind?: string;
+  /** An owner-applied one's target only (a `grant`'s `<piece>:<agent>[:<paths>]`, t-1970; a `vouch-wake`'s or a
+   * `principal-reset`'s, t-1975): what the owner's Allow does, for the piece that applies it. */
+  target?: string }
 
 /** How core learns whether what an ask waits on is resolved. Undefined: couldn't tell (the piece is absent, or failed). */
 export interface WaitCheckers {
@@ -31,7 +34,7 @@ export interface WaitCheckers {
 /** Why an approval's state clears the ask, in words for the FYI; undefined while it still waits (pending). */
 export function approvalCleared(a: ApprovalState | null): string | undefined {
   if (a === null) return 'the approval it asked about is gone';
-  return ({ allowed: 'the approval was allowed', used: 'the approval was allowed and used', denied: 'the approval was denied', expired: 'the approval was allowed, and expired unused' } as Record<string, string>)[a.state];
+  return ({ allowed: 'the approval was allowed', used: 'the approval was allowed and used', denied: 'the approval was denied', expired: 'the approval was allowed, and expired unused', withdrawn: 'the approval was withdrawn unanswered (asked again with an up-to-date list)' } as Record<string, string>)[a.state];
 }
 
 export interface Resolved { agent: string; conversation: string; digest: string; reason: string }

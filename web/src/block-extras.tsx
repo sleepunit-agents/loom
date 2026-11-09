@@ -1,14 +1,30 @@
 // The parts of blocks.tsx Home's first screen never draws, in their own chunk (web-app.test.ts, the first page's
 // weight): the confirm a danger button asks (000h's alert dialog), a desktop's table and a long list's pages.
 import type { ReactNode } from 'react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { usePortalContainer } from '@/components/ui/portal-container';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Arrive } from './arrive';
 import type { Button as Btn } from './loom';
 
-/** A danger (or confirm) button's question, before it sends. */
+/** A danger (or confirm) button's question, before it sends. In a tile (the tiled desktop) it's modal to its tile only,
+ * which an alert dialog can't be (Radix's is always the screen's): a dialog with the alert's role and the same answers,
+ * that a press outside doesn't close. */
 export function Confirm({ b, open, onOpenChange, fire }: { b: Btn; open: boolean; onOpenChange: (o: boolean) => void; fire: () => void }) {
+  const layer = usePortalContainer();
+  if (layer) return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent role="alertdialog" appearance="confirmation" onInteractOutside={(e) => e.preventDefault()}>
+        <DialogHeader><DialogTitle>{b.label}?</DialogTitle>
+          <DialogDescription>{b.confirm ?? 'This can\'t be undone from here.'}</DialogDescription></DialogHeader>
+        <DialogFooter><DialogClose asChild><Button variant="secondary">Keep it</Button></DialogClose>
+          <Button variant="danger" onClick={() => { onOpenChange(false); fire(); }}>{b.label}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>

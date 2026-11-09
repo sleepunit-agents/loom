@@ -6,9 +6,10 @@
 import { createHash } from 'node:crypto';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
-  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
+  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
+import { COMMS_VENUE, filedThreads, noteLoopPause } from './comms.js';
 import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, withHouseholdDb } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
@@ -74,6 +75,10 @@ export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number 
   // Its model and harness, kept household-wide for good: redaction and grader families outlive the fold.
   noteModels(h.home, { model: turn.model, harness: turn.harness });
   const out = recordTurn(agentDir(h, agent), agent, turn, roleString(role));
+  // The runtime paused a Comms thread as a loop (its deferred note): the thread says so in words (comms.md, section 7).
+  if (role.kind === 'runtime' && turn.venue === COMMS_VENUE && turn.kind === 'note' && turn.outcome === 'deferred') {
+    try { noteLoopPause(h.home, out.conversation); } catch (e) { process.stderr.write(`loom: couldn't tell a Comms thread of its pause: ${(e as Error).name}\n`); }
+  }
   if (key !== undefined) {
     // writeTurn is synchronous, so nothing in this process writes between the lookup above and here.
     withHouseholdDb(h.home, (db) => db.transaction(() => {
@@ -108,7 +113,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
  * the page draws both alike): the conversation, its digests newest first, and its turn counts
  * and outcomes. It needs nothing but core's records, so it works after the venue is gone.
  */
-export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string): Feed {
+export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string, openDigest?: string): Feed {
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const head: FeedItem = {
     title: (c.label ?? c.place).slice(0, 200),
@@ -125,7 +130,8 @@ export function genericRender(c: Conversation, digests: readonly Digest[], stats
       // At most 50 items in a feed: the head, then up to 40 digests and the counts.
       items: digests.slice(0, 40).map((d) => ({
         title: d.summary.replace(/\s+/g, ' ').slice(0, 200), when: d.at, ref: d.id, body: d.summary,
-        ...(d.needs_owner ? { status: 'needs you' } : {}),
+        // Only the ask the Inbox still shows needs you; one answered or cleared was asked, and is history.
+        ...(d.needs_owner ? { status: d.id === openDigest ? 'needs you' : 'asked' } : {}),
       })),
     });
   }
@@ -156,7 +162,7 @@ export async function conversationView(contextDir: string, agent: string, id: st
   const stats = turnStats(contextDir, id);
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const label = venueLabel(home, c.venue);
-  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label) };
+  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id)) };
   let v;
   try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
@@ -238,5 +244,8 @@ export function conversationsSection(contextDir: string, slug: string, since: st
   if (!db) return null;
   db.close();
   const home = homeFor(contextDir, env);
-  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v)) };
+  // Comms threads filed under the project count from their first message, digest or not (comms.md, "Project").
+  const agent = householdOf(contextDir)?.agent;
+  const filed = home && agent ? filedThreads(home, agent, slug) : [];
+  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v), filed) };
 }

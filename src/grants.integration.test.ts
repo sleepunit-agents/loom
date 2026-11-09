@@ -32,8 +32,8 @@ const fs = require('node:fs');
 let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   const r = JSON.parse(s);
   fs.appendFileSync(process.env.LOOM_HOME + '/thing-ran', JSON.stringify({ caller: r.caller, path: r.path }) + '\\n');
-  // Its own agent list, as today: art only.
-  if (r.caller.kind === 'agent' && r.caller.agent !== 'art') return console.log(JSON.stringify({ status: 403, body: { error: 'thing: not one of my agents' } }));
+  // Its own agent list (art only), the fallback when no grants authority decided the call.
+  if (r.caller.kind === 'agent' && r.caller.granted !== true && r.caller.agent !== 'art') return console.log(JSON.stringify({ status: 403, body: { error: 'thing: not one of my agents' } }));
   console.log(JSON.stringify({ body: { ok: true, caller: r.caller, path: r.path } }));
 });
 `;
@@ -134,14 +134,15 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
     it('with the grant, it runs; the path is what follows /api/<piece>/ (run, for its remote CLI)', async () => {
       const r = await call('/api/thing/boxes/list', tok.art);
       expect(r.status).toBe(200);
-      expect(ran()).toEqual([{ caller: { kind: 'agent', agent: 'art' }, path: 'boxes/list' }]);
+      expect(ran()).toEqual([{ caller: { kind: 'agent', agent: 'art', granted: true }, path: 'boxes/list' }]);
       // mark is granted thing's `run` and nothing else of it.
       expect((await call('/api/thing/boxes/list', tok.mark)).status).toBe(403);
       expect(ran()).toHaveLength(1);
       const run = await call('/api/thing/run', tok.mark, { argv: ['list'] });
       expect(asked()).toContainEqual({ agent: 'mark', piece: 'thing', path: 'run' });
-      // Granted by the authority, then the piece's own list still says no (it isn't asked to change).
-      expect(run).toEqual({ status: 403, body: { error: 'thing: not one of my agents' } });
+      // The authority decided, and the caller says so (granted: true), so the piece's own list isn't consulted (t-1971).
+      expect(run.status).toBe(200);
+      expect(ran()[1]).toEqual({ caller: { kind: 'agent', agent: 'mark', granted: true }, path: 'run' });
       expect(ran()).toHaveLength(2);
     });
 
@@ -192,6 +193,8 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
       expect(await call('/api/thing/x', tok.mark)).toEqual({ status: 403, body: { error: 'thing: not one of my agents' } });
       expect((await call('/api/thing/x', tok.owner)).status).toBe(200);
       expect(asked()).toEqual([]);
+      // Nobody decided for the piece, so no caller says granted.
+      expect(ran().every((r) => (r as { caller: { granted?: boolean } }).caller.granted === undefined)).toBe(true);
       expect(ran()).toHaveLength(3);
     });
   });

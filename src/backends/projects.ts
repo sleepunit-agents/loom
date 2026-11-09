@@ -173,6 +173,23 @@ function checkStringList(v: unknown, path: string, each: (s: string, p: string) 
   return v as string[];
 }
 
+/** A repo selector's forge: lowercase, at most 24 (docs/specs/projects.md, `links.repos`). */
+const REPO_FORGE = /^[a-z][a-z0-9-]{0,23}$/;
+/** A literal locator: two to four segments of letters, digits and . _ -, so nothing in it reads as a pattern. */
+const REPO_LOCATOR = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){1,3}$/;
+
+/**
+ * A repo selector as feeds get it: `<forge>:<locator>`, the bare `<owner>/<repo>` as `github:<owner>/<repo>`. Split
+ * at the first `:` when it comes before any `/`. Null when it isn't one. Case is the reading piece's business.
+ */
+export function normalizeRepo(sel: string): string | null {
+  const colon = sel.indexOf(':');
+  const slash = sel.indexOf('/');
+  const [forge, loc] = colon !== -1 && (slash === -1 || colon < slash) ? [sel.slice(0, colon), sel.slice(colon + 1)] : ['github', sel];
+  if (!REPO_FORGE.test(forge) || loc.length > 120 || !REPO_LOCATOR.test(loc)) return null;
+  return `${forge}:${loc}`;
+}
+
 function checkLinks(links: unknown, slug: unknown): void {
   if (!isPlainObject(links)) fail('links: must be an object');
   for (const k of Object.keys(links)) {
@@ -190,7 +207,16 @@ function checkLinks(links: unknown, slug: unknown): void {
       if (!NOTE_PATH.test(n)) fail(`${p}: "${n}" is not a note path prefix (up to six segments of letters, digits and . _ -)`);
     });
   }
-  for (const k of ['repos', 'venues'] as const) if (k in links) checkStringList(links[k], `links.${k}`, () => {});
+  if ('venues' in links) checkStringList(links.venues, 'links.venues', () => {});
+  if ('repos' in links) {
+    const seen = new Map<string, string>();
+    checkStringList(links.repos, 'links.repos', (r, p) => {
+      const n = normalizeRepo(r);
+      if (n === null) fail(`${p}: "${r}" is not a repo selector (<forge>:<owner>/<repo>, or a bare <owner>/<repo>: segments of letters, digits and . _ -)`);
+      if (seen.has(n)) fail(`${p}: "${r}" is the same repo as "${seen.get(n)}"`);
+      seen.set(n, r);
+    });
+  }
   if ('epic' in links) {
     const e = checkString(links.epic, 'links.epic', MAX_EPIC);
     if (e.trim() === '') fail('links.epic: must not be empty');

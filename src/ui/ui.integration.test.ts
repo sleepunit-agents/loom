@@ -100,7 +100,8 @@ describe('the vocabulary pieces send', () => {
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '/act/loom' }] }] }, /page link/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'html', html: '<b>' }] }] }, /unknown block type/],
     [{ title: 'T', sections: [{ id: 'Bad Id', blocks: [] }] }, /section.id/],
-    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'text', text: 'x'.repeat(2001) }] }] }, /longer than/],
+    // A label over the limit still refuses the page; a block's own words are cut short instead (blocks.test.ts, t-1861).
+    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'kv', items: [{ label: 'x'.repeat(2001), value: 'v' }] }] }] }, /longer than/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 't', tone: 'red' }] }] }] }, /tone/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'table', columns: ['a'], rows: [['1', '2']] }] }] }, /table row/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'details', summary: 'a', blocks: [{ type: 'details', summary: 'b', blocks: [] }] }] }] }, /details/],
@@ -412,7 +413,7 @@ describe('loom UI over HTTP', () => {
     expect(section(pat, 'summary')).toBeUndefined();
     expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
     expect(section(pat, 'where')).toBeUndefined();
-    expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);
+    expect((pat.page.sections as Array<{ side?: boolean; place?: string }>).filter((x) => x.side || x.place === 'side')).toEqual([]);
     // A piece may link to someone with no card: a page that says so, not an error.
     const nobody = await getJson('/people/no-such-person', cookie);
     expect(nobody.status).toBe(200);

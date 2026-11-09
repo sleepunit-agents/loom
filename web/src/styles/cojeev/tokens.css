@@ -1,5 +1,5 @@
-/* Cojeev tokens: one definition per mode. The runtime palettes in lib/appearance-tokens.ts ("paper" is
-   this default) re-point these at runtime. Contrast notes below are measured against these values. */
+/* Cojeev tokens: one definition per mode; loom's looks (src/looks/) re-point them. Contrast notes below are measured
+   against these values. */
 :root{
 color-scheme:light;
 /* accents [E] I03 */

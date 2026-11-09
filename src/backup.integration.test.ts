@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadHousehold, rawHousehold, type Household } from './household.js';
@@ -72,6 +72,18 @@ describe.skipIf(!hasTools)('loom backup', () => {
 
   const settings = (target: string, extra: Record<string, unknown> = {}) =>
     setSettings(h, validateSettings({ target, recipients: [owner.recipient], at: '02:55', tz: 'America/Chicago', ...extra }), env);
+
+  /**
+   * Noon in Chicago, well clear of the 02:55 slot. The tick tests count from setAt, and setAt is the wall clock when
+   * settings were set: left there, a run in a ten-minute window each day (02:45-02:55 in Chicago for the first tick
+   * test, 20:45-20:55 for the miss) put the slot between two of its ticks, and the tick ran a backup the test didn't
+   * expect (t-1925: loom#589's 22.x job ran at 02:40-03:01 UTC, twice).
+   */
+  const NOON_CHICAGO = '2026-11-04T18:00:00.000Z';
+  const pinSetAt = (iso: string): number => {
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), setAt: iso }));
+    return Date.parse(iso);
+  };
 
   /** An export that writes `bytes` random bytes and says these pieces were in; a drill that answers from `drills`. */
   function fakes(o: { bytes?: number; pieces?: string[]; drills?: boolean[]; exported?: { n: number } } = {}): RunDeps {
@@ -418,7 +430,7 @@ describe.skipIf(!hasTools)('loom backup', () => {
   it('the tick runs a due backup once, says a miss once, again after 6 hours, and an OK when it\'s over', async () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
-    const set = Date.parse(readState(h.home).setAt!);
+    const set = pinSetAt(NOON_CHICAGO);
     // Two days on with no run: a miss is said (the tick also runs the one that's due, and here it fails).
     const deps = fakes({ drills: [false, false, false, false] });
     const t1 = set + 2 * 86_400_000;
@@ -437,17 +449,16 @@ describe.skipIf(!hasTools)('loom backup', () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`, { at: '02:55' });
     // A run that's started counts as the day's: lastStart is now, so the tick only says the miss.
-    const set = Date.parse(readState(h.home).setAt!);
-    const st = join(h.home, 'backup', 'state.json');
+    const set = pinSetAt(NOON_CHICAGO);
     const t = set + 30 * 3600_000;
-    writeFileSync(st, JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
     const deps = fakes();
     await tickBackup({ home: h.home, env, nowMs: t, deps });
     await tickBackup({ home: h.home, env, nowMs: t + 10 * 60_000, deps });
     expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet"]);
+    // 6 hours on (midnight in Chicago, before the 02:55 slot): said again, and nothing ran.
     await tickBackup({ home: h.home, env, nowMs: t + 6 * 3600_000, deps });
-    // (6 hours on, a night's slot may have come round too: its good run then says OK again after these.)
-    expect(alerts.map((a) => a.summary).slice(0, 2)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
+    expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
   });
 
   it('the real alert command: a failed run reaches LOOM_ALERT_COMMAND, with source loom-backup; a planted household command never runs', async () => {
@@ -455,7 +466,9 @@ describe.skipIf(!hasTools)('loom backup', () => {
     settings(`path:${dir}`);
     const heard = join(work, 'heard');
     const cmd = join(work, 'alert.sh');
-    writeFileSync(cmd, `#!/bin/sh\nprintf '%s\\n' "$@" > ${heard}\n`);
+    // Written whole, then moved into place: a plain `>` makes the file before printf fills it, and the wait below read
+    // it empty (t-1886).
+    writeFileSync(cmd, `#!/bin/sh\nprintf '%s\\n' "$@" > ${heard}.part && mv ${heard}.part ${heard}\n`);
     chmodSync(cmd, 0o755);
     writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...rawHousehold(h.home), backup: { ...(rawHousehold(h.home).backup as object), alertCommand: ['/bin/touch', join(work, 'planted')] } }));
     const { alert: _a, ...noAlert } = fakes({ drills: [false, false, false, false] });
@@ -518,16 +531,71 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(alerts[0].facts).toMatchObject({ minutes: 1800 });
   });
 
+  it('a lock that changes after it was judged stale is someone\'s fresh one: left where it is, never taken', () => {
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    const lock = join(h.home, 'backup', 'run.lock');
+    writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
+    let fresh: ReturnType<typeof takeLock> = null;
+    // Between this taker's judging and its takeover, another takes the stale lock over and holds a fresh one.
+    const late = takeLock(h.home, Date.now(), { judged: () => { fresh = takeLock(h.home); } });
+    expect(fresh).not.toBeNull();
+    expect(late).toBeNull();
+    const held = JSON.parse(readFileSync(lock, 'utf-8'));
+    expect(held.pid).toBe(process.pid);
+    fresh!.release();
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it('a takeover claim held by a live taker is waited on; one whose taker died is cleared, and the lock is taken next time', () => {
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    const lock = join(h.home, 'backup', 'run.lock');
+    const stale = JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() });
+    writeFileSync(lock, stale);
+    // A live taker (this process) is mid-takeover, however long it's been: the lock is left alone.
+    writeFileSync(`${lock}.takeover`, `${process.pid} someone`);
+    utimesSync(`${lock}.takeover`, new Date(0), new Date(0));
+    expect(takeLock(h.home, Date.now() + 86_400_000)).toBeNull();
+    expect(readFileSync(lock, 'utf-8')).toBe(stale);
+    expect(existsSync(`${lock}.takeover`)).toBe(true);
+    // Its taker died there: the claim is cleared, and the next try takes the lock over.
+    writeFileSync(`${lock}.takeover`, `${2 ** 22 + 999} someone`);
+    expect(takeLock(h.home)).toBeNull();
+    expect(existsSync(`${lock}.takeover`)).toBe(false);
+    const got = takeLock(h.home);
+    expect(got).not.toBeNull();
+    got!.release();
+    expect(readdirSync(join(h.home, 'backup')).filter((n) => n.startsWith('run.lock'))).toEqual([]);
+  });
+
   it('a stale lock taken over by two processes at once: one gets it; a run never releases its successor\'s lock', async () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
     writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
     const script = join(work, 'race.mjs');
     writeFileSync(script, `import { takeLock } from ${JSON.stringify(new URL('./backup.ts', import.meta.url).pathname.replace(/\.ts$/, '.js').replace('/src/', '/dist/'))};
-const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) setTimeout(() => l.release(), 400);`);
-    const run1 = () => new Promise<string>((res) => { const c = spawn(process.execPath, [script, h.home], { env }); let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('close', () => res(o.trim())); });
+import { readdirSync, writeFileSync } from 'node:fs';
+// All three judge the same lock stale before any takes it over: each says so, then waits for the others (5 s at most).
+const met = process.argv[3];
+const judged = () => { writeFileSync(met + '/' + process.pid, ''); const until = Date.now() + 5000; while (readdirSync(met).length < 3 && Date.now() < until); };
+const l = takeLock(process.argv[2], Date.now(), { judged }); console.log(l ? 'got' : 'busy'); if (l) { process.stdin.on('end', () => l.release()); process.stdin.resume(); }`);
+    const met = join(work, 'met'); mkdirSync(met);
+    // The one that gets it holds it until all three have said (a fixed 400 ms let a slow starter find it free, t-1886).
+    let said = 0;
+    const all: Array<() => void> = [];
+    const run1 = () => new Promise<string>((res) => {
+      const c = spawn(process.execPath, [script, h.home, met], { env });
+      all.push(() => c.stdin.end());
+      let o = '';
+      let heard = false;
+      // One that dies without a word has said too, so the holder is never left waiting.
+      const say = () => { if (heard) return; heard = true; if (++said === 3) for (const end of all) end(); };
+      c.stdout.on('data', (d) => { o += d; say(); });
+      c.on('close', () => { say(); res(o.trim()); });
+    });
     const outs = await Promise.all([run1(), run1(), run1()]);
     expect(outs.sort()).toEqual(['busy', 'busy', 'got']);
+    // All three were in the takeover at once, not one after another's fresh lock.
+    expect(readdirSync(met)).toHaveLength(3);
     // A lock taken over as stale: the old holder's release leaves the new one's.
     const old = takeLock(h.home)!;
     writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token: 'successor' }));
