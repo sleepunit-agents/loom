@@ -91,7 +91,7 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
     await d.changed();
     const p = await screen(width, 800, '/');
     const line = p.locator('.loom-top--one .loom-tick__line').first();
-    expect(await line.innerText()).toContain('Mark · Running a command · Comms');
+    await expect.poll(() => line.innerText()).toContain('Mark · Running a command · Comms');
     expect(await line.innerText()).not.toContain('private raw text');
     expect(await line.innerText()).not.toContain('Private words');
     expect(await p.locator('.loom-top--one .loom-tick__live').first().isVisible()).toBe(false);
