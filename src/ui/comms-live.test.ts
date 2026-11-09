@@ -21,9 +21,12 @@ it.each(['SQLITE_BUSY', 'SQLITE_LOCKED'])('retries %s on the next poll without t
   expect(reads.movedSince.mock.calls[1]).toEqual(since);
 });
 
-it('does not hide unexpected polling failures', () => {
+it('reports unexpected polling failures without terminating the listener', () => {
   vi.useFakeTimers();
+  const report = vi.spyOn(console, 'error').mockImplementation(() => {});
   reads.movedSince.mockImplementationOnce(() => { throw new Error('unexpected'); });
   watchComms('/missing-comms-bug-test');
-  expect(() => vi.advanceTimersByTime(2000)).toThrow('unexpected');
+  expect(() => vi.advanceTimersByTime(2000)).not.toThrow();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining('Comms live update failed'), expect.objectContaining({ message: 'unexpected' }));
+  expect(() => vi.advanceTimersByTime(2000)).not.toThrow();
 });
