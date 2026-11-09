@@ -60,8 +60,11 @@ describe.runIf(existsSync(`${root}dist/web/index.html`) && existsSync(chrome))('
       // Barket also matches Art, so search by full contact name to exercise a single result.
       await p.getByRole('searchbox', { name: 'Search people' }).fill('Mark');
       expect(await p.locator('.loom-people__row').count()).toBe(1);
+      expect(await p.locator('.loom-people__row').getAttribute('href')).toBe('/people/mark?q=Mark');
       await p.locator('.loom-people__row').click();
       await p.locator('.loom-people__detail [data-section="profile"]').waitFor();
+      expect(new URL(p.url()).pathname).toBe('/people/mark');
+      expect(new URL(p.url()).searchParams.get('q')).toBe('Mark');
       expect(await p.locator('.loom-people__detail').textContent()).toContain('How each agent knows it');
       if (width === 390) {
         await p.getByRole('button', { name: 'Contacts', exact: true }).click();
