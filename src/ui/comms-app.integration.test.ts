@@ -102,6 +102,39 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
+  it('lets the owner choose a thread model, keeps the choice, and reports a failed save', async () => {
+    const { ctx, page, errors } = await open(false);
+    let selected = 'auto';
+    let fail = false;
+    await page.route('**/comms/*/model', async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        if (fail) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The runtime is unavailable.' }) });
+        const body = req.postDataJSON() as { harness: string; _csrf: string };
+        expect(body._csrf).toBeTruthy();
+        selected = body.harness;
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threadChoice: selected }) });
+    });
+    try {
+      await page.goto(`${base}/comms/${thread.id}`);
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      await page.getByRole('menuitemradio', { name: 'Model: Auto', exact: false }).waitFor();
+      await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent?.includes('Codex'));
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      expect(await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: false }).getAttribute('aria-checked')).toBe('true');
+      fail = true;
+      await page.getByRole('menuitemradio', { name: 'Model: Claude', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'The runtime is unavailable.' }).waitFor();
+      expect(selected).toBe('codex');
+      expect(await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: false }).getAttribute('aria-checked')).toBe('true');
+      expect(await noSideways(page)).toBe(true);
+      expect(errors).toEqual(['Failed to load resource: the server responded with a status of 503 (Service Unavailable)']);
+    } finally { await ctx.close(); }
+  }, 30_000);
+
   it('on a phone: the list, then the thread with its comm screen, its steps and the composer above the dock', async () => {
     const { ctx, page, errors } = await open(true);
     try {
