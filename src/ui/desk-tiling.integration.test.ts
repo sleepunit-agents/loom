@@ -166,6 +166,10 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       expect(query(p, 'm')).toBe('activity');
       await p.click(KEY('Activity')); await tile(p, 'Activity').waitFor();
       await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
+      // ResizeObserver and the passive Split effect run after the restore commit.
+      // Observe beyond that turn: a poll alone could accept the transient correct URL.
+      await p.waitForTimeout(300);
+      expect([new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
       // Restoring Activity narrows People again. People's one-pane reader must not
       // take focus when its layout changes and replace the restored app's address.
       await expect.poll(async () => (await tiles(p)).find((t) => t.focused)?.label).toBe('Activity');
