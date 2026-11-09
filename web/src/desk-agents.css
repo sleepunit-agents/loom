@@ -224,3 +224,12 @@
 :root[data-look] .loom-bigcard__words summary { font-size:12px; color:var(--v-text-2); cursor:pointer; }
 :root[data-look] .loom-bigcard__question .loom-inbox__read { gap:10px; }
 :root[data-look] .loom-bigcard__question .loom-inbox__answer { gap:8px; margin-top:0; }
+
+/* Complete jobs stay reachable in the compact rail and wrap on phones. */
+.loom-rcard-wrap { min-width: 0; }
+.loom-rcard-wrap > .loom-rcard { width: 100%; }
+.loom-jobs-fold { padding: .5rem; font-size: .8rem; }
+.loom-jobs-fold summary { cursor: pointer; }
+.loom-jobs { list-style: none; margin: .5rem 0; padding: 0; }
+.loom-jobs li { display: flex; flex-direction: column; gap: .15rem; padding: .4rem 0; overflow-wrap: anywhere; }
+.loom-jobs small { opacity: .7; font-size: .7rem; }

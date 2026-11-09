@@ -922,3 +922,23 @@ usual validation and limits. The top page's sections appear above the list for
 notices and existing actions. `group`, `repo` and `author` query parameters keep
 the selection and filters in the address. The piece still owns all authorization
 and action handling, including the selected reader's buttons.
+
+### Complete agent jobs
+
+An agent report may include `jobs`, independently of the legacy active-only `doing` summary.
+Each job has a producer-stable `id`, `text`, and `status`: `running` (observed active body),
+`waiting` (queued, held or parked work), `scheduled` (future clock entry), or `backlog`
+(open task without an observed execution). Optional `tasks` contains explicit task references;
+`conversation` restricts visibility using Comms membership or agent ownership; `page` links to
+its producer; `run`, `wake`, `since`, and `at` carry identity and times. Bodies' private labels
+stay out of runtime manifests and core supplies them only after checking visibility.
+
+The Home cards merge all jobs, without the legacy eight-row cap. A task-only row (backlog or waiting on its owner) is
+absorbed when a visible non-backlog job explicitly references it. Matching titles or conversation
+provenance never establish work identity; two concurrent runs remain two rows. Producers omit
+completed work on their next manifest. The complete list is on large/phone cards and under
+“All jobs” on compact cards. Waiting, scheduled and backlog rows do not make an agent busy.
+
+Install core support before producers: older core ignores the optional field. The normal manifest
+size limits still apply (512 KiB and at most 10,000 jobs per agent). Tasks retain their existing
+household-only visibility; adding jobs does not make the Tasks piece available to agent owners.
