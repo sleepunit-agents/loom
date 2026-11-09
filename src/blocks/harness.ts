@@ -193,7 +193,7 @@ function countOccurrences(haystack: string, needle: string): number {
     const at = haystack.indexOf(needle, from);
     if (at === -1) return count;
     count++;
-    from = at + needle.length;
+    from = at + 1;
   }
 }
 

@@ -197,6 +197,13 @@ describe('patchHarness', () => {
     expect(raw).not.toContain('extra');
   });
 
+  it('rejects overlapping matches rather than selecting one silently', async () => {
+    const path = await seed('aaa');
+    const before = await readFile(path, 'utf-8');
+    await expect(harness.patchHarness(ctx, 'claude-code', 'aa', 'changed')).rejects.toThrow(/matches 2 times/);
+    expect(await readFile(path, 'utf-8')).toBe(before);
+  });
+
   it('rejects when no manifest exists yet', async () => {
     await expect(harness.patchHarness(ctx, 'claude-code', 'x', 'y')).rejects.toThrow(/no existing manifest/);
   });
