@@ -63,8 +63,8 @@ export function conversationOfItem(it: Pick<InboxItem, 'page' | 'reply' | 'sourc
 }
 
 /** Whether an Inbox item is one of this thread's asks: open, needing the owner, its agent's, from its conversation. */
-export function isThreadAsk(it: InboxItem & { conversation?: string }, t: Pick<Thread, 'agent' | 'conversation'>): boolean {
-  return it.box !== 'done' && it.kind !== 'fyi' && it.kind !== 'answered' && it.attention !== false && it.agent === t.agent && conversationOfItem(it) === t.conversation;
+export function isThreadAsk(it: InboxItem & { conversation?: string }, t: Pick<Thread, 'agent' | 'conversation'>, origins: Record<string, string> = {}): boolean {
+  return it.box !== 'done' && it.kind !== 'fyi' && it.kind !== 'answered' && it.attention !== false && it.agent === t.agent && (conversationOfItem(it) === t.conversation || origins[conversationOfItem(it) ?? ''] === t.conversation);
 }
 
 const isId = (s: unknown): s is string => typeof s === 'string' && /^a-[0-9a-f]{4,32}$/.test(s);
@@ -154,6 +154,8 @@ const verdictOfState = (s: string): string => (Object.hasOwn(VERDICT_OF_STATE, s
 export interface ThreadAsksDeps {
   /** The viewer's Inbox items, now (the Inbox's own: its pieces filter, its absorbing). */
   items: InboxItem[];
+  /** Runtime-verified display roots for follow-up conversations; never supplies additional Inbox items. */
+  origins?: Record<string, string>;
   /** The approval ids whose card only the household owner answers (the approvals piece's lead cards). */
   leads: Set<string>;
   householdOwner: boolean;
@@ -172,13 +174,14 @@ export async function threadAsks(h: Household, env: NodeJS.ProcessEnv, t: Thread
   // A Needs you here that waits on an approval asked from another conversation: its own card, without that approval's
   // words or buttons (they're that conversation's). One asked from here, absorbed by a Needs you elsewhere: its own card
   // here all the same, its Allow and Deny its piece's.
-  const elsewhere = (it: InboxItem) => !!it.approval?.conversation && it.approval.conversation !== t.conversation;
+  const belongs = (cv: string | undefined) => !!cv && (cv === t.conversation || d.origins?.[cv] === t.conversation);
+  const elsewhere = (it: InboxItem) => !!it.approval?.conversation && !belongs(it.approval.conversation);
   const waiting = new Set<InboxItem>();
   const mine: InboxItem[] = [];
   for (const it of d.items) {
-    if (isThreadAsk(it, t)) {
+    if (isThreadAsk(it, t, d.origins)) {
       if (elsewhere(it)) { const own = { ...it, approval: undefined }; waiting.add(own); mine.push(own); } else mine.push(it);
-    } else if (it.approval?.conversation === t.conversation && isThreadAsk({ ...it, conversation: t.conversation, page: undefined }, t)) {
+    } else if (it.approval && belongs(it.approval.conversation) && isThreadAsk({ ...it, conversation: t.conversation, page: undefined }, t)) {
       const a = it.approval;
       mine.push({ key: it.key, kind: 'permission', box: it.box, attention: it.attention, unread: false, text: a.text, ...(a.meta ? { meta: a.meta } : {}),
         at: it.at, agent: it.agent, source: a.source, actions: a.actions, conversation: t.conversation,

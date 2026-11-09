@@ -96,3 +96,14 @@ describe('a chip\'s card', () => {
     for (const x of ['t-5', 't-6']) { expect(r[x], x).not.toHaveProperty('href'); expect(r[x], x).not.toHaveProperty('page'); }
   });
 });
+
+it('runtime provenance shows descendant asks only for the same agent and an already visible open item', () => {
+  const t = { agent: 'art', conversation: 'cv-0123456789ab' } as Thread;
+  const origins = { 'cv-00000000000f': t.conversation };
+  const child = item([], { conversation: 'cv-00000000000f' });
+  expect(isThreadAsk(child, t)).toBe(false);
+  expect(isThreadAsk(child, t, origins)).toBe(true);
+  for (const more of [{ agent: 'mark' }, { box: 'done' as const }, { attention: false }, { kind: 'answered' as const }]) {
+    expect(isThreadAsk({ ...child, ...more }, t, origins)).toBe(false);
+  }
+});
