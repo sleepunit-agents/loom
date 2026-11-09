@@ -23,6 +23,7 @@
  * TICK_MIN_MS however many apps open, with at most STREAMS_PER_SESSION streams per signed-in browser.
  */
 import { watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { dataChanges } from './live-files.js';
 import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
@@ -133,10 +134,13 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   res.on('close', () => drop(c));
   if (!watcher) {
     try {
+      const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => {
         if (String(file) === PIECES_TICK) void tick(true);
-        else if (file && DATA.test(String(file))) changed(whose(String(file)));
+        else if (file && DATA.test(String(file)) && files.moved(String(file))) changed(whose(String(file)));
       });
+      // Reconcile the registration gap; queued callbacks then see the updated baseline.
+      for (const file of files.reconcile()) changed(whose(file));
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }
   ticking ??= setInterval(() => void tick(), WATCH_MS);
