@@ -1,0 +1,23 @@
+npm warn Unknown project config "onnxruntime-node-install-cuda". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+ RUN  v5.0.5 /tmp/loom-morph
+
+ ❯ src/ui/morph-mount.integration.test.ts (5 tests | 1 failed | 4 skipped) 2032ms
+   × mount cost stays bounded when forty more hosts appear, with all paths ready before paint 1557ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ui/morph-mount.integration.test.ts > mount cost stays bounded when forty more hosts appear, with all paths ready before paint
+AssertionError: expected 322 to be less than 12
+ ❯ src/ui/morph-mount.integration.test.ts:12:626
+
+ ❯ fixture src/ui/morph-mount.integration.test.ts:10:529
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  09:48:53
+   Duration  2.85s (tests 78%, import 19%, setup 2%, transform 1%)
+

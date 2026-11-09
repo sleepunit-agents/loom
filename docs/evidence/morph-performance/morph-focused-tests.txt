@@ -1,0 +1,10 @@
+npm warn Unknown project config "onnxruntime-node-install-cuda". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+ RUN  v5.0.5 /tmp/loom-morph
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  09:51:25
+   Duration  9.17s (tests 81%, import 13%, setup 4%, transform 3%)
+
