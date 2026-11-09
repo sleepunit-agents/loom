@@ -32,6 +32,11 @@ process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
   if (process.argv[2] === 'api') {
     fs.appendFileSync(home + '/runtime-api.jsonl', input + '\\n');
+    const q = JSON.parse(input);
+    if (q.path === 'conversation-origins') {
+      const all = fs.existsSync(home + '/runtime-origins.json') ? JSON.parse(fs.readFileSync(home + '/runtime-origins.json', 'utf8')) : {};
+      return console.log(JSON.stringify({ status: 200, body: { origins: Object.fromEntries(q.body.conversations.map(cv => [cv, all[cv] || cv])) } }));
+    }
     return console.log(JSON.stringify({ status: 200, body: { exit: 0, stdout: '{}', stderr: '' } }));
   }
   fs.appendFileSync(home + '/runtime-calls.jsonl', input + '\\n');
@@ -725,6 +730,30 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
   });
 
   describe('criterion 12: asks inline', () => {
+    it('retains a continuation approval in its original thread when a later digest clears needs_owner', async () => {
+      const t = await open();
+      const other = await open();
+      const child = 'cv-0000000000cc';
+      writeFileSync(join(h.home, 'runtime-origins.json'), JSON.stringify({ [child]: t.conversation }));
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{
+        text: 'Continue the approved repair?', kind: 'permission', agent: 'art', conversation: child,
+        actions: [{ action: 'allow', label: 'Allow', fields: { id: 'a-000000cc' } }, { action: 'deny', label: 'Deny', fields: { id: 'a-000000cc' } }],
+      }]));
+      clearPieceCache();
+      try {
+        const asks = async (thread: Thread) => (await page(tok.jonathan, 'GET', `/comms/${thread.id}`)).body.asks as Array<{ ref: string; state: string }>;
+        expect(await asks(t)).toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc', state: 'open' }));
+        recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:origin-test');
+        writeDigest(agentDir(h, 'art'), { conversation: t.conversation!, run: 'r-cleared-needs' }, { summary: 'Continued.', needs_owner: null } as never);
+        expect(await asks(t)).toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc', state: 'open' }));
+        expect(await asks(other)).not.toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc' }));
+        expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);
+      } finally {
+        rmSync(join(h.home, 'runtime-origins.json'), { force: true });
+        rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache();
+      }
+    });
+
     it('shows a pending approval only in its own thread: its conversation and its agent both', async () => {
       const t = await open();
       const other = await open();

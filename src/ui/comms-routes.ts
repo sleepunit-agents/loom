@@ -33,7 +33,7 @@ import { managedPieces } from '../cli/pieces-managed.js';
 import { threadWork } from '../comms-work.js';
 import { openThreadStream } from './comms-live.js';
 import { pieceApi, type PieceInfo } from './pieces.js';
-import { threadAsks, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
+import { threadAsks, conversationOfItem, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
 import { refShape, resolveRefs, REFS_MAX } from '../comms-refs.js';
 
 export interface CommsContext {
@@ -165,7 +165,18 @@ async function asksOf(c: CommsContext, t: Thread): Promise<ThreadAskView[]> {
   if (!c.inbox) return [];
   try {
     const i = await c.inbox();
-    return await threadAsks(c.household, c.env, t, i);
+    const conversations = [...new Set(i.items.filter((it) => it.agent === t.agent)
+      .flatMap((it) => [conversationOfItem(it), it.approval?.conversation])
+      .filter((cv): cv is string => typeof cv === 'string' && /^cv-[0-9a-f]{12}$/.test(cv) && cv !== t.conversation))].slice(0, 128);
+    let origins: Record<string, string> = {};
+    const runtime = conversations.length ? runtimePath(c.env) : undefined;
+    if (runtime) {
+      try {
+        const r = await pieceApi(runtime, { caller: { kind: 'owner', agents: [t.agent] }, path: 'conversation-origins', body: { agent: t.agent, conversations } }, c.env) as { status?: number; body?: { origins?: Record<string, string> } };
+        if (r.status === 200 && r.body?.origins) origins = r.body.origins;
+      } catch { /* Older/unavailable runtime: directly linked cards still work. */ }
+    }
+    return await threadAsks(c.household, c.env, t, { ...i, origins });
   } catch (e) {
     process.stderr.write(`loom: a Comms thread's asks couldn't be read: ${(e as Error).message}\n`);
     return [];
