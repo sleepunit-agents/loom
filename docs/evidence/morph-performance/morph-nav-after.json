@@ -1,0 +1,41 @@
+{
+  "results": [
+    {
+      "row": 2,
+      "reopen": false,
+      "elapsed": 1603.042316,
+      "paths": 40,
+      "style": 31,
+      "layout": 17,
+      "styleMs": 295.191,
+      "layoutMs": 27.674,
+      "scriptMs": 886.677,
+      "taskMs": 1821.808
+    },
+    {
+      "row": 3,
+      "reopen": false,
+      "elapsed": 2130.251582000001,
+      "paths": 40,
+      "style": 47,
+      "layout": 25,
+      "styleMs": 325.31199999999995,
+      "layoutMs": 28.773,
+      "scriptMs": 659.832,
+      "taskMs": 1579.5589999999997
+    },
+    {
+      "row": 2,
+      "reopen": true,
+      "elapsed": 974.5288460000011,
+      "paths": 40,
+      "style": 43,
+      "layout": 19,
+      "styleMs": 252.38700000000003,
+      "layoutMs": 32.222,
+      "scriptMs": 516.8460000000001,
+      "taskMs": 1091.5579999999995
+    }
+  ],
+  "errors": []
+}

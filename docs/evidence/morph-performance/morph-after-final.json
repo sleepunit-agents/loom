@@ -1,0 +1,306 @@
+[
+  {
+    "count": 10,
+    "run": 0,
+    "elapsed": 121.89999985694885,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 3.463,
+    "layoutMs": 6.4510000000000005,
+    "paths": 10,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 279
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1886
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 618
+      },
+      {
+        "name": "Layout",
+        "dur": 5828
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 679
+      },
+      {
+        "name": "Layout",
+        "dur": 585
+      }
+    ]
+  },
+  {
+    "count": 10,
+    "run": 1,
+    "elapsed": 36.59999990463257,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 1.2329999999999999,
+    "layoutMs": 5.204000000000001,
+    "paths": 10,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 221
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 517
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 189
+      },
+      {
+        "name": "Layout",
+        "dur": 4945
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 325
+      },
+      {
+        "name": "Layout",
+        "dur": 207
+      }
+    ]
+  },
+  {
+    "count": 10,
+    "run": 2,
+    "elapsed": 62.299999952316284,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 1.31,
+    "layoutMs": 4.364,
+    "paths": 10,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 190
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 457
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 182
+      },
+      {
+        "name": "Layout",
+        "dur": 2099
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 497
+      }
+    ]
+  },
+  {
+    "count": 40,
+    "run": 0,
+    "elapsed": 90.79999995231628,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 3.622,
+    "layoutMs": 5.084,
+    "paths": 40,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 357
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 887
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 703
+      },
+      {
+        "name": "Layout",
+        "dur": 1461
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1735
+      }
+    ]
+  },
+  {
+    "count": 40,
+    "run": 1,
+    "elapsed": 64.70000004768372,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 3.311,
+    "layoutMs": 4.729,
+    "paths": 40,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 258
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 754
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 589
+      },
+      {
+        "name": "Layout",
+        "dur": 1445
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1724
+      },
+      {
+        "name": "Layout",
+        "dur": 3253
+      }
+    ]
+  },
+  {
+    "count": 40,
+    "run": 2,
+    "elapsed": 59,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 2.497,
+    "layoutMs": 2.1670000000000003,
+    "paths": 40,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 272
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 855
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 590
+      },
+      {
+        "name": "Layout",
+        "dur": 1413
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 862
+      }
+    ]
+  },
+  {
+    "count": 80,
+    "run": 0,
+    "elapsed": 104.09999990463257,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 8.435,
+    "layoutMs": 12.185,
+    "paths": 80,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 314
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1301
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 4768
+      },
+      {
+        "name": "Layout",
+        "dur": 11049
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 2087
+      },
+      {
+        "name": "Layout",
+        "dur": 1099
+      }
+    ]
+  },
+  {
+    "count": 80,
+    "run": 1,
+    "elapsed": 175,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 7.433000000000001,
+    "layoutMs": 6.64,
+    "paths": 80,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1608
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1119
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 1685
+      },
+      {
+        "name": "Layout",
+        "dur": 3312
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 3033
+      }
+    ]
+  },
+  {
+    "count": 80,
+    "run": 2,
+    "elapsed": 100.10000014305115,
+    "style": 4,
+    "layout": 2,
+    "styleMs": 19.665,
+    "layoutMs": 4.672,
+    "paths": 80,
+    "events": [
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 310
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 3751
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 12291
+      },
+      {
+        "name": "Layout",
+        "dur": 1918
+      },
+      {
+        "name": "UpdateLayoutTree",
+        "dur": 5001
+      }
+    ]
+  }
+]
