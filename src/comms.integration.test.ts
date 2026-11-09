@@ -37,6 +37,13 @@ process.stdin.on('end', () => {
       const all = fs.existsSync(home + '/runtime-origins.json') ? JSON.parse(fs.readFileSync(home + '/runtime-origins.json', 'utf8')) : {};
       return console.log(JSON.stringify({ status: 200, body: { origins: Object.fromEntries(q.body.conversations.map(cv => [cv, all[cv] || cv])) } }));
     }
+    if (q.path === 'model-choice') {
+      const f = home + '/model-choices.json';
+      const choices = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : {};
+      if (q.body.harness !== undefined) { choices[q.body.conversation] = q.body.harness; fs.writeFileSync(f, JSON.stringify(choices)); }
+      return console.log(JSON.stringify({ status: 200, body: { agent: q.body.agent, conversation: q.body.conversation, threadChoice: choices[q.body.conversation] || 'auto', agentChoice: 'auto', effective: choices[q.body.conversation] || 'auto' } }));
+    }
+
     return console.log(JSON.stringify({ status: 200, body: { exit: 0, stdout: '{}', stderr: '' } }));
   }
   fs.appendFileSync(home + '/runtime-calls.jsonl', input + '\\n');
@@ -337,6 +344,30 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
         raw.members[1].agents = ['art'];
         writeFileSync(join(h.home, 'household.json'), JSON.stringify(raw));
       }
+    });
+
+    it('reads and saves a thread model through the authenticated runtime with server-owned scope', async () => {
+      const t = await open();
+      const read = await page(tok.jonathan, 'GET', `/comms/${t.id}/model`);
+      expect(read.status).toBe(200);
+      expect(read.body.threadChoice).toBe('auto');
+      const saved = await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'codex', conversation: 'cv-999999999999', agent: 'mark' });
+      expect(saved.status).toBe(200);
+      expect(saved.body.threadChoice).toBe('codex');
+      expect((await page(tok.jonathan, 'GET', `/comms/${t.id}/model`)).body.threadChoice).toBe('codex');
+      const request = apiCalls().filter((x) => x.path === 'model-choice').at(-1)!;
+      expect(request.body).toEqual({ agent: 'art', conversation: t.conversation });
+      expect(request.caller).toMatchObject({ kind: 'owner', who: 'jonathan', agents: '*' });
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'auto' })).body.threadChoice).toBe('auto');
+    });
+
+    it('refuses model choice from another owner, a body, or an invalid selection', async () => {
+      const t = await open();
+      const before = apiCalls().length;
+      expect((await page(tok.sam, 'POST', `/comms/${t.id}/model`, { harness: 'codex' })).status).toBe(403);
+      expect((await page(tok.art, 'POST', `/comms/${t.id}/model`, { harness: 'codex' })).status).toBe(401);
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'not-a-harness' })).status).toBe(400);
+      expect(apiCalls()).toHaveLength(before);
     });
 
     it('shows another owner the conversation, never its words', async () => {
