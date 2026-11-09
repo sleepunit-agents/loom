@@ -216,7 +216,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const archived = new URL(req.url ?? '/', 'http://x').searchParams.get('archived') === '1';
       settleThread(h.home, null);
-      const threads = threadsOf(h, m, { archived });
+      const background = new URL(req.url ?? '/', 'http://x').searchParams.get('background') === '1';
+      const threads = threadsOf(h, m, { archived, ...(background ? { background: 'only' as const } : {}) });
       const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
       send(200, { ...(await asView(c, 'list', pathname)), threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
         agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)), member: m.person });

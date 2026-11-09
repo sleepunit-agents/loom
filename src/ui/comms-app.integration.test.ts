@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
-import { createConversationTables } from '../backends/conversations.js';
+import { createConversationTables, recordTurn } from '../backends/conversations.js';
 import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery } from '../comms.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from './pieces.js';
@@ -101,6 +101,33 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     return { ctx, page, errors };
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+
+  it('keeps jobs in Background work and attributes the job brief to Art', async () => {
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'background-ui', label: 'Internal diagnostic',
+      at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'Diagnostic brief from Art' });
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      expect(await page.locator('.comms-row__title').allTextContents()).not.toContain('Internal diagnostic');
+      await page.getByRole('button', { name: 'Background work', exact: true }).click();
+      const row = page.locator('.comms-row__btn').filter({ hasText: 'Internal diagnostic' });
+      await row.waitFor();
+      await row.click();
+      const brief = page.locator('.comms-msg--agent').filter({ hasText: 'Diagnostic brief from Art' });
+      await brief.waitFor();
+      expect(await page.locator('.comms-msg--mine').filter({ hasText: 'Diagnostic brief from Art' }).count()).toBe(0);
+      expect(await noSideways(page)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      // Keep later app tests independent of this diagnostic.
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(job.id);
+      db.close();
+    }
+  }, 30_000);
 
   it('lets the owner choose a thread model, keeps the choice, and reports a failed save', async () => {
     const { ctx, page, errors } = await open(false);

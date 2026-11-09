@@ -328,13 +328,20 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
 function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void }) {
   const [archived, setArchived] = useState<Thread[] | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  useEffect(() => { if (showArchived) void getJson<{ threads: Thread[] }>('/comms?archived=1').then((r) => setArchived(r?.threads ?? [])); }, [showArchived]);
+  const [showBackground, setShowBackground] = useState(false);
+  useEffect(() => {
+    if (!showArchived && !showBackground) return;
+    let cancelled = false;
+    void getJson<{ threads: Thread[] }>(`/comms?archived=${showArchived ? 1 : 0}&background=${showBackground ? 1 : 0}`)
+      .then((r) => { if (!cancelled) setArchived(r?.threads ?? []); });
+    return () => { cancelled = true; };
+  }, [showArchived, showBackground, threads]);
   const groups = useMemo(() => {
     const pinned = threads.filter((t) => t.pinned), unread = threads.filter((t) => !t.pinned && t.unread), rest = threads.filter((t) => !t.pinned && !t.unread);
     return [['Pinned', pinned], ['Unread', unread], ['Threads', rest]] as const;
   }, [threads]);
   const act = async (t: Thread, verb: string) => { await post(`/comms/${t.id}/${verb}`, csrf); reload(); };
-  const list = showArchived ? [['Archived', archived ?? []] as const] : groups;
+  const list = showArchived || showBackground ? [[showBackground ? 'Background work' : 'Archived', archived ?? []] as const] : groups;
   return (
     <nav className="comms-list" aria-label="Threads">
       <header className="comms-list__head">
@@ -348,8 +355,10 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { 
             onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
-      {!threads.length && !showArchived && <p className="comms-empty">No threads yet. Start one with one of your agents.</p>}
-      <button type="button" className="comms-archived" onClick={() => setShowArchived(!showArchived)}>{showArchived ? 'Back to threads' : 'Archived'}</button>
+      {(showArchived || showBackground) && archived?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
+      {!threads.length && !showArchived && !showBackground && <p className="comms-empty">No threads yet. Start one with one of your agents.</p>}
+      <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
+      <button type="button" className="comms-archived" onClick={() => { setArchived(null); setShowArchived(!showArchived); }}>{showArchived ? 'Back to active' : 'Archived'}</button>
     </nav>
   );
 }
@@ -491,7 +500,7 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}{next && ` Next try at ${next}.`}</p>
     {conversation && !['no-runtime', 'busy', 'loop'].includes(String(card.error)) && <a className="loom-data comms-trace" href={traceHref(conversation)}>What happened</a>}</div>;
   if (m.kind === 'ask') return <div className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {agentName(m.from, marks).toLowerCase()}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></div>;
-  const mine = m.kind === 'message';
+  const mine = m.kind === 'message' && m.from !== agent;
   const delivery = mine ? deliveryOf(m) : undefined;
   const mark = marks[m.from];
   const avatar = mine

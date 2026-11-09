@@ -1286,3 +1286,13 @@ follow-ups are delivered to that conversation's actual venue and place. Thread
 access still requires that member to own the agent. The runtime's report post
 may carry a stable `spawn-run-…` reference to avoid duplicate reports after a
 restart. A client or an agent token cannot create these thread views directly.
+
+### Background job visibility (t-2002)
+
+An owner assigned to a runtime-spawned thread has access, but has not thereby
+spoken in it. Until they send a message, it appears under **Background work**
+in Comms rather than the personal thread list, unread badge, agent card summary
+or reply notifications. The direct link and all owner checks still work.
+A real owner follow-up promotes it into their normal threads. Background work
+can also show archived jobs. Inbox asks are independent and remain visible.
+A job brief attributed to the agent renders as the agent's words, never as You.

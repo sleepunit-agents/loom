@@ -522,7 +522,7 @@ export function digestsFor(h: Household, t: Thread): Array<{ at: string; summary
 export interface ListedThread extends Thread { unread: boolean; working: boolean; last_seq: number; last_reply: number }
 
 /** A member's threads with agents they own: pinned first, then by last; archived ones only when asked. */
-export function threadsOf(h: Household, member: Member, opts: { archived?: boolean } = {}): ListedThread[] {
+export function threadsOf(h: Household, member: Member, opts: { archived?: boolean; background?: 'only' | 'include' } = {}): ListedThread[] {
   const rows = withThreads(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE member = ? ORDER BY pinned DESC, last DESC').all(member.person) as ThreadRow[]);
   const listed = rows.filter((r) => owns(member, r.agent) && h.agents.includes(r.agent) && (opts.archived ? r.archived !== null : r.archived === null))
     .map((r) => {
@@ -532,7 +532,18 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
     });
   // Pinned, then unread, then the rest, each by last (comms.md, "Phone").
   const rank = (t: ListedThread) => (t.pinned ? 0 : t.unread ? 1 : 2);
-  return listed.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+  // A job assigned an owner for access is not a conversation that owner started.
+  // Keep it reachable by its link and in Background work until they actually write in it.
+  const visible = listed.filter((t) => {
+    if (opts.background === 'include') return true;
+    const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
+      && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+    const background = spawned && !withMessages(h.home, (db) => db.prepare(
+      "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
+    ).get(t.id, t.member));
+    return opts.background === 'only' ? background : !background;
+  });
+  return visible.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
 
 /** The most of a first unread reply's words that a desktop card carries (one line of it, docs/specs/agent-desk.md). */
