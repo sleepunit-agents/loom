@@ -26,6 +26,8 @@ it('only a fresh explicit idle observation proves idle', () => {
  if(typeof m === 'string') throw new Error(m);
  const ps=[{piece:'runtime',path:'runtime',manifest:m}];
  expect(tickerActivityOf(ps,'art',now)).toHaveProperty('activity.action','Idle');
+ expect(tickerActivityOf([...ps,...pieces([{text:'Working elsewhere'}])],'art',now)).toEqual({});
+ expect(tickerActivityOf([...ps,...pieces([{text:'Old work',activity}])],'art',now+30000)).toEqual({});
  expect(tickerActivityOf(ps,'art',now+30000)).toEqual({});
  expect(tickerActivityOf(pieces([]),'art',now)).toEqual({});
 });

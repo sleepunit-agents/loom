@@ -1200,6 +1200,8 @@ export function tickerActivityOf(pieces: PieceInfo[], agent: string, now = Date.
     .sort((a, b) => Date.parse(b.activity!.observedAt) - Date.parse(a.activity!.observedAt));
   const d = ds[0];
   if (!d?.activity) {
+    // An idle producer cannot account for another source's work without an observation.
+    if (pieces.some(p => p.manifest.agents?.[agent]?.doing?.length)) return {};
     const idle = pieces.flatMap(p => p.manifest.agents?.[agent]?.idle ? [p.manifest.agents[agent].idle!] : [])
       .find(i => Date.parse(i.observedAt) <= now && Date.parse(i.expiresAt) > now);
     return idle ? { activity: { action: 'Idle', ...idle } } : {};
