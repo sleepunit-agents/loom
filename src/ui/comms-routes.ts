@@ -15,12 +15,12 @@
  *   POST /comms/<thread>/send           {id, text}
  *   POST /comms/<thread>/title          {title}
  *   POST /comms/<thread>/project        {project | null}
- *   POST /comms/<thread>/pin, unpin, archive, unarchive, stop, delete
+ *   POST /comms/<thread>/pin, unpin, archive, unarchive, stop, resume, delete
  *   POST /comms/<thread>/read           {seq}
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  addMemberMessage, agentsComms, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
+  addMemberMessage, agentsComms, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { getConversation } from '../backends/conversations.js';
@@ -92,12 +92,16 @@ async function threadModel(c: CommsContext, t: Thread, member: Member, harness?:
     body: { agent: t.agent, conversation: t.conversation, ...(harness === undefined ? {} : { harness }) } }, c.env);
 }
 
-/** End the thread's body, through the runtime's `deliver end <conversation>` as the household owner. Never waits on it. */
-function endBody(env: NodeJS.ProcessEnv, t: Thread): void {
-  const p = runtimePath(env);
-  if (!p) return;
-  void pieceApi(p, { caller: { kind: 'owner', agents: '*' }, path: 'run', body: { argv: ['deliver', 'end', t.conversation] } }, env).catch(() => undefined);
+/** Control only the server-resolved thread, with its member's actual agent scope. */
+async function threadControl(c: CommsContext, t: Thread, member: Member, action: 'interrupt' | 'resume'): Promise<{ status: number; body: unknown }> {
+  const p = runtimePath(c.env);
+  if (!p) return { status: 503, body: { error: 'the runtime is unavailable' } };
+  return pieceApi(p, { caller: { kind: 'owner', agents: member.agents, who: member.person }, path: 'conversation-control',
+    body: { agent: t.agent, conversation: t.conversation, action } }, c.env);
 }
+
+const noRuntimeConversation = (r: { status: number; body: unknown }): boolean => r.status === 404 &&
+  !!r.body && typeof r.body === 'object' && 'error' in r.body && r.body.error === 'no such conversation';
 
 /**
  * What a delivery the runtime took says for the thread: its body's state, and an error when no body started. The
@@ -299,11 +303,23 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'project': send(200, { thread: view(setProject(h, t, body.project ?? null)) }); return true;
       case 'pin': setPinned(h, t, true); send(200, { ok: true }); return true;
       case 'unpin': setPinned(h, t, false); send(200, { ok: true }); return true;
-      case 'archive': setArchived(h, t, true); endBody(c.env, t); send(200, { ok: true }); return true;
+      case 'archive':
+      case 'delete': {
+        const r = await threadControl(c, t, m!, 'interrupt');
+        // A new thread may never have reached the runtime: there is no body to stop.
+        if (r.status !== 200 && !noRuntimeConversation(r)) { send(r.status, r.body); return true; }
+        if (verb === 'archive') setArchived(h, t, true); else deleteThread(h, t);
+        send(200, { ok: true, ...(r.status === 200 ? { interruption: r.body } : {}) }); return true;
+      }
       case 'unarchive': setArchived(h, t, false); send(200, { ok: true }); return true;
       case 'read': markRead(h, t, body.seq); send(200, { ok: true }); return true;
-      case 'stop': askStop(h, t); send(200, { ok: true }); return true;
-      case 'delete': deleteThread(h, t); endBody(c.env, t); send(200, { ok: true }); return true;
+      case 'stop':
+      case 'resume': {
+        const r = await threadControl(c, t, m!, verb === 'stop' ? 'interrupt' : 'resume');
+        if (noRuntimeConversation(r) && verb === 'stop') send(200, { ok: true, state: 'idle' });
+        else send(r.status, r.body);
+        return true;
+      }
       default: send(404, { error: 'not-found' }); return true;
     }
   } catch (e) { refuse(e); return true; }
