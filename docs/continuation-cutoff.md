@@ -38,3 +38,11 @@ reconciliation of indeterminate reports, real runtime/core crash crossing cutoff
 legacy upgrade proofs, independent review, and existing core timing failures.
 Production issuance remains deliberately held in the runtime draft. All companion
 PRs remain drafts; no merges or installation follow from these local proofs.
+
+Clock-envelope companion: core now requires a positive integer expiresAt on an
+authenticated clock continuation delivery and includes it in the delivery-id hash.
+Changing it conflicts; missing/legacy, string and invalid values are refused.
+Runtime must compare this with its sealed grant at admission: this envelope alone
+grants no authority. Companion runtime runner preflight is staged; remote native
+host recheck, runtime fenced reconciliation and cutoff crash/upgrade proofs remain
+shipping gates. Production issuance stays held, with no approved lifetime policy.

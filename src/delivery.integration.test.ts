@@ -194,7 +194,7 @@ describe('POST /api/loom/deliver', () => {
     });
 
     it('only authenticated clock carries opaque continuation fields, with payload conflict checking', async () => {
-      const continuation = { handle: `cont-${'a'.repeat(64)}`, wake: 'w-abcdef' };
+      const continuation = { handle: `cont-${'a'.repeat(64)}`, wake: 'w-abcdef', expiresAt: 9999999999999 };
       const body = wake('continued', { continuation });
       expect((await post(tok.w1, body)).status).toBe(403);
       expect(calls()).toHaveLength(0);
@@ -204,7 +204,8 @@ describe('POST /api/loom/deliver', () => {
       expect((await post(tok.clock, body)).status).toBe(200);
       expect(calls()).toHaveLength(1);
       expect((await post(tok.clock, wake('continued', { continuation: { ...continuation, wake: 'w-123456' } }))).status).toBe(409);
-      for (const bad of [{ ...continuation, target: 'forged' }, { ...continuation, handle: 'bad' }, { ...continuation, wake: 'bad' }]) {
+      expect((await post(tok.clock, wake('continued', { continuation: { ...continuation, expiresAt: 9999999999998 } }))).status).toBe(409);
+      for (const bad of [{ ...continuation, target: 'forged' }, { ...continuation, handle: 'bad' }, { ...continuation, wake: 'bad' }, { ...continuation, expiresAt: undefined }, { ...continuation, expiresAt: '9999999999999' }, { ...continuation, expiresAt: 0 }]) {
         expect((await post(tok.clock, wake('invalid', { continuation: bad }))).status).toBe(400);
       }
       expect((await post(tok.clock, slackMsg('wrong-venue', { continuation }))).status).toBe(400);

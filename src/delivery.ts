@@ -63,7 +63,7 @@ export interface DeliverBody {
    */
   local?: true;
   /** Opaque capability carried only by the authenticated clock, never display lineage. */
-  continuation?: { handle: string; wake: string };
+  continuation?: { handle: string; wake: string; expiresAt: number };
 }
 
 export type BodyState = 'fed' | 'resumed' | 'started' | 'queued' | 'failed';
@@ -120,9 +120,9 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   if (raw.local === true && (raw.venue !== 'wake' || raw.kind !== 'wake')) return 'local is only for a wake, on venue wake';
   if (raw.continuation !== undefined) {
     const c = raw.continuation;
-    if (!isObject(c) || Object.keys(c).some((k) => !['handle', 'wake'].includes(k)) ||
+    if (!isObject(c) || Object.keys(c).some((k) => !['handle', 'wake', 'expiresAt'].includes(k)) ||
         typeof c.handle !== 'string' || !/^cont-[0-9a-f]{64}$/.test(c.handle) ||
-        typeof c.wake !== 'string' || !/^w-[0-9a-f]{6}$/.test(c.wake)) return 'continuation is an opaque handle and exact wake id';
+        typeof c.wake !== 'string' || !/^w-[0-9a-f]{6}$/.test(c.wake) || !Number.isSafeInteger(c.expiresAt) || (c.expiresAt as number) <= 0) return 'continuation is an opaque handle and exact wake id';
     if (raw.venue !== 'wake' || raw.kind !== 'wake' || !isObject(raw.from) || raw.from.kind !== 'schedule') return 'continuation is only for a scheduled wake';
   }
   // The key and turn fields are conversations.md's: the turn parser checks them the same way.
@@ -135,7 +135,7 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   }
   return {
     id: raw.id, agent: raw.agent, venue: turn.venue, place: turn.place, ...(turn.label !== undefined ? { label: turn.label } : {}),
-    ...(raw.continuation !== undefined ? { continuation: { handle: (raw.continuation as Record<string, string>).handle, wake: (raw.continuation as Record<string, string>).wake } } : {}),
+    ...(raw.continuation !== undefined ? { continuation: { handle: (raw.continuation as Record<string, string>).handle, wake: (raw.continuation as Record<string, string>).wake, expiresAt: (raw.continuation as Record<string, unknown>).expiresAt as number } } : {}),
     from: turn.from, kind: raw.kind as DeliverKind, at: turn.at, text: raw.text, ...(raw.local === true ? { local: true as const } : {}),
   };
 }
@@ -207,7 +207,7 @@ export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, call
  * the same however its JSON was written. The table keeps this, never the text.
  */
 export function deliveryHash(d: DeliverBody): string {
-  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : []), ...(d.continuation ? ['continuation', d.continuation.handle, d.continuation.wake] : [])];
+  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : []), ...(d.continuation ? ['continuation', d.continuation.handle, d.continuation.wake, d.continuation.expiresAt] : [])];
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
