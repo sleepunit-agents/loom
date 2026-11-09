@@ -166,6 +166,11 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       expect(query(p, 'm')).toBe('activity');
       await p.click(KEY('Activity')); await tile(p, 'Activity').waitFor();
       await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
+      // Restoring Activity narrows People to one pane at these widths. Its already-open reader must not
+      // take focus from the dock and switch the focused tile/address back to People on that resize.
+      expect((await tiles(p)).find((t) => t.focused)?.label).toBe('Activity');
+      expect(await p.locator(KEY('Activity')).evaluate((el) => el === document.activeElement)).toBe(true);
+      expect(await tile(p, 'People').locator('.loom-tile__path').textContent()).toBe(`loom${person}`);
       await p.context().close();
     }, 60_000);
   }
