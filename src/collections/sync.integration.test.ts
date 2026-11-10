@@ -47,18 +47,20 @@ if (process.argv[2] === 'ui' && process.argv[3] === 'act') {
   process.exit(0);
 }
 if (process.argv[2] === 'ui') { console.log(JSON.stringify({ title: 'Tasks', sections: [] })); process.exit(0); }
-let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
+let s = ''; process.stdin.on('data', (d) => s += d).on('end', async () => {
   const ask = JSON.parse(s);
   const log = read('plog.json', []);
   const head = log.length ? log[log.length - 1] : { rev: 0, txn: 'genesis000' };
   if (process.argv[2] === 'changes') {
     const c = ask['tasks/task'];
+    if (read('hold-change.json', false)) { fs.writeFileSync(home + '/change-started', 'yes'); await new Promise((r) => setTimeout(r, 200)); }
     if (c.rev === null) return console.log(JSON.stringify({ 'tasks/task': { head: head.rev, txn: head.txn, changes: [] } }));
     // The proof: this log holds that transaction at that revision (rev 0 is the empty log's start).
     const at = c.rev === 0 ? { txn: 'genesis000' } : log.find((e) => e.rev === c.rev);
     if (!at || at.txn !== c.txn || head.rev < c.rev) return console.log(JSON.stringify({ 'tasks/task': { reset: true } }));
     const changes = log.filter((e) => e.rev > c.rev).map((e) => ({ op: e.op, id: e.id, rev: e.rev, txn: e.txn, ...(e.op === 'upsert' ? { audience: e.audience, record: e.record } : {}), ...(e.expires ? { expires: e.expires } : {}) }));
-    return console.log(JSON.stringify({ 'tasks/task': { head: head.rev, txn: head.txn, changes, more: false } }));
+    const limit = read('change-page.json', ask.limit || 1000);
+    return console.log(JSON.stringify({ 'tasks/task': { head: head.rev, txn: head.txn, changes: changes.slice(0, limit), more: changes.length > limit } }));
   }
   const all = read('records.json', []);
   const v = ask.viewer;
@@ -208,6 +210,9 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
   beforeEach(() => {
     for (const s of streams.splice(0)) s.stop();
     rev = 0;
+    rmSync(join(h.home, 'change-page.json'), { force: true });
+    rmSync(join(h.home, 'hold-change.json'), { force: true });
+    rmSync(join(h.home, 'change-started'), { force: true });
     writeFileSync(join(h.home, 'plog.json'), '[]');
     writeFileSync(join(h.home, 'records.json'), '[]');
     rmSync(join(h.home, 'collections', 'live.db'), { force: true });
@@ -240,6 +245,47 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     ], aggregates: { count: { n: 3, exact: true } } });
     const text = JSON.stringify(ev.frames);
     for (const word of ['rev', 'txn', 'epoch']) expect(text).not.toContain(`"${word}"`);
+  });
+
+  it.each([1001, 35])('a %i-row transaction advances through pages and commits whole, even beyond the round budget', async (n) => {
+    const { ev } = await live(tok.jonathan);
+    if (n === 35) writeFileSync(join(h.home, 'change-page.json'), '2');
+    commit(Array.from({ length: n }, (_, i) => ({ op: 'upsert' as const, id: 't-1', record: { agent: 'art', title: `step ${i}`, status: 'open' }, audience: { ownersOf: ['art'] } })));
+    await sync();
+    const state = withLog(h.home, (db) => ({
+      domain: db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number },
+      row: db.prepare("SELECT record FROM idx WHERE key = 'tasks/task/t-1'").get() as { record: string },
+      txns: db.prepare("SELECT COUNT(DISTINCT txn) AS n FROM log WHERE domain = 'tasks/task'").get() as { n: number },
+    }));
+    expect(state.domain.rev).toBe(n + 2);
+    expect(JSON.parse(state.row.record).title).toBe(`step ${n - 1}`);
+    expect(state.txns.n).toBe(1);
+    commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'later transaction', status: 'open' }, audience: { ownersOf: ['pond-bot'] } }]);
+    await sync();
+    expect(await until(() => JSON.stringify(rowsFrames(ev)).includes('later transaction'))).toBe(true);
+    expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number }).rev)).toBe(n + 3);
+  });
+
+  it.each([false, true])('a provider call that loses its lease cannot commit (successor already expired: %s)', async (expired) => {
+    await live(tok.jonathan);
+    commit([{ op: 'upsert', id: 't-1', record: { agent: 'art', title: 'after lease loss', status: 'open' }, audience: { ownersOf: ['art'] } }]);
+    writeFileSync(join(h.home, 'hold-change.json'), 'true');
+    const pulling = sync();
+    expect(await until(() => { try { return readFileSync(join(h.home, 'change-started'), 'utf-8') === 'yes'; } catch { return false; } })).toBe(true);
+    if (expired) {
+      // The slow call already read head 3. A successor reads head 4, then its lease expires too.
+      commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'successor progress', status: 'open' }, audience: { ownersOf: ['pond-bot'] } }]);
+      const last = JSON.parse(readFileSync(join(h.home, 'plog.json'), 'utf-8')).at(-1);
+      withLog(h.home, (db) => db.prepare("UPDATE domains SET rev = ?, txn = ?, lease = 'successor', lease_until = 0 WHERE domain = 'tasks/task'").run(last.rev, last.txn));
+    } else withLog(h.home, (db) => db.prepare("UPDATE domains SET lease = 'other-listener', lease_until = ? WHERE domain = 'tasks/task'").run(Date.now() + 30_000));
+    await pulling;
+    expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number }).rev)).toBe(expired ? 4 : 2);
+    expect(withLog(h.home, (db) => (db.prepare("SELECT COUNT(*) AS n FROM log WHERE domain = 'tasks/task'").get() as { n: number }).n)).toBe(0);
+    rmSync(join(h.home, 'hold-change.json'), { force: true });
+    if (expired) commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'next transaction', status: 'open' }, audience: { ownersOf: ['pond-bot'] } }]);
+    withLog(h.home, (db) => db.prepare("UPDATE domains SET lease_until = 0 WHERE domain = 'tasks/task'").run());
+    await sync();
+    expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number }).rev)).toBe(expired ? 5 : 3);
   });
 
   it('pulling twice writes nothing twice, and changes come in commit order', async () => {

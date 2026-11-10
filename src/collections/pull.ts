@@ -134,13 +134,25 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
   if (minted) tick(home);
   if (!p.piece || !p.changes || row.mode === 'bridge') return bridge(ctx, p, domain, types, row.epoch);
   let cursor = { rev: row.rev, txn: row.txn };
+  // Paging can be ahead of the durable cursor while a transaction is held.
+  let paging = cursor;
+  // Lease renewal alone cannot fence a suspended listener: a successor may already have
+  // advanced the durable cursor and let its own lease expire. Compare it under the write lock.
+  const atCursor = <T>(f: Parameters<typeof withLog<T>>[1]): T | undefined => withLog(home, (db) => db.transaction(() => {
+    const current = db.prepare('SELECT epoch, rev, txn FROM domains WHERE domain = ?').get(domain) as { epoch: string; rev: number | null; txn: string | null } | undefined;
+    if (!current || current.epoch !== row.epoch || current.rev !== cursor.rev || current.txn !== cursor.txn || !takeLease(db, domain, LISTENER, now())) return undefined;
+    return f(db);
+  }).immediate());
   let held: Array<Change & { type: string }> = [];
   let wrote = 0;
   let started = false;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const stdin = JSON.stringify({ [domain]: { rev: cursor.rev, txn: cursor.txn }, limit: PAGE_MAX });
+  for (let page = 0; page < MAX_PAGES || held.length > 0; page++) {
+    if (!atCursor(() => true)) return 'busy';
+    const stdin = JSON.stringify({ [domain]: { rev: paging.rev, txn: paging.txn }, limit: PAGE_MAX });
     const r = await poolOf(p.name).run(() => runOffer(ctx.env, p.piece!, p.changes!, { kind: 'collections', stdin, caller: { kind: 'owner' }, parse: (v) => v }));
     if (r === null) return 'busy';
+    // A slow provider may outlive the lease; do not commit if another listener took it.
+    if (!atCursor(() => true)) return 'busy';
     if (!r.ok) { process.stderr.write(`loom: collections changes from ${p.name} (${domain}) failed: ${r.error}\n`); return 'failed'; }
     const a = (r.value && typeof r.value === 'object' && !Array.isArray(r.value) ? (r.value as Record<string, unknown>)[domain] : undefined) as Record<string, unknown> | undefined;
     if (!a || typeof a !== 'object') { process.stderr.write(`loom: collections changes from ${p.name} said nothing of ${domain}\n`); return 'failed'; }
@@ -158,7 +170,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     if (cursor.rev === null) {
       if (typeof a.txn !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(a.txn)) return 'failed';
       started = true;
-      withLog(home, (db) => setCursor(db, domain, row.epoch, a.head as number, a.txn as string));
+      if (!atCursor((db) => { setCursor(db, domain, row.epoch, a.head as number, a.txn as string); return true; })) return 'busy';
       // What's there already reaches the index by snapshot (its expiry is kept from it); changes from the head on.
       const snap = await snapshot(ctx, p, types);
       if (typeof snap !== 'string') withLog(home, (db) => seedIndex(db, domain, row.epoch, [...snap.seen].map(([key, c]) => ({ key, audience: c.audience!, ...(c.agent ? { agent: c.agent } : {}), ...(c.expires !== undefined ? { expires: c.expires } : {}), record: c.record! }))));
@@ -166,7 +178,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     }
     if (!Array.isArray(a.changes) || a.changes.length > PAGE_MAX) return 'failed';
     const changes: Array<Change & { type: string }> = [];
-    let last = cursor.rev;
+    let last = paging.rev ?? -1;
     for (const raw of a.changes) {
       const c = parseChange(raw, p, types);
       // Out of order, or not a change: the page is refused whole, and the next pull asks again from the cursor.
@@ -174,6 +186,8 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
       last = c.rev as number;
       changes.push(c);
     }
+    if (a.more === true && !changes.length) return 'failed';
+    if (changes.length) { const tail = changes[changes.length - 1]; paging = { rev: tail.rev, txn: tail.txn }; }
     const all = [...held, ...changes];
     // Whole transactions only: a transaction still open at the page's end waits for the next page.
     let cut = all.length;
@@ -186,10 +200,16 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
       while (j < complete.length && complete[j].txn === complete[i].txn) j++;
       const txn = complete.slice(i, j);
       const end = txn[txn.length - 1];
-      wrote += withLog(home, (db) => writeTxn(db, domain, row.epoch, txn, (c) => ({ key: `${p.name}/${(c as Change & { type: string }).type}/${c.id}`, type: (c as Change & { type: string }).type }), now(), { rev: end.rev as number, txn: end.txn as string }));
+      const written = atCursor((db) => writeTxn(db, domain, row.epoch, txn, (c) => ({ key: `${p.name}/${(c as Change & { type: string }).type}/${c.id}`, type: (c as Change & { type: string }).type }), now(), { rev: end.rev as number, txn: end.txn as string }));
+      if (written === undefined) return 'busy';
+      wrote += written;
       cursor = { rev: end.rev, txn: end.txn };
       i = j;
     }
+    // Once the round budget is used, yield at the first committed boundary. A trailing partial
+    // transaction is read again next round from the durable cursor; a single larger transaction
+    // must finish before yielding, otherwise it could never make progress.
+    if (page + 1 >= MAX_PAGES && complete.length) break;
     if (a.more !== true) {
       if (!complete.length && Number.isSafeInteger(a.head) && typeof a.txn === 'string' && (a.head as number) === cursor.rev) break;
       break;
