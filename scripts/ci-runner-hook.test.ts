@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -14,14 +14,17 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 function run(event: string, payload: unknown, opts: { repo?: string; queue?: unknown; token?: boolean } = {}) {
   writeFileSync(join(dir, 'event.json'), JSON.stringify(payload));
   writeFileSync(join(dir, 'answer.json'), JSON.stringify(opts.queue ?? null));
-  writeFileSync(join(dir, 'curl'), opts.queue === undefined ? '#!/bin/sh\nexit 22\n' : `#!/bin/sh\ncat '${join(dir, 'answer.json')}'\n`);
+  // It also keeps what it was given on stdin, to show the token never reaches its arguments.
+  writeFileSync(join(dir, 'curl'), opts.queue === undefined ? '#!/bin/sh\nexit 22\n'
+    : `#!/bin/sh\ncat > '${join(dir, 'stdin')}'\necho "$@" > '${join(dir, 'argv')}'\ncat '${join(dir, 'answer.json')}'\n`);
   chmodSync(join(dir, 'curl'), 0o755);
   if (opts.token === false) rmSync(join(dir, 'token'), { force: true });
   else writeFileSync(join(dir, 'token'), 'not-a-token');
   return spawnSync('bash', [HOOK], {
     encoding: 'utf8',
     env: {
-      PATH: `${dir}:${process.env.PATH}`,
+      PATH: process.env.PATH,
+      LOOM_RUNNER_HOOK_CURL: join(dir, 'curl'),
       GITHUB_REPOSITORY: opts.repo ?? 'sleepunit-agents/loom',
       GITHUB_EVENT_NAME: event,
       GITHUB_EVENT_PATH: join(dir, 'event.json'),
@@ -71,10 +74,23 @@ describe('ci-runner-hook.sh', () => {
     expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }]) }).status).toBe(0);
   });
 
-  it("refuses a merge-queue group while a fork's pull request is queued", () => {
-    const r = run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }, { number: 2, isCrossRepository: true }]) });
+  it("refuses a merge-queue group that holds a fork's pull request", () => {
+    const r = run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: true }, { number: 2, isCrossRepository: false }]) });
     expect(r.status).not.toBe(0);
-    expect(r.stdout).toContain('#2');
+    expect(r.stdout).toContain('#1');
+  });
+
+  it("lets a group run with a fork's pull request queued behind it, which isn't in its code", () => {
+    const behind = queue([{ number: 1, isCrossRepository: false }, { number: 2, isCrossRepository: true }]);
+    behind.data.repository.mergeQueue.entries.nodes[0].headCommit.oid = SHA;
+    behind.data.repository.mergeQueue.entries.nodes[1].headCommit.oid = 'c'.repeat(40);
+    expect(run('merge_group', group(), { queue: behind }).status).toBe(0);
+  });
+
+  it('sends the token on stdin, not in arguments', () => {
+    expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }]) }).status).toBe(0);
+    expect(readFileSync(join(dir, 'stdin'), 'utf8')).toContain('not-a-token');
+    expect(readFileSync(join(dir, 'argv'), 'utf8')).not.toContain('not-a-token');
   });
 
   it('refuses a merge-queue group no longer queued, or not on main', () => {
@@ -89,5 +105,15 @@ describe('ci-runner-hook.sh', () => {
     expect(run('merge_group', group(), { queue: { errors: [{ message: 'nope' }] } }).status).not.toBe(0);
     expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }], 101) }).status).not.toBe(0);
     expect(run('merge_group', group(), { queue: queue([]), token: false }).status).not.toBe(0);
+    expect(run('merge_group', group(), { queue: { data: { repository: { mergeQueue: { entries: { totalCount: 0, nodes: null } } } } } }).status).not.toBe(0);
+    const nullPr = queue([{ number: 1, isCrossRepository: false }]);
+    (nullPr.data.repository.mergeQueue.entries.nodes[0] as { pullRequest: unknown }).pullRequest = null;
+    expect(run('merge_group', group(), { queue: nullPr }).status).not.toBe(0);
+  });
+
+  it('refuses when the event payload is unreadable', () => {
+    writeFileSync(join(dir, 'event.json'), 'not json');
+    const r = spawnSync('bash', [HOOK], { encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_REPOSITORY: 'sleepunit-agents/loom', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: join(dir, 'event.json') } });
+    expect(r.status).not.toBe(0);
   });
 });

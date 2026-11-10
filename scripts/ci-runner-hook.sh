@@ -8,13 +8,17 @@
 # runner's .env.
 #
 # Allowed: a push to this repository; a pull request whose branch is in this repository and which a person
-# opened (not Dependabot); a merge-queue group on main that is still queued, while no fork's pull
-# request is in the queue. Anything else,
+# opened (not Dependabot); a merge-queue group on main that is still queued and holds no fork's pull
+# request. Anything else,
 # and anything this can't read, is refused.
 #
 # The merge queue is only in GitHub's GraphQL API, which needs a token: LOOM_RUNNER_QUEUE_TOKEN_FILE names a
 # file holding a read-only token (it needs no permissions beyond reading this public repository).
 set -euo pipefail
+# Tools from the system, never from a PATH a job could have touched. The test points curl at a stand-in.
+PATH=/usr/bin:/bin
+JQ=/usr/bin/jq
+CURL=${LOOM_RUNNER_HOOK_CURL:-/usr/bin/curl}
 
 REPO=sleepunit-agents/loom
 refuse() { echo "::error::loom runner refuses this job: $*"; exit 1; }
@@ -27,33 +31,38 @@ case "${GITHUB_EVENT_NAME:-}" in
   push)
     exit 0 ;;
   pull_request)
-    head=$(jq -r '.pull_request.head.repo.full_name // ""' "$event")
-    author=$(jq -r '.pull_request.user.login // ""' "$event")
+    head=$("$JQ" -r '.pull_request.head.repo.full_name // ""' "$event")
+    author=$("$JQ" -r '.pull_request.user.login // ""' "$event")
     [ "$head" = "$REPO" ] || refuse "pull request from ${head:-a deleted fork}"
     [ "$author" != 'dependabot[bot]' ] || refuse "a Dependabot pull request"
     exit 0 ;;
   merge_group)
-    # Only main has a merge queue. The group must still be queued (its head commit is an entry's), so a group
-    # built with a fork's pull request that has since left the queue is refused too, and no fork's pull
-    # request may be queued anywhere.
-    base=$(jq -r '.merge_group.base_ref // ""' "$event")
-    sha=$(jq -r '.merge_group.head_sha // ""' "$event")
+    # Only main has a merge queue. A group holds the code of its own entry and every entry ahead of it, so
+    # those must all be this repository's; entries behind it are not in it. The group must still be queued
+    # (its head commit is an entry's): one built with a fork's pull request that has since left the queue
+    # is refused too. A fork's pull request can't merge through the queue while our runners are on.
+    base=$("$JQ" -r '.merge_group.base_ref // ""' "$event")
+    sha=$("$JQ" -r '.merge_group.head_sha // ""' "$event")
     [ "$base" = refs/heads/main ] || refuse "a merge queue on ${base:-an unknown branch}"
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse "a merge-queue group with no head commit"
     token_file=${LOOM_RUNNER_QUEUE_TOKEN_FILE:-}
     [ -n "$token_file" ] && [ -r "$token_file" ] || refuse "no token to read the merge queue"
     query='{"query":"{ repository(owner: \"sleepunit-agents\", name: \"loom\") { mergeQueue(branch: \"main\") { entries(first: 100) { totalCount nodes { headCommit { oid } pullRequest { number isCrossRepository } } } } } }"}'
-    answer=$(curl -fsS --max-time 20 -H "Authorization: bearer $(cat "$token_file")" -H 'Content-Type: application/json' \
-      -d "$query" https://api.github.com/graphql) || refuse "could not read the merge queue"
-    verdict=$(jq -r --arg sha "$sha" '
+    # The token goes to curl on stdin, not in its arguments, where any process could read it.
+    answer=$(printf 'header = "Authorization: bearer %s"\n' "$(< "$token_file")" \
+      | "$CURL" -fsS --max-time 20 -K - -H 'Content-Type: application/json' -d "$query" https://api.github.com/graphql) \
+      || refuse "could not read the merge queue"
+    verdict=$("$JQ" -r --arg sha "$sha" '
       .data.repository.mergeQueue.entries as $e
-      | if $e == null or ($e.totalCount > ($e.nodes | length)) then "unreadable"
-        elif ([$e.nodes[] | select(.headCommit.oid == $sha)] | length) == 0 then "gone"
-        else ([$e.nodes[] | select(.pullRequest.isCrossRepository != false) | .pullRequest.number // "?"] | join(" "))
+      | if ($e | type) != "object" or ($e.nodes | type) != "array" or $e.totalCount > ($e.nodes | length) then "unreadable"
+        else ([$e.nodes | to_entries[] | select(.value.headCommit.oid == $sha) | .key] | first) as $at
+        | if $at == null then "gone"
+          else ([$e.nodes[0:$at + 1][] | select(.pullRequest.isCrossRepository != false) | .pullRequest.number // "?"] | join(" "))
+          end
         end' <<<"$answer") || refuse "could not read the merge queue"
     [ "$verdict" != unreadable ] || refuse "could not read the whole merge queue"
     [ "$verdict" != gone ] || refuse "this group is no longer in the merge queue"
-    [ -z "$verdict" ] || refuse "a fork's pull request is in the merge queue (#$verdict)"
+    [ -z "$verdict" ] || refuse "this group holds a fork's pull request (#$verdict)"
     exit 0 ;;
   *)
     refuse "event ${GITHUB_EVENT_NAME:-unknown}" ;;
