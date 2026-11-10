@@ -18,6 +18,7 @@ import { agentName } from './core.js';
 import { needsAskKey, needsAskText } from './push.js';
 import { openProjectsStore } from '../backends/projects.js';
 import type { CardPerson, ProjectCards, ProjectCardView } from './project-cards.js';
+import { NO_PROJECTS } from './project-cards.js';
 
 export type { CardPerson, ProjectCards, ProjectCardView };
 import { splitPage, validPath, type Block, type Page, type Section } from './vocab.js';
@@ -37,7 +38,7 @@ interface Gist {
   changes?: { open: number; failing: number; running: number };
   people: CardPerson[];
 }
-interface Count { at: number; waiting: number; error?: string; gist?: Gist }
+interface Count { at: number; waiting: number; error?: string; gist?: Gist; directoryUpdated?: string }
 
 /** The sparkline's window: the index's `since`, a day a point. */
 export const SPARK_DAYS = 7;
@@ -152,6 +153,7 @@ async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: n
   } catch (e) {
     result = { at: nowMs, waiting: 0, error: (e as Error).message ?? 'failed' };
   }
+  result.directoryUpdated = p.updated;
   counts.set(key, result);
   return result;
 }
@@ -194,7 +196,8 @@ function cardOf(o: ProjectsOwner, p: ProjectListEntry, summary: string | undefin
     lately: (gist?.dated ?? []).filter((d) => !d.waiting).slice(0, 3).map((d) => ({ text: d.text.slice(0, 200), ago: age(d.when, nowMs), ...(d.status ? { status: d.status } : {}) })),
     repos: (p.links.repos ?? []).map(repoChip),
     people: (gist?.people ?? (o.agent ? [{ name: o.agent, agent: o.agent }] : [])).slice(0, 12),
-    activity: p.activity,
+    // Cached feeds can predate this directory read. Their stamp must stay theirs, not the new card's.
+    activity: p.activity, directoryUpdated: c && c !== 'late' ? c.directoryUpdated : p.updated,
   };
   if (c !== undefined) {
     card.waiting = c === 'late' ? { unknown: "Couldn't count what's waiting: its sections are slow to answer." }
@@ -238,8 +241,8 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
     }
   }
   if (!rows.length) {
-    return { page: { title: 'Projects', sections: [{ id: 'none', blocks: [{ type: 'text', tone: 'muted',
-      text: 'No projects yet. A project is an ongoing body of work with a goal (a product, a client, a season); an agent makes one with project_write, and its page here collects everything filed under it.' }] }] } };
+    return { cards: { active: [], quiet: [], waiting: 0 }, page: { title: 'Projects', sections: [{ id: 'none', blocks: [{ type: 'text', tone: 'muted',
+      text: NO_PROJECTS }] }] } };
   }
   const live = rows.filter((r) => r.p.status === 'active');
   const quiet = rows.filter((r) => r.p.status !== 'active');

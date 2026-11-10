@@ -261,7 +261,28 @@ describe('the Projects pages, directly', () => {
     expect(cards!.quiet.map((c) => [c.slug, c.waiting])).toEqual([['old', undefined]]);
     expect(whatOf('A sentence with v1.2 in it. And more.')).toBe('A sentence with v1.2 in it.');
     expect(whatOf('A first sentence\nwrapped over two lines. Then more.')).toBe('A first sentence wrapped over two lines.');
-    expect((await projectsApp([{ dir: join(dir, 'none') }])).cards).toBeUndefined();
+    expect((await projectsApp([{ dir: join(dir, 'none') }])).cards).toEqual({ active: [], quiet: [], waiting: 0 });
+  });
+
+  it('cached feed details keep the directory stamp they were counted for after a card edit', async () => {
+    write(dir, { slug: 'stamped', name: 'Before' });
+    const calls = { n: 0 };
+    const hub = hubWith([{ key: 'piece:tasks', groups: [{ title: 'Work', waiting: true, items: [{ title: 'Choose a date', when: new Date(NOW).toISOString(), who: ['Ada'] }] }] }], calls);
+    const first = await projectsApp([{ dir }], { hub, nowMs: NOW });
+    const store = openProjectsStore(dir, { now: () => NOW + 1000 })!;
+    try { store.write({ slug: 'stamped', name: 'After' }); } finally { store.close(); }
+    const after = await projectsApp([{ dir }], { hub, nowMs: NOW + 2000 });
+    expect(after.cards!.active[0].name).toBe('After');
+    expect(after.cards!.active[0].directoryUpdated).toBe(first.cards!.active[0].directoryUpdated);
+    expect(after.cards!.active[0].directoryUpdated).toBe(new Date(NOW).toISOString());
+    expect(calls.n).toBe(1);
+    for (const field of ['waiting', 'lately', 'people', 'spark', 'changes'] as const) expect(after.cards!.active[0][field]).toEqual(first.cards!.active[0][field]);
+    expect(after.cards!.active[0].waiting).toEqual({ count: 1, items: ['Choose a date'] });
+    expect(after.cards!.active[0].people).toEqual([{ name: 'Ada' }]);
+    expect(after.cards!.active[0].spark).toBeDefined();
+    forgetProjectCounts();
+    const fresh = await projectsApp([{ dir }], { hub, nowMs: NOW + 3000 });
+    expect(fresh.cards!.active[0].directoryUpdated).toBe(new Date(NOW + 1000).toISOString());
   });
 
   it('an archived project\'s page says so', async () => {

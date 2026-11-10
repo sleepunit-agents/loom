@@ -4,6 +4,8 @@
  */
 export interface CardPerson { name: string; person?: string; agent?: string }
 
+export const NO_PROJECTS = 'No projects yet. A project is an ongoing body of work with a goal (a product, a client, a season); an agent makes one with project_write, and its page here collects everything filed under it.';
+
 /** One project's card on the index (docs/specs/projects.md, "The index"), drawn by web/src/projects.tsx. */
 export interface ProjectCardView {
   slug: string;
@@ -24,5 +26,7 @@ export interface ProjectCardView {
   repos: string[];
   people: CardPerson[];
   activity: string;
+  /** Directory revision whose card selectors these page-owned feeds were computed for. */
+  directoryUpdated?: string;
 }
 export interface ProjectCards { active: ProjectCardView[]; quiet: ProjectCardView[]; waiting: number }

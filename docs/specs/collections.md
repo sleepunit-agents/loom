@@ -1178,6 +1178,16 @@ household owners and core before filtering, paging and totals; agent owners and 
 matching the Projects app. Each row also carries `owners: true` for core's independent audience check. It reads core stores directly and
 runs no piece commands. Counts depending on the clock use the batch's observation time.
 
-This is directory coverage only. Project waiting counts, piece feeds, cards and hub consumers have not
-moved to it yet. Their piece-owned membership and status rules must remain authoritative; do not derive
+The Projects index reads this whole directory (every page, strictly inside the shared 1000-row window)
+for membership, names, status, repos and activity. While loading, partial, stale or refused it keeps its
+page's cards. A whole empty directory removes the last card too. Two windows reuse the same set, including
+its warm snapshot; changes arrive through the existing shared stream, with no new timers or piece reads.
+A new project can appear on an initially empty index. A new or newly active card says its waiting count
+is unknown, rather than claiming nothing waits; a quiet card sheds active feed details. Page feeds carry
+the directory `updated` stamp they used: any card edit invalidates them until a page with the matching
+stamp arrives, including in another window opened from a cached page. A reconnect during continuation
+restarts paging even when the first page has the same length as before.
+
+This is directory coverage only. Project summaries, waiting counts, piece feeds, card gists and hub consumers
+still come from their pages. Their piece-owned membership and status rules must remain authoritative; do not derive
 them by copying those rules into core or by adding per-request piece commands.
