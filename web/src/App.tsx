@@ -230,6 +230,7 @@ export default function App() {
   // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
   const [D, setD] = useState(desk$);
   // The tile that has focus (tiles.tsx tells): the dock lights its key and the bar says its page.
+  const [tileOpen, setTileOpen] = useState<{ key: string; label: string }[]>([]);
   const [tileFocus, setTileFocus] = useState<import('./tiling/tiles').Focused>(null);
 
   // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
@@ -399,7 +400,7 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <>{agentDock
+    value: t.href, label: t.label, open: tiled && tileOpen.some((a) => a.key === t.href), icon: <>{agentDock
       // An agent's own dock wears the agent's colour, not an app's tint (looks.css): the pixel ramps are the apps' tints,
       // so its keys keep their line icons.
       ? <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />
@@ -411,6 +412,9 @@ export default function App() {
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
   const lit = launching && wide && chrome?.shell?.household ? '#apps' : tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
+  const temporary = tiled && !agentDock ? tileOpen.filter((a) => !phoneTabs.some((t) => t.href === a.key)) : [];
+  const temporaryItems = dockItems(temporary.map((a) => ({ href: a.key, label: a.label, current: false })))
+    .map((a, i) => ({ ...a, divider: i === 0 }));
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
@@ -670,7 +674,7 @@ export default function App() {
 
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
-              <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
+              <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} onOpen={setTileOpen} outerGo={go}
                 shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} deskEnv={(g) => pageEnv(mainPage, g)}
                 oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
@@ -700,7 +704,7 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(me ? [me] : []),
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...temporaryItems, ...(me ? [me] : []),
                   // A desktop's last key: every app (launcher.tsx).
                   ...(desk && !agentDock ? [{ value: '#apps', label: 'All apps', tint: 'olive', icon: <span className="loom-apps-dots" aria-hidden>{Array.from({ length: 9 }, (_, n) => <i key={n} />)}</span> }] : [])]}
                 value={lit} onValueChange={pick}

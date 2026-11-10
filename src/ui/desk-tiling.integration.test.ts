@@ -91,6 +91,35 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     await expect.poll(() => p.locator('.loom-launcher').count()).toBe(0);
   };
 
+  it('marks every open app and keeps temporary launcher keys until closed', async () => {
+    const p = await screen(1280, 800);
+    const lane = (name: string) => p.locator(KEY(name)).locator('..');
+    await open(p, 'Inbox', 1);
+    await open(p, 'Comms', 2);
+    for (const name of ['Inbox', 'Comms']) expect(await lane(name).getAttribute('data-open')).toBe('true');
+    expect(await lane('Comms').getAttribute('data-active')).toBe('true');
+    expect(await lane('Inbox').getAttribute('data-active')).toBeNull();
+    const mark = async (name: string) => lane(name).locator('[data-part="active-indicator"]').evaluate((e) => ({ color: getComputedStyle(e).backgroundColor, size: getComputedStyle(e).transform }));
+    expect((await mark('Inbox')).color).not.toBe('rgba(0, 0, 0, 0)');
+    expect((await mark('Inbox')).color).not.toBe((await mark('Comms')).color);
+    expect(await p.locator(KEY('Appearance')).count()).toBe(0);
+    await launch(p, 'Appearance');
+    await expect.poll(() => p.locator(KEY('Appearance')).count()).toBe(1);
+    expect(await lane('Appearance').getAttribute('data-divider')).toBe('true');
+    expect(await lane('Appearance').getAttribute('data-open')).toBe('true');
+    await p.click(KEY('Appearance')); // minimize, still open
+    expect(await lane('Appearance').getAttribute('data-open')).toBe('true');
+    await p.click(KEY('Appearance'));
+    await p.locator('.loom-tile[aria-label*="Appearance"] button[aria-label="Close Appearance"]').click();
+    await expect.poll(() => p.locator(KEY('Appearance')).count()).toBe(0);
+    await p.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
+    expect(await p.locator('.loom-dock-bar [data-open], .loom-dock-bar [data-divider]').count()).toBe(0);
+    const bounds = await p.locator('.loom-dock-bar [data-part="items"]').boundingBox();
+    expect(bounds!.width).toBeLessThanOrEqual(390);
+    await p.context().close();
+  });
+
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     it(`10. open, focus, minimize and back, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);

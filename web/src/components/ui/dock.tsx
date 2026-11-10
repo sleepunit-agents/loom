@@ -13,6 +13,8 @@ export type DockItem = {
   label: string;
   icon: React.ReactNode;
   disabled?: boolean;
+  open?: boolean;
+  divider?: boolean;
   badge?: React.ReactNode;
   /** The item's own colour, one of the palette's names (pink, blue, yellow, olive); without one, by its place. */
   tint?: string;
@@ -333,6 +335,8 @@ export function Dock({
                   key={item.value}
                   data-part="lane"
                   data-tint={item.tint}
+                  data-open={item.open || undefined}
+                  data-divider={item.divider || undefined}
                   data-active={item.value === activeValue || undefined}
                   data-engaged={engaged || undefined}
                 >
