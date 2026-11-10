@@ -36,7 +36,7 @@ export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unava
   jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[];
   moving?: { agent: string; text: string; meta?: string }[];
   /** The system bar's ticker (agent-status 1.2; the live record's, not Home's card). */
-  activity?: TickerActivity; activityUnavailable?: boolean };
+  activity?: TickerActivity | null; activityUnavailable?: boolean };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 /** The member's own Comms, per agent (src/comms.ts agentsComms). */
 export type AgentComms = { agent: string; unread: number; first?: { thread: string; text: string | null };

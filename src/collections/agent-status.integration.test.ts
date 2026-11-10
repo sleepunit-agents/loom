@@ -171,7 +171,8 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     // jonathan's thread's step is his ticker's; sam (another owner of art) is told nothing of it.
     const jonArt = ((await ask('jonathan')).rows as Data[]).find((r) => r.agent === 'art');
     expect(jonArt.activity).toEqual(expect.objectContaining({ action: 'Reading a file', where: 'Comms' }));
-    expect(((await ask('sam')).rows as Data[])[0].activity).toBeUndefined();
+    // Nothing fresh is said as null (1.2), so a window clears what it had.
+    expect(((await ask('sam')).rows as Data[])[0].activity).toBeNull();
     expect((await home('jonathan')).home.moving).toEqual([expect.objectContaining({ agent: 'art', text: 'On two things' })]);
     const sam = await ask('sam');
     expect((sam.rows as Data[]).map((r) => r.agent)).toEqual(['art']);

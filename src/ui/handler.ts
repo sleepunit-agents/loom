@@ -1213,7 +1213,8 @@ async function memberCards(base: UiOptions, full: Household, m: Member): Promise
   // The system bar's ticker for each (agent-status 1.2): its fresh activity (tickerActivityOf, over this member's
   // pieces), or that loom can't say what it's doing. "Active 4m ago" is said again in the window from `seen.at`.
   const runtime = pieces.some((p) => p.piece === 'runtime');
-  return agentCards(hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, ...tickerActivityOf(pieces, c.id, now),
+  // `activity` is always said (null: nothing fresh), so a window tells a 1.2 card with nothing to report from an older one.
+  return agentCards(hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, activity: tickerActivityOf(pieces, c.id, now).activity ?? null,
     ...(!runtime || c.state === 'unavailable' || c.state === 'broken' ? { activityUnavailable: true } : {}) }));
 }
 

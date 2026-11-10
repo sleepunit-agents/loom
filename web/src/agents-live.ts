@@ -77,8 +77,10 @@ type ShellAgent = { id: string; working?: boolean; sub?: string; activity?: Tick
 export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, now = Date.now()): A {
   if (!c) return a;
   const { working: _w, sub: _s, ...rest } = a;
-  const out = { ...rest, ...(c.state === 'working' ? { working: true } : {}), sub: c.seen?.at ? `active ${ago(c.seen.at, now) || 'a while ago'}` : 'quiet for 3 days' } as A;
-  if (!('activity' in c) && !('activityUnavailable' in c)) return out;
+  const recent = !!c.seen?.at && now - Date.parse(c.seen.at) < 72 * 3_600_000;
+  const out = { ...rest, ...(c.state === 'working' ? { working: true } : {}), sub: recent ? `active ${ago(c.seen!.at, now) || 'a while ago'}` : 'quiet for 3 days' } as A;
+  // A 1.2 card always says `activity` (null: nothing fresh); an older one doesn't, and the page's ticker stands.
+  if (!('activity' in c)) return out;
   delete out.activity; delete out.activityUnavailable;
   const d = c.activity;
   if (d && Date.parse(d.observedAt) <= now && Date.parse(d.expiresAt) > now) out.activity = d;

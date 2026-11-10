@@ -21,6 +21,11 @@ describe('shellAgentOf', () => {
       activity: { action: 'Working', observedAt: at(-40), expiresAt: at(-10) } }, now);
     expect(a).toEqual({ id: 'art', label: 'Art', sub: 'quiet for 3 days', activityUnavailable: true });
   });
+  it('a 1.2 card with nothing to say clears the page\'s ticker; a last step over three days old is quiet', () => {
+    const was = { ...page, activityUnavailable: true as const };
+    expect(shellAgentOf(was, { id: 'art', label: 'Art', bg: '', fg: '', state: 'available', activity: null, seen: { at: at(-73 * 3600), where: 'Comms' } }, now))
+      .toEqual({ id: 'art', label: 'Art', sub: 'quiet for 3 days' });
+  });
   it('keeps the page\'s ticker for a record from before 1.2, and leaves an agent with no card as it was', () => {
     expect(shellAgentOf(page, { id: 'art', label: 'Art', bg: '', fg: '', state: 'working', seen: { at: at(-10), where: 'Comms' } }, now))
       .toEqual({ ...page, sub: 'active just now' });
