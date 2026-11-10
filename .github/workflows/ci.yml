@@ -62,10 +62,10 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Only a push to main can publish a deployable build. Its name pins the
-      # merged commit, never a PR/merge-group head. Deploy also checks run success.
+      # Exercise runtime packaging on PRs and in the queue too. Deploy accepts
+      # only a successful main-push run with the exact merged commit.
       - name: Package deploy build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.node-version == '24.x' && matrix.shard == 1
+        if: matrix.node-version == '24.x' && matrix.shard == 1
         run: |
           printf '%s\n' "$GITHUB_SHA" > deploy-commit
           # Install production dependencies in CI, including native modules.
@@ -80,7 +80,7 @@ jobs:
           mv node_modules deploy-runtime/node_modules
           mv node_modules-dev node_modules
       - name: Keep deploy build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.node-version == '24.x' && matrix.shard == 1
+        if: matrix.node-version == '24.x' && matrix.shard == 1
         uses: actions/upload-artifact@v7
         with:
           name: loom-build-${{ github.sha }}
