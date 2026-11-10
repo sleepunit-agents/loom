@@ -263,9 +263,20 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     await sync();
     await until(() => rowsFrames(jon.ev).length >= 1);
     expect(rowsFrames(jon.ev).map((f) => f.data)).toEqual([{ seq: 1, sub: 'q', scope: 1, leaves: ['tasks/task/t-1'] }]);
-    // loren never held t-1 (art's): no frame names it.
-    await deliverNow(h.home);
-    expect(JSON.stringify(loren.ev.frames)).not.toContain('t-1');
+    // Loren never held t-1 (art's). Deliver an allowed update as a barrier: seeing it proves her
+    // reader consumed the earlier writes too, so an undelivered private frame can't escape the check.
+    commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'pond two, after', status: 'open' }, audience: { ownersOf: ['pond-bot'] } }]);
+    await sync();
+    expect(await until(() => rowsFrames(loren.ev).some((f) =>
+      (f.data.upserts as Array<Record<string, unknown>> | undefined)?.some((r) => r.title === 'pond two, after') ?? false))).toBe(true);
+    // hello's random stream id can itself contain 't-1'. Require the exact frames instead:
+    // no private leave, delete, upsert, count or extra event, before or alongside the barrier.
+    expect(loren.ev.frames).toEqual([
+      { event: 'hello', data: loren.ev.hello },
+      { event: 'rows', data: { seq: 1, sub: 'q', scope: 1, upserts: [
+        { key: 'tasks/task/t-2', title: 'pond two, after', status: 'open', agent: 'pond-bot' },
+      ] } },
+    ]);
   });
 
   it('a change to a record the viewer can\'t see sends their subscription nothing at all, not even a count', async () => {
