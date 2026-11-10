@@ -103,7 +103,7 @@ export function withAgentCards<V extends { view: string; chrome?: { shell?: { ag
   }
   if (data.view === 'house-home') firstRunShown = !!(data.home as { firstRun?: unknown } | undefined)?.firstRun;
   if (data.view === 'house-home' && data.home && typeof data.home === 'object') {
-    out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live), moving: live.flatMap((c) => c.moving ?? []) } };
+    out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c, now)), headline: headlineOf(live), moving: live.flatMap((c) => c.moving ?? []) } };
   }
   return out;
 }
