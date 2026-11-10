@@ -20,21 +20,23 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
   const [to, setTo] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
   const [text, setText] = useState('');
+  // A send refused or lost (the member's to fix by changing it), apart from loom not saying who to ask.
   const [error, setError] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   // One id per sheet: pressing Send twice, or again after a lost answer, is the same thread (openThread's repeat).
   const id = useRef(newId());
   useEffect(() => {
     if (!about) return;
     id.current = newId();
-    setRoute(null); setTo(null); setChanging(false); setText(''); setError(null);
+    setRoute(null); setTo(null); setChanging(false); setText(''); setError(null); setRouteError(null);
     const q = about.agent ? `?agent=${encodeURIComponent(about.agent)}` : '';
     // A late answer for an item since closed never lands on the next one's sheet.
     const gone = new AbortController();
     void fetch(`/comms/route${q}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: gone.signal })
       .then(async (r) => (r.ok ? (await r.json()) as Route : Promise.reject(r.status)))
       .then((r) => { setRoute(r); setTo(r.pick); setChanging(r.pick === null); })
-      .catch(() => { if (!gone.signal.aborted) setError('loom can\'t say who to ask right now. Try again in a moment.'); });
+      .catch(() => { if (!gone.signal.aborted) setRouteError('loom can\'t say who to ask right now. Close this and try again in a moment.'); });
     return () => gone.abort();
   }, [about]);
   const name = (a: string) => agents.find((x) => x.id === a)?.label ?? a;
@@ -66,7 +68,7 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
             </div>
             <div className="loom-chat-about__to">
               <span className="loom-chat-about__to-word">To</span>
-              {!route && !error && <span className="loom-data">Finding who to ask…</span>}
+              {!route && !routeError && <span className="loom-data">Finding who to ask…</span>}
               {route && to && !changing && (
                 <>
                   <span className="loom-chat-about__agent" data-agent={to}>{name(to)}</span>
@@ -78,7 +80,7 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
                 <span className="loom-chat-about__pick" role="radiogroup" aria-label="Who to ask">
                   {route.agents.map((a) => (
                     <button key={a} type="button" role="radio" aria-checked={a === to} data-on={a === to || undefined}
-                      onClick={() => { setTo(a); setChanging(false); }}>{name(a)}</button>
+                      onClick={() => { if (error) { id.current = newId(); setError(null); } setTo(a); setChanging(false); }}>{name(a)}</button>
                   ))}
                 </span>
               )}
@@ -92,7 +94,7 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
             }} rows={4} maxLength={39_000}
               placeholder="What do you want to know?" aria-label="Your message"
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
-            {error && <p className="loom-chat-about__error" role="alert">{error}</p>}
+            {(error ?? routeError) && <p className="loom-chat-about__error" role="alert">{error ?? routeError}</p>}
             <div className="loom-chat-about__go">
               <Button type="submit" disabled={!to || !text.trim() || sending}>{sending ? 'Starting…' : to ? `Send to ${name(to)}` : 'Send'}</Button>
             </div>

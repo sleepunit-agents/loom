@@ -20,7 +20,7 @@ import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
 import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
 import { Split, type SplitFolder } from './split';
-import { aboutAttr, chatAbout, type About } from './about';
+import { aboutAttr, chatAbout, validAbout, type About } from './about';
 import './inbox.css';
 
 const useEnv = () => useContext(EnvContext)!;
@@ -260,7 +260,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks, replyId, 
       )}
       <Fine text={i.fine} className="loom-inbox__fine" />
       {/* Chat about this (about.ts): a thread about the item, never an answer to it. */}
-      <div className="loom-inbox__chat"><Button size="sm" variant="outline" onClick={() => chatAbout(inboxAbout(i, p.title))}>Chat about this</Button></div>
+      {validAbout(inboxAbout(i, p.title)) && <div className="loom-inbox__chat"><Button size="sm" variant="outline" onClick={() => chatAbout(inboxAbout(i, p.title))}>Chat about this</Button></div>}
       <div className="loom-inbox__meta">
         {(own || i.href || refs.length > 0) && (
           <section aria-label="Where it lives">

@@ -15,13 +15,20 @@ export const CHAT_ABOUT = 'loom-chat-about';
 const PAGE = /^[A-Za-z0-9][A-Za-z0-9._~/-]{0,199}$/;
 const REF = /^(?:t-\d{1,9}|a-[0-9a-f]{8}|cv-[0-9a-f]{12}|github:[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}|[a-z][a-z0-9-]{0,39}:[A-Za-z0-9._@/#:-]{1,160})$/;
 
-/** Ask for the sheet about `a`; nothing happens when loom couldn't find it again (no ref or page it takes). */
-export function chatAbout(a: About): void {
+/** `a` with only the page and ref loom takes, or null when neither is left: then nothing offers Chat about this. */
+export function validAbout(a: About | null): About | null {
+  if (!a || !a.label.trim()) return null;
   const page = a.page && PAGE.test(a.page) && !a.page.split('/').includes('..') ? a.page : undefined;
   const ref = a.ref && REF.test(a.ref) ? a.ref : undefined;
-  if (!page && !ref) return;
+  if (!page && !ref) return null;
   const { page: _p, ref: _r, ...rest } = a;
-  dispatchEvent(new CustomEvent<About & { seen: string }>(CHAT_ABOUT, { detail: { ...rest, ...(ref ? { ref } : {}), ...(page ? { page } : {}), seen: new Date().toISOString() } }));
+  return { ...rest, ...(ref ? { ref } : {}), ...(page ? { page } : {}) };
+}
+
+/** Ask for the sheet about `a` (one validAbout made). */
+export function chatAbout(a: About): void {
+  const ok = validAbout(a);
+  if (ok) dispatchEvent(new CustomEvent<About & { seen: string }>(CHAT_ABOUT, { detail: { ...ok, seen: new Date().toISOString() } }));
 }
 
 /** The attribute a row puts on itself to be chatted about. */
@@ -34,7 +41,7 @@ export function aboutOf(el: Element | null): About | null {
   try {
     const o = JSON.parse(raw) as Record<string, unknown>;
     const s = (k: string) => (typeof o[k] === 'string' && o[k] ? { [k]: o[k] as string } : {});
-    return typeof o.label === 'string' && o.label && (o.ref || o.page) ? { label: o.label, ...s('ref'), ...s('page'), ...s('agent') } : null;
+    return typeof o.label === 'string' ? validAbout({ label: o.label, ...s('ref'), ...s('page'), ...s('agent') }) : null;
   } catch { return null; }
 }
 
@@ -50,5 +57,5 @@ export function aboutPage(url: string, label: string): About | null {
   const slug = /^(knowledge|projects|people)\/([a-z0-9][a-z0-9-]*)$/.exec(path);
   const agent = /^a\/([a-z][a-z0-9-]*)(?:\/|$)/.exec(path)?.[1];
   const ref = task ?? cv?.[2] ?? (slug ? `${{ knowledge: 'knowledge', projects: 'project', people: 'person' }[slug[1]]}:${slug[2]}` : undefined);
-  return { label: label.slice(0, 120), page: path, ...(ref ? { ref } : {}), ...(agent ? { agent } : {}) };
+  return validAbout({ label: label.slice(0, 120), page: path, ...(ref ? { ref } : {}), ...(agent ? { agent } : {}) });
 }
