@@ -84,7 +84,7 @@ import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
 import { registerCoreSource } from '../collections/core-types.js';
 import type { MemRecord } from '../collections/memory.js';
 import { ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
-import { nudge } from '../collections/pull.js';
+import { GAP_MS, nudge } from '../collections/pull.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
@@ -1070,6 +1070,30 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
  * outcomes), so a badge, Home, the Inbox and a thread's ask card read one set. For the core viewer: every member's,
  * once each, without anyone's own read state, and with how many members have opened each, so a read moves it.
  */
+/**
+ * "Something changed" (live.ts) moves the attention records: a nudge, at most one per GAP_MS a household (a burst of
+ * changes costs one write; the pull itself is coalesced the same way). A change seen only in the stores' files waits
+ * FILES_GAP_MS: building the records reads those stores, and a read's closing connection moves their files too, so a
+ * shorter gap would have the records rebuild themselves forever (measured: every 1.5 s, with nothing changing).
+ */
+const FILES_GAP_MS = 5_000;
+const nudgedAt = new Map<string, number>();
+const nudgeLater = new Map<string, NodeJS.Timeout>();
+const laterFromFiles = new Set<string>();
+function nudgeAttention(home: string, fromFiles = false): void {
+  // A change that isn't only the files' doesn't wait out the files' longer gap.
+  if (nudgeLater.has(home) && (fromFiles || !laterFromFiles.has(home))) return;
+  clearTimeout(nudgeLater.get(home)); nudgeLater.delete(home); laterFromFiles.delete(home);
+  const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + (fromFiles ? FILES_GAP_MS : GAP_MS) - Date.now());
+  const go = () => { nudgeLater.delete(home); laterFromFiles.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
+  if (!wait) { go(); return; }
+  // One within the gap still lands, at its end: a change is never left for the 15 s pull to find.
+  const t = setTimeout(go, wait);
+  t.unref?.();
+  nudgeLater.set(home, t);
+  if (fromFiles) laterFromFiles.add(home);
+}
+
 async function memberInbox(base: UiOptions, full: Household, m: Member): Promise<{ items: InboxItem[]; reader?: string }> {
   const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
   const hh = own ? narrowed(full, own) : full;
@@ -1553,7 +1577,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (full) {
     const base = opts, home = full.home;
     registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
-    onChanged(home, () => nudge(home, ATTENTION_DOMAIN));
+    onChanged(home, (fromFiles) => nudgeAttention(home, fromFiles));
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };

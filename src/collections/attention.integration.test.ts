@@ -206,7 +206,7 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
     await new Promise((r) => setTimeout(r, 2500));
     expect(upserted(sam)).toBe(false);
     expect((await ask('sam', {})).rows.find((r: Data) => r.key === `loom/attention/${it.key}`).unread).toBe(true);
-  });
+  }, 30_000);
 
   it('an Allow answered in one window leaves every live subscription that held it', async () => {
     const jon = await openEvents(base, tok.jonathan); streams.push(jon);
@@ -224,12 +224,16 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
     expect((left(jon)!.data.aggregates as Data).count.n).toBe(j.aggregates.count.n - 1);
     // What core holds of each item says exactly whose Inbox has it: Jonathan's own outcome ("You did this") is his
     // alone, Mark's card only Jonathan's (Sam doesn't own Mark), Art's card both of theirs.
-    const db = new BetterSqlite3(join(h.home, 'collections', 'live.db'), { readonly: true });
-    const idx = db.prepare("SELECT key, audience, record FROM idx WHERE key LIKE 'loom/attention/%'").all() as Array<{ key: string; audience: string; record: string }>;
-    db.close();
-    const whose = (f: (r: Data) => boolean) => JSON.parse(idx.find((x) => f(JSON.parse(x.record)))!.audience);
-    expect(whose((r) => r.kind === 'fyi' && r.meta === 'You did this')).toEqual({ members: ['jonathan'] });
+    const idx = () => {
+      const db = new BetterSqlite3(join(h.home, 'collections', 'live.db'), { readonly: true });
+      try { return db.prepare("SELECT key, audience, record FROM idx WHERE key LIKE 'loom/attention/%'").all() as Array<{ key: string; audience: string; record: string }>; } finally { db.close(); }
+    };
+    const mine = (r: Data) => r.kind === 'fyi' && r.meta === 'You did this';
+    // The outcome is noted after the action answers: the next pull (soon, coalesced) brings it.
+    expect(await until(() => idx().some((x) => mine(JSON.parse(x.record))))).toBe(true);
+    const whose = (f: (r: Data) => boolean) => JSON.parse(idx().find((x) => f(JSON.parse(x.record)))!.audience);
+    expect(whose(mine)).toEqual({ members: ['jonathan'] });
     expect(whose((r) => r.text === 'Let Mark post to the studio channel?')).toEqual({ members: ['jonathan'] });
     expect(whose((r) => r.text === 'Give Art access to Tasks?')).toEqual({ members: ['jonathan', 'sam'] });
-  });
+  }, 30_000);
 });

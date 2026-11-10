@@ -110,6 +110,8 @@ const FIELDS = ['agent', 'kind', 'box', 'attention', 'unread', 'text', 'sort', '
 
 // A piece's manifest may carry at most 10 asks (src/ui/vocab.ts): more and it's refused whole.
 const N = Number(process.env.LOOM_BENCH_ASKS ?? 10);
+// Between rounds: a person answering every few seconds. Closer than GAP_MS (1.5 s) apart, changes coalesce by design.
+const SPACING = Number(process.env.LOOM_BENCH_SPACING ?? 3_500);
 const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
 describe.skipIf(!process.env.LOOM_BENCH)('bench: what needs you, page refetch vs the live attention set', () => {
@@ -179,7 +181,7 @@ describe.skipIf(!process.env.LOOM_BENCH)('bench: what needs you, page refetch vs
       // The old way: after the change, the Inbox and Home pages again, as the open windows did.
       const [x, y] = await Promise.all([get('/inbox'), get('/')]);
       oldMs.push(tChange - t0 + Math.max(x.ms, y.ms));
-      await new Promise((r) => setTimeout(r, 1_700));
+      await new Promise((r) => setTimeout(r, SPACING));
     }
     out.update = { actAnswerMs: med(actMs), oldChangeThenRefetchMs: med(oldMs), newRowsFrameMs: med(newMs) };
 
@@ -193,11 +195,11 @@ describe.skipIf(!process.env.LOOM_BENCH)('bench: what needs you, page refetch vs
       await fetch(`${base}/inbox/read`, { method: 'POST', headers: { ...auth, 'content-type': 'application/x-www-form-urlencoded' }, body: `i=${key.split('/')[2]}` });
       await until(() => ev.frames.slice(from).some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.key === key && u.unread === false)), 10_000);
       readMs.push(performance.now() - t0);
-      await new Promise((r) => setTimeout(r, 1_700));
+      await new Promise((r) => setTimeout(r, SPACING));
     }
     out.read = { oldOtherWindowsMs: '20000 to 60000 (their next timed refetch)', newRowsFrameMs: med(readMs) };
     // Written where LOOM_BENCH says (the test runner keeps a passing test's console to itself).
-    writeFileSync(process.env.LOOM_BENCH!, JSON.stringify({ asks: N, rounds: R, ...out }, null, 2));
+    writeFileSync(process.env.LOOM_BENCH!, JSON.stringify({ asks: N, rounds: R, spacingMs: SPACING, ...out }, null, 2));
     ev.stop();
     await handle.close();
     await closeAllBackends();

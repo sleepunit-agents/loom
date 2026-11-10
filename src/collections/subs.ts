@@ -547,8 +547,10 @@ export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piec
   try {
     domains = [...providers(env).values()].filter((p) => (piece === 'loom' ? !p.piece : p.piece === piece)).flatMap((p) => [...domainsOf(p).keys()]);
   } catch { return; }
-  if (!domains.includes(ATTENTION_DOMAIN)) domains.push(ATTENTION_DOMAIN);
-  await pullNowAll(home, domains);
+  // The attention records are every member's Inbox, built again: pulled soon (coalesced, one per GAP_MS), never
+  // awaited, so a run of actions can't make each one rebuild them all. The acting piece's own domains are awaited.
+  pullSoon(home, [ATTENTION_DOMAIN]);
+  await pullNowAll(home, domains.filter((d) => d !== ATTENTION_DOMAIN));
 }
 
 /** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
@@ -558,7 +560,8 @@ export function pullSoon(home: string, domains: readonly string[]): void {
   const h = homes.get(home);
   if (!h) return;
   const wanted = wantedOf(h);
-  for (const d of domains) if (wanted.has(d)) h.puller.soon(d);
+  // Delivered as soon as each lands, not on the next pass.
+  for (const d of domains) if (wanted.has(d)) void h.puller.soon(d).then(() => deliverNow(home)).catch(() => undefined);
 }
 
 /** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them

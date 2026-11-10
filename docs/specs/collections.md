@@ -663,20 +663,33 @@ along with the listeners. The adapter is the only code that imports the client l
   asked again. What moves it: every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read` (a pull
   soon, never awaited, so a loop of reads costs one pull per 1.5 s), and everything that says loom's bare "something
   changed" (`live.ts` `onChanged`), plus the 15 s pull.
+- **The snapshot's records are for noticing change, not for showing.** Each body is the first member's copy of the
+  item (two members' copies of one key can differ: `absorbApprovals` and lead cards depend on their pieces), so
+  anything that later reads them as the core viewer for a person (push, Needs auto-resolve) filters by the audience
+  and then asks again as that person, through the per-viewer source.
+- **After an action**, `loom/attention` is pulled soon (coalesced, never awaited); the acting piece's own domains
+  are still pulled before the answer.
 - **Before any page has been asked for** (loom just started), nothing has registered the Inbox's code, and the type
   answers `unavailable`, never an empty set that would read as "nothing needs you".
 - **A re-ask is leading-edge**: at once when the subscription wasn't asked in the last 1.5 s, else when the gap is up
-  (`subs.ts` `reaskSoon`). Measured (`attention.bench.integration.test.ts`, 10 asks, median of 7): an Allow reached
-  another window in 0.26 s (was 1.3 s: the bare change, then the Inbox's and Home's pages again); a read reached the
-  member's other windows in 1.3 s (was their next timed refetch, 20 to 60 s; 0.13 s when the read awaited its pull,
-  which let a loop of reads keep loom recomputing every Inbox); the first load is one 6 ms, 4.9 KB
-  answer (was the Inbox's page, 12 ms and 6.9 KB, and Home's, 12 ms and 4.6 KB, each carrying its own copy).
+  (`subs.ts` `reaskSoon`); a coalesced pull (`pullSoon`) delivers as soon as it lands. Measured
+  (`attention.bench.integration.test.ts`, 10 asks, an action every 3.5 s, median of 7): an Allow reached another
+  window in 0.16 s (was 0.86 s: the bare change, then the Inbox's and Home's pages again) and the action answered in
+  0.10 s (0.18 s while it awaited the attention pull); a read reached the member's other windows in 0.06 s (was their
+  next timed refetch, 20 to 60 s); the first load is one 6 ms, 4.9 KB answer (was the Inbox's page, 12 ms and 6.9 KB,
+  and Home's, 12 ms and 4.6 KB, each carrying its own copy). Actions closer than 1.5 s apart coalesce by design.
+- **The stores' files echo reads.** Building the records reads the agents' stores, and a read's closing connection
+  makes SQLite fold its `-wal` back, which loom's file watcher (`live.ts`) hears as "something changed". Nudged on
+  that at once, the records rebuilt themselves every 1.5 s with nothing changing; a change seen only in those files
+  now nudges at most once per 5 s (`handler.ts` `nudgeAttention`), anything else at once. The old bare `change` hears
+  the same echo (an open page asked again after its own read is the likely result); that is t-2032's to retire.
 - **`GET /inbox?i=` no longer marks read**; the app posts `/inbox/read` for the item it opens.
 - **The manifest cache key now includes `LOOM_OWNER_SCOPE`** (`pieces.ts` `scopeKey`): the parity test found a
   household owner's Inbox missing another agent's ask after an agent owner's request had cached its narrowed answer.
 - **In the window** (`web/src/attention.ts`): one subscription per tab, read by `withAttention` into every page view
   (the shell's total and per-agent badges, Home's `needs`/`need`/`stack`, an agent window's `waiting`, the Inbox's
-  `items`), and by `ask-open.ts` to show whether a card is open (loom is still asked right before a send). Until the
+  `items`), and by `ask-open.ts` to show whether a card is open: an item it holds is open or answered; one it doesn't
+  hold yet (a thread can show an ask first) is loom's to say, and loom is still asked right before a send. Until the
   set is live and complete, each view reads its page's own copy, as before. Once it's live, the Inbox isn't asked
   again on a bare change or on its timer (`page.ts` `liveViews`). `document.documentElement.dataset.attention` says
   `live` or `page`.

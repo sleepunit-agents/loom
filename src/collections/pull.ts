@@ -275,6 +275,8 @@ export class Puller {
     clearInterval(this.poll); this.poll = undefined;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
+    for (const w of this.after.values()) w.resolve(undefined);
+    this.after.clear();
   }
 
   /** Every wanted domain, and the expiry pass. */
@@ -284,14 +286,25 @@ export class Puller {
     for (const d of this.wanted()) this.soon(d);
   }
 
-  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS, else when that's up. One at a time per domain. */
-  soon(domain: string): void {
-    if (this.timers.has(domain)) return;
+  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS, else when that's up. One at a time per domain.
+   * Answers when that pull is done (a caller may deliver right after it). */
+  soon(domain: string): Promise<PullOutcome | undefined> {
+    const waiting = this.after.get(domain);
+    if (this.timers.has(domain) && waiting) return waiting.promise;
+    let resolve!: (v: PullOutcome | undefined) => void;
+    const promise = new Promise<PullOutcome | undefined>((r) => { resolve = r; });
+    this.after.set(domain, { promise, resolve });
     const wait = Math.max(0, (this.last.get(domain) ?? 0) + GAP_MS - Date.now());
-    const t = setTimeout(() => { this.timers.delete(domain); void this.now(domain); }, wait);
+    const t = setTimeout(() => {
+      this.timers.delete(domain);
+      this.after.delete(domain);
+      this.now(domain).then(resolve, () => resolve(undefined));
+    }, wait);
     t.unref?.();
     this.timers.set(domain, t);
+    return promise;
   }
+  private after = new Map<string, { promise: Promise<PullOutcome | undefined>; resolve: (v: PullOutcome | undefined) => void }>();
 
   /** Pull `domain` now (or join the pull under way). */
   now(domain: string): Promise<PullOutcome> {

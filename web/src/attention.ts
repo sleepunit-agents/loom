@@ -59,12 +59,16 @@ liveViews((view) => view === 'inbox' && set.current() !== null);
  */
 export const useAttention = (csrf: string | undefined): Attention | null => set.use(csrf);
 
-/** What the live set says of one ask, for a card that would otherwise ask loom (ask-open.ts): undefined when it can't say. */
+/**
+ * What the live set says of one ask, for a card that would otherwise ask loom (ask-open.ts): open when it holds it open,
+ * answered when it holds it done. One it doesn't hold, it can't say (a thread can show an ask a moment before the set
+ * has it): undefined, and loom is asked.
+ */
 export function openFromLive(q: { k?: string; a?: string }): boolean | undefined {
   const current = set.current();
   if (!current) return undefined;
-  const it = current.items.find((x) => (q.k ? x.key === q.k : [...(x.actions ?? []), ...(x.approval?.actions ?? [])].some((b) => b.fields?.id === q.a)) && x.box !== 'done');
-  return !!it;
+  const it = current.items.find((x) => (q.k ? x.key === q.k : [...(x.actions ?? []), ...(x.approval?.actions ?? [])].some((b) => b.fields?.id === q.a)));
+  return it ? it.box !== 'done' : undefined;
 }
 
 /** Home's first few in place (src/ui/handler.ts HOME_STACK): its band and rail show these. */
