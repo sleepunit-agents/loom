@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadHousehold, setAbout, aboutOf } from '../household.js';
@@ -57,3 +57,32 @@ it('a held session lock cannot freeze /login or issue a session; release permits
     expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
   } finally { await handle.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('a household mutation under a held lock cannot delay a concurrent /login', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loom-household-http-lock-'));
+  writeFileSync(join(dir, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], default: 'art' }));
+  const contextDir = join(dir, 'agents', 'art');
+  mkdirSync(contextDir, { recursive: true });
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Test');
+  const household = loadHousehold(dir)!;
+  const handle = await startHttpServer({ contextDir, household, host: '127.0.0.1', port: 0, token: 'test-household-token' });
+  const base = `http://127.0.0.1:${handle.port}`;
+  const lock = join(dir, '.household.lock');
+  try {
+    const before = readFileSync(join(dir, 'household.json'), 'utf8');
+    writeFileSync(lock, String(process.pid));
+    const start = performance.now();
+    const post = fetch(`${base}/act/loom`, { method: 'POST', headers: { 'x-loom-fetch': '1', authorization: 'Bearer test-household-token', 'content-type': 'application/x-www-form-urlencoded' }, body: '_action=mark-set&agent=art&mark=1', redirect: 'manual' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const login = await fetch(`${base}/login`);
+    const failed = await post;
+    const elapsed = performance.now() - start;
+    console.log(`held household lock, POST plus /login: ${Math.round(elapsed)} ms, POST ${failed.status}`);
+    expect(elapsed).toBeLessThan(700);
+    expect(login.status).toBe(200);
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ ok: false, message: 'state busy; try again' });
+    expect(readFileSync(join(dir, 'household.json'), 'utf8')).toBe(before);
+    expect(readFileSync(lock, 'utf8')).toBe(String(process.pid));
+  } finally { await handle.close(); rmSync(dir, { recursive: true, force: true }); }
+}, 15_000);
