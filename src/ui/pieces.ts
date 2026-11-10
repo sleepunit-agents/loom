@@ -107,6 +107,15 @@ export function clearPieceCache(path?: string): void {
 }
 
 /**
+ * A piece's shared records moved (collections/pull.ts logged a change, or its API said it wrote): its kept pages go, so
+ * the next look runs it, not the last copy (t-2029: an open Tasks page is asked again when its tasks move, and a copy kept
+ * for up to 5 s, then shown while revalidating, would answer with the old one). Its manifests stay.
+ */
+export function forgetPiecePages(path: string): void {
+  for (const k of [...pages.keys()]) if (k.startsWith(`${path}\0`)) pages.delete(k);
+}
+
+/**
  * A piece's pages, kept briefly the same way (stale while revalidating): opening one again shows the last copy
  * at once and asks the piece behind it, instead of starting its process on every visit (0.3-0.8s each). Keyed
  * by who's looking, the scope, the version, the path and the query; an action on the piece drops them all.
@@ -526,7 +535,7 @@ export async function pieceApi(
   request: { caller: ApiCaller; path: string; body: unknown },
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
-): Promise<{ status: number; body: unknown }> {
+): Promise<{ status: number; body: unknown; changed?: true }> {
   const r = await apiPool.run(() => {
     const env1 = withGrant(env, path, request.caller);
     // A path the piece answers from its long-lived server (piece-server.ts, t-2065): the grant goes in the request.
@@ -548,5 +557,7 @@ export async function pieceApi(
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 200 || status > 499) {
     return { status: 502, body: { error: 'the piece answered with a status outside 200-499' } };
   }
-  return { status, body: parsed.body };
+  // `changed: true`: the call wrote, so core pulls the piece's shared collections soon (http-server.ts pieceCall). Only
+  // that word is read; it never reaches the caller.
+  return { status, body: parsed.body, ...((parsed as { changed?: unknown }).changed === true ? { changed: true as const } : {}) };
 }

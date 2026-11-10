@@ -889,7 +889,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
       </header>
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
-        {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
+        {!wide && <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} />}
         {/* A desktop's thread (Jonathan, 2026-11-07: "outlook-esque"): a band of fixed height over the chat, the comm screen
             at its own size on the left (never stretched), who's in the conversation and the thread's work on the right,
             scrolling inside the band so its height never changes; the chat takes the rest. */}
@@ -907,7 +907,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                     <span className="comms-people__name">{member.split('-').map((w) => (w[0]?.toUpperCase() ?? '') + w.slice(1)).join(' ')}</span><span className="comms-people__what loom-data">you</span></li>
                 </ul>
               </section>
-              <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />
+              <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} />
             </div>
           </div>
         )}

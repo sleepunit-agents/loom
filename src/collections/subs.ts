@@ -569,6 +569,17 @@ export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piec
   await pullNowAll(home, domains.filter((d) => !SOON.includes(d)));
 }
 
+/**
+ * A piece's API call said it wrote (`changed: true` beside its answer, docs/extensions.md "The API"): its own domains are
+ * pulled soon (coalesced, never awaited), so a house's `taskstore close` reaches open windows at once, not on the next
+ * 15 s pull.
+ */
+export function pullPieceSoon(home: string, env: NodeJS.ProcessEnv, piece: string): void {
+  let domains: string[];
+  try { domains = [...providers(env).values()].filter((p) => p.piece === piece).flatMap((p) => [...domainsOf(p).keys()]); } catch { return; }
+  if (domains.length) pullSoon(home, domains);
+}
+
 /** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
  * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
 export function pullSoon(home: string, domains: readonly string[]): void {
