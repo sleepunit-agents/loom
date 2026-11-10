@@ -707,6 +707,23 @@ along with the listeners. The adapter is the only code that imports the client l
 - **Still to move** (later in t-2025's line): the push watch (`yourCall`) and Needs auto-resolve reading the records as
   the core viewer; a Comms thread's own asks (`threadAsks`) as a filtered view of this set; project "waiting".
 
+## As built: Comms threads' unread (t-2027, first slice)
+
+- **Core's `thread` type (1.1) carries each thread's list state**: `unread` (a reply past its member's read),
+  `working`, `background` (a job's thread its member hasn't written in) and `last_seq`, from `comms.ts`
+  `threadRowStates` (one grouped read for every thread), the same rule as the Comms list (`threadsOf`, which now shares `isBackground`). Never a word:
+  the first line a card shows stays on `GET /comms/agents`. `archived` is filterable with `eq` (`null`: open).
+- **In the window** (`web/src/threads-live.ts`, on `live-set.ts`): one subscription per tab to the member's open,
+  non-background threads. The dock's Comms count (`withThreads`) and each desktop agent card's unread count read it,
+  counting threads (owner decision 3; `GET /comms/agents` counts threads too now, so a card never flips between
+  threads and replies when the set drops to its fallback). `useAgentComms` (desk-agents.tsx) asks `/comms/agents` again only when a
+  thread's unread or newest message moves, no longer on every bare change and every minute.
+- **Parity** (`threads-live.integration.test.ts`): a member's live threads and their unread are exactly `GET /comms`'s
+  list and its count, never another member's (another owner of the same agent included). A reply reached the
+  member's live window in 35 ms; a read right after it in 1.5 s (coalesced with the reply's pull).
+- **Still to move**: thread metadata and pages of messages for an open thread (its own `/comms/<t>` stream stays the
+  transport for words), refs and previews, the conversation page, and a thread's asks as a view of the attention set.
+
 ## What stays on its own transport (exceptions)
 
 Each needs its own rationale, and safe status and metadata about them still go through collections:
