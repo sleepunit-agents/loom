@@ -56,12 +56,12 @@ export function Pager({ page, pages, shown, to, total }: { page: number; pages: 
 
 type Cell = string | { text: string; page?: string };
 /** A desktop's table: 000h's table (its ledger look), rows as they come. */
-export function WideTable({ columns, rows, cell }: { columns: string[]; rows: Cell[][]; cell: (c: Cell) => ReactNode }) {
+export function WideTable({ columns, rows, cell, rowAbout }: { rowAbout: (r: Cell[]) => Record<string, string>; columns: string[]; rows: Cell[][]; cell: (c: Cell) => ReactNode }) {
   return (
     <TableContainer>
       <Table>
         <TableHeader><TableRow>{columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-        <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-middle">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
+        <TableBody>{rows.map((r, n) => <Arrive {...rowAbout(r)} as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-middle">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
       </Table>
     </TableContainer>
   );
