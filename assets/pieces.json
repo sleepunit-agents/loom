@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "3cda9791b25fab759ca17444c390380bac77f95e",
+      "commit": "e10ae8f8b7fcbe08f6be6b56a7e887971c4ecbed",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "27eec6596102ef9c9bfe0c05c8bac982109bd361",
+      "commit": "c06150538c6d3c0d349ba52173fdb15f2c3e5c38",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
@@ -44,7 +44,7 @@
     {
       "name": "changes",
       "repo": "sleepunit-agents/loom-changes",
-      "commit": "6bc4bfcd0e9717b4b65d61089c87c33e92229108",
+      "commit": "fc387ecf0db2585c7817db43d5d06f0cc75527de",
       "version": "0.2.0",
       "label": "Changes",
       "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."
@@ -52,7 +52,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "545e2ad4031dcb24d2fa56439bc51e88e62ba2fe",
+      "commit": "fac97958be017fad593e26066fdfefbb4a22d93a",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
