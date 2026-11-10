@@ -1960,11 +1960,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const receipt = op !== null ? { receipt: { op, state: result.ok ? 'done' : 'failed', ...(result.ok ? {} : { why: result.message }) } } : {};
       const answer = JSON.stringify({ ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
         ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }), ...receipt });
-      // A retry gets this same answer, never a second run (its one-time message, if any, is kept for it too).
-      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', answer));
+      // A retry gets this same answer, never a second run. A one-time message (a secret, a link: `keep`) is never written
+      // down: a retry hears it was done, and that it was shown once.
+      const kept = result.keep ? JSON.stringify({ ok: result.ok, message: 'Done. What it showed was shown once.', receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
+      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', kept));
       return send(res, 200, 'application/json', answer);
     }
-    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.message, receipt: { op, state: result.ok ? 'done' : 'failed' } })));
+    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? 'Done. What it showed was shown once.' : result.message, receipt: { op, state: result.ok ? 'done' : 'failed' } })));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 
