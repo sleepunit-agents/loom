@@ -550,11 +550,15 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
   return visible.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
 
+/** A spawned job's thread: its conversation is the job's own, not the agent's Comms one. */
+export function isJob(h: Household, t: Thread): boolean {
+  return t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
+    && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+}
+
 /** A job's thread its member hasn't written in (a spawn assigned to them for access): Background work, not their list. */
 export function isBackground(h: Household, t: Thread): boolean {
-  const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
-    && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
-  return spawned && !withMessages(h.home, (db) => db.prepare(
+  return isJob(h, t) && !withMessages(h.home, (db) => db.prepare(
     "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
   ).get(t.id, t.member));
 }
