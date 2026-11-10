@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "e9365c65f3c1d4e7460ad9e38da31f817797eb59",
+      "commit": "b1d7ddf2c384130a338614e0c1c5f1a4500155a7",
       "version": "0.7.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
