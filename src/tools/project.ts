@@ -236,6 +236,8 @@ export const noPieceSections: PieceSectionSource = async () => [];
 export interface HubOptions {
   nowMs?: number;
   pieceSections?: PieceSectionSource;
+  /** Leave out the conversations section: a house's caller reads only the conversation it holds (t-2118). */
+  noConversations?: boolean;
 }
 
 export type ProjectHubResult =
@@ -388,7 +390,7 @@ export async function projectHubOf(
       section('notes', () => notesSection(contextDir, row.card, since, nowMs)),
       section('people', () => peopleSection(contextDir, row.card, nowMs)),
       // After people (docs/specs/conversations.md, "Projects"): digests store project slugs, resolved at write.
-      section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
+      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
@@ -443,9 +445,9 @@ export async function projectList(contextDir: string, input: { status?: string; 
 export async function projectHub(
   contextDir: string,
   input: { slug: string; since?: string; include_archived?: boolean },
-  opts: HubOptions = { pieceSections: managedPieceSections() },
+  opts: HubOptions = {},
 ): Promise<string> {
-  return text(() => projectHubOf(contextDir, input, opts));
+  return text(() => projectHubOf(contextDir, input, { pieceSections: managedPieceSections(), ...opts }));
 }
 
 export async function projectOrphansText(contextDir: string): Promise<string> {

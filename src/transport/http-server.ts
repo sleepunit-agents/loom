@@ -447,7 +447,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
     return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true,
       // Which house this session's agent token names (t-2061): its digests go only to the conversation that house holds.
-      ...(c.role.kind === 'agent' && c.role.house ? { caller: { house: c.role.house, ...(c.role.service ? { service: c.role.service } : {}) } } : {}),
+      ...(c.role.kind === 'agent' && (c.role.house || c.role.service) ? { caller: { ...(c.role.house ? { house: c.role.house } : {}), ...(c.role.service ? { service: c.role.service } : {}) } } : {}),
       tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
   };
 

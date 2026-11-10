@@ -397,6 +397,29 @@ describe('criterion 3: digests (conversation_digest)', () => {
     expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);
   });
 
+  // t-2118: a digest summarises its conversation's words, so a house reads only the conversation it holds: the list,
+  // one conversation, its findings and a project hub's conversations section. A service's house (with or without a
+  // house id) reads none; loom's machine (no house) reads all, as before.
+  it('from a house, the conversations it reads are the one it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U3', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-11', conversation: conv });
+    const ids = (r: { body: Record<string, unknown> }) => (r.body.conversations as Array<{ id: string }>).map((c) => c.id);
+    const own = await mcp(art, { house: 'h-11' });
+    expect(ids(await own.call('conversations'))).toEqual([conv]);
+    expect((await own.call('conversation', { id: conv })).error).toBe(false);
+    const theirs = await own.call('conversation', { id: other });
+    expect(theirs.error).toBe(true);
+    expect(String(theirs.body.error)).toBe(`no conversation ${other}`);
+    for (const caller of [{ house: 'h-12' }, { house: 'h-13', service: 'discord' }, { service: 'discord' }]) {
+      const none = await mcp(art, caller);
+      expect(ids(await none.call('conversations'))).toEqual([]);
+      expect((await none.call('conversation', { id: conv })).error).toBe(true);
+      expect((await none.call('conversation_findings')).body.findings).toEqual([]);
+    }
+    const local = await mcp(art);
+    expect(ids(await local.call('conversations'))).toEqual(expect.arrayContaining([conv, other]));
+  });
+
   it('a house holds one conversation, for good', () => {
     expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
     expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
@@ -801,6 +824,12 @@ describe('criterion 12, end to end: project_hub carries the conversations core s
     expect(conv.items.filter((i) => i.new).length).toBe(4);   // the channel, 22, 21, 20
     const hockey = await projectHubOf(dir, { slug: 'hockey', since });
     expect(('sections' in hockey) && (hockey.sections.find((x) => x.key === 'conversations') as { items: unknown[] }).items).toHaveLength(1);
+    // From a house (t-2118): no conversations section at all, the rest as before.
+    const housed = await projectHubOf(dir, { slug: 'on-pond', since }, { noConversations: true });
+    expect(('sections' in housed) && housed.sections.map((x) => x.key)).not.toContain('conversations');
+    const viaTool = await mcp(dir, { house: 'h-20', service: 'discord' });
+    expect(JSON.stringify((await viaTool.call('project_hub', { slug: 'pond' })).body)).not.toContain('Pond channel');
+    expect(JSON.stringify((await (await mcp(dir)).call('project_hub', { slug: 'pond' })).body)).toContain('Pond channel');
   });
 });
 

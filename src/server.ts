@@ -137,7 +137,8 @@ export interface LoomServerInstance {
  */
 export function bodyHouseConversation(contextDir: string, caller: LoomServerConfig['caller']): string | null | undefined {
   const house = caller?.house;
-  if (!house) return undefined;
+  // A service's token with no house (an older one, or one made by hand) holds nothing either: never as loom's machine.
+  if (!house) return caller?.service ? null : undefined;
   const home = homeFor(contextDir);
   const self = householdOf(contextDir)?.agent;
   let held: { agent: string; conversation: string } | null = null;
@@ -1455,7 +1456,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug, since, include_archived }) => {
-      const result = await projectHub(contextDir, { slug, since, include_archived });
+      // From a house, no other conversation's digests (t-2118): a house reads only the conversation it holds.
+      const result = await projectHub(contextDir, { slug, since, include_archived }, bodyHouseConversation(contextDir, config.caller) === undefined ? {} : { noConversations: true });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1639,9 +1641,13 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ people, project, venue, since }) => convText(() => ({
-      conversations: conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }),
-    })),
+    async ({ people, project, venue, since }) => convText(() => {
+      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) });
+      // From a house, only the conversation it holds (t-2118): a digest summarises its conversation's words, and a
+      // house (a sibling's, a guest's, a chat bridge's) never reads another's. None from a house the runtime named none for.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      return { conversations: held === undefined ? all : all.filter((c) => held !== null && c.id === held) };
+    }),
   );
 
   server.registerTool(
@@ -1654,6 +1660,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ id }) => {
+      // From a house, only the conversation it holds (t-2118), the same refusal as one that isn't there.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      if (held !== undefined && held !== id) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `no conversation ${id}` }, null, 2) }], isError: true };
       const view = await conversationView(contextDir, agentOfDir(contextDir), id);
       return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
     },
@@ -1668,7 +1677,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ since }) => convText(() => ({ findings: findingsOf(contextDir, since ? { since } : {}) })),
+    async ({ since }) => convText(() => {
+      // From a house, the findings on the conversation it holds only (t-2118); none from a house it named none for.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      if (held === null) return { findings: [] };
+      return { findings: findingsOf(contextDir, { ...(since ? { since } : {}), ...(held ? { conversation: held } : {}) }) };
+    }),
   );
 
   // MCP-App render probe — env-gated, throwaway. Not part of the tool surface

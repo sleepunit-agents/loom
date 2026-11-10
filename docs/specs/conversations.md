@@ -373,7 +373,9 @@ audit log, so it has no raw text to copy.
   A house that holds no body's conversation (a task's own house before it runs a job, an `up` house) writes none.
   `comms_title` is held to the same rule.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
-  above.
+  above. From a house (t-2118), only the conversation that house holds: the list has that one, `conversation` refuses
+  any other as if it weren't there, and the findings are its own. `project_hub` from a house has no conversations
+  section. A service's house, with or without a house id, holds none, so it reads none.
 
 **The ask** (`needs_owner` as an object, src/backends/needs.ts), written for the owner: what decision, why, what
 happens either way.
