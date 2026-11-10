@@ -7,6 +7,7 @@
  * The set here is made in the test (pixel-ramp's arithmetic needs known pixels): Home has black, grey and white bands;
  * Inbox is line-only (black ink, a white strip); Activity, Members and People (yellow) are plain. Knowledge has none.
  */
+import { requestTrace } from './request-trace.fixture.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -119,34 +120,40 @@ describe('the household\'s pixel icons', () => {
   });
 
   it('serves the set to someone signed in, and not to anyone else', async () => {
-    const anon = await fetch(`${base}/pixel-icons/home.png`, { redirect: 'manual' });
+    const trace = requestTrace();
+    const anon = await trace.fetch(`${base}/pixel-icons/home.png`, { redirect: 'manual' });
     expect(anon.status).not.toBe(200);
     expect(anon.headers.get('content-type') ?? '').not.toMatch(/image/);
-    const forged = await fetch(`${base}/pixel-icons/home.png`, { redirect: 'manual', headers: { cookie: 'loom_ui=' + '0'.repeat(64) } });
+    const forged = await trace.fetch(`${base}/pixel-icons/home.png`, { redirect: 'manual', headers: { cookie: 'loom_ui=' + '0'.repeat(64) } });
     expect(forged.status).not.toBe(200);
+    trace.mark('Jonathan sign-in start');
     const cookie = await signIn();
-    const ok = await fetch(`${base}/pixel-icons/home.png?v=1`, { headers: { cookie } });
+    trace.mark('Jonathan sign-in complete');
+    const ok = await trace.fetch(`${base}/pixel-icons/home.png?v=1`, { headers: { cookie } });
     expect(ok.status).toBe(200);
     expect(ok.headers.get('content-type')).toBe('image/png');
     expect(ok.headers.get('cache-control')).toMatch(/^private/);
+    trace.mark('Home icon body start');
     expect(Buffer.from(await ok.arrayBuffer()).equals(HOME)).toBe(true);
-    expect((await fetch(`${base}/pixel-icons/knowledge.png`, { headers: { cookie } })).status).toBe(404);
+    expect((await trace.fetch(`${base}/pixel-icons/knowledge.png`, { headers: { cookie } })).status).toBe(404);
     // Nothing but an app's icon: a PNG that is there, beside the set and at the household's top, is never served by a path
     // that climbs out to it, however it's spelled.
     writeFileSync(join(h.home, 'icons', 'secret.png'), HOME);
     writeFileSync(join(h.home, 'secret.png'), HOME);
     for (const climb of ['..%2Fsecret.png', '%2E%2E%2Fsecret.png', '..%2F..%2Fsecret.png', '..%5Csecret.png', 'test%2F..%2F..%2Fsecret.png']) {
-      const r = await fetch(`${base}/pixel-icons/${climb}`, { headers: { cookie } });
+      const r = await trace.fetch(`${base}/pixel-icons/${climb}`, { headers: { cookie } });
       expect(r.headers.get('content-type') ?? '', climb).not.toMatch(/image/);
     }
     // An agent owner is a member too: their shell names the icons, and they can fetch them.
-    const samCookie = ((await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    const samCookie = ((await trace.fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: `token=${encodeURIComponent(samToken)}`, redirect: 'manual' })).headers.get('set-cookie') ?? '').split(';')[0];
-    const sam = await fetch(`${base}/pixel-icons/home.png?v=1`, { headers: { cookie: samCookie } });
+    const sam = await trace.fetch(`${base}/pixel-icons/home.png?v=1`, { headers: { cookie: samCookie } });
     expect(sam.status).toBe(200);
     expect(sam.headers.get('content-type')).toBe('image/png');
     // The shell names the set for the page, with each line-only icon.
-    const page = await (await fetch(`${base}/`, { headers: { cookie, accept: 'application/json' } })).json() as { chrome: { shell: { icons?: { v: string; apps: Record<string, unknown> } } } };
+    trace.mark('shell JSON start');
+    const page = await (await trace.fetch(`${base}/`, { headers: { cookie, accept: 'application/json' } })).json() as { chrome: { shell: { icons?: { v: string; apps: Record<string, unknown> } } } };
+    trace.mark('shell JSON complete');
     expect(page.chrome.shell.icons?.apps).toEqual({ activity: {}, home: {}, inbox: { line: true }, members: {}, people: {} });
   });
 

@@ -1,3 +1,4 @@
+import { requestTrace } from './request-trace.fixture.js';
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import { existsSync, mkdirSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright-core';
@@ -31,7 +32,10 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
     expect(jonathan.state).toBe('working');
   }, 30000);
   for (const width of [1600, 390]) it(`shows every job and removes completed work at ${width}`, async () => {
+    const trace = requestTrace();
+    trace.mark('publish jobs start');
     d.report({ art: { jobs: rows } }); clearPieceCache(); await d.changed();
+    trace.mark('publish jobs complete');
     const ctx = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
     await ctx.addInitScript(() => { sessionStorage.setItem('loom-booted', '1'); sessionStorage.setItem('loom-arrived', '1'); });
     // A decoration can remain in flight while the app is ready. Navigation must wait for
@@ -43,9 +47,10 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
         image.hidden = true; image.src = '/__ci_slow_decoration.svg'; document.body.append(image);
       }, { once: true });
     });
-    const p = await ctx.newPage(); p.setDefaultTimeout(5000);
+    const p = await ctx.newPage(); p.setDefaultTimeout(5000); trace.page(p);
     try {
-      await ctx.request.post(d.base + '/login', { form: { token: d.tok.jonathan }, maxRedirects: 0 }); await p.goto(d.base + '/', { waitUntil: 'domcontentloaded' });
+      trace.mark('sign-in start');
+      await ctx.request.post(d.base + '/login', { form: { token: d.tok.jonathan }, maxRedirects: 0 }); trace.mark('sign-in complete'); await p.goto(d.base + '/', { waitUntil: 'domcontentloaded' });
       const card = p.locator('.loom-bigcard[data-agent="art"]');
       await card.getByRole('heading', { name: 'All jobs · 16' }).waitFor();
       expect(await card.locator('.loom-jobs li').count()).toBe(16);
