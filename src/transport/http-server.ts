@@ -51,7 +51,7 @@ import { spawnBackupTick } from '../backup-tick.js';
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
-import { findPiece, resolvePieceName } from '../cli/pieces.js';
+import { findPiece, listPieces, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
@@ -773,7 +773,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     // Its manifest moved (docs/extensions.md, "agents"; t-1945): the open apps ask the pieces again now. No body to read.
     if (subpath === 'pieces/changed' && role.kind === 'runtime') {
-      piecesMoved(live!().home);
+      // Only the runtime's own manifest moved: the other pieces keep theirs (t-2065).
+      const runtime = runtimePieces(process.env);
+      piecesMoved(live!().home, runtime.length === 1 ? listPieces(process.env).find((p) => p.name === runtime[0])?.path : undefined);
       return sendJson(res, 200, { ok: true });
     }
     // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.

@@ -22,7 +22,7 @@
  * household file) goes to household owners. And the pieces are asked one round at a time, at most every
  * TICK_MIN_MS however many apps open, with at most STREAMS_PER_SESSION streams per signed-in browser.
  */
-import { watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
@@ -48,7 +48,8 @@ const pending = new Map<Client, NodeJS.Timeout>();
 const lastSent = new WeakMap<Client, number>();
 let ticked = 0;
 let tickRunning: Promise<void> | undefined;
-let tickAgain = false;
+// What the next round asks, once the one under way is done: false nothing, true every piece, a set just those paths.
+let tickAgain: boolean | Set<string> = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
 
@@ -92,28 +93,49 @@ function drop(c: Client): void {
 
 const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
-/** Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change. */
-function tick(now = false): Promise<void> {
+/**
+ * Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change.
+ * `now`: a piece's own word, asked at once; `only` (with it): just the paths that moved (t-2065), else every piece.
+ */
+function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
   // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
-  if (now && tickRunning) { tickAgain = true; return tickRunning; }
+  if (now && tickRunning) {
+    tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
+    return tickRunning;
+  }
   if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
-  ticked = Date.now();
-  // A piece's own word: every scope's kept answer goes (the open ones are asked again just below).
-  if (now) expirePieceManifests();
+  // A round of every piece resets the clock; one piece's word doesn't, so the round every WATCH_MS still comes.
+  if (!only) ticked = Date.now();
+  // A piece's own word: its kept answer goes in every scope (the open ones are asked again just below).
+  if (now) { if (only) for (const p of only) expirePieceManifests(p); else expirePieceManifests(); }
   tickRunning = (async () => {
     const scopes = new Map<string, NodeJS.ProcessEnv>();
     for (const c of clients) scopes.set(scopeOf(c.env), c.env);
     for (const [scope, env] of scopes) {
-      const now = await refreshPieceManifests(env).catch(() => undefined);
+      const now = await refreshPieceManifests(env, only).catch(() => undefined);
       if (!now) continue;
       const before = seen.get(scope);
       let moved = false;
       if (before) for (const [path, print] of now) if (before.get(path) !== print) { clearPiecePages(path); moved = true; }
-      seen.set(scope, now);
+      // Only what was asked replaces what was seen: the others' last answers stay the ones to compare with.
+      seen.set(scope, only && before ? new Map([...before, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
     }
-  })().finally(() => { tickRunning = undefined; if (tickAgain) { tickAgain = false; void tick(true); } });
+  })().finally(() => {
+    tickRunning = undefined;
+    const again = tickAgain;
+    tickAgain = false;
+    if (again) void tick(true, again === true ? undefined : again);
+  });
   return tickRunning;
+}
+
+/** The piece paths a tick file names (one per line after its time), or undefined: every piece. */
+function tickPaths(home: string): Set<string> | undefined {
+  try {
+    const [, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
+    return paths.length ? new Set(paths) : undefined;
+  } catch { return undefined; }
 }
 
 /**
@@ -134,7 +156,7 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   if (!watcher) {
     try {
       watcher = watch(home, { recursive: true }, (_e, file) => {
-        if (String(file) === PIECES_TICK) void tick(true);
+        if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
         else if (file && DATA.test(String(file))) changed(whose(String(file)));
       });
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
@@ -147,9 +169,13 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
 /** How many apps are listening (for tests). */
 export const listening = () => clients.size;
 
-/** A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now. */
-export function piecesMoved(home: string): void {
+/**
+ * A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now.
+ * `path`: the piece that said so, and only it is asked again (t-2065: the runtime says so at every body's start and end,
+ * and each word used to re-run every piece's `ui --json`); none, every piece.
+ */
+export function piecesMoved(home: string, path?: string): void {
   // A producer's new observation also matters when no stream is open to watch the tick file.
-  expirePieceManifests();
-  try { writeFileSync(join(home, PIECES_TICK), String(Date.now())); } catch { /* the pieces' own tick finds it */ }
+  expirePieceManifests(path);
+  try { writeFileSync(join(home, PIECES_TICK), `${Date.now()}\n${path ?? ''}\n`); } catch { /* the pieces' own tick finds it */ }
 }
