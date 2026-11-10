@@ -10,6 +10,37 @@ describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
+  it('failed UI offers start only once per freshness window, or on that piece moving', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-failed-ui-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    const path = join(bin, 'loom-slack');
+    const asked = join(root, 'asked');
+    writeFileSync(path, `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(asked)}, 'run\\n');
+process.exit(2);
+`);
+    chmodSync(path, 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const runs = () => readFileSync(asked, 'utf8').trim().split('\n').length;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let round = 0; round < 4; round++) {
+        await refreshPieceManifests(env);
+        await pieceManifests(env);
+        vi.setSystemTime(Date.now() + ROUND_MS);
+      }
+      expect(runs()).toBe(1);
+      await refreshPieceManifests(env);
+      expect(runs()).toBe(2);
+      expirePieceManifests(path);
+      await refreshPieceManifests(env);
+      expect(runs()).toBe(3);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('an in-flight live refresh cannot restore an observation invalidated by the producer', async () => {
     const root = mkdtempSync(join(tmpdir(), 'loom-refresh-race-'));
     dirs.push(root);

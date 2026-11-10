@@ -110,6 +110,11 @@ type ManifestResult = PieceInfo | PieceSkip;
  */
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
 const cache = new Map<string, CacheEntry>();
+/** Failed/unsupported UI offers get the same freshness window as a manifest, rather than a process per live round. */
+const failedManifests = new Map<string, { at: number; result: ManifestResult }>();
+function forgetFailures(path?: string): void {
+  for (const key of failedManifests.keys()) if (path === undefined || key.startsWith(`${path}\0`)) failedManifests.delete(key);
+}
 let manifestGeneration = 0;
 /**
  * When an action last ran on a piece (by path), or on every piece (''): a served manifest must be made since then
@@ -137,6 +142,7 @@ const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
  * answer stays as the one to show if the next run fails or runs long. `path`: that piece's alone, in every scope (t-2065).
  */
 export function expirePieceManifests(path?: string): void {
+  forgetFailures(path);
   manifestGeneration++;
   // Every piece at once (no word from one of them in particular): any served answer from before is suspect.
   if (path === undefined) movedAt.set('', Date.now());
@@ -144,6 +150,7 @@ export function expirePieceManifests(path?: string): void {
 }
 
 export function clearPieceCache(path?: string): void {
+  forgetFailures(path);
   manifestGeneration++;
   movedAt.set(path ?? '', Date.now());
   if (path === undefined) { cache.clear(); pages.clear(); return; }
@@ -425,10 +432,17 @@ function keyOf(path: string, env: NodeJS.ProcessEnv): Keyed {
  */
 function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Keyed): Promise<ManifestResult> {
   const { key, version, on } = k;
+  const failed = failedManifests.get(key);
+  if (failed && Date.now() - failed.at < CACHE_MS) return Promise.resolve(failed.result);
+  failedManifests.delete(key);
+  const generation = manifestGeneration;
   const under = running.get(key);
   if (under && under.generation === manifestGeneration) return under.result;
   const result = fetchManifest(piece, path, env).then((r): ManifestResult => {
-    if (!('manifest' in r)) return r;
+    if (!('manifest' in r)) {
+      if (generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
+      return r;
+    }
     const now = { scope: r.manifest.scope === true, owners: r.manifest.owners === 2 };
     turnsOn.set(`${path}\0${version}`, now);
     if (on && ((now.scope && !on.scope) || (now.owners && !on.owners))) return { piece, reason: 'reads a new scope' };
