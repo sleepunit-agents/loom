@@ -15,12 +15,12 @@
  *   POST /comms/<thread>/send           {id, text}
  *   POST /comms/<thread>/title          {title}
  *   POST /comms/<thread>/project        {project | null}
- *   POST /comms/<thread>/pin, unpin, archive, unarchive, stop, delete
+ *   POST /comms/<thread>/pin, unpin, archive, unarchive, stop, resume, delete
  *   POST /comms/<thread>/read           {seq}
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  addMemberMessage, agentsComms, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
+  addMemberMessage, agentsComms, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { getConversation } from '../backends/conversations.js';
@@ -33,7 +33,7 @@ import { managedPieces } from '../cli/pieces-managed.js';
 import { threadWork } from '../comms-work.js';
 import { openThreadStream } from './comms-live.js';
 import { pieceApi, type PieceInfo } from './pieces.js';
-import { threadAsks, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
+import { threadAsks, conversationOfItem, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
 import { refShape, resolveRefs, REFS_MAX } from '../comms-refs.js';
 
 export interface CommsContext {
@@ -83,12 +83,25 @@ function runtimePath(env: NodeJS.ProcessEnv): string | undefined {
   return named.length === 1 ? findPiece(named[0].name, env) ?? undefined : undefined;
 }
 
-/** End the thread's body, through the runtime's `deliver end <conversation>` as the household owner. Never waits on it. */
-function endBody(env: NodeJS.ProcessEnv, t: Thread): void {
-  const p = runtimePath(env);
-  if (!p) return;
-  void pieceApi(p, { caller: { kind: 'owner', agents: '*' }, path: 'run', body: { argv: ['deliver', 'end', t.conversation] } }, env).catch(() => undefined);
+/** Proxy an owner's thread preference through the runtime; never trust a client conversation id. */
+async function threadModel(c: CommsContext, t: Thread, member: Member, harness?: unknown): Promise<{ status: number; body: unknown }> {
+  if (harness !== undefined && (typeof harness !== 'string' || !['auto', 'claude', 'codex'].includes(harness))) return { status: 400, body: { error: 'model is auto, claude or codex' } };
+  const p = runtimePath(c.env);
+  if (!p) return { status: 503, body: { error: 'the runtime is unavailable' } };
+  return pieceApi(p, { caller: { kind: 'owner', agents: member.agents, who: member.person }, path: 'model-choice',
+    body: { agent: t.agent, conversation: t.conversation, ...(harness === undefined ? {} : { harness }) } }, c.env);
 }
+
+/** Control only the server-resolved thread, with its member's actual agent scope. */
+async function threadControl(c: CommsContext, t: Thread, member: Member, action: 'interrupt' | 'resume'): Promise<{ status: number; body: unknown }> {
+  const p = runtimePath(c.env);
+  if (!p) return { status: 503, body: { error: 'the runtime is unavailable' } };
+  return pieceApi(p, { caller: { kind: 'owner', agents: member.agents, who: member.person }, path: 'conversation-control',
+    body: { agent: t.agent, conversation: t.conversation, action } }, c.env);
+}
+
+const noRuntimeConversation = (r: { status: number; body: unknown }): boolean => r.status === 404 &&
+  !!r.body && typeof r.body === 'object' && 'error' in r.body && r.body.error === 'no such conversation';
 
 /**
  * What a delivery the runtime took says for the thread: its body's state, and an error when no body started. The
@@ -165,7 +178,18 @@ async function asksOf(c: CommsContext, t: Thread): Promise<ThreadAskView[]> {
   if (!c.inbox) return [];
   try {
     const i = await c.inbox();
-    return await threadAsks(c.household, c.env, t, i);
+    const conversations = [...new Set(i.items.filter((it) => it.agent === t.agent)
+      .flatMap((it) => [conversationOfItem(it), it.approval?.conversation])
+      .filter((cv): cv is string => typeof cv === 'string' && /^cv-[0-9a-f]{12}$/.test(cv) && cv !== t.conversation))].slice(0, 128);
+    let origins: Record<string, string> = {};
+    const runtime = conversations.length ? runtimePath(c.env) : undefined;
+    if (runtime) {
+      try {
+        const r = await pieceApi(runtime, { caller: { kind: 'owner', agents: [t.agent] }, path: 'conversation-origins', body: { agent: t.agent, conversations } }, c.env) as { status?: number; body?: { origins?: Record<string, string> } };
+        if (r.status === 200 && r.body?.origins) origins = r.body.origins;
+      } catch { /* Older/unavailable runtime: directly linked cards still work. */ }
+    }
+    return await threadAsks(c.household, c.env, t, { ...i, origins });
   } catch (e) {
     process.stderr.write(`loom: a Comms thread's asks couldn't be read: ${(e as Error).message}\n`);
     return [];
@@ -196,7 +220,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const archived = new URL(req.url ?? '/', 'http://x').searchParams.get('archived') === '1';
       settleThread(h.home, null);
-      const threads = threadsOf(h, m, { archived });
+      const background = new URL(req.url ?? '/', 'http://x').searchParams.get('background') === '1';
+      const threads = threadsOf(h, m, { archived, ...(background ? { background: 'only' as const } : {}) });
       const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
       send(200, { ...(await asView(c, 'list', pathname)), threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
         agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)), member: m.person });
@@ -238,6 +263,9 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         openThreadStream(res, c.headers, h.home, { thread: t.id, session: c.session, from, may: () => { const now = c.live(); return !!now && stillSees(now, person, t.id); } });
         return true;
       }
+      if (verb === 'model' && dir === undefined) {
+        const r = await threadModel(c, t, m!); send(r.status, r.body); return true;
+      }
       // Work in this thread (comms.md, "The panel"): live from the pieces, for this member only.
       if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!)), true;
       // The loom things it names, as chips (comms.md, "Chips"): each ref's card, or null where this member can't open it.
@@ -267,6 +295,10 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     const why = c.guard(req, body);
     if (why) return send(403, { error: why }), true;
     switch (verb) {
+      case 'model': {
+        if (typeof body.harness !== 'string') return send(400, { error: 'model is auto, claude or codex' }), true;
+        const r = await threadModel(c, t, m!, body.harness); send(r.status, r.body); return true;
+      }
       case 'send': {
         // Accepted once recorded (t-1881): the delivery goes on in the background, and the thread's live state says
         // what came of it. The same id again is Send again: a message not delivered goes again, once; one on its way
@@ -283,11 +315,23 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'project': send(200, { thread: view(setProject(h, t, body.project ?? null)) }); return true;
       case 'pin': setPinned(h, t, true); send(200, { ok: true }); return true;
       case 'unpin': setPinned(h, t, false); send(200, { ok: true }); return true;
-      case 'archive': setArchived(h, t, true); endBody(c.env, t); send(200, { ok: true }); return true;
+      case 'archive':
+      case 'delete': {
+        const r = await threadControl(c, t, m!, 'interrupt');
+        // A new thread may never have reached the runtime: there is no body to stop.
+        if (r.status !== 200 && !noRuntimeConversation(r)) { send(r.status, r.body); return true; }
+        if (verb === 'archive') setArchived(h, t, true); else deleteThread(h, t);
+        send(200, { ok: true, ...(r.status === 200 ? { interruption: r.body } : {}) }); return true;
+      }
       case 'unarchive': setArchived(h, t, false); send(200, { ok: true }); return true;
       case 'read': markRead(h, t, body.seq); send(200, { ok: true }); return true;
-      case 'stop': askStop(h, t); send(200, { ok: true }); return true;
-      case 'delete': deleteThread(h, t); endBody(c.env, t); send(200, { ok: true }); return true;
+      case 'stop':
+      case 'resume': {
+        const r = await threadControl(c, t, m!, verb === 'stop' ? 'interrupt' : 'resume');
+        if (noRuntimeConversation(r) && verb === 'stop') send(200, { ok: true, state: 'idle' });
+        else send(r.status, r.body);
+        return true;
+      }
       default: send(404, { error: 'not-found' }); return true;
     }
   } catch (e) { refuse(e); return true; }

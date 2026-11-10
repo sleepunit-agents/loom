@@ -45,6 +45,7 @@ const ActivityView = lazy(() => import('./activity').then((m) => ({ default: m.A
 // An agent's window (agent-window.tsx): its header and its sections, around its pages. Its own chunk.
 const AgentWindow = lazy(() => import('./agent-window'));
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
+const PeopleView = lazy(() => import('./people').then((m) => ({ default: m.PeopleView })));
 const ProjectsView = lazy(() => import('./projects').then((m) => ({ default: m.ProjectsView })));
 // Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
 const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
@@ -357,7 +358,8 @@ export default function App() {
       if (!ch) return false;
       const r: ActResult = await act(c, ch.csrf, action, fields);
       say({ ok: r.ok, message: r.message, from: r.from, undo: r.undo });
-      if (r.go) goTo(r.go); else if (r.ok) void pg.load(pg.url, false);
+      // Unsure whether it landed (an unreadable answer, t-1995): read the page again, so it shows what loom recorded.
+      if (r.go) goTo(r.go); else if (r.ok || r.unsure) void pg.load(pg.url, false);
       return r.ok;
     };
     const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => sendAs(a, f, c), go: goTo, wide, stale: !pg.fresh, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
@@ -498,7 +500,8 @@ export default function App() {
             )}
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
-                {own(data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
+                {own(data.view === 'page' && data.people ? <Suspense fallback={<Spinner size="lg" />}><PeopleView data={data.people} /></Suspense>
+                  : data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
                   : data.view === 'page' && data.page.changes ? <Suspense fallback={<Spinner size="lg" />}><ChangesView page={data.page} unscoped={data.unscoped} /></Suspense>
                   : data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
@@ -531,14 +534,16 @@ export default function App() {
   const [booting, setBooting] = useState(false);
   useLayoutEffect(() => {
     if (arrived.current || !data || waiting) return;
+    // A cold desktop chunk can land after the page data. Keep the session fresh until it can boot.
+    if (desk && !D) return;
     arrived.current = true;
     // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
     // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
     const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
     // A desktop boots first, once a session and only with motion allowed; the arrival (its power-on) runs as it ends.
-    if (desk && desk$?.bootsNow()) { setBooting(true); return; }
+    if (desk && D?.bootsNow()) { setBooting(true); return; }
     if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
-  }, [data, waiting]);
+  }, [data, waiting, D, wide]);
 
   // A page come back to with Back or Forward: back where it was, once its page is drawn.
   useLayoutEffect(() => {

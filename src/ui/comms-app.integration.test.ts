@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
-import { createConversationTables } from '../backends/conversations.js';
+import { createConversationTables, recordTurn } from '../backends/conversations.js';
 import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery } from '../comms.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from './pieces.js';
@@ -101,6 +101,66 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     return { ctx, page, errors };
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+
+  it('keeps jobs in Background work and attributes the job brief to Art', async () => {
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'background-ui', label: 'Internal diagnostic',
+      at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'Diagnostic brief from Art' });
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      expect(await page.locator('.comms-row__title').allTextContents()).not.toContain('Internal diagnostic');
+      await page.getByRole('button', { name: 'Background work', exact: true }).click();
+      const row = page.locator('.comms-row__btn').filter({ hasText: 'Internal diagnostic' });
+      await row.waitFor();
+      await row.click();
+      const brief = page.locator('.comms-msg--agent').filter({ hasText: 'Diagnostic brief from Art' });
+      await brief.waitFor();
+      expect(await page.locator('.comms-msg--mine').filter({ hasText: 'Diagnostic brief from Art' }).count()).toBe(0);
+      expect(await noSideways(page)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      // Keep later app tests independent of this diagnostic.
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(job.id);
+      db.close();
+    }
+  }, 30_000);
+
+  it('lets the owner choose a thread model, keeps the choice, and reports a failed save', async () => {
+    const { ctx, page, errors } = await open(false);
+    let selected = 'auto';
+    let fail = false;
+    await page.route('**/comms/*/model', async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        if (fail) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The runtime is unavailable.' }) });
+        const body = req.postDataJSON() as { harness: string; _csrf: string };
+        expect(body._csrf).toBeTruthy();
+        selected = body.harness;
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threadChoice: selected }) });
+    });
+    try {
+      await page.goto(`${base}/comms/${thread.id}`);
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      await page.getByRole('menuitemradio', { name: 'Model: Auto', exact: false }).waitFor();
+      await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent?.includes('Codex'));
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      await page.getByRole('button', { name: 'Thread menu', exact: true }).click();
+      expect(await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: false }).getAttribute('aria-checked')).toBe('true');
+      fail = true;
+      await page.getByRole('menuitemradio', { name: 'Model: Claude', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'The runtime is unavailable.' }).waitFor();
+      expect(selected).toBe('codex');
+      expect(await page.getByRole('menuitemradio', { name: 'Model: Codex', exact: false }).getAttribute('aria-checked')).toBe('true');
+      expect(await noSideways(page)).toBe(true);
+      expect(errors).toEqual(['Failed to load resource: the server responded with a status of 503 (Service Unavailable)']);
+    } finally { await ctx.close(); }
+  }, 30_000);
 
   it('on a phone: the list, then the thread with its comm screen, its steps and the composer above the dock', async () => {
     const { ctx, page, errors } = await open(true);

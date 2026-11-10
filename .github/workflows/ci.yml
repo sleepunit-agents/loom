@@ -35,8 +35,10 @@ jobs:
     name: build + test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [22.x, 24.x]
+        node-version: ${{ github.event_name == 'merge_group' && fromJSON('["24.x"]') || fromJSON('["22.x", "24.x"]') }}
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -47,6 +49,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        # Supported by the pinned installer directly, independent of npm's
+        # deprecated forwarding of custom .npmrc settings. Embeddings use CPU.
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: npm ci
 
       # The household bundle (src/bundle.ts) encrypts with age; its tests run the real thing.
@@ -67,4 +73,71 @@ jobs:
           key: loom-embedding-model-fast-bge-small-en-v1.5-v1
 
       - name: Test
-        run: npm test
+        env:
+          LOOM_CI_SHARD: ${{ matrix.shard }}/4
+        run: npm test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json
+
+      - name: Keep shard reports and retry ledger
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-node-${{ matrix.node-version }}-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: warn
+
+  results:
+    name: CI results
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - name: Install report reader
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ci-node-*
+          path: reports
+      - name: Merge reports per Node version
+        run: |
+          for version in 22.x 24.x; do
+            mkdir -p "merged/$version/blobs"
+            for shard in reports/ci-node-$version-shard-*; do
+              [ -f "$shard/shard.blob.json" ] || continue
+              cp "$shard/shard.blob.json" "merged/$version/blobs/$(basename "$shard").json"
+            done
+            if [ -n "$(ls -A "merged/$version/blobs")" ]; then
+              npx vitest --merge-reports="merged/$version/blobs" --reporter=json --outputFile="merged/$version/vitest.json" || exit 1
+            fi
+          done
+      - name: Collect every retried test
+        if: always()
+        run: |
+          mkdir -p merged
+          find reports -name flaky.jsonl -exec cat {} + > merged/flaky.jsonl
+          echo '### Retried tests (burn down in t-2012)' >> "$GITHUB_STEP_SUMMARY"
+          if [ -s merged/flaky.jsonl ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat merged/flaky.jsonl >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No retried tests recorded. Check shard completion before treating this as clean.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-merged-${{ github.run_attempt }}
+          path: merged/
+          retention-days: 14
+      - name: Require every shard to pass
+        if: always()
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: test "$RESULT" = success

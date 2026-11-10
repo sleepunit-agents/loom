@@ -193,3 +193,43 @@
 :root[data-look] .loom-phome .loom-bigcard__compose input{font-size:16px}
 /* how it is, in words: chrome, not text to select (index.css's chrome list) */
 :root[data-look] :is(.loom-bigcard__eb,.loom-rcard__st,.loom-askb){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+/* Agreed large cards (t-1982): spend room on words, with scrolling rather than truncation. */
+:root[data-look] .loom-bigcard__in { display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:20px; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
+:root[data-look] .loom-bigcard__identity { display:flex; align-items:center; gap:18px; flex:none; min-width:0; }
+:root[data-look] .loom-bigcard__face { flex:none; }
+:root[data-look] .loom-bigcard__info { flex:1; }
+:root[data-look] .loom-bigcard__name { overflow-wrap:anywhere; }
+:root[data-look] .loom-bigcard__columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; min-width:0; flex:1 0 auto; }
+:root[data-look] .loom-bigcard__columns>div { min-width:0; display:flex; flex-direction:column; gap:22px; }
+:root[data-look] .loom-bigcard h3 { margin:0 0 10px; color:var(--v-text-3); font:11px var(--loom-font-data); text-transform:uppercase; letter-spacing:.12em; }
+:root[data-look] .loom-bigcard__kv { display:block; margin:0; }
+:root[data-look] .loom-bigcard__kv dt { display:none; }
+:root[data-look] .loom-bigcard__kv dd { display:block; white-space:normal; overflow:visible; overflow-wrap:anywhere; line-height:1.5; }
+:root[data-look] .loom-bigcard__item { margin:0; padding:10px 0; border-bottom:1px solid var(--v-border); overflow-wrap:anywhere; font-size:14px; }
+:root[data-look] .loom-bigcard__item small { display:block; color:var(--v-text-3); font-size:12px; }
+:root[data-look] .loom-bigcard__empty { color:var(--v-text-3); font-size:14px; }
+:root[data-look] .loom-bigcard__question { flex:none; min-width:0; padding:16px; border:1px solid color-mix(in srgb,var(--v-yellow) 45%,var(--v-border)); background:color-mix(in srgb,var(--v-yellow) 6%,var(--v-paper)); }
+:root[data-look] .loom-bigcard__question .loom-inbox__read { padding:0; }
+:root[data-look] .loom-bigcard__question :is(.loom-inbox__meta,.loom-inbox__details) { display:none; }
+:root[data-look] .loom-bigcard__question .loom-split__head { font-size:18px; }
+:root[data-look] .loom-bigcard__question .loom-inbox__answer { margin-top:12px; }
+:root[data-look] .loom-bigcard__compose { flex:none; margin-top:auto; }
+:root[data-look] .loom-bigcard__strip span { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+@container (max-width:560px) {
+  :root[data-look] .loom-bigcard__columns { grid-template-columns:minmax(0,1fr); gap:22px; }
+  :root[data-look] .loom-bigcard__kv dd { display:block; -webkit-line-clamp:unset; }
+}
+:root[data-look] .loom-phome .loom-bigcard__in { display:flex; }
+:root[data-look] .loom-bigcard__words summary { font-size:12px; color:var(--v-text-2); cursor:pointer; }
+:root[data-look] .loom-bigcard__question .loom-inbox__read { gap:10px; }
+:root[data-look] .loom-bigcard__question .loom-inbox__answer { gap:8px; margin-top:0; }
+
+/* Complete jobs stay reachable in the compact rail and wrap on phones. */
+.loom-rcard-wrap { min-width: 0; }
+.loom-rcard-wrap > .loom-rcard { width: 100%; }
+.loom-jobs-fold { padding: .5rem; font-size: .8rem; }
+.loom-jobs-fold summary { cursor: pointer; }
+.loom-jobs { list-style: none; margin: .5rem 0; padding: 0; }
+.loom-jobs li { display: flex; flex-direction: column; gap: .15rem; padding: .4rem 0; overflow-wrap: anywhere; }
+.loom-jobs small { opacity: .7; font-size: .7rem; }

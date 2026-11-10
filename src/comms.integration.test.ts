@@ -32,6 +32,23 @@ process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
   if (process.argv[2] === 'api') {
     fs.appendFileSync(home + '/runtime-api.jsonl', input + '\\n');
+    const q = JSON.parse(input);
+    if (q.path === 'conversation-control') {
+      const f = home + '/control-status';
+      const status = fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 200;
+      return console.log(JSON.stringify({ status, body: status === 200 ? { accepted: true, state: q.body.action === 'interrupt' ? 'pending' : 'resuming' } : { error: status === 404 ? 'no such conversation' : 'control unavailable' } }));
+    }
+    if (q.path === 'conversation-origins') {
+      const all = fs.existsSync(home + '/runtime-origins.json') ? JSON.parse(fs.readFileSync(home + '/runtime-origins.json', 'utf8')) : {};
+      return console.log(JSON.stringify({ status: 200, body: { origins: Object.fromEntries(q.body.conversations.map(cv => [cv, all[cv] || cv])) } }));
+    }
+    if (q.path === 'model-choice') {
+      const f = home + '/model-choices.json';
+      const choices = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : {};
+      if (q.body.harness !== undefined) { choices[q.body.conversation] = q.body.harness; fs.writeFileSync(f, JSON.stringify(choices)); }
+      return console.log(JSON.stringify({ status: 200, body: { agent: q.body.agent, conversation: q.body.conversation, threadChoice: choices[q.body.conversation] || 'auto', agentChoice: 'auto', effective: choices[q.body.conversation] || 'auto' } }));
+    }
+
     return console.log(JSON.stringify({ status: 200, body: { exit: 0, stdout: '{}', stderr: '' } }));
   }
   fs.appendFileSync(home + '/runtime-calls.jsonl', input + '\\n');
@@ -222,7 +239,7 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
         ['POST', `/comms/${t.id}/send`, { id: mid(1), text: 'x' }], ['POST', `/comms/${t.id}/title`, { title: 'x' }],
         ['POST', `/comms/${t.id}/project`, { project: null }], ['POST', `/comms/${t.id}/pin`, {}], ['POST', `/comms/${t.id}/unpin`, {}],
         ['POST', `/comms/${t.id}/archive`, {}], ['POST', `/comms/${t.id}/unarchive`, {}], ['POST', `/comms/${t.id}/read`, { seq: 1 }],
-        ['POST', `/comms/${t.id}/stop`, {}], ['POST', `/comms/${t.id}/delete`, {}],
+        ['POST', `/comms/${t.id}/stop`, {}], ['POST', `/comms/${t.id}/resume`, {}], ['POST', `/comms/${t.id}/delete`, {}],
       ];
       for (const who of [tok.loren, tok.sam]) {
         for (const [m, p, b] of routes) {
@@ -332,6 +349,30 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
         raw.members[1].agents = ['art'];
         writeFileSync(join(h.home, 'household.json'), JSON.stringify(raw));
       }
+    });
+
+    it('reads and saves a thread model through the authenticated runtime with server-owned scope', async () => {
+      const t = await open();
+      const read = await page(tok.jonathan, 'GET', `/comms/${t.id}/model`);
+      expect(read.status).toBe(200);
+      expect(read.body.threadChoice).toBe('auto');
+      const saved = await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'codex', conversation: 'cv-999999999999', agent: 'mark' });
+      expect(saved.status).toBe(200);
+      expect(saved.body.threadChoice).toBe('codex');
+      expect((await page(tok.jonathan, 'GET', `/comms/${t.id}/model`)).body.threadChoice).toBe('codex');
+      const request = apiCalls().filter((x) => x.path === 'model-choice').at(-1)!;
+      expect(request.body).toEqual({ agent: 'art', conversation: t.conversation });
+      expect(request.caller).toMatchObject({ kind: 'owner', who: 'jonathan', agents: '*' });
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'auto' })).body.threadChoice).toBe('auto');
+    });
+
+    it('refuses model choice from another owner, a body, or an invalid selection', async () => {
+      const t = await open();
+      const before = apiCalls().length;
+      expect((await page(tok.sam, 'POST', `/comms/${t.id}/model`, { harness: 'codex' })).status).toBe(403);
+      expect((await page(tok.art, 'POST', `/comms/${t.id}/model`, { harness: 'codex' })).status).toBe(401);
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/model`, { harness: 'not-a-harness' })).status).toBe(400);
+      expect(apiCalls()).toHaveLength(before);
     });
 
     it('shows another owner the conversation, never its words', async () => {
@@ -484,14 +525,19 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       expect(JSON.stringify(d2.body.brief)).not.toMatch(/comms_title/);
     });
 
-    it('shows working, clears it on done, and answers stop once after Stop', async () => {
+    it('shows working, clears it on done, and sends Stop through scoped runtime control', async () => {
       const t = await open();
       await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' });
       expect(((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.thread as { state: { working: boolean } }).state.working).toBe(true);
       await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done' });
       expect(((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.thread as { state: { working: boolean } }).state.working).toBe(false);
-      await page(tok.jonathan, 'POST', `/comms/${t.id}/stop`, {});
-      expect((await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' })).body).toEqual({ ok: true, stop: true });
+      const stopped = await page(tok.jonathan, 'POST', `/comms/${t.id}/stop`, { conversation: 'cv-ffffffffffff', agent: 'sam' });
+      expect(stopped.body).toEqual({ accepted: true, state: 'pending' });
+      expect(apiCalls().filter(x => x.path === 'conversation-control').at(-1)).toMatchObject({
+        caller: { kind: 'owner', agents: '*', who: 'jonathan' }, body: { agent: 'art', conversation: t.conversation, action: 'interrupt' },
+      });
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/resume`, { conversation: 'cv-ffffffffffff' })).body).toEqual({ accepted: true, state: 'resuming' });
+      expect(apiCalls().filter(x => x.path === 'conversation-control').at(-1)).toMatchObject({ body: { agent: 'art', conversation: t.conversation, action: 'resume' } });
       expect((await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' })).body).toEqual({ ok: true });
     });
 
@@ -549,6 +595,25 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
   });
 
   describe('criterion 8: unread, pin, archive, delete', () => {
+    it('keeps the thread intact and reports failure when its runtime cannot accept interruption', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'control-status'), '503');
+      try {
+        for (const verb of ['stop', 'archive', 'delete']) {
+          expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/${verb}`, {})).status).toBe(502);
+          const current = await page(tok.jonathan, 'GET', `/comms/${t.id}`);
+          expect(current.status).toBe(200);
+          expect((current.body.thread as { archived: unknown }).archived).toBeNull();
+        }
+      } finally { rmSync(join(h.home, 'control-status')); }
+    });
+
+    it('can archive a new thread whose conversation has not reached the runtime', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'control-status'), '404');
+      try { expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/archive`, {})).status).toBe(200); }
+      finally { rmSync(join(h.home, 'control-status')); }
+    });
     it('counts unread replies and never lowers read_seq', async () => {
       const t = await open();
       await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'unread one' });
@@ -578,7 +643,7 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       const archived = (await page(tok.jonathan, 'GET', '/comms?archived=1')).body.threads as Array<{ id: string }>;
       expect(archived.some((x) => x.id === t.id)).toBe(true);
       await new Promise((r) => setTimeout(r, 300));
-      expect(apiCalls().some((c) => JSON.stringify(c).includes(`"deliver","end","${t.conversation}"`))).toBe(true);
+      expect(apiCalls().some((c) => c.path === 'conversation-control' && (c.body as { conversation: string }).conversation === t.conversation)).toBe(true);
       const refused = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id: mid(n++), text: 'x' });
       expect(refused.status).toBe(409);
       expect(String(refused.body.error)).toMatch(/archived/);
@@ -725,6 +790,30 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
   });
 
   describe('criterion 12: asks inline', () => {
+    it('retains a continuation approval in its original thread when a later digest clears needs_owner', async () => {
+      const t = await open();
+      const other = await open();
+      const child = 'cv-0000000000cc';
+      writeFileSync(join(h.home, 'runtime-origins.json'), JSON.stringify({ [child]: t.conversation }));
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{
+        text: 'Continue the approved repair?', kind: 'permission', agent: 'art', conversation: child,
+        actions: [{ action: 'allow', label: 'Allow', fields: { id: 'a-000000cc' } }, { action: 'deny', label: 'Deny', fields: { id: 'a-000000cc' } }],
+      }]));
+      clearPieceCache();
+      try {
+        const asks = async (thread: Thread) => (await page(tok.jonathan, 'GET', `/comms/${thread.id}`)).body.asks as Array<{ ref: string; state: string }>;
+        expect(await asks(t)).toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc', state: 'open' }));
+        recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:origin-test');
+        writeDigest(agentDir(h, 'art'), { conversation: t.conversation!, run: 'r-cleared-needs' }, { summary: 'Continued.', needs_owner: null } as never);
+        expect(await asks(t)).toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc', state: 'open' }));
+        expect(await asks(other)).not.toContainEqual(expect.objectContaining({ ref: 'approval:a-000000cc' }));
+        expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);
+      } finally {
+        rmSync(join(h.home, 'runtime-origins.json'), { force: true });
+        rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache();
+      }
+    });
+
     it('shows a pending approval only in its own thread: its conversation and its agent both', async () => {
       const t = await open();
       const other = await open();
@@ -1285,6 +1374,12 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     expect((await api(tok.runtime, 'comms/adapter', q)).body.id).toBe(id);
     const thread = await page(tok.jonathan, 'GET', `/comms/${id}`);
     expect(thread.body.thread).toMatchObject({ conversation: child.conversation, title: 'spawn test' });
+    expect(thread.body.messages[0]).toMatchObject({ kind: 'message', from: 'art' });
+    // Assigned ownership permits reading a job; it does not make it a personal chat.
+    expect((await page(tok.jonathan, 'GET', '/comms')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).toContain(id);
+    expect((await page(tok.sam, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms/agents')).body.agents.find((a: {agent: string}) => a.agent === 'art').last.thread).not.toBe(id);
     expect((await page(tok.sam, 'GET', `/comms/${id}`)).status).toBe(403);
     expect(JSON.stringify((await page(tok.jonathan, 'GET', `/comms/${parent.id}`)).body.messages)).toContain(id.replace(/^th:/, ''));
     const post = { op: 'post', agent: 'art', place: id, text: 'ok', run: 'run-0123456789ab', ref: 'spawn-run-0123456789ab' };
@@ -1295,6 +1390,8 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     await page(tok.jonathan, 'POST', `/comms/${id}/send`, { id: mid(n++), text: 'Try yes instead' });
     await settled(id);
     expect(deliveries().at(-1)).toMatchObject({ venue: 'spawn', place: 'sp-test', from: { kind: 'person', slug: 'jonathan' }, text: 'Try yes instead' });
+    expect((await page(tok.jonathan, 'GET', '/comms')).body.threads.map((t: Thread) => t.id)).toContain(id);
+    expect((await page(tok.jonathan, 'GET', '/comms?background=1')).body.threads.map((t: Thread) => t.id)).not.toContain(id);
   });
 
 

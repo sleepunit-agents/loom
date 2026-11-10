@@ -180,14 +180,17 @@ export interface Reading { label: string; value: string; detail?: string; tone?:
  * body is in, a lane or a wake running, a task, a remote session. The card lists them, simply; the details are a
  * tap away (`page`). `since` is when it started (ISO 8601).
  */
-export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string;
+export interface CurrentActivity { action: string; observedAt: string; expiresAt: string }
+export interface Doing { activity?: CurrentActivity; text: string; kind?: DoingKind; where?: string; since?: string; page?: string;
   /** The conversation a delivered body is in (cv-…; the runtime's): loom says which one, and links it, for whoever may see it. */
   conversation?: string;
   /** Where loom links it (loom's own, never a piece's): a Comms thread's page, for its member (handler.ts, atWorkFor). */
   href?: string }
 export type DoingKind = 'talk' | 'lane' | 'task' | 'session' | 'other';
 export const DOING_KINDS: ReadonlySet<string> = new Set(['talk', 'lane', 'task', 'session', 'other']);
-export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
+export type JobStatus = 'running' | 'waiting' | 'scheduled' | 'backlog';
+export interface Job extends Doing { id: string; status: JobStatus; tasks?: string[]; run?: string; wake?: string; at?: string }
+export interface AgentReport { idle?: { observedAt: string; expiresAt: string }; jobs?: Job[]; state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
 /** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
 export type Level = 'loom' | 'agent';
 
@@ -1047,19 +1050,49 @@ export function parseManifest(value: unknown): Manifest | string {
         agentId(id, 'an agents key');
         const r = obj(ag[id], `agents.${id}`);
         if (r.state !== undefined && (typeof r.state !== 'string' || !AGENT_STATES.has(r.state))) throw new Invalid(`agents.${id}.state must be one of ${[...AGENT_STATES].join(', ')}`);
-        m.agents[id] = {
+        let idle: { observedAt: string; expiresAt: string } | undefined;
+        if (r.idle !== undefined) {
+          const i = obj(r.idle, 'agents.idle');
+          const observedAt = str(i.observedAt, 'idle.observedAt'), expiresAt = str(i.expiresAt, 'idle.expiresAt');
+          const at = Date.parse(observedAt), end = Date.parse(expiresAt);
+          if (!Number.isFinite(at) || !Number.isFinite(end) || end <= at || end - at > 30000) throw new Invalid('idle needs at most 30 seconds of freshness');
+          idle = { observedAt, expiresAt };
+        }
+        m.agents[id] = { ...(idle ? { idle } : {}),
           ...(r.state !== undefined ? { state: r.state as AgentState } : {}),
           ...(r.reason !== undefined ? { reason: str(r.reason, `agents.${id}.reason`) } : {}),
           readings: (r.readings === undefined ? [] : arr(r.readings, `agents.${id}.readings`, LIMITS.readings)).map((x) => {
             const d = obj(x, 'reading');
             return { label: str(d.label, 'reading.label'), value: str(d.value, 'reading.value'), detail: optStr(d.detail, 'reading.detail'), tone: tone(d.tone), page: page(d.page, 'reading.page') };
           }),
+          ...(r.jobs !== undefined ? { jobs: arr(r.jobs, `agents.${id}.jobs`, 10000).map((x): Job => {
+            const j = obj(x, 'job');
+            if (!['running', 'waiting', 'scheduled', 'backlog'].includes(String(j.status))) throw new Invalid('job.status is running, waiting, scheduled or backlog');
+            const at = optStr(j.at, 'job.at'), since = optStr(j.since, 'job.since');
+            if ([at, since].some((t) => t !== undefined && !Number.isFinite(Date.parse(t)))) throw new Invalid('job times are ISO 8601');
+            return { id: str(j.id, 'job.id'), status: j.status as JobStatus, text: str(j.text, 'job.text'),
+              ...(j.tasks !== undefined ? { tasks: arr(j.tasks, 'job.tasks', 1000).map((t) => str(t, 'job.task')) } : {}),
+              ...(j.conversation !== undefined ? { conversation: conversationRef(j.conversation) } : {}),
+              ...(j.page !== undefined ? { page: page(j.page, 'job.page') } : {}),
+              ...(at ? { at } : {}), ...(since ? { since } : {}),
+              ...(j.run !== undefined ? { run: str(j.run, 'job.run') } : {}), ...(j.wake !== undefined ? { wake: str(j.wake, 'job.wake') } : {}) };
+          }) } : {}),
           ...(r.doing !== undefined ? { doing: arr(r.doing, `agents.${id}.doing`, LIMITS.doing).map((x) => {
             const d = obj(x, 'doing');
             if (d.kind !== undefined && (typeof d.kind !== 'string' || !DOING_KINDS.has(d.kind))) throw new Invalid(`doing.kind must be one of ${[...DOING_KINDS].join(', ')}`);
             const since = optStr(d.since, 'doing.since');
             if (since !== undefined && !Number.isFinite(Date.parse(since))) throw new Invalid('doing.since is a time (ISO 8601)');
-            return { text: str(d.text, 'doing.text'), ...(d.kind ? { kind: d.kind as DoingKind } : {}), ...(d.where !== undefined ? { where: str(d.where, 'doing.where') } : {}),
+            let activity: CurrentActivity | undefined;
+            if (d.activity !== undefined) {
+              const a = obj(d.activity, 'doing.activity');
+              const action = str(a.action, 'activity.action');
+              const observedAt = str(a.observedAt, 'activity.observedAt'), expiresAt = str(a.expiresAt, 'activity.expiresAt');
+              const at = Date.parse(observedAt), end = Date.parse(expiresAt);
+              if (!['Working', 'Running a command', 'Reading a file', 'Editing a file', 'Writing a file', 'Searching files', 'Searching the web', 'Using a tool', 'Starting a helper'].includes(action)
+                || !Number.isFinite(at) || !Number.isFinite(end) || end <= at || end - at > 30000) throw new Invalid('activity needs fixed safe action words and at most 30 seconds of freshness');
+              activity = { action, observedAt, expiresAt };
+            }
+            return { ...(activity ? { activity } : {}), text: str(d.text, 'doing.text'), ...(d.kind ? { kind: d.kind as DoingKind } : {}), ...(d.where !== undefined ? { where: str(d.where, 'doing.where') } : {}),
               ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}),
               ...(d.conversation !== undefined ? { conversation: conversationRef(d.conversation) } : {}) };
           }) } : {}),

@@ -399,3 +399,6 @@ color-scheme:light;
 --v-disabled-ink:#3A3743;--muted-foreground-ink:#2B2934;--muted-foreground-tinted:#2B2934;--status-pending-ink:#2B2934;
 --v-border:#827D8A;--v-skel-edge:#827D8A;--v-edge:#55525D;--v-disabled-edge:#55525D;--sel-edge:#8F0F43;--loom-muted:#55525D;--loom-muted-wash:#55525D;
 --v-danger-ink:#8C1222;--v-olive-ink:#472A99;--v-accent-ink:#8F0F43;--status-ok-ink:#11502F;--status-warn-ink:#5E3D00;--status-danger-ink:#8C1222;--status-info-ink:#004A51}
+
+/* Desktop connectivity already has a fixed status at the right of its one bar. */
+@media(min-width:1024px){:root[data-look] .loom-top--one .loom-tick__live{display:none}}

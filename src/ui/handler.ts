@@ -1,3 +1,4 @@
+import { agentJobs } from './agent-jobs.js';
 /**
  * loom's web UI on the HTTP daemon (full scope only).
  *
@@ -69,7 +70,7 @@ import { activityView } from './activity.js';
 import { tapeRows, whereLabel, type TapeEntry } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
-import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPeopleApp, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
@@ -163,15 +164,26 @@ function scopedPathOk(pathname: string): boolean {
  * The runtime is the one record of a body at work; this only says which conversation, and to whom.
  */
 export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member: Member | undefined): PieceInfo[] {
-  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
-  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(h.home, agent, cv); } catch { return undefined; } };
+  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation) || r.jobs?.length))) return pieces;
+  const threads = new Map<string, ReturnType<typeof threadOfAgentConversation>>();
+  const threadOf = (agent: string, cv: string) => {
+    const key = `${agent}:${cv}`;
+    if (!threads.has(key)) { try { threads.set(key, threadOfAgentConversation(h.home, agent, cv)); } catch { threads.set(key, undefined); } }
+    return threads.get(key);
+  };
   const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
-  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, !r.doing ? r : {
-    ...r, doing: r.doing.flatMap((d) => {
+  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, {
+    ...r, jobs: (r.jobs ?? []).flatMap((j) => {
+      if (!member || !owns(member, a) || !h.agents.includes(a)) return [];
+      const t = j.conversation ? threadOf(a, j.conversation) : undefined;
+      if (t && t.member !== member.person) return [];
+      const label = j.conversation ? (t?.title ?? labelOf(a, j.conversation)) : undefined;
+      return [{ ...j, ...(['Working in a conversation', 'Waiting to continue'].includes(j.text) && label ? { text: label } : {}), ...(j.conversation ? { href: t ? threadPath(t.id) : `/a/${a}/conversation/${j.conversation}` } : {}) }];
+    }), doing: (r.doing ?? []).flatMap((d) => {
       if (!d.conversation) return [d];
       const t = threadOf(a, d.conversation);
       if (t) return member && t.member === member.person ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
-      if (!member || !owns(member, a) || !h.agents.includes(a)) return [d];
+      if (!member || !owns(member, a) || !h.agents.includes(a)) { const { activity, ...generic } = d; return [generic]; }
       const label = labelOf(a, d.conversation);
       return [{ ...d, ...(label ? { text: d.kind === 'talk' ? `Talking in ${label}` : label } : {}), href: `/a/${a}/conversation/${d.conversation}` }];
     }) }])) } });
@@ -929,8 +941,10 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
   const taken = new Set<HomeAsk>();
   const out = asks.map((a) => {
     if (!a.waitsOnApproval) return a;
-    const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
+    const card = asks.find((x) => x.source.id === src && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
+    // Several conversations can wait on the same decision. Each gets the real actions;
+    // remove the standalone card once, while the piece still enforces one decision.
     taken.add(card);
     // A card that leads (a grant, t-1970; a vouch or a reset, t-1975): what Allow gives is the piece's words, never the agent's; its ask is the why.
     const lead = card.lead ? { text: card.text, meta: a.text, ...(a.needs ? { needs: { ...a.needs, why: a.text,
@@ -967,22 +981,25 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
     const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
-    const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
+    const recentSteps = tapeRows(agentDir(h, a), 72, nowMs).slice(0, 3);
+    const last = recentSteps[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
     if (last) readings.push({ label: 'Last seen', value: agoText(last.created, nowMs), detail: whereLabel(last.where), source: agentSource(a), page: '' });
     // What it has going, newest first; and only what's wrong (a reading marked bad or warn): no news is good news.
     const doing = reports.flatMap((x) => (x.r.doing ?? []).map((d) => ({ ...d, source: pieceSource(x.p.piece) })))
       .sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0)).slice(0, 8);
+    const jobs = agentJobs(reports.flatMap(({ p, r }) => (r.jobs ?? []).map((j) => ({ ...j, source: pieceSource(p.piece),
+      ...(j.page !== undefined && !j.href ? { href: pageHref(j.page, pieceSource(p.piece)) } : {}) }))));
     const problems = reports.flatMap((x) => x.r.readings.filter((r) => r.tone === 'bad' || r.tone === 'warn')
       .map((r) => ({ text: `${r.label}: ${r.value}`, tone: r.tone as 'bad' | 'warn', source: pieceSource(x.p.piece), ...(r.page !== undefined ? { page: r.page } : {}) })));
     if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
       problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
     }
     // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
-    const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
+    const state: AgentState = worst?.r.state ?? (doing.length || jobs.some((j) => j.status === 'running') ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
-    return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
+    return { id: a, ...marks[a], state, reason, doing, jobs, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -1008,6 +1025,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), box: inboxBox({ ...a, kind: askKind(a), attention: a.attention !== false }), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
       ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}),
+      ...(a.waitsOnApproval ? { waitsOnApproval: a.waitsOnApproval } : {}),
       ...(a.fine ? { fine: a.fine } : {}), ...(a.relayedFrom ? { relayedFrom: a.relayedFrom } : {}),
       ...(a.conversation && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}) })),
     ...pieces.flatMap((p) => {
@@ -1141,7 +1159,7 @@ const STATE_RANK: Record<AgentState, number> = { broken: 3, unavailable: 2, work
 function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
   const reports = pieces.flatMap((p) => (p.manifest.agents?.[agent] ? [p.manifest.agents[agent]] : []));
   const worst = reports.filter((r) => r.state).sort((x, y) => STATE_RANK[y.state!] - STATE_RANK[x.state!])[0];
-  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
+  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0 || r.jobs?.some((j) => j.status === 'running')) ? 'working' : 'available');
 }
 
 /**
@@ -1174,8 +1192,26 @@ function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
 
 /** The one thing an agent is on, newest first, as its card's line says it (agentCards): for its window's pill. */
 function onOf(pieces: PieceInfo[], agent: string): { on?: { text: string; href?: string } } {
-  const d = pieces.flatMap((p) => p.manifest.agents?.[agent]?.doing ?? []).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
+  const d = pieces.flatMap((p) => { const r = p.manifest.agents?.[agent]; return r?.doing?.length ? r.doing : (r?.jobs ?? []).filter((j) => j.status === 'running'); }).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
   return d ? { on: { text: d.text, ...(d.href ? { href: d.href } : {}) } } : {};
+}
+
+/** Only fresh producer observations, after atWorkFor has applied membership. Never job/episode timestamps. */
+export function tickerActivityOf(pieces: PieceInfo[], agent: string, now = Date.now()) {
+  const ds = pieces.flatMap(p => p.manifest.agents?.[agent]?.doing ?? [])
+    .filter(d => d.activity && Date.parse(d.activity.observedAt) <= now && Date.parse(d.activity.expiresAt) > now)
+    .sort((a, b) => Date.parse(b.activity!.observedAt) - Date.parse(a.activity!.observedAt));
+  const d = ds[0];
+  if (!d?.activity) {
+    // An idle producer cannot account for another source's work without an observation.
+    if (pieces.some(p => p.manifest.agents?.[agent]?.doing?.length)) return {};
+    const idle = pieces.flatMap(p => p.manifest.agents?.[agent]?.idle ? [p.manifest.agents[agent].idle!] : [])
+      .find(i => Date.parse(i.observedAt) <= now && Date.parse(i.expiresAt) > now);
+    return idle ? { activity: { action: 'Idle', ...idle } } : {};
+  }
+  // The venue is a fixed category, never a conversation label or excerpt.
+  const where = d.kind === 'lane' ? 'a wake' : ['Comms', 'Discord', 'Slack', 'Signal'].includes(d.where ?? '') ? d.where : d.kind === 'talk' ? 'a conversation' : 'a session';
+  return { activity: { ...d.activity, where, ...(d.href ? { href: d.href } : {}) } };
 }
 
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
@@ -1227,7 +1263,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
-          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a) })),
+          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a), ...tickerActivityOf(pieces, a), ...(!pieces.some(p => p.piece === 'runtime') || ['unavailable', 'broken'].includes(agentStateOf(pieces, a)) ? { activityUnavailable: true } : {}) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
@@ -1861,7 +1897,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/pieces.json') {
     const m0 = await pieceManifests(scopedEnv);
-    const m = { ...m0, pieces: forOwner(m0.pieces, opts.ownerScope) };
+    const m = { ...m0, pieces: atWorkFor(forOwner(m0.pieces, opts.ownerScope), opts.household?.(), who?.member) };
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
       pieces: m.pieces.map((p) => ({ piece: p.piece, manifest: p.manifest })),
@@ -2021,6 +2057,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead, extra?: Record<string, unknown>) =>
       { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
         return view('page', { page, ctx, chrome: ch, head, ...extra }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
+    const contacts = (slug?: string) => {
+      const data = householdPeopleApp(hh, query, slug, { projects: !opts.ownerScope });
+      const m = who?.member;
+      const conversations = m && data.selected ? threadsOf(hh, m).filter((t) => t.agent === data.selected || t.member === data.selected).slice(0, 5)
+        .map((t) => ({ title: t.title ?? 'New thread', href: threadPath(t.id) })) : [];
+      const permissions = opts.ownerScope ? undefined : permissionsOf(opts.env).permissions;
+      return { ...data, conversations, ...(permissions ? { permissions: permissions + (data.selected && hh.agents.includes(data.selected) ? `/${data.selected}` : '') } : {}) };
+    };
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
@@ -2121,7 +2165,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         : 'Facts about the world, shared by every agent in the household.';
       return view('knowledge', { knowledge: k, title, intro, add: NEW_FACT_LINK, topic: query.topic ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
     }
-    if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
+    if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'), undefined, { people: contacts() });
     // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
     // not-found page here, never the single-agent route below.
     if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
@@ -2138,7 +2182,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
-      return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
+      return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug, { projects: !opts.ownerScope }) : notFound, 'people', ctxOf(`people/${slug}`), undefined, { people: contacts(slug ?? undefined) });
     }
     if (pathname === '/members') return send200(householdMembers(hh), 'members', ctxOf('members'));
     // A conversation (docs/specs/conversations.md, loom:conversation/<id>): whichever of this viewer's agents has it.

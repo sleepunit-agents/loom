@@ -96,3 +96,36 @@ describe('a chip\'s card', () => {
     for (const x of ['t-5', 't-6']) { expect(r[x], x).not.toHaveProperty('href'); expect(r[x], x).not.toHaveProperty('page'); }
   });
 });
+
+it('runtime provenance shows descendant asks only for the same agent and an already visible open item', () => {
+  const t = { agent: 'art', conversation: 'cv-0123456789ab' } as Thread;
+  const origins = { 'cv-00000000000f': t.conversation };
+  const child = item([], { conversation: 'cv-00000000000f' });
+  expect(isThreadAsk(child, t)).toBe(false);
+  expect(isThreadAsk(child, t, origins)).toBe(true);
+  for (const more of [{ agent: 'mark' }, { box: 'done' as const }, { attention: false }, { kind: 'answered' as const }]) {
+    expect(isThreadAsk({ ...child, ...more }, t, origins)).toBe(false);
+  }
+});
+
+
+describe('approval-backed conversational asks', () => {
+  const question = (more: Partial<InboxItem> = {}) => item([], {
+    kind: 'decision', source: { id: 'loom', base: '/a/art/', act: '/a/art/act/loom' },
+    reply: { action: 'needs-reply', label: 'Reply', fields: { digest: 'dg-test' } },
+    needs: { answers: 'yes-no', refs: [], details: '' }, ...more,
+  });
+  it('keeps ordinary Yes/No, but never substitutes it for an unavailable approval', () => {
+    expect(openView(question(), false, true).yesNo).toBe(true);
+    const v = openView(question({ waitsOnApproval: 'a-00000001' }), false, true);
+    expect(v.yesNo).toBeUndefined();
+    expect(v.kind).toBe('permission');
+    expect(v.decide).toBeUndefined();
+  });
+  it('uses the approval piece actions and exact id when its card is available', () => {
+    const actions = ['allow', 'deny'].map(action => ({ action, label: action === 'allow' ? 'Allow' : 'Deny', fields: { id: 'a-00000001' } }));
+    const v = openView(question({ waitsOnApproval: 'a-00000001', approval: { text: 'Run the audit?', actions, source: src } }), false, true);
+    expect(v.yesNo).toBeUndefined();
+    expect(v.decide).toEqual({ allow: actions[0], deny: actions[1], source: src });
+  });
+});

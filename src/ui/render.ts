@@ -4,7 +4,7 @@
  * the app (web/, docs/specs/ui-app.md); the old HTML renderer went 2026-10-29. Every string that reaches the
  * sign-in pages goes through esc().
  */
-import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
+import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing, Job } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -63,7 +63,8 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
+export interface TickerActivity { action: string; where?: string; observedAt: string; expiresAt: string; href?: string }
+export interface AgentView { activity?: TickerActivity; activityUnavailable?: boolean; id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
 
 export interface Shell {
   owner: string;
@@ -251,6 +252,8 @@ export interface InboxItem {
   reply?: HomeAsk['reply'];
   needs?: NeedsView;
   approval?: ApprovalView;
+  /** Approval dependency, even while its live card is unavailable. Never a conversational Yes/No. */
+  waitsOnApproval?: string;
   /** Exactly what its yes allows (a piece's machine fields: a kind and a target), as small print. */
   fine?: string;
   /** The agent whose request it passes on (HomeAsk's): who asks is them, via `agent`. */
@@ -304,11 +307,13 @@ export interface AgentCard {
   reason: string;
   /** What it has going right now, from every piece: a summary, the details a tap away (Jonathan, 2026-10-29). */
   doing: Array<Doing & { source: Source }>;
+  jobs?: Array<Job & { source: Source }>;
   /** Only what's wrong: a reading a piece marked bad or warn. Nothing here means its things are fine. */
   problems: Array<{ text: string; source: Source; page?: string; tone: 'bad' | 'warn' }>;
   /** When it was last on the tape, and where. */
   seen?: { at: string; where: string };
   readings: Array<Reading & { source: Source }>;
+  steps?: Array<{ text: string; at: string; where: string }>;
 }
 
 export interface HouseHome {

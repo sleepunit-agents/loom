@@ -106,7 +106,7 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
       const hiddenOutside = () => p.evaluate(() => [...document.querySelectorAll('[aria-hidden="true"]')].filter((e) => !e.closest('.loom-tile[data-tile="/members"]')).length);
       // People's filters come in their own lazy chunk (with its stylesheet): count once they're drawn, or a late chunk
       // adds its icons' aria-hidden between the two counts.
-      await p.locator('.loom-tile[data-tile="/people"] [data-slot="toggle-group"]').first().waitFor();
+      await p.locator('.loom-tile[data-tile="/people"] [aria-label="Search people"]').first().waitFor();
       const before = await hiddenOutside();
       // A member's row on Members: its sheet (the Inbox's ask was one, until it became a reader: t-1925).
       await inbox.getByText('Owns every agent').first().click();
