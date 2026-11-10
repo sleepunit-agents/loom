@@ -265,7 +265,9 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     expect(rowsFrames(jon.ev).map((f) => f.data)).toEqual([{ seq: 1, sub: 'q', scope: 1, leaves: ['tasks/task/t-1'] }]);
     // loren never held t-1 (art's): no frame names it.
     await deliverNow(h.home);
-    expect(JSON.stringify(loren.ev.frames)).not.toContain('t-1');
+    // hello's random stream id can itself contain 't-1'. No data frame is due to Loren,
+    // so require the complete frame list to remain exactly the original hello.
+    expect(loren.ev.frames).toEqual([{ event: 'hello', data: loren.ev.hello }]);
   });
 
   it('a change to a record the viewer can\'t see sends their subscription nothing at all, not even a count', async () => {
