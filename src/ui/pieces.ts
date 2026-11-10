@@ -45,9 +45,9 @@ export const PIECE_MAX_BYTES = 512 * 1024;
 export const CACHE_MS = 60_000;
 /**
  * The open apps' round (live.ts) asks each piece every ROUND_MS, and one that answered the same as before less often:
- * twice the wait for each round in a row it didn't move, up to ROUND_MAX_MS (t-2110: every piece every 15 s per open
+ * with at least CACHE_MS between process-backed asks, and up to ROUND_MAX_MS (t-2110: every piece every 15 s per open
  * scope kept loom's machine at load 10-12). Its own word that it moved, an action on it, or its records moving asks it
- * at the next round again. An answer younger than SHARE_MS is everyone's: a round over four scopes, a page load
+ * at the next round again. Served manifests retain their short window for idle observations. An answer younger than SHARE_MS is everyone's: a round over four scopes, a page load
  * just after a piece's word, and the next scope's round all get the one run.
  */
 export const ROUND_MS = 15_000;
@@ -108,8 +108,13 @@ type ManifestResult = PieceInfo | PieceSkip;
  * `expired`: the piece said it moved, so the next look asks it again, keeping this answer for a run that fails or is
  * slow (t-2064). `print` is the answer as the round compares it, `same` how many rounds in a row it came back the same.
  */
-interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
+interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number; recordsMoved?: boolean }
 const cache = new Map<string, CacheEntry>();
+/** Failed/unsupported UI offers get the same freshness window as a manifest, rather than a process per live round. */
+const failedManifests = new Map<string, { at: number; result: ManifestResult }>();
+function forgetFailures(path?: string): void {
+  for (const key of failedManifests.keys()) if (path === undefined || key.startsWith(`${path}\0`)) failedManifests.delete(key);
+}
 let manifestGeneration = 0;
 /**
  * When an action last ran on a piece (by path), or on every piece (''): a served manifest must be made since then
@@ -137,6 +142,7 @@ const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
  * answer stays as the one to show if the next run fails or runs long. `path`: that piece's alone, in every scope (t-2065).
  */
 export function expirePieceManifests(path?: string): void {
+  forgetFailures(path);
   manifestGeneration++;
   // Every piece at once (no word from one of them in particular): any served answer from before is suspect.
   if (path === undefined) movedAt.set('', Date.now());
@@ -144,6 +150,7 @@ export function expirePieceManifests(path?: string): void {
 }
 
 export function clearPieceCache(path?: string): void {
+  forgetFailures(path);
   manifestGeneration++;
   movedAt.set(path ?? '', Date.now());
   if (path === undefined) { cache.clear(); pages.clear(); return; }
@@ -157,9 +164,12 @@ export function clearPieceCache(path?: string): void {
  * for up to 5 s, then shown while revalidating, would answer with the old one). Its manifests stay.
  */
 export function forgetPiecePages(path: string): void {
+  // A run started before this write cannot consume the hint or restore a
+  // failure cooldown when it lands. Invalidate it as a producer change.
+  expirePieceManifests(path);
   for (const k of [...pages.keys()]) if (k.startsWith(`${path}\0`)) pages.delete(k);
   // Its manifest likely moved with them (a count on its tile): the next round asks it, however long it was quiet.
-  for (const [k, e] of cache) if (k.startsWith(`${path}\0`)) e.same = 0;
+  for (const [k, e] of cache) if (k.startsWith(`${path}\0`)) { e.same = 0; e.recordsMoved = true; }
 }
 
 /**
@@ -425,10 +435,17 @@ function keyOf(path: string, env: NodeJS.ProcessEnv): Keyed {
  */
 function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Keyed): Promise<ManifestResult> {
   const { key, version, on } = k;
+  const failed = failedManifests.get(key);
+  if (failed && Date.now() - failed.at < CACHE_MS) return Promise.resolve(failed.result);
+  failedManifests.delete(key);
+  const generation = manifestGeneration;
   const under = running.get(key);
   if (under && under.generation === manifestGeneration) return under.result;
   const result = fetchManifest(piece, path, env).then((r): ManifestResult => {
-    if (!('manifest' in r)) return r;
+    if (!('manifest' in r)) {
+      if (generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
+      return r;
+    }
     const now = { scope: r.manifest.scope === true, owners: r.manifest.owners === 2 };
     turnsOn.set(`${path}\0${version}`, now);
     if (on && ((now.scope && !on.scope) || (now.owners && !on.owners))) return { piece, reason: 'reads a new scope' };
@@ -504,10 +521,13 @@ function shownPieces(env: NodeJS.ProcessEnv): Array<{ name: string; path: string
   return listPieces(env).filter((p) => p.name !== 'loom' && resolvePieceName(env, p.name) === p.name);
 }
 
-/** How long a round leaves a piece's answer be: SHARE_MS once it moved, else longer for each round it didn't. */
+/** Process-backed manifests get their full freshness window; a records hint asks again at the next round. */
 function roundWait(e: CacheEntry): number {
+  if (e.recordsMoved) return SHARE_MS;
   const same = e.same ?? 0;
-  return same === 0 ? SHARE_MS : Math.min(ROUND_MS * 2 ** same, ROUND_MAX_MS) - SHARE_MS;
+  // A CLI startup costs the same even when its tile's clock changed. Ordinary
+  // rounds respect its freshness window; writes still ask at the next round.
+  return Math.max(CACHE_MS, same === 0 ? SHARE_MS : Math.min(ROUND_MS * 2 ** same, ROUND_MAX_MS) - SHARE_MS);
 }
 
 /**
