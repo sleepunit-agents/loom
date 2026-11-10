@@ -73,6 +73,8 @@ export interface Announce {
   key: string; title: string; body: string; agent?: string;
   /** Only this member's devices hear it (a Comms reply: comms.md, "Notifications"). */
   member?: string;
+  /** Only these members' devices hear it (an attention record's audience: the members whose Inbox has it, t-2025). */
+  members?: string[];
   /** Where a tap opens (else the ask in the Inbox). */
   url?: string;
   /** Whether an agent owner may hear of it: loom's own, or from a piece that understands agent owners. */
@@ -108,6 +110,7 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
     const payload = JSON.stringify({ title: a.title, body: '', tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });
     for (const { member, ...sub } of w.subs) {
       if (a.member !== undefined && (member ?? firstMember?.()) !== a.member) continue;
+      if (a.members !== undefined && !a.members.includes(member ?? firstMember?.() ?? '')) continue;
       if (!hears(member, a)) continue;
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });
