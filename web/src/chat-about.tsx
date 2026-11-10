@@ -69,7 +69,7 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
       <DialogContent appearance="editor" showCloseButton className="loom-chat-about">
         <DialogHeader>
           <DialogTitle>Chat about this</DialogTitle>
-          <DialogDescription>A new private thread. The agent looks it up for where it is now.</DialogDescription>
+          <DialogDescription>A private chat about this item. The agent looks it up as it is now.</DialogDescription>
         </DialogHeader>
         {about && (
           <form className="loom-chat-about__form" onSubmit={(e) => { e.preventDefault(); void send(); }}>

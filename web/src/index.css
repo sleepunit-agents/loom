@@ -589,3 +589,9 @@ img { -webkit-user-drag: none; }
   font:700 calc(var(--ls)*.5)/1 var(--font-display);color:var(--c);background:color-mix(in srgb,var(--c) 14%,var(--v-paper));
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,transparent)}
 :root[data-contrast="more"] .loom-letter{box-shadow:inset 0 0 0 1.5px var(--c)}
+
+/* Item rows have their own touch-hold action; the reader's words and its inputs keep native selection. */
+@media (hover: none) and (max-width: 1023px) {
+  [data-about] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  [data-about] :is(input, textarea, select, [contenteditable]) { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
+}

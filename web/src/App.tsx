@@ -1,5 +1,6 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
+import { phoneRowAbout } from './row-about';
 import { useAttention, withAttention } from './attention';
 import { useThreads, withThreads } from './threads-live';
 import { deskHomeOf, useAgentCards, withAgentCards } from './agents-live';
@@ -135,6 +136,8 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
 
 export default function App() {
   const wide = useWide();
+  const aboutRows = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!wide && aboutRows.current) return phoneRowAbout(aboutRows.current); }, [wide]);
   const sideWide = useMedia(SIDE_COLUMN);
   const [vw, setVw] = useState(() => innerWidth);
   useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
@@ -653,6 +656,7 @@ export default function App() {
   return (
     <PixelContext.Provider value={pixel}><PixelIconsContext.Provider value={pixIconSet}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${desk ? 'loom-desk' : chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
+        ref={aboutRows}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
