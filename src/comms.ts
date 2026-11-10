@@ -528,6 +528,10 @@ export function messageRecords(home: string, threads: readonly Thread[]): Messag
   });
 }
 
+function messageRevision(r: MsgRow): string {
+  return createHash('sha256').update(r.text ?? '').update(JSON.stringify([r.at, r.kind, r.sender, r.id, r.card_json, r.run, r.delivered])).digest('hex');
+}
+
 /** Only the selected page's encrypted revisions. A snapshot selects every metadata record once, never decrypts any. */
 export function messageRevisions(home: string, records: readonly { thread: string; seq: number }[]): string[] {
   return withMessages(home, (db) => {
@@ -535,20 +539,20 @@ export function messageRevisions(home: string, records: readonly { thread: strin
     return records.map((m) => {
       const r = stmt.get(m.thread, m.seq) as MsgRow | undefined;
       if (!r) return 'gone';
-      return createHash('sha256').update(r.text ?? '').update(JSON.stringify([r.at, r.kind, r.sender, r.id, r.card_json, r.run, r.delivered])).digest('hex');
+      return messageRevision(r);
     });
   });
 }
 
 /** A checked page's exact messages, at most PAGE. The caller has already chosen this member's thread. */
-export async function messagesBySeq(h: Household, env: NodeJS.ProcessEnv, t: Thread, seqs: readonly number[]): Promise<Message[]> {
+export async function messagesBySeq(h: Household, env: NodeJS.ProcessEnv, t: Thread, seqs: readonly number[]): Promise<Array<{ message: Message; revision: string }>> {
   if (seqs.length > PAGE) throw new Error('a message page is too large');
   const rows = withMessages(h.home, (db) => seqs.flatMap((seq) => {
     const r = db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq = ?').get(t.id, seq) as MsgRow | undefined;
     return r ? [r] : [];
   }));
   const o = rows.some((r) => r.text && r.kind !== 'error') ? openerFor(h.home, env) : null;
-  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(o, t.agent, t.id, r));
+  return pool(rows, DECRYPT_AT_ONCE, async (r) => ({ message: await messageOf(o, t.agent, t.id, r), revision: messageRevision(r) }));
 }
 
 /** The thread's newest message seq (0 with none), and its newest reply's. */

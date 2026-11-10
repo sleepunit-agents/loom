@@ -1,6 +1,6 @@
 /** Message records: route parity, member isolation, bounded word reads, key refusal, retention/deletion and a history
  * beyond the generic bridge limit. The bridge/index holds encrypted revisions and safe metadata only. */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn } from '../backends/conversations.js';
 import { adapterCall, allThreads, markRead, openThread, setArchived, setPinned, setTitle, threadFor } from '../comms.js';
+import * as comms from '../comms.js';
 import { sentDigest } from './subs.js';
 import { CORE_TYPES, coreAnswers } from './core-types.js';
 import { withLog, indexOf } from './log.js';
@@ -130,6 +131,28 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     // The cursor is sealed to its member, even another owner of the same agent.
     const first = await ask('jonathan', { where: [['thread', 'eq', t.id]] });
     expect((await ask('sam', { where: [['thread', 'eq', t.id]], after: first.next })).error).toBe('bad-query');
+  });
+
+  it('pairs payload, mutable metadata and revision from the same selected row across a writer race', async () => {
+    const t = thread('jonathan', 'art', 'a delivery that moves during a read');
+    const original = comms.messagesBySeq;
+    let changed = false;
+    const spy = vi.spyOn(comms, 'messagesBySeq').mockImplementation(async (...args) => {
+      if (args[2].id === t.id && !changed) {
+        changed = true;
+        const db = new BetterSqlite3(join(h.home, 'comms.db'));
+        db.prepare('UPDATE comms_messages SET delivered = 1 WHERE thread = ?').run(t.id); db.close();
+      }
+      return original(...args);
+    });
+    try {
+      const a = await ask('jonathan', { where: [['thread', 'eq', t.id]], fields: ['thread', 'seq', 'revision', 'delivered', 'message'] });
+      expect(a.error).toBeUndefined();
+      expect(changed).toBe(true);
+      expect(a.rows[0].message.delivered).toBe(true);
+      expect(a.rows[0].delivered).toBe(true);
+      expect(a.rows[0].revision).toBe(comms.messageRevisions(h.home, [{ thread: t.id, seq: 1 }])[0]);
+    } finally { spy.mockRestore(); }
   });
 
   it('snapshots encrypted revisions with no key and no plaintext; bounded word reads refuse a missing key', async () => {

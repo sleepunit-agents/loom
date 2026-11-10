@@ -224,9 +224,11 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
     const recs = held.get(q.type)!;
     if (q.type === 'message' && recs !== 'unavailable') {
       const answer = answerFrom(recs, { ...q, fields: [...new Set([...q.fields, 'thread', 'seq'])] }, decl, now);
-      const revisions = messageRevisions(h.home, answer.rows as Array<{ thread: string; seq: number }>);
-      answer.rows.forEach((r, i) => { r.revision = revisions[i]; });
-      if (!q.fields.includes('message') || viewer.kind !== 'member') { out.push(answer); continue; }
+      if (!q.fields.includes('message') || viewer.kind !== 'member') {
+        const revisions = messageRevisions(h.home, answer.rows as Array<{ thread: string; seq: number }>);
+        answer.rows.forEach((r, i) => { r.revision = revisions[i]; });
+        out.push(answer); continue;
+      }
       try {
         const threads = new Map(allThreads(h.home).filter((t) => t.member === viewer.person && viewer.agents.includes(t.agent) && h.agents.includes(t.agent)).map((t) => [t.id, t]));
         for (const tid of new Set(answer.rows.map((r) => String(r.thread)))) {
@@ -234,8 +236,16 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
           if (!t) continue;
           const rows = answer.rows.filter((r) => r.thread === tid);
           const messages = await messagesBySeq(h, env, t, rows.map((r) => Number(r.seq)));
-          const bySeq = new Map(messages.map((m) => [m.seq, m]));
-          for (const r of rows) r.message = bySeq.get(Number(r.seq));
+          const bySeq = new Map(messages.map((m) => [m.message.seq, m]));
+          for (const r of rows) {
+            const opened = bySeq.get(Number(r.seq));
+            if (!opened) throw new Error('message moved during page read');
+            r.message = opened.message;
+            r.revision = opened.revision;
+            // Mutable metadata and its words come from the same selected row, even when another listener wrote
+            // between the metadata scan and this bounded payload read.
+            for (const f of ['at', 'kind', 'from', 'run', 'delivered'] as const) if (q.fields.includes(f)) r[f] = opened.message[f];
+          }
         }
         out.push(answer);
       } catch { out.push({ id: q.id, rows: [], more: false, error: 'unavailable' }); }
