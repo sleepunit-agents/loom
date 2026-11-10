@@ -163,6 +163,8 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
           ? `(household of ${found.household.agents.join(', ')}; tokens in ${found.household.home}/tokens.json)\n`
           : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
     );
+    // The stable listener only sends traffic after this worker is ready.
+    if (process.connected && process.env.LOOM_WORKER_SOCKET) process.send?.({ type: 'loom-ready' });
     // Hold open until the process is signalled.
     await new Promise<void>(() => {});
     return 0;

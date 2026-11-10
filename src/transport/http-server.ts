@@ -1129,7 +1129,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
-    http.listen(opts.port, opts.host, () => resolve());
+    // A supervised worker has a private Unix socket, inaccessible to other
+    // users. All request/auth handling stays in this server.
+    const socket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
+    if (socket) http.listen(socket, () => resolve());
+    else http.listen(opts.port, opts.host, () => resolve());
   });
   const addr = http.address();
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
