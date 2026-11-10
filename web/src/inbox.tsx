@@ -86,6 +86,13 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
     setSel(i.key); setPicks((x) => x + 1);
     if (i.unread) { setRead((r) => new Set(r).add(i.key)); void markRead(i.key, ctx.csrf); }
   };
+  // An item opened by its address (/inbox?i=, a notification's link) is read too: loom's GET never marks it (a GET never
+  // writes: docs/specs/collections.md, "Read state"), so the app says so, once, as a pick does.
+  useEffect(() => {
+    const it = opened ? items.find((i) => i.key === opened) : undefined;
+    if (it?.attention && it.unread) { setRead((r) => new Set(r).add(it.key)); void markRead(it.key, ctx.csrf); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
   // The next open one after it in the list, else the one before: a mail client's.
   const next = (key: string) => { const n = shown.findIndex((i) => i.key === key); const open = (i: InboxItem) => i.key !== key && boxOf(i) !== 'done';
     return shown.slice(n + 1).find(open) ?? shown.slice(0, Math.max(0, n)).reverse().find(open) ?? null; };

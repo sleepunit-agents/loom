@@ -34,7 +34,7 @@ import { agentJobs } from './agent-jobs.js';
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
-import { changed, closeSession, openStream, type Sees } from './live.js';
+import { changed, closeSession, onChanged, openStream, type Sees } from './live.js';
 import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -81,7 +81,10 @@ import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Agent
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
-import { closeStream as subsClose, openStream as subsOpen, pullAfterAction } from '../collections/subs.js';
+import { registerCoreSource } from '../collections/core-types.js';
+import type { MemRecord } from '../collections/memory.js';
+import { ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
+import { GAP_MS, nudge } from '../collections/pull.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
@@ -1061,6 +1064,124 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   return items.map((it, i) => ({ it, i })).sort((x, y) => t(y.it) - t(x.it) || x.i - y.i).map((x) => x.it);
 }
 
+/**
+ * The attention records (core's `attention` type, src/collections/core-types.ts; t-2025): one member's Inbox items as
+ * the Inbox itself builds them for them (their agents, the pieces that understand them, their read state and their own
+ * outcomes), so a badge, Home, the Inbox and a thread's ask card read one set. For the core viewer: every member's,
+ * once each, without anyone's own read state, and with how many members have opened each, so a read moves it.
+ */
+/**
+ * "Something changed" (live.ts: an action, a piece's manifest moving) moves the attention records: a nudge, at most one
+ * per GAP_MS a household (a burst costs one write; one inside the gap lands at its end). The stores' own file changes
+ * aren't heard here: building the records reads them, and that reading writes to them, so hearing it would rebuild the
+ * records forever (measured: every 1.5 s, with nothing changing). An agent's ask nudges itself (the digest tool,
+ * src/server.ts); anything else of theirs waits for the 15 s pull.
+ */
+const nudgedAt = new Map<string, number>();
+const nudgeLater = new Map<string, NodeJS.Timeout>();
+/** How many times each household's attention records were built (the echo test counts them). */
+const builds = new Map<string, number>();
+export const attentionBuilds = (home: string): number => builds.get(home) ?? 0;
+
+function nudgeAttention(home: string): void {
+  if (nudgeLater.has(home)) return;
+  const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
+  const go = () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
+  if (!wait) { go(); return; }
+  const t = setTimeout(go, wait);
+  t.unref?.();
+  nudgeLater.set(home, t);
+}
+
+async function memberInbox(base: UiOptions, full: Household, m: Member): Promise<{ items: InboxItem[]; reader?: string }> {
+  const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
+  const hh = own ? narrowed(full, own) : full;
+  const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
+  const pieces = forOwner((await pieceManifests(env)).pieces, own);
+  const reader = m.person === firstOwner(full).person ? undefined : m.person;
+  const store = storeFor(base);
+  const items = inboxItems(hh, pieces, env, store.doneItems(reader), !own);
+  const opened = store.openedAt(reader);
+  for (const it of items) {
+    it.unread = it.attention && !opened.has(it.key);
+    const at = opened.get(it.key);
+    if (at) it.seen = new Date(at * 1000).toISOString();
+  }
+  return { items, reader };
+}
+
+/** An Inbox item as a record: its key is its id, its time its sort (one with no time first, as the Inbox files it). */
+export function attentionRecord(it: InboxItem, audience: Record<string, unknown>, perViewer: boolean): MemRecord {
+  const t = it.at ? Date.parse(it.at) : NaN;
+  const exp = it.expires ? Date.parse(it.expires) : NaN;
+  const { key, expires: _e, unread, seen, ...rest } = it;
+  return {
+    ...rest, id: key, audience, sort: Number.isFinite(t) ? t : 8.64e15,
+    ...(Number.isFinite(exp) ? { expires: exp } : {}),
+    ...(perViewer ? { unread, ...(seen ? { seen } : {}) } : {}),
+  } as MemRecord;
+}
+
+/**
+ * One build per viewer at a time, and at most one queued after it: however many subscriptions a viewer holds (six
+ * streams of 64), the re-asks a change sets off cost that viewer one build, or two, never one each. A re-ask never joins
+ * a build already under way (it may have read before the change it was asked for): it shares the one queued after it.
+ */
+const slots = new Map<string, { cur: Promise<MemRecord[]>; next?: Promise<MemRecord[]> }>();
+
+function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
+  const full = base.household?.();
+  if (!full || viewer.kind === 'agent') return Promise.resolve([]);
+  const k = `${full.home}\0${viewerId(viewer)}`;
+  const run = (): Promise<MemRecord[]> => {
+    // The household as it is when the build starts (a queued one may start after a member was added).
+    const now = base.household?.() ?? full;
+    const p: Promise<MemRecord[]> = buildAttention(base, now, viewer).finally(() => {
+      builds.set(full.home, (builds.get(full.home) ?? 0) + 1);
+      const s = slots.get(k);
+      if (s?.cur === p && !s.next) slots.delete(k);
+    });
+    return p;
+  };
+  const s = slots.get(k);
+  if (!s) { const cur = run(); slots.set(k, { cur }); return cur; }
+  s.next ??= s.cur.catch(() => undefined).then(() => { const cur = run(); slots.set(k, { cur }); return cur; });
+  return s.next;
+}
+
+async function buildAttention(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+  if (viewer.kind === 'member') {
+    const m = full.members.find((x) => x.person === viewer.person);
+    if (!m) return [];
+    const { items } = await memberInbox(base, full, m);
+    // Each item is this member's own Inbox's: theirs alone, whoever else's Inbox has the same one.
+    return items.map((it) => attentionRecord(it, { members: [viewer.person] }, true));
+  }
+  // Each item's audience is exactly the members whose Inbox has it (a member's own outcome is theirs alone; a scoped
+  // piece's answer is that owner's), never a wider term: anything that reads these as the core viewer (push, Needs
+  // auto-resolve) filters for a person by it.
+  const store = storeFor(base);
+  const all = new Map<string, MemRecord>();
+  const whose = new Map<string, string[]>();
+  const reads = new Map<string, number>();
+  // Each member's own copy, as a digest: two members' copies of one item can differ (their pieces, absorbed approvals),
+  // so one that moves in a copy other than the first moves the record too, and its member is asked again.
+  const copies = new Map<string, ReturnType<typeof createHash>>();
+  for (const m of full.members) {
+    const { items, reader } = await memberInbox(base, full, m);
+    const opened = store.openedKeys(reader);
+    for (const it of items) {
+      if (opened.has(it.key)) reads.set(it.key, (reads.get(it.key) ?? 0) + 1);
+      whose.set(it.key, [...(whose.get(it.key) ?? []), m.person]);
+      const rec = attentionRecord(it, {}, false);
+      if (!copies.has(it.key)) copies.set(it.key, createHash('sha256'));
+      copies.get(it.key)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
+      if (!all.has(it.key)) all.set(it.key, rec);
+    }
+  }
+  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
+}
+
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
 function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
   const needle = q.toLowerCase();
@@ -1481,11 +1602,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
+  // The attention records are the Inbox's own (t-2025): registered for this household, with the options as they came
+  // (never an agent owner's narrowed ones: each viewer's are made from their own membership).
+  if (full) {
+    const base = opts, home = full.home;
+    registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
+    onChanged(home, () => nudgeAttention(home));
+  }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
   if (full && who?.member) opts = { ...opts, member: who.member };
   if (full && who?.member && who.member.agents !== '*') {
-    const own = who.member.agents;
+    // The agents they own that are still the household's (memberViewer's rule): a departed one is in no one's scope.
+    const own = who.member.agents.filter((a) => full.agents.includes(a));
     if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
     const base = opts.household!;
     opts = { ...opts, household: () => narrowed(base(), own), ownerScope: own, env: { ...opts.env, LOOM_OWNER_SCOPE: own.join(',') } };
@@ -1753,6 +1882,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const key = form.get('i') ?? '';
     if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
     storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
+    // A read is a change like any other (collections.md, "Read state"): every window of this member's hears it. Pulled
+    // soon (at once if it wasn't in the last GAP_MS, else when that's up), never awaited here: a loop of reads costs one
+    // pull per gap, not one each.
+    if (full) pullSoon(full.home, [ATTENTION_DOMAIN]);
     return sendJson(res, 200, { ok: true });
   }
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;
@@ -2211,8 +2344,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
       const folder: InboxFolder = folderOf(query.f);
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
-      // Opening an attention item reads it; nothing else is ever unread.
-      if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
+      // Opening an attention item reads it, but a GET never writes (collections.md, "Read state"): the app posts
+      // /inbox/read for the item it opens (web/src/inbox.tsx), as it does for every pick.
       const opened = store.openedAt(reader);
       for (const it of items) {
         it.unread = it.attention && !opened.has(it.key);

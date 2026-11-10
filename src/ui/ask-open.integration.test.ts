@@ -71,6 +71,9 @@ describe.runIf(built && chrome)('Needs you answers only an ask loom says is open
     const asked: string[] = [];
     await p.route('**/inbox/open?*', (r) => { asked.push(new URL(r.request().url()).searchParams.get('k')!); return open === 'offline' ? r.abort('internetdisconnected')
       : open === 'cached' ? r.fulfill({ json: { open: true }, headers: { 'x-loom-saved-at': String(Date.now() - 3_600_000) } }) : r.fulfill({ json: { open: open === 'yes' } }); });
+    // The live attention set (web/src/attention.ts) would say it's open without asking: these cases are about loom's
+    // own answer, so the set never goes live here (its ask fails, and the cards ask loom as before).
+    if (open !== 'yes') await p.route('**/collections/query', (r) => r.abort('internetdisconnected'));
     let n = 0;
     await p.route('**/act/**', (r) => { n++; return r.fulfill({ json: { ok: true, message: 'Answered.' } }); });
     await p.goto(`${base}/`);
@@ -90,7 +93,7 @@ describe.runIf(built && chrome)('Needs you answers only an ask loom says is open
     });
   }
 
-  it('open now: its Yes and No, and loom is asked again right before Yes is sent', async () => {
+  it('open now (the live set, or loom, says so): its Yes and No, and loom is asked again right before Yes is sent', async () => {
     const { p, asked, posted } = await desk('yes');
     const yes = need(p).getByRole('button', { name: 'Yes', exact: true });
     await yes.waitFor();

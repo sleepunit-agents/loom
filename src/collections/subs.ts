@@ -88,6 +88,8 @@ interface Sub {
   sent: Map<string, string>;
   /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
   retry?: boolean;
+  /** When it was last asked again (reaskSoon): the next waits out AGG_GAP_MS from then, never from the change. */
+  askedAt?: number;
 }
 
 /**
@@ -490,7 +492,11 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     return v;
   };
   void (async () => {
-    await new Promise((r) => setTimeout(r, AGG_GAP_MS));
+    // At most once per AGG_GAP_MS, and at once when the last ask is that long ago: the first change in a while reaches
+    // the window without waiting, and a burst still costs one ask per gap (t-2025's measure: 1.7 s became ~0.2 s).
+    const wait = Math.max(0, (sub.askedAt ?? 0) + AGG_GAP_MS - Date.now());
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    sub.askedAt = Date.now();
     const v = still();
     const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
@@ -534,11 +540,33 @@ export function pullNow(home: string, domain: string): Promise<unknown> {
  * PULL_WAIT_MS for it, and the stream catches up with the rest.
  */
 export const PULL_WAIT_MS = 3_000;
+/** Core's attention records are made from every piece's asks (t-2025): any action may move them. */
+export const ATTENTION_DOMAIN = 'loom/attention';
 export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piece: string): Promise<void> {
   let domains: string[];
   try {
     domains = [...providers(env).values()].filter((p) => (piece === 'loom' ? !p.piece : p.piece === piece)).flatMap((p) => [...domainsOf(p).keys()]);
   } catch { return; }
+  // The attention records are every member's Inbox, built again: pulled soon (coalesced, one per GAP_MS), never
+  // awaited, so a run of actions can't make each one rebuild them all. The acting piece's own domains are awaited.
+  pullSoon(home, [ATTENTION_DOMAIN]);
+  await pullNowAll(home, domains.filter((d) => d !== ATTENTION_DOMAIN));
+}
+
+/** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
+ * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
+export function pullSoon(home: string, domains: readonly string[]): void {
+  for (const d of domains) nudge(home, d);
+  const h = homes.get(home);
+  if (!h) return;
+  const wanted = wantedOf(h);
+  // Delivered as soon as each lands, not on the next pass.
+  for (const d of domains) if (wanted.has(d)) void h.puller.soon(d).then(() => deliverNow(home)).catch(() => undefined);
+}
+
+/** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them
+ * for every other listener. */
+export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
   for (const d of domains) nudge(home, d);
   const h = homes.get(home);
