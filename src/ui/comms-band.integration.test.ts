@@ -11,7 +11,7 @@ import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest
 
 vi.setConfig({ testTimeout: 60_000 });
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -20,6 +20,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
 import { sheet } from './pixel-sheet.fixture.js';
 import { createConversationTables } from '../backends/conversations.js';
+import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { closeAllBackends } from '../backends/index.js';
 import { adapterCall, openThread, recordDelivery, type Thread } from '../comms.js';
 import { stopCommsWatch } from './comms-live.js';
@@ -53,6 +54,28 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
+    // These threads are seeded directly, so none has a runtime body. Archive still asks the runtime to interrupt
+    // before changing storage; answer its precise missing-conversation result, just as the real runtime does.
+    const loom = parseLoomBlock({ role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'] }, 'runtime', ['loom-runtime']);
+    if (typeof loom === 'string') throw new Error(loom);
+    const dir = join(home, 'pieces', 'runtime');
+    mkdirSync(join(dir, 'current'), { recursive: true });
+    writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name: 'runtime', source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: 'runtime', version: '1', installed: 'x',
+      bins: ['loom-runtime'], loom: { settings: [], services: [], ...loom } }));
+    const cli = join(dir, 'current', 'cli');
+    writeFileSync(cli, `#!${process.execPath}
+let input = '';
+process.stdin.on('data', d => { input += d; });
+process.stdin.on('end', () => {
+  const q = JSON.parse(input);
+  console.log(JSON.stringify(q.path === 'conversation-control'
+    ? { status: 404, body: { error: 'no such conversation' } }
+    : { status: 200, body: {} }));
+});
+`);
+    chmodSync(cli, 0o755);
+    mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
+    symlinkSync(cli, join(home, 'pieces', 'bin', 'loom-runtime'));
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
     // Art wears a pixel sheet: the comm screen draws his pixel face, and it must stay at a whole scale.
@@ -176,7 +199,9 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
       await p.keyboard.press('Escape');
       expect(await menu.count()).toBe(0);
       await row.click({ button: 'right' });
+      const archived = p.waitForResponse((r) => r.url().endsWith(`/comms/${t.id}/archive`) && r.request().method() === 'POST');
       await menu.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+      expect((await archived).status()).toBe(200);
       await expect.poll(() => row.count()).toBe(0);
       await p.getByRole('button', { name: 'Archived', exact: true }).click();
       await row.waitFor();
