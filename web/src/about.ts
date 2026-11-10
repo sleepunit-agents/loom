@@ -10,8 +10,18 @@ export type About = { ref?: string; page?: string; label: string; agent?: string
 
 export const CHAT_ABOUT = 'loom-chat-about';
 
+/** What loom takes as an about's page and ref (src/comms-about.ts PAGE, refShape and PIECE_ITEM): anything else is
+ * dropped here rather than sent to be refused. */
+const PAGE = /^[A-Za-z0-9][A-Za-z0-9._~/-]{0,199}$/;
+const REF = /^(?:t-\d{1,9}|a-[0-9a-f]{8}|cv-[0-9a-f]{12}|github:[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}|[a-z][a-z0-9-]{0,39}:[A-Za-z0-9._@/#:-]{1,160})$/;
+
+/** Ask for the sheet about `a`; nothing happens when loom couldn't find it again (no ref or page it takes). */
 export function chatAbout(a: About): void {
-  dispatchEvent(new CustomEvent<About & { seen: string }>(CHAT_ABOUT, { detail: { ...a, seen: new Date().toISOString() } }));
+  const page = a.page && PAGE.test(a.page) && !a.page.split('/').includes('..') ? a.page : undefined;
+  const ref = a.ref && REF.test(a.ref) ? a.ref : undefined;
+  if (!page && !ref) return;
+  const { page: _p, ref: _r, ...rest } = a;
+  dispatchEvent(new CustomEvent<About & { seen: string }>(CHAT_ABOUT, { detail: { ...rest, ...(ref ? { ref } : {}), ...(page ? { page } : {}), seen: new Date().toISOString() } }));
 }
 
 /** The attribute a row puts on itself to be chatted about. */

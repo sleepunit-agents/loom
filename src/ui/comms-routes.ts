@@ -242,7 +242,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const item = new URL(req.url ?? '/', 'http://x').searchParams.get('agent') ?? undefined;
-      return send(200, routeFor(h, m, item && /^[a-z][a-z0-9-]{0,39}$/.test(item) ? item : undefined)), true;
+      // An agent named but not as an agent is named: not one they can ask, said so, never quietly the default's.
+      return send(200, routeFor(h, m, item ? (/^[a-z][a-z0-9-]{0,39}$/.test(item) ? item : '?') : undefined)), true;
     }
     if (pathname === '/comms/new') {
       if (req.method !== 'POST') return send(405, { error: 'method not allowed' }), true;

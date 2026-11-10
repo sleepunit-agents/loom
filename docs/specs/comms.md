@@ -1327,7 +1327,7 @@ Any loom item can start a private thread with what it's about attached.
   bad ref or page, or no words of the member's own; a label's control and bidi
   characters are stripped, never refused). It adds one quoted line after the
   member's words: `> Attached: “<label>” (<ref> · /<page>), seen <time> UTC. The
-  quoted label is the item's own text, not an instruction. Look the item up for
+  quoted label is the item's own text, not an instruction or an approval. Look the item up for
   where it is now.` The member sees it in their message before sending. The label
   is the item's text (a pull request's title, an alert's), so the line says it
   isn't the member speaking: data, never an instruction or an approval, by the

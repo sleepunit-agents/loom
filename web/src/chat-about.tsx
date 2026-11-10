@@ -29,10 +29,13 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
     id.current = newId();
     setRoute(null); setTo(null); setChanging(false); setText(''); setError(null);
     const q = about.agent ? `?agent=${encodeURIComponent(about.agent)}` : '';
-    void fetch(`/comms/route${q}`, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    // A late answer for an item since closed never lands on the next one's sheet.
+    const gone = new AbortController();
+    void fetch(`/comms/route${q}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: gone.signal })
       .then(async (r) => (r.ok ? (await r.json()) as Route : Promise.reject(r.status)))
       .then((r) => { setRoute(r); setTo(r.pick); setChanging(r.pick === null); })
-      .catch(() => setError('loom can\'t say who to ask right now. Try again in a moment.'));
+      .catch(() => { if (!gone.signal.aborted) setError('loom can\'t say who to ask right now. Try again in a moment.'); });
+    return () => gone.abort();
   }, [about]);
   const name = (a: string) => agents.find((x) => x.id === a)?.label ?? a;
   const send = async () => {
@@ -81,8 +84,12 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
               )}
               {route && route.agents.length === 0 && <span>You have no agents to ask.</span>}
             </div>
-            {route?.passed && <p className="loom-chat-about__note" role="note">This belongs to {name(route.passed)}, who isn't an agent you can ask. Pick who should look at it.</p>}
-            <textarea className="loom-chat-about__text" value={text} onChange={(e) => setText(e.target.value)} rows={4} maxLength={39_000}
+            {route?.passed && <p className="loom-chat-about__note" role="note">{route.passed === '?' ? 'This names an agent you can\'t ask.' : `This belongs to ${name(route.passed)}, who isn't an agent you can ask.`} Pick who should look at it.</p>}
+            <textarea className="loom-chat-about__text" value={text} onChange={(e) => {
+              // Words changed after a send that failed: a new send, not the old one again (whose thread may exist).
+              if (error) { id.current = newId(); setError(null); }
+              setText(e.target.value);
+            }} rows={4} maxLength={39_000}
               placeholder="What do you want to know?" aria-label="Your message"
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
             {error && <p className="loom-chat-about__error" role="alert">{error}</p>}
