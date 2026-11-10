@@ -1134,7 +1134,9 @@ function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
   if (!full || viewer.kind === 'agent') return Promise.resolve([]);
   const k = `${full.home}\0${viewerId(viewer)}`;
   const run = (): Promise<MemRecord[]> => {
-    const p: Promise<MemRecord[]> = buildAttention(base, full, viewer).finally(() => {
+    // The household as it is when the build starts (a queued one may start after a member was added).
+    const now = base.household?.() ?? full;
+    const p: Promise<MemRecord[]> = buildAttention(base, now, viewer).finally(() => {
       builds.set(full.home, (builds.get(full.home) ?? 0) + 1);
       const s = slots.get(k);
       if (s?.cur === p && !s.next) slots.delete(k);

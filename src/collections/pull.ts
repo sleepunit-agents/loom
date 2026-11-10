@@ -267,11 +267,14 @@ export class Puller {
   constructor(private readonly ctx: () => PullContext, private readonly wanted: () => Set<string>) {}
 
   start(): void {
+    this.stopped = false;
     this.poll ??= setInterval(() => this.round(), POLL_MS);
     this.poll.unref?.();
   }
 
+  private stopped = false;
   stop(): void {
+    this.stopped = true;
     clearInterval(this.poll); this.poll = undefined;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
@@ -300,7 +303,7 @@ export class Puller {
       this.after.delete(domain);
       // A pull already under way may have read before what this one was asked for: this one runs after it, never joins it.
       const on = this.running.get(domain);
-      (on ? on.catch(() => undefined).then(() => this.now(domain)) : this.now(domain)).then(resolve, () => resolve(undefined));
+      (on ? on.catch(() => undefined).then(() => (this.stopped ? undefined : this.now(domain))) : this.now(domain)).then(resolve, () => resolve(undefined));
     }, wait);
     t.unref?.();
     this.timers.set(domain, t);
