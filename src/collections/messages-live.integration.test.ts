@@ -188,6 +188,35 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     deleteThread(h, threadFor(h, member('jonathan'), t.id));
     expect(await until(() => stream.frames.some((f) => f.event === 'rows' && (f.data.leaves as string[] | undefined)?.includes(`loom/message/${t.id}:1`)))).toBe(true);
   });
+  it('opens words only when a changed message can affect the subscribed thread and sequence range', async () => {
+    const t = thread('jonathan', 'art', 'watched words');
+    const other = thread('jonathan', 'art', 'another thread');
+    const stream = await openEvents(base, tok.jonathan); streams.push(stream);
+    const a = await ask('jonathan', { where: [['thread', 'eq', t.id], ['seq', 'lte', 1]], subscribe: true, stream: stream.hello.stream });
+    expect(a.error).toBeUndefined();
+    // Drain the bridge's initial pull before counting. The initial subscription can need one reconciliation.
+    const { pullNow, deliverNow } = await import('./subs.js');
+    await pullNow(h.home, 'loom/message');
+    await deliverNow(h.home);
+    await new Promise((r) => setTimeout(r, 1700));
+    const spy = vi.spyOn(comms, 'messagesBySeq');
+    try {
+      reply(other, 'unrelated thread reply');
+      reply(t, 'outside the loaded sequence range');
+      await pullNow(h.home, 'loom/message');
+      await deliverNow(h.home);
+      await new Promise((r) => setTimeout(r, 1800));
+      expect(spy.mock.calls.filter((args) => args[2].id === t.id)).toHaveLength(0);
+      const db = new BetterSqlite3(join(h.home, 'comms.db'));
+      db.prepare('UPDATE comms_messages SET text = NULL WHERE thread = ? AND seq = 1').run(t.id); db.close();
+      comms.bump(h.home);
+      expect(await until(() => stream.frames.some((f) => f.event === 'rows' && (f.data.upserts as Data[] | undefined)?.some((r) => r.thread === t.id && r.seq === 1 && r.message?.text === null)))).toBe(true);
+      expect(spy.mock.calls.some((args) => args[2].id === t.id)).toBe(true);
+      comms.deleteThread(h, threadFor(h, member('jonathan'), t.id));
+      expect(await until(() => stream.frames.some((f) => f.event === 'rows' && (f.data.leaves as string[] | undefined)?.includes(`loom/message/${t.id}:1`)))).toBe(true);
+    } finally { spy.mockRestore(); stream.stop(); }
+  }, 20_000);
+
   it('keeps live coverage after 10,000 retained message identities', async () => {
     const t = thread('jonathan', 'art', 'old history');
     const db = new BetterSqlite3(join(h.home, 'comms.db'));

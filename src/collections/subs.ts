@@ -469,7 +469,7 @@ async function passOnce(h: HomeState): Promise<void> {
           if (r.domain !== sub.domain) continue;
           if (r.epoch !== sub.epoch) { reset(s, sub, 'epoch'); gone = true; break; }
           // A type whose audience the provider decides per viewer is never routed by audience: it's asked again.
-          if (ask) { if (r.key.startsWith(`${sub.provider}/${sub.type}/`)) domainMoved = true; } else apply(sub, v, r, now);
+          if (ask) { if (r.key.startsWith(`${sub.provider}/${sub.type}/`) && mayMoveAskedPage(sub, p, r)) domainMoved = true; } else apply(sub, v, r, now);
         }
       }
       if (gone || !s.subs.has(sub.id)) continue;
@@ -487,6 +487,22 @@ async function passOnce(h: HomeState): Promise<void> {
       reset(s, biggest, 'gap');
     }
   }
+}
+
+/**
+ * A core message's log row has its complete, wordless query fields. An unrelated thread or sequence range cannot
+ * change this page, so don't open its words again. This only skips work: the provider still decides membership and
+ * authority on every re-ask. A delivered key always asks again (including deletion or a row moving out of range).
+ * Other ask providers can keep viewer-dependent copies, so their log records cannot make this decision.
+ */
+function mayMoveAskedPage(sub: Sub, p: Provider, row: LogRow): boolean {
+  if (p.piece || sub.provider !== 'loom' || sub.type !== 'message') return true;
+  if (sub.delivered.has(row.key)) return true;
+  // An unseen deletion can't add anything to this page. A missing/malformed upsert is conservative.
+  if (row.op === 'delete') return false;
+  if (!row.record) return true;
+  try { return matches(JSON.parse(row.record) as Record<string, unknown>, sub.query.where); }
+  catch { return true; }
 }
 
 /**
