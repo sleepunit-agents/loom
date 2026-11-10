@@ -241,14 +241,21 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:ORDER', at: at(2), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       expect((await audit(tok.runtime, t.conversation, t.seq + 1, 'x')).status).toBe(404);
       expect((await audit(tok.runtime, 'cv-000000000000', 1, 'x')).status).toBe(404);
-      // art's own token didn't write that turn (the runtime did).
-      expect((await audit(tok.art, t.conversation, t.seq, 'x')).status).toBe(403);
+      // art's own token didn't write that turn (the runtime did): to an agent token that's no such turn (t-2135), the
+      // same answer, word for word, as a seq that doesn't exist, so a house learns nothing of others' turns.
+      const theirs = await audit(tok.art, t.conversation, t.seq, 'x');
+      const none = await audit(tok.art, t.conversation, t.seq + 1, 'x');
+      expect([theirs.status, none.status]).toEqual([404, 404]);
+      expect((await theirs.json()).error.replace(/ \d+ /, ' N ')).toBe((await none.json()).error.replace(/ \d+ /, ' N '));
       const s = await turn(tok.art, { venue: 'session', place: 'claude-code:s1', at: at(3), from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-s1', outcome: 'none' });
       // The runtime didn't write the session's turn, and pond-bot's token can't reach art's.
       expect((await audit(tok.runtime, s.conversation, s.seq, 'x')).status).toBe(403);
       expect((await audit(tok.pond, s.conversation, s.seq, 'x')).status).toBe(404);
       expect((await audit(tok.art, s.conversation, s.seq, 'a note')).status).toBe(200);
       expect((await audit(tok.art, s.conversation, s.seq, 'again')).status).toBe(409);
+      // A house's token: another house's (or loom's machine's) turn is no such turn, never "already taken" or "too old".
+      tok.h7 = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-7' }, label: 'art @ h-7' }).token;
+      expect((await audit(tok.h7, s.conversation, s.seq, 'x')).status).toBe(404);
       // Other roles never reach the route; unknown keys are refused.
       for (const k of ['owner', 'box', 'review'] as const) expect((await audit(tok[k], t.conversation, t.seq, 'x')).status, k).toBe(403);
       expect((await post('audit', tok.runtime, { conversation: t.conversation, seq: t.seq, text: 'x', model: 'y' })).status).toBe(400);
