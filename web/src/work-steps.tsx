@@ -65,7 +65,10 @@ function Row({ n, now, owner }: { n: WorkNode<WorkCard>; now: number; owner?: st
   const has = !!(w.detail || w.body || w.result || n.kids.length);
   return (
     <li className="work-row" data-state={stepOf(c)} data-open={open || undefined}>
-      <button type="button" className="work-row__head" aria-expanded={open} disabled={!has} onClick={() => setOpen(!open)}>
+      {/* The head opens the row, but isn't a button itself: a label's chips are buttons of their own, and a button can't
+          hold one. The chevron is its button, for the keyboard and a screen reader; a click anywhere else on it but a
+          chip opens it too. */}
+      <div className="work-row__head" data-has={has || undefined} onClick={(e) => { if (has && !(e.target as HTMLElement).closest('button')) setOpen(!open); }}>
         <Status c={c} />
         {/* A label's refs become chips, as in a reply (comms.md, "Chips"). */}
         <span className="work-row__name">{c.text ? <RefText text={c.text} owner={owner} /> : 'A step (older than this thread keeps)'}</span>
@@ -73,8 +76,12 @@ function Row({ n, now, owner }: { n: WorkNode<WorkCard>; now: number; owner?: st
         {stepOf(c) === 'error' && exit !== null && <span className="work-row__exit loom-data">exit {exit}</span>}
         {over && <span className="work-row__over loom-data">past its {took(limit!)} limit</span>}
         <span className="work-row__time loom-data">{time}</span>
-        {has && <Icon name={open ? 'chevron-down' : 'chevron-right'} size="sm" className="work-row__chev" />}
-      </button>
+        {has && (
+          <button type="button" className="work-row__toggle" aria-expanded={open} aria-label={open ? 'Hide this step' : 'Show this step'} onClick={() => setOpen(!open)}>
+            <Icon name={open ? 'chevron-down' : 'chevron-right'} size="sm" className="work-row__chev" />
+          </button>
+        )}
+      </div>
       {open && (
         <div className="work-row__more">
           {(w.detail || w.body) && (

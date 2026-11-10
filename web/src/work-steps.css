@@ -14,8 +14,10 @@
 .work-rows .work-rows { padding-left: 14px; border-left: 1px solid var(--comms-line, var(--v-border)); margin-left: 9px; }
 .work-row { min-width: 0; }
 .work-row__head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 4px 6px; border-radius: 6px; text-align: left; color: var(--v-text); font-size: 13px; background: none; border: 0; }
-.work-row__head:not(:disabled):hover { background: color-mix(in srgb, var(--v-text) 6%, transparent); }
-.work-row__head:disabled { cursor: default; color: var(--v-text); opacity: 1; }
+.work-row__head[data-has] { cursor: pointer; }
+.work-row__head[data-has]:hover { background: color-mix(in srgb, var(--v-text) 6%, transparent); }
+.work-row__toggle { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: inherit; cursor: pointer; }
+.work-row__toggle:focus-visible { outline: 2px solid var(--v-accent, currentColor); outline-offset: 1px; }
 .work-row__icon { flex: none; color: var(--v-text-3); }
 .work-row__icon[data-state="failed"] { color: var(--v-danger); }
 .work-row__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

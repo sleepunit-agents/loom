@@ -1513,7 +1513,8 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   const working = r.working_since !== null || checked.some((c) => c.state === 'running');
   // A sign of life moves only forward, and never to one from the future (a clock ahead would hold it for good).
   const takeAlive = !!alive && alive.at <= now.getTime() + 60_000 && alive.at > (r.alive_at ?? 0);
-  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { ...(working ? { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null } : {}),
+  // Nothing to tell (no spell of work, no sign of life taken): the thread isn't touched, so no stream is woken.
+  if (working || takeAlive) withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { ...(working ? { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null } : {}),
     ...(takeAlive ? { alive_at: alive.at, alive_tokens: alive.tokens ?? null } : {}) }, now));
   return { ok: true, added, updated };
 }

@@ -265,7 +265,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
           expect(await helper.locator('.work-row__count').textContent()).toBe('2 steps');
           expect(await helper.locator('.work-row__time').textContent()).toBe('40s');
           // Opened: the prompt and the command, the output in colour, the result line.
-          await failed.locator('.work-row__head').click();
+          await failed.locator('.work-row__toggle').click();
           const term = failed.locator('.work-term');
           await term.waitFor();
           expect(await term.locator('.work-term__prompt').textContent()).toBe('$ npm test -- deploy\n');
@@ -274,11 +274,11 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
           expect(await failed.locator('.work-row__result').textContent()).toBe('exit 1: 11 passed, 1 failed');
           // The diff in green and red; the helper's steps nested under it.
           const edit = page.locator('.work-row').filter({ hasText: 'Edited deploy.test.mjs' }).first();
-          await edit.locator('.work-row__head').click();
+          await edit.locator('.work-row__toggle').click();
           expect(await edit.locator('.work-diff[data-d="add"]').count()).toBe(2);
           expect(await edit.locator('.work-diff[data-d="rm"]').count()).toBe(1);
           expect(await edit.locator('.work-term').textContent()).not.toContain('\x1b');
-          await helper.locator('.work-row__head').first().click();
+          await helper.locator('.work-row__toggle').first().click();
           expect(await helper.locator('.work-rows .work-row').count()).toBe(2);
           // The working line: quiet for over two minutes, and says so itself, with the step it's on.
           const live = page.locator('.comms-live');
@@ -659,6 +659,10 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       // The failure says why; the one still running says so.
       expect(await page.locator('.work-row[data-state="error"] .work-row__name').textContent()).toContain('exit 1: 3 tests failed');
       expect(await page.locator('.work-row[data-state="current"]').count()).toBe(1);
+      // A label's chips are buttons of their own, never inside the row's: a row with nothing to open still lets one work.
+      expect(await page.locator('button.work-row__head').count()).toBe(0);
+      expect(await page.locator('.work-row__head').count()).toBe(6);
+      expect(await page.locator('.work-row button button').count()).toBe(0);
       expect(await noSideways(page)).toBe(true);
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }
