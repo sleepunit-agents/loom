@@ -1,3 +1,4 @@
+import { aboutAttr, aboutPage, validAbout } from './about';
 // loom's blocks (src/ui/vocab.ts) drawn with 000h's components, by the rules in docs/specs/ui-app.md:
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
@@ -91,6 +92,8 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
   // Nothing is cut so it can't be read (Jonathan, 2026-11-03): a row's words run to two lines, and a row that goes
   // nowhere opens to its whole text on a tap; one that goes somewhere shows it all there.
+  const { ctx } = useEnv();
+  const about = i.ref ? validAbout({ ref: i.ref, label: i.text, agent: i.agent }) : i.page ? aboutPage(pageHref(i.page, ctx.source), i.text) : null;
   const [open, setOpen] = useState(false);
   const whole = wrap || open;
   // A row with `more` opens in place; its link is then inside what opened, not where the tap goes.
@@ -108,7 +111,7 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
   );
   return (
     <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
-      <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
+      <Item {...(about ? aboutAttr({ ...about, ...(i.agent ? { agent: i.agent } : {}) }) : {})} as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
         {linked ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link>
           : wrap && !i.more ? body
             : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
@@ -154,14 +157,19 @@ function ListBlock({ items, pages, wrap, who }: { items: ListItem[]; pages?: Pag
 }
 
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
-  const { wide } = useEnv();
+  const { wide, ctx } = useEnv();
+  const rowAbout = (r: (string | { text: string; page?: string })[]) => {
+    const c = r.find((c) => typeof c !== "string" && c.page);
+    const a = c && typeof c !== "string" && c.page ? aboutPage(pageHref(c.page, ctx.source), c.text) : null;
+    return a ? aboutAttr(a) : {};
+  };
   const { rows, pager } = usePaged(b.rows, (b as { pages?: Pages }).pages);
   const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? tidy(c) : <Link page={c.page}>{tidy(c.text)}</Link>);
   if (!b.rows.length) return <Nothing title="Nothing here yet" />;
   if (!wide) {
     return (
       <><ul className="divide-y">{rows.map((r, n) => (
-        <Arrive as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
+        <Arrive {...rowAbout(r)} as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
           <span className="font-medium">{cell(r[0])}</span>
           <span className="text-sm opacity-70">{r.slice(1).map((c, m) => <span key={m}>{m ? ' · ' : ''}{cell(c)}</span>)}</span>
         </Arrive>))}
@@ -169,7 +177,7 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
     );
   }
   // A desktop: 000h's table (its ledger look), rows as they come.
-  return <><Suspense fallback={<div className="min-h-24" />}><WideTable columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
+  return <><Suspense fallback={<div className="min-h-24" />}><WideTable rowAbout={rowAbout} columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
 }
 
 

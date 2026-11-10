@@ -334,7 +334,14 @@ const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
   );
   CREATE TABLE IF NOT EXISTS comms_delete_pending (id TEXT PRIMARY KEY);`;
 
-const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
+const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS conversation_steps (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, conversation TEXT NOT NULL, run TEXT NOT NULL,
+    id TEXT NOT NULL, at TEXT NOT NULL, tool TEXT NOT NULL, state TEXT NOT NULL, words BLOB,
+    UNIQUE(conversation, run, id)
+  );
+  CREATE INDEX IF NOT EXISTS conversation_steps_at ON conversation_steps(at);
+  CREATE INDEX IF NOT EXISTS conversation_steps_page ON conversation_steps(conversation, seq);
+  CREATE TABLE IF NOT EXISTS comms_messages (
     thread    TEXT NOT NULL,
     seq       INTEGER NOT NULL,
     at        TEXT NOT NULL,
@@ -370,7 +377,7 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
 const threadsReady = new Set<string>();
 function withThreads<T>(home: string, f: (db: Database) => T): T {
   return withHouseholdDb(home, (db) => {
-    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); threadsReady.add(home); }
+    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); addColumn(db, 'comms_threads', 'about_key', 'TEXT'); threadsReady.add(home); }
     return f(db);
   });
 }
@@ -814,7 +821,7 @@ function checkId(id: unknown): string {
  * Open a thread with its first message (POST /comms/new). The same member, agent, id and text answer the same thread;
  * the same id with another agent or other text is a 409. Answers the thread, its first message's seq, and whether it's new.
  */
-export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member, raw: Record<string, unknown>, now: Date = new Date()): { thread: Thread; seq: number; created: boolean } {
+export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member, raw: Record<string, unknown>, now: Date = new Date(), aboutKey?: string): { thread: Thread; seq: number; created: boolean } {
   const agent = raw.agent;
   if (typeof agent !== 'string' || !h.agents.includes(agent) || !owns(member, agent)) return fail('forbidden: you can open threads only with an agent you own', 403);
   const id = checkId(raw.id);
@@ -840,13 +847,19 @@ export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member,
     const channel = 1 + Math.max(
       (db.prepare('SELECT MAX(channel) AS n FROM comms_threads WHERE member = ? AND agent = ?').get(member.person, agent) as { n: number | null }).n ?? 0,
       (db.prepare('SELECT MAX(channel) AS n FROM comms_deleted WHERE member = ? AND agent = ?').get(member.person, agent) as { n: number | null }).n ?? 0);
-    db.prepare(`INSERT INTO comms_threads (id, agent, member, conversation, project, opened, last, channel, first_id, first_hash, updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(place, agent, member.person, conversationId(agent, COMMS_VENUE, place), project, at, at, channel, id, hash, now.getTime());
+    db.prepare(`INSERT INTO comms_threads (id, agent, member, conversation, project, opened, last, channel, first_id, first_hash, updated, about_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(place, agent, member.person, conversationId(agent, COMMS_VENUE, place), project, at, at, channel, id, hash, now.getTime(), aboutKey ?? null);
     return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow);
   }).immediate());
   const seq = append(h.home, env, thread.id, { kind: 'message', from: member.person, id, text, hash, delivered: 'sending' }, now);
   bump(h.home);
   return { thread, seq, created: true };
+}
+
+/** Existing private threads about the same item, for this member and the selected agent only. */
+export function threadsAbout(h: Household, member: Member, agent: string, key: string): Array<{ id: string; title: string | null }> {
+  if (!h.agents.includes(agent) || !owns(member, agent)) return fail(NOT_YOURS, 403);
+  return withThreadsAt(h.home, (db) => db.prepare('SELECT id, title FROM comms_threads WHERE member = ? AND agent = ? AND about_key = ? AND archived IS NULL AND id NOT IN (SELECT id FROM comms_delete_pending) ORDER BY last DESC LIMIT 5').all(member.person, agent, key) as Array<{ id: string; title: string | null }>);
 }
 
 /**
@@ -1368,7 +1381,27 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
     return { id: o.id, tool: o.tool, summary: o.summary, state: o.state as CardState };
   });
   const r = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE conversation = ?').get(conversation) as ThreadRow | undefined);
-  if (!r || r.archived !== null) return fail('conflict: that conversation has no live thread', 409);
+  if (!r) {
+    // Runtime tokens are household-wide writers (as conversations/turn), not agent tokens.
+    const c = h.agents.map((a) => getConversation(agentDir(h, a), conversation)).find(Boolean);
+    // Private Comms and spawned jobs never fall back to the agent-wide conversation viewer,
+    // including after deletion. Their member-only thread is their sole step store.
+    if (!c || c.venue === COMMS_VENUE || c.venue === 'spawn') return fail('conflict: that conversation has no live thread', 409);
+    const sealed = checked.map((c) => ({ ...c, words: encrypt(h.home, env, c.summary) }));
+    return withMessages(h.home, (db) => db.transaction(() => {
+      let added = 0, updated = 0;
+      for (const c of sealed) {
+        const prior = db.prepare('SELECT seq FROM conversation_steps WHERE conversation = ? AND run = ? AND id = ?').get(conversation, run, c.id);
+        if (prior) { db.prepare('UPDATE conversation_steps SET state = ?, words = ? WHERE conversation = ? AND run = ? AND id = ?').run(c.state, c.words, conversation, run, c.id); updated++; }
+        else { db.prepare('INSERT INTO conversation_steps(conversation, run, id, at, tool, state, words) VALUES (?, ?, ?, ?, ?, ?, ?)').run(conversation, run, c.id, nowIso(now), c.tool, c.state, c.words); added++; }
+      }
+      // Bounded per conversation, even for a bridge with a long continuous history.
+      db.prepare('DELETE FROM conversation_steps WHERE conversation = ? AND seq NOT IN (SELECT seq FROM conversation_steps WHERE conversation = ? ORDER BY seq DESC LIMIT 1000)').run(conversation, conversation);
+      db.prepare('DELETE FROM conversation_steps WHERE at < ?').run(new Date(now.getTime() - (h.commsDays ?? COMMS_DAYS_DEFAULT) * DAY_MS).toISOString());
+      return { ok: true as const, added, updated };
+    }).immediate());
+  }
+  if (r.archived !== null) return fail('conflict: that conversation has no live thread', 409);
   let added = 0, updated = 0;
   for (const c of checked) {
     const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json, text IS NOT NULL AS kept FROM comms_messages WHERE thread = ? AND kind = 'card' AND id = ?").get(r.id, c.id) as { seq: number; card_json: string; kept: number } | undefined);
@@ -1389,6 +1422,18 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   return { ok: true, added, updated };
 }
 
+/** Recent steps for an already authorized conversation page. No raw transcript or tool output. */
+export async function conversationSteps(home: string, env: NodeJS.ProcessEnv, conversation: string, before?: number, days = COMMS_DAYS_DEFAULT) {
+  if (!existsSync(join(home, COMMS_DB))) return [];
+  type Row = { seq: number; run: string; at: string; tool: string; state: string; words: Buffer };
+  const rows = withMessages(home, (db) => db.prepare('SELECT * FROM conversation_steps WHERE conversation = ? AND seq < ? AND at >= ? ORDER BY seq DESC LIMIT 100').all(conversation, before ?? Number.MAX_SAFE_INTEGER, new Date(Date.now() - days * DAY_MS).toISOString()) as Row[]);
+  if (!rows.length) return [];
+  const opener = openerFor(home, env);
+  const out = [];
+  for (const r of rows.reverse()) out.push({ seq: r.seq, run: r.run, at: r.at, tool: r.tool, state: r.state, text: await decrypt(opener, r.words, `step ${r.seq}`) });
+  return out;
+}
+
 // ─── The sweep ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1407,6 +1452,7 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
     swept = withMessages(h.home, (db) => {
       // An ask's words kept on its thread go with the thread's (comms.md, "Asks inline"): the row stays, its answer too.
       // By when core first kept it (its own clock), never the piece's `at`, which could be any time.
+      db.prepare('DELETE FROM conversation_steps WHERE at < ?').run(cut);
       db.prepare('UPDATE comms_asks SET words = NULL WHERE words IS NOT NULL AND seen < ?').run(cut);
       return db.prepare('UPDATE comms_messages SET text = NULL WHERE text IS NOT NULL AND at < ?').run(cut).changes;
     });

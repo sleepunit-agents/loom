@@ -1002,3 +1002,11 @@ activity at expiry even when its shell is cached or offline.
 An agent report may instead carry `idle: { observedAt, expiresAt }` with the same time bounds,
 only when its producer actually observed that it has no body working or unknown. Missing,
 expired, and offline reports mean activity unavailable; they are not proof of idle.
+
+### Item refs on rows
+
+List items and panel rows may carry `ref`, the item's stable loom ref (for
+example `a-deadbeef`). The desktop uses it for **Chat about this**, including
+rows that open a sheet and have no page link. The label and agent still come
+from the row. A ref is a pointer for discussion; it grants no access and does
+not perform the row's action.

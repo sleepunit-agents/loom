@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, adapterCall, wordsHash, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
+import { onBump, seqsOf, conversationSteps, COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, adapterCall, wordsHash, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { knowledgeWrite } from './tools/knowledge-write.js';
@@ -565,8 +565,62 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     });
   });
 
+  it('offers only this member and selected agent’s unarchived threads about the same ref', async () => {
+    const about = { ref: 't-12', label: 'A task', page: 'p/tasks/task/t-12' };
+    const made = await page(tok.jonathan, 'POST', '/comms/new', { agent: 'art', id: mid(n++), text: 'Discuss this', about });
+    expect(made.status).toBe(200);
+    const t = made.body.thread as Thread;
+    expect((await page(tok.jonathan, 'GET', '/comms/about?agent=art&ref=t-12')).body.threads).toEqual([{ id: t.id, title: null }]);
+    expect((await page(tok.sam, 'GET', '/comms/about?agent=art&ref=t-12')).body.threads).toEqual([]);
+    expect((await page(tok.jonathan, 'GET', '/comms/about?agent=mark&ref=t-12')).body.threads).toEqual([]);
+    expect((await page(tok.jonathan, 'GET', '/comms/about?agent=art&ref=t-13')).body.threads).toEqual([]);
+    expect((await page(tok.loren, 'GET', '/comms/about?agent=art&ref=t-12')).status).toBe(403);
+    expect((await page(tok.jonathan, 'GET', '/comms/about?agent=art')).status).toBe(400);
+    expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/archive`, {})).status).toBe(200);
+    expect((await page(tok.jonathan, 'GET', '/comms/about?agent=art&ref=t-12')).body.threads).toEqual([]);
+  });
+
   describe('criterion 5 (core): activity', () => {
     const card = (id: string, extra: Record<string, unknown> = {}) => ({ id, at: new Date().toISOString(), tool: 'Bash', summary: 'Ran the tests', state: 'running', ...extra });
+    it('keeps wake and bridge steps apart by run, encrypted, with bounded pages and the existing viewer gate', async () => {
+      for (const venue of ['wake', 'slack']) {
+        const cv = recordTurn(agentDir(h, 'art'), 'art', { venue, place: `watch-${venue}`, at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:runtime').conversation;
+        for (const run of ['run1', 'run2']) expect((await api(tok.runtime, 'comms/activity', { conversation: cv, run, cards: [card('same')] })).body).toMatchObject({ added: 1 });
+        expect((await api(tok.runtime, 'comms/activity', { conversation: cv, run: 'run2', cards: [card('same', { state: 'done' })] })).body).toMatchObject({ updated: 1 });
+        const steps = await conversationSteps(h.home, process.env, cv);
+        expect(steps.map((s) => [s.run, s.state, s.text])).toEqual([['run1', 'running', 'Ran the tests'], ['run2', 'done', 'Ran the tests']]);
+        expect((await conversationSteps(h.home, process.env, cv, steps[1].seq)).map((s) => s.run)).toEqual(['run1']);
+        const visible = await page(tok.jonathan, 'GET', `/a/art/conversation/${cv}`);
+        expect(JSON.stringify(visible.body)).toContain('Watching');
+        expect(JSON.stringify(visible.body)).toContain('Ran the tests');
+        const denied = await page(tok.loren, 'GET', `/a/art/conversation/${cv}`);
+        expect(JSON.stringify(denied.body)).not.toContain('Ran the tests');
+        expect(JSON.stringify((await page(tok.loren, 'GET', `/conversation/${cv}`)).body)).not.toContain('Ran the tests');
+        expect(readFileSync(join(h.home, COMMS_DB)).includes(Buffer.from('Ran the tests'))).toBe(false);
+      }
+    });
+    it('keeps older steps behind a working bounded-history link', async () => {
+      const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'wake', place: 'watch-history', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:runtime').conversation;
+      for (let start = 0; start < 101; start += 50) {
+        const cards = Array.from({ length: Math.min(50, 101 - start) }, (_, i) => card(`history${start + i}`, { summary: `History step ${start + i}`, state: 'done' }));
+        expect((await api(tok.runtime, 'comms/activity', { conversation: cv, run: 'history', cards })).status).toBe(200);
+      }
+      const newest = (await page(tok.jonathan, 'GET', `/a/art/conversation/${cv}`)).body;
+      expect(JSON.stringify(newest)).toContain('History step 100');
+      expect(JSON.stringify(newest)).not.toContain('"History step 0"');
+      const watching = (newest.page as { sections: Array<{ id: string; blocks: Array<{ items?: Array<{ text: string; page?: string }> }> }> }).sections.find((s) => s.id === 'watching')!;
+      const link = watching.blocks.flatMap((b) => b.items ?? []).find((i) => i.text === 'Earlier steps')!.page!;
+      const earlier = (await page(tok.jonathan, 'GET', link.replace(/^loom:/, '/'))).body;
+      expect(JSON.stringify(earlier)).toContain('History step 0');
+      expect(JSON.stringify(earlier)).not.toContain('History step 100');
+    });
+    it('never revives a deleted private thread as agent-wide conversation steps', async () => {
+      const t = await open();
+      recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
+      expect((await page(tok.jonathan, 'POST', `/comms/${t.id}/delete`, {})).status).toBe(200);
+      expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('late')] })).status).toBe(409);
+      expect(await conversationSteps(h.home, process.env, t.conversation)).toEqual([]);
+    });
     it('takes cards for a live thread, updates by id, and keeps the summary encrypted', async () => {
       const t = await open();
       expect((await api(tok.runtime, 'comms/activity', { conversation: 'cv-000000000000', run: 'r1', cards: [card('c1')] })).status).toBe(409);
@@ -776,36 +830,53 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     it('sends {seq} on the thread\'s stream, and the shared stream\'s change only to its member', async () => {
       const t = await open();
       const ac = new AbortController();
-      const r = await fetch(`${base}/comms/${t.id}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
-      expect(r.status).toBe(200);
-      const shared = (token: string) => fetch(`${base}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${token}` }, signal: ac.signal });
-      const mine = await shared(tok.jonathan);
-      const sams = await shared(tok.sam);
-      const read = async (res: Response, until: RegExp, ms: number): Promise<string> => {
-        const reader = res.body!.getReader();
-        let got = '';
-        const end = Date.now() + ms;
-        while (Date.now() < end && !until.test(got)) {
-          const chunk = await Promise.race([reader.read(), new Promise<{ done: true; value: undefined }>((res2) => setTimeout(() => res2({ done: true, value: undefined }), Math.max(1, end - Date.now())))]);
-          if (chunk.done) break;
-          got += new TextDecoder().decode(chunk.value);
-        }
-        reader.releaseLock();
-        return got;
-      };
-      await new Promise((res2) => setTimeout(res2, 200));
-      const posted = Date.now();
-      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'live one' });
-      const got = await read(r, /event: message\ndata: \{"seq":\d+\}/, 3000);
-      expect(got).toMatch(/event: message\ndata: \{"seq":\d+\}\n/);
-      expect(Date.now() - posted).toBeLessThan(400);
-      expect(got).not.toMatch(/live one/);
-      expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
-      // Readonly resolver opens can report unchanged memory WALs. They are no shared change,
-      // even for another member who owns the same agent. Keep the production timer enabled.
-      await resolveNeeds(h, pieceCheckers(process.env));
-      expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
-      ac.abort();
+      const initialSeq = seqsOf(h.home, t.id).last;
+      const expected = initialSeq + 1;
+      // Time from the thread's commit notification, before the production push listener runs. Encryption and HTTP
+      // admission precede that notification; counting them made a fast push fail on a slow worker (550ms vs 400ms).
+      stopCommsWatch();
+      let notifiedAt: number | undefined;
+      const off = onBump(() => {
+        if (notifiedAt === undefined && seqsOf(h.home, t.id).last >= expected) notifiedAt = performance.now();
+      });
+      try {
+        const r = await fetch(`${base}/comms/${t.id}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
+        expect(r.status).toBe(200);
+        const shared = (token: string) => fetch(`${base}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${token}` }, signal: ac.signal });
+        const mine = await shared(tok.jonathan);
+        const sams = await shared(tok.sam);
+        const read = async (res: Response, until: RegExp, ms: number): Promise<string> => {
+          const reader = res.body!.getReader();
+          let got = '';
+          const end = Date.now() + ms;
+          while (Date.now() < end && !until.test(got)) {
+            const chunk = await Promise.race([reader.read(), new Promise<{ done: true; value: undefined }>((res2) => setTimeout(() => res2({ done: true, value: undefined }), Math.max(1, end - Date.now())))]);
+            if (chunk.done) break;
+            got += new TextDecoder().decode(chunk.value);
+          }
+          reader.releaseLock();
+          return got;
+        };
+        // The opening frame is the readiness barrier, not proof that the reply was pushed.
+        const initialFrame = new RegExp(`event: message\\ndata: \\{"seq":${initialSeq}\\}`);
+        expect(await read(r, initialFrame, 3000)).toMatch(initialFrame);
+        const replyFrame = new RegExp(`event: message\\ndata: \\{"seq":${expected}\\}\\n`);
+        // Observe receipt while the POST is in flight; waiting for its response would time an unrelated HTTP path.
+        const pushed = read(r, replyFrame, 3000).then((got) => ({ got, receivedAt: performance.now() }));
+        const [{ got, receivedAt }, posted] = await Promise.all([
+          pushed, api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'live one' }),
+        ]);
+        expect(posted.status).toBe(200);
+        expect(got).toMatch(replyFrame);
+        expect(notifiedAt).toBeDefined();
+        expect(receivedAt - notifiedAt!).toBeLessThan(400);
+        expect(got).not.toMatch(/live one/);
+        expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
+        // Readonly resolver opens can report unchanged memory WALs. They are no shared change,
+        // even for another member who owns the same agent. Keep the production timer enabled.
+        await resolveNeeds(h, pieceCheckers(process.env));
+        expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
+      } finally { off(); ac.abort(); }
     });
   });
 

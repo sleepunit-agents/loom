@@ -1307,8 +1307,16 @@ composer and no Stop. Looking never touches the run, and closing the window
 leaves it running. **Join in** brings the composer and Stop back for that
 thread. The thread read carries `job: {joined}` for this. Any thread opens at its
 newest page (`PAGE`, 100), and **Earlier messages** reads `/before/<seq>` a page
-at a time. A job without a thread (a wake, a bridge's chat) still links to its
-conversation's page, which has no live steps.
+at a time. A job without a thread (a wake, a bridge's chat) links to its
+conversation's page, with a read-only **Watching** section and live steps (a
+2-second page refresh). Replies stay in its original venue; no Join in or Stop
+is offered there. The runtime posts the same redacted cards for every managed
+conversation. Core stores these separately from Comms messages in
+`conversation_steps` in the encrypted-words database: run and card id identify
+updates, sequence orders pages of 100, and at most 1000 cards survive per
+conversation. Reopening reads the current snapshot, including moved states;
+`before` reads earlier steps. Words use the same key, retention and exclusion
+from exports as Comms. The existing conversation viewer gate applies.
 
 ### Chat about this (t-2034, t-2035)
 
@@ -1318,8 +1326,17 @@ Any loom item can start a private thread with what it's about attached.
   desktop's right-click on it offers **Chat about this**, beside whatever the
   row's own menu offers. A window's title-bar menu offers it for the page it
   shows. On a phone, the page name's sheet offers it. An Inbox item's reader
-  has a button for it. Today, Inbox items and agent cards' job rows carry
-  `data-about`, and every page can be chatted about from its window or name.
+  has a button for it. Inbox items, agent cards' job rows, Tasks and Approvals
+  list/table rows, Changes rows and Knowledge rows carry `data-about`. Every
+  item page can be chatted about from its window or name. On a phone, the
+  row's context action (long press) opens its Chat about this sheet directly.
+- **Existing threads.** The sheet offers **Continue in <thread>** for up to
+  five unarchived threads about the same item, newest first, belonging to the
+  same member and selected agent. Changing agent refetches the choices. The
+  item key is its ref when present, otherwise its page, kept on the thread as
+  `about_key`; labels and timestamps never affect matching. Continuing opens
+  the chosen thread without sending or starting a body. Starting a new thread
+  is still available. No other member's threads are offered.
 - **What's attached.** A pointer: the item's ref (`t-N`, `a-…`,
   `github:owner/repo#N`, `knowledge:…`, or a piece's own `<piece>:<id>`), its
   page, the label the member saw and when they saw it. `POST /comms/new` takes

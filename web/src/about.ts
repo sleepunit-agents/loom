@@ -1,6 +1,6 @@
 // Chat about this (t-2034, t-2035; docs/specs/comms.md, "Chat about this"): any loom item can start a Comms thread with
 // what it's about attached. An item says what it is with `data-about` (aboutAttr): the desktop's right-click offers
-// "Chat about this" for it, and a window's own menu offers it for the page it shows (aboutPage). Either way the request
+// "Chat about this" for it (a phone uses a touch hold), and a window menu offers it for the page (aboutPage). The request
 // is one event, `loom-chat-about`, that App answers with the sheet (chat-about.tsx, its own chunk). This file is on the
 // first page, so it stays this small.
 

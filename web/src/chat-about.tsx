@@ -16,6 +16,7 @@ const WHY: Record<Route['why'], string> = { item: 'its agent', default: 'your ho
 export default function ChatAbout({ about, csrf, agents, onClose, go }: {
   about: (About & { seen: string }) | null; csrf: string; agents: Agent[]; onClose: () => void; go: (href: string) => void;
 }) {
+  const [existing, setExisting] = useState<Array<{ id: string; title: string | null }>>([]);
   const [route, setRoute] = useState<Route | null>(null);
   const [to, setTo] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
@@ -39,6 +40,16 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
       .catch(() => { if (!gone.signal.aborted) setRouteError('loom can\'t say who to ask right now. Close this and try again in a moment.'); });
     return () => gone.abort();
   }, [about]);
+  useEffect(() => {
+    setExisting([]);
+    if (!about || !to) return;
+    const gone = new AbortController();
+    const q = new URLSearchParams({ agent: to, ...(about.ref ? { ref: about.ref } : { page: about.page! }) });
+    void fetch(`/comms/about?${q}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: gone.signal })
+      .then(async (r) => r.ok ? await r.json() as { threads: Array<{ id: string; title: string | null }> } : { threads: [] })
+      .then((r) => { if (!gone.signal.aborted) setExisting(r.threads); }).catch(() => {});
+    return () => gone.abort();
+  }, [about, to]);
   const name = (a: string) => agents.find((x) => x.id === a)?.label ?? a;
   const send = async () => {
     if (!about || !to || !text.trim() || sending) return;
@@ -58,7 +69,7 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
       <DialogContent appearance="editor" showCloseButton className="loom-chat-about">
         <DialogHeader>
           <DialogTitle>Chat about this</DialogTitle>
-          <DialogDescription>A new private thread. The agent looks it up for where it is now.</DialogDescription>
+          <DialogDescription>A private chat about this item. The agent looks it up as it is now.</DialogDescription>
         </DialogHeader>
         {about && (
           <form className="loom-chat-about__form" onSubmit={(e) => { e.preventDefault(); void send(); }}>
@@ -87,6 +98,8 @@ export default function ChatAbout({ about, csrf, agents, onClose, go }: {
               {route && route.agents.length === 0 && <span>You have no agents to ask.</span>}
             </div>
             {route?.passed && <p className="loom-chat-about__note" role="note">{route.passed === '?' ? 'This names an agent you can\'t ask.' : `This belongs to ${name(route.passed)}, who isn't an agent you can ask.`} Pick who should look at it.</p>}
+            {existing.map((t) => <Button key={t.id} type="button" variant="outline" onClick={() => { onClose(); go(`/comms/${t.id.replace(/^th:/, '')}`); }}>Continue in {t.title ?? `your thread with ${name(to!)}`}</Button>)}
+            {existing.length > 0 && <p className="loom-chat-about__note">Or start a new thread below.</p>}
             <textarea className="loom-chat-about__text" value={text} onChange={(e) => {
               // Words changed after a send that failed: a new send, not the old one again (whose thread may exist).
               if (error) { id.current = newId(); setError(null); }
