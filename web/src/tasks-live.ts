@@ -85,6 +85,7 @@ function group(specs: () => QuerySpec[]) {
   let sets: Array<ReturnType<typeof wholeSet>> = [];
   let held: Map<string, Rec> | null = null;
   const hearers = new Set<Moved>();
+  const snapshots = new Set<Moved>();
   const all = (): Map<string, Rec> | null => {
     const got = sets.map((x) => x.current());
     return got.length && got.every((x) => x) ? new Map(got.flatMap((x) => [...x!])) : null;
@@ -93,22 +94,31 @@ function group(specs: () => QuerySpec[]) {
     const now = all();
     const was = held;
     held = now;
-    if (!now) return;
+    if (!now) {
+      // Consumers holding a derived copy must drop it when the set stops being live (including sign-out).
+      if (was) for (const f of [...snapshots]) f(new Set(), new Map());
+      return;
+    }
     // Just live: everything is news to what's shown (a page drawn before the set came may be older than it).
     const keys = was ? movedKeys(was, now) : new Set(now.keys());
     if (keys.size) for (const f of [...hearers]) f(keys, now);
   };
   return {
     /** Hear them move (the keys that moved, and every record held), keeping them live while heard. */
-    watch(csrf: string, f: Moved): () => void {
+    watch(csrf: string, f: Moved, snapshot = false): () => void {
       hearers.add(f);
+      if (snapshot) snapshots.add(f);
       if (hearers.size === 1) {
         // A recent window starts when it's asked for: a tab open for days only holds a little more.
         sets = specs().map((sp) => wholeSet(sp, publish));
         for (const x of sets) x.start(csrf);
+      } else if (held && snapshot) {
+        // A second window needs the current snapshot even if nothing moves after it opens.
+        f(new Set(held.keys()), held);
       }
       return () => {
         hearers.delete(f);
+        snapshots.delete(f);
         if (!hearers.size) { for (const x of sets) x.stop(); sets = []; held = null; }
       };
     },
@@ -118,7 +128,7 @@ function group(specs: () => QuerySpec[]) {
 
 const tasks = group(() => [OPEN_SPEC, recentSpec()]);
 /** Hear the tasks move (the keys that moved, and every record held), keeping the set live while heard. */
-export const watchTasks = (csrf: string, f: Moved): (() => void) => tasks.watch(csrf, f);
+export const watchTasks = (csrf: string, f: Moved, snapshot = false): (() => void) => tasks.watch(csrf, f, snapshot);
 /** Whether the tasks are live and whole now. */
 export const tasksLive = (): boolean => tasks.live();
 

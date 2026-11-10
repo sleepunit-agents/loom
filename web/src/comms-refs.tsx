@@ -7,6 +7,9 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useEnv } from './blocks';
+import { watchTasks } from './tasks-live';
+import { taskCardsOf } from './task-ref-cards';
+import type { Rec } from './collections/runtime';
 
 export type RefKind = 'task' | 'pr' | 'approval' | 'conv' | 'note' | 'knowledge' | 'project' | 'person' | 'agent';
 export interface RefCard { kind: RefKind; title: string; status?: string; tone?: 'bad' | 'warn' | 'ok'; page?: string; href?: string }
@@ -67,7 +70,7 @@ export const useRefs = () => useContext(RefsContext);
 
 /** A thread's refs: asked for as they're drawn (a batch at a time), asked again `refresh` after it changes (a new reply
  * may have moved a task), and the one card open. */
-export function ThreadRefs({ thread, refresh, children }: { thread: string; refresh: number; children: ReactNode }) {
+export function ThreadRefs({ thread, refresh, csrf, children }: { thread: string; refresh: number; csrf: string; children: ReactNode }) {
   const [cards, setCards] = useState<Cards>(() => new Map());
   const asked = useRef(new Set<string>());
   const queue = useRef(new Set<string>());
@@ -105,13 +108,22 @@ export function ThreadRefs({ thread, refresh, children }: { thread: string; refr
     return () => clearTimeout(t);
   }, [refresh, fetchSome]);
   cardsNow.current = cards;
+  // Only already-admitted chips read these records; absent rows can be outside the recent window.
+  const [tasks, setTasks] = useState<ReadonlyMap<string, Rec>>(() => new Map());
+  const needsTasks = [...cards].some(([ref, card]) => card?.kind === 'task' && card.page === `p/tasks/task/${ref}`);
+  useEffect(() => {
+    setTasks(new Map());
+    if (!csrf || !needsTasks) return;
+    return watchTasks(csrf, (_keys, records) => setTasks(records), true);
+  }, [csrf, needsTasks]);
+  const liveCards = useMemo(() => taskCardsOf(cards, tasks), [cards, tasks]);
   const [shown, setShown] = useState<{ ref: string; at: HTMLElement } | null>(null);
   const open = useCallback((ref: string, at: HTMLElement) => setShown((s) => (s?.ref === ref && s.at === at ? null : { ref, at })), []);
-  const api = useMemo(() => ({ cards, want, open }), [cards, want, open]);
+  const api = useMemo(() => ({ cards: liveCards, want, open }), [liveCards, want, open]);
   return (
     <RefsContext.Provider value={api}>
       {children}
-      {shown && cards.get(shown.ref) && <RefPopover card={cards.get(shown.ref)!} at={shown.at} onClose={() => setShown(null)} />}
+      {shown && liveCards.get(shown.ref) && <RefPopover card={liveCards.get(shown.ref)!} at={shown.at} onClose={() => setShown(null)} />}
     </RefsContext.Provider>
   );
 }

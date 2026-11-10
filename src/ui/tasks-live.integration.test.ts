@@ -14,6 +14,9 @@ import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { openThread, adapterCall } from '../comms.js';
+import { stopCommsWatch } from './comms-live.js';
 import { chromium, type Browser } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
@@ -150,7 +153,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
     ]));
     piece(h.home, 'changes', { role: 'changes', collections: { query: ['loom-changes', 'collections', 'query', '--json'], types: { change: CHANGE } } }, CHANGES_BIN);
     process.env.PATH = `${join(h.home, 'pieces', 'bin')}:${process.env.PATH}`;
-    tok.jonathan = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    tok.jonathan = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
     tok.sam = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
@@ -158,6 +161,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
   });
   afterAll(async () => {
     await browser?.close();
+    stopCommsWatch();
     await handle?.close();
     if (saved.home === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved.home;
     process.env.PATH = saved.path;
@@ -226,4 +230,52 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
     console.log(`[tasks-live] a change's checks moved -> on the open Changes page in ${Date.now() - t0} ms`);
     await ctx.close();
   });
+  it.skipIf(spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status !== 0).each([1440, 390].flatMap((width) => ['neon', 'lowlight', 'daylight'].map((look) => ({ width, look }))))
+    ('an open task chip follows shared records with no refs re-read: $width / $look', async ({ width, look }) => {
+      const file = join(h.home, 'tasks.json');
+      const ts = JSON.parse(readFileSync(file, 'utf-8'));
+      const task = ts.find((t: { id: string }) => t.id === 't-2');
+      task.title = 'Original task title'; task.status = 'open'; task.blocked = false; task.updated = new Date().toISOString();
+      writeFileSync(file, JSON.stringify(ts));
+      const { pullNow } = await import('../collections/subs.js');
+      await pullNow(h.home, 'tasks/task');
+      const thread = openThread(h, process.env, h.members[0], { agent: 'art', id: 'aaaaaaaaaaaaaa' + String.fromCharCode(97 + ['neon', 'lowlight', 'daylight'].indexOf(look)) + (width === 1440 ? 'a' : 'b'), text: 'Please check t-2 and t-3.' }).thread;
+      adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'I am checking t-2 and t-3.' });
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+      await ctx.request.post(`${base}/login`, { form: { token: tok.jonathan }, maxRedirects: 0 });
+      await ctx.addInitScript((look) => { localStorage.setItem('loom-look', look); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); }, look);
+      const page = await ctx.newPage();
+      page.setDefaultTimeout(8000);
+      const errors: string[] = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      let refs = 0;
+      // Isolate admission from presentation: t-2 is admitted, t-3 is refused even though its record is readable.
+      await page.route(`**/comms/${thread.id}/refs?*`, async (route) => {
+        refs++;
+        await route.fulfill({ json: { refs: { 't-2': { kind: 'task', title: 'Original task title', status: 'Waiting on you', tone: 'warn', page: 'p/tasks/task/t-2' }, 't-3': null } } });
+      });
+      try {
+        await page.goto(`${base}/comms/${thread.id}`);
+        const chip = page.getByRole('button', { name: 'Task t-2: Original task title, Waiting on you', exact: true });
+        await chip.click();
+        await page.getByRole('dialog', { name: 'Task: Original task title' }).waitFor();
+        const before = refs;
+        task.title = 'Renamed while the chip is open'; task.status = 'closed'; task.updated = new Date().toISOString();
+        writeFileSync(file, JSON.stringify(ts));
+        const start = Date.now();
+        await pullNow(h.home, 'tasks/task');
+        await page.getByRole('dialog', { name: 'Task: Renamed while the chip is open' }).waitFor({ timeout: 8000 });
+        await page.getByRole('button', { name: 'Task t-2: Renamed while the chip is open, Waiting on you', exact: true }).waitFor();
+        expect(await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).getAttribute('href')).toBe('/p/tasks/task/t-2');
+        expect(refs).toBe(before);
+        expect(await page.getByRole('button', { name: /^Task t-3:/ }).count()).toBe(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        expect(errors).toEqual([]);
+        console.log(`[task-chip] ${width}/${look}: updated in ${Date.now() - start}ms, extra refs reads=${refs - before}`);
+      } catch (error) {
+        console.log('[task-chip diagnostic]', page.url(), (await page.locator('body').innerText()).slice(0, 3000), errors);
+        throw error;
+      } finally { await ctx.close(); }
+    });
+
 });
