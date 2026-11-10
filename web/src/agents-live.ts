@@ -4,8 +4,10 @@
 // on every page, not only while Home is the main one. Null while it isn't live and whole: each view reads its page's
 // copy then.
 import { liveSet } from './live-set';
+import { liveOnChange } from './page';
+import { attentionNow, type Attention } from './attention';
 import type { Card, DeskHomeData } from './desk-agents';
-import type { Attention } from './attention';
+import type { TickerActivity } from './loom';
 import type { QuerySpec, Rec, ViewState } from './collections/runtime';
 
 const SPEC: QuerySpec = { type: 'loom/agent-status@^1', order: [['agent', 'asc']], limit: 100 };
@@ -35,6 +37,10 @@ export function cardsOf(state: ViewState, records: ReadonlyMap<string, Rec>): Ca
 }
 
 const set = liveSet<Card[]>(SPEC, cardsOf);
+// Home (house-home) is the cards and what needs you, both live: not asked again on a bare change while both are (its
+// timer still asks, for its chrome: the tiles' stats, the backup and Boxes alerts). Its first-run card isn't records.
+liveOnChange((view) => view === 'house-home' && set.current() !== null && attentionNow() !== null && !firstRunShown);
+let firstRunShown = false;
 export const useAgentCards = (csrf: string | undefined): Card[] | null => set.use(csrf);
 export const agentCardsNow = (): Card[] | null => set.current();
 
@@ -60,23 +66,40 @@ export function deskHomeOf(page: DeskHomeData | null, cards: Card[] | null, atte
   return { headline: headlineOf(cards), needs: attention.needs.length, need: attention.needs[0], stack: attention.needs.slice(0, STACK), cards };
 }
 
+type ShellAgent = { id: string; working?: boolean; sub?: string; activity?: TickerActivity; activityUnavailable?: boolean };
+
+/**
+ * One of the shell's agents as its live card says it (src/ui/handler.ts chrome: workingOf, lastActive, tickerActivityOf):
+ * at work by the card's state, "active 4m ago" from `seen.at` (the card's last step, within three days, as lastActive
+ * reads it), its ticker's fresh activity (one past its expiry is gone, as the bar would say), and whether loom can say.
+ * A record from before 1.2 (no ticker fields) keeps the page's ticker.
+ */
+export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, now = Date.now()): A {
+  if (!c) return a;
+  const { working: _w, sub: _s, ...rest } = a;
+  const out = { ...rest, ...(c.state === 'working' ? { working: true } : {}), sub: c.seen?.at ? `active ${ago(c.seen.at, now) || 'a while ago'}` : 'quiet for 3 days' } as A;
+  if (!('activity' in c) && !('activityUnavailable' in c)) return out;
+  delete out.activity; delete out.activityUnavailable;
+  const d = c.activity;
+  if (d && Date.parse(d.observedAt) <= now && Date.parse(d.expiresAt) > now) out.activity = d;
+  if (c.activityUnavailable) out.activityUnavailable = true;
+  return out;
+}
+
 /**
  * A page's view with what the cards say read from the live set: Home's cards and headline, and the shell's agents at
  * work (the system bar's, src/ui/handler.ts workingOf: the same rule as a card's state, agentStateOf). Unchanged while
  * it isn't live.
  */
-export function withAgentCards<V extends { view: string; chrome?: { shell?: { agents: Array<{ id: string; working?: boolean }> } }; [k: string]: unknown }>(data: V | null, live: Card[] | null): V | null {
+export function withAgentCards<V extends { view: string; chrome?: { shell?: { agents: ShellAgent[] } }; [k: string]: unknown }>(data: V | null, live: Card[] | null, now = Date.now()): V | null {
   if (!data || !live) return data;
   let out: V = data;
   const shell = data.chrome?.shell;
   if (shell) {
-    const state = new Map(live.map((c) => [c.id, c.state]));
-    out = { ...out, chrome: { ...data.chrome, shell: { ...shell, agents: shell.agents.map((a) => {
-      if (!state.has(a.id)) return a;
-      const { working: _w, ...rest } = a;
-      return state.get(a.id) === 'working' ? { ...rest, working: true } : rest;
-    }) } } };
+    const byId = new Map(live.map((c) => [c.id, c]));
+    out = { ...out, chrome: { ...data.chrome, shell: { ...shell, agents: shell.agents.map((a) => shellAgentOf(a, byId.get(a.id), now)) } } };
   }
+  if (data.view === 'house-home') firstRunShown = !!(data.home as { firstRun?: unknown } | undefined)?.firstRun;
   if (data.view === 'house-home' && data.home && typeof data.home === 'object') {
     out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live), moving: live.flatMap((c) => c.moving ?? []) } };
   }

@@ -98,7 +98,8 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
 
   const report = (extra: Record<string, unknown> = {}) => writeFileSync(join(h.home, 'runtime-agents.json'), JSON.stringify({
     art: { state: 'working', reason: 'On two things', readings: [{ label: 'Next', value: '09:00', detail: 'morning lane' }, { label: 'Box', value: 'down', tone: 'bad' }],
-      doing: [{ text: 'Working in a conversation', kind: 'talk', conversation: mine.conversation, since }],
+      doing: [{ text: 'Working in a conversation', kind: 'talk', conversation: mine.conversation, since,
+        activity: { action: 'Reading a file', observedAt: new Date(Date.now() - 1_000).toISOString(), expiresAt: new Date(Date.now() + 25_000).toISOString() } }],
       jobs: [
         { id: 'job-thread', text: 'Working in a conversation', kind: 'talk', status: 'running', conversation: mine.conversation, since },
         { id: 'job-lane', text: 'Morning lane', kind: 'lane', status: 'running', where: 'wake', since },
@@ -148,7 +149,9 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     return ((await r.json()) as { answers: Data[] }).answers[0];
   };
   /** A record as Home's card: its key's id is the card's id; `running` and `agent` are the record's own. */
-  const asCard = (r: Data) => { const { key, agent: _a, running: _r, ...rest } = r; return { id: key.split('/')[2], ...rest }; };
+  const asCard = (r: Data) => { const { key, agent: _a, running: _r, activity: _t, activityUnavailable: _u, ...rest } = r; return { id: key.split('/')[2], ...rest }; };
+  /** The bar's ticker for an agent, as the page's shell says it (handler.ts chrome) and as a record carries it (1.2). */
+  const tickerOf = (x: Data) => ({ ...(x.activity ? { activity: x.activity } : {}), ...(x.activityUnavailable ? { activityUnavailable: true } : {}) });
   // The cards' times ("Last seen 3 min ago") are made when asked: the same within a test's second.
   const strip = (c: Data) => JSON.parse(JSON.stringify(c));
 
@@ -161,7 +164,14 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
       expect((a.rows as Data[]).map(asCard).map(strip), who).toEqual((page.home.cards as Data[]).map(strip));
       // Home's "moving" is every card's own (1.1), so a window keeps it live from the records.
       expect((a.rows as Data[]).flatMap((r) => r.moving), who).toEqual(page.home.moving);
+      // The bar's ticker is each record's own (1.2): the same as the page's shell agents, member for member.
+      const shellAgents = (page.chrome.shell.agents as Data[]).filter((x) => (a.rows as Data[]).some((r) => r.agent === x.id));
+      expect((a.rows as Data[]).map(tickerOf), who).toEqual(shellAgents.map(tickerOf));
     }
+    // jonathan's thread's step is his ticker's; sam (another owner of art) is told nothing of it.
+    const jonArt = ((await ask('jonathan')).rows as Data[]).find((r) => r.agent === 'art');
+    expect(jonArt.activity).toEqual(expect.objectContaining({ action: 'Reading a file', where: 'Comms' }));
+    expect(((await ask('sam')).rows as Data[])[0].activity).toBeUndefined();
     expect((await home('jonathan')).home.moving).toEqual([expect.objectContaining({ agent: 'art', text: 'On two things' })]);
     const sam = await ask('sam');
     expect((sam.rows as Data[]).map((r) => r.agent)).toEqual(['art']);

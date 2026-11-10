@@ -1204,12 +1204,17 @@ async function buildAttention(base: UiOptions, full: Household, viewer: Viewer):
  * viewer: each agent once, its audience exactly the members who own it, with a digest of every member's own copy (two
  * members' copies differ by their threads' jobs), so a change to any copy moves it and that member is asked again.
  */
-async function memberCards(base: UiOptions, full: Household, m: Member): Promise<AgentCard[]> {
+async function memberCards(base: UiOptions, full: Household, m: Member): Promise<Array<AgentCard & { activity?: unknown; activityUnavailable?: true }>> {
   const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
   const hh = own ? narrowed(full, own) : full;
   const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
   const pieces = atWorkFor(forOwner((await pieceManifests(env)).pieces, own), full, m);
-  return agentCards(hh, pieces, agentsOf(hh)!, Date.now());
+  const now = Date.now();
+  // The system bar's ticker for each (agent-status 1.2): its fresh activity (tickerActivityOf, over this member's
+  // pieces), or that loom can't say what it's doing. "Active 4m ago" is said again in the window from `seen.at`.
+  const runtime = pieces.some((p) => p.piece === 'runtime');
+  return agentCards(hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, ...tickerActivityOf(pieces, c.id, now),
+    ...(!runtime || c.state === 'unavailable' || c.state === 'broken' ? { activityUnavailable: true } : {}) }));
 }
 
 /** A card as a record: its agent is its id. */

@@ -131,7 +131,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
   // code makes it for this member (src/ui/handler.ts agentCards over their pieces; a Comms thread's job is its member's
   // alone, handler.ts atWorkFor). So it's an `ask` type, each row's audience the viewer, as attention is.
   'agent-status': declare('agent-status', {
-    version: '1.1',
+    version: '1.2',
     schema: { type: 'object', properties: { agent: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' } } },
     agent: 'agent',
     fields: {
@@ -152,10 +152,14 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       steps: { class: 'member' },
       // What's moving for it (1.1): each piece that says it's working, and why; Home's list is every card's.
       moving: { class: 'member' },
+      // The system bar's ticker (1.2): its newest fresh observation (action, where, observedAt, expiresAt, href; never
+      // an excerpt), or `activityUnavailable` when loom can't say (no runtime, or it's unavailable or broken).
+      activity: { class: 'member' },
+      activityUnavailable: { class: 'member' },
       // A digest of every member's own copy (the core viewer's snapshot alone): a copy that moves moves the record.
       copies: { class: 'owner' },
     },
-    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps', 'moving'],
+    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps', 'moving', 'activity', 'activityUnavailable'],
     max_page: 100,
     aggregates: { count: {} },
     audience: 'ask',
