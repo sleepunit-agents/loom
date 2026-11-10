@@ -5,10 +5,10 @@
 // of it. One column in a narrow tile or on a phone, two in a big window, three at very wide (projects.css, by the
 // width of the view itself, not the screen's). A card opens the project's hub inside the app.
 import './projects.css';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { watchProjects, projectsLive } from './tasks-live';
-import { projectDirectory } from './project-directory';
-import type { Rec } from './collections/runtime';
+import { ProjectDirectory } from './project-directory';
+import { NO_PROJECTS } from '../../src/ui/project-cards';
 import { Link, Who, useEnv } from './blocks';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import type { CardPerson, ProjectCardView, ProjectCards } from '../../src/ui/project-cards';
@@ -104,17 +104,18 @@ function Card({ c }: { c: ProjectCardView }) {
 
 export function ProjectsView({ cards: pageCards }: { cards: ProjectCards }) {
   const { ctx } = useEnv();
-  const [records, setRecords] = useState<ReadonlyMap<string, Rec> | null>(null);
+  const [live, setLive] = useState<{ page: ProjectCards; cards: ProjectCards } | null>(null);
   useEffect(() => {
-    setRecords(null);
+    setLive(null);
     if (!ctx.csrf) return;
-    return watchProjects(ctx.csrf, (_keys, rows) => setRecords(projectsLive() ? rows : null));
-  }, [ctx.csrf]);
-  const cards = useMemo(() => projectDirectory(pageCards, records), [pageCards, records]);
+    const directory = new ProjectDirectory(pageCards);
+    return watchProjects(ctx.csrf, (_keys, rows) => setLive({ page: pageCards, cards: directory.read(projectsLive() ? rows : null) }));
+  }, [ctx.csrf, pageCards]);
+  const cards = live?.page === pageCards ? live.cards : pageCards;
   const n = cards.active.length;
   return (
     <div className="loom-projects">
-      {!n && !cards.quiet.length && <p>No projects yet. A project is an ongoing body of work with a goal (a product, a client, a season); an agent makes one with project_write, and its page here collects everything filed under it.</p>}
+      {!n && !cards.quiet.length && <p>{NO_PROJECTS}</p>}
       {n > 0 && <p className="pj-head loom-data">{n} active{cards.waiting ? ` · ${cards.waiting} waiting on you` : ''}</p>}
       {n > 0 && <ul className="pj-grid" aria-label="Active projects">{cards.active.map((c) => <li key={`${c.agent ?? ''}/${c.slug}`}><Card c={c} /></li>)}</ul>}
       {cards.quiet.length > 0 && (

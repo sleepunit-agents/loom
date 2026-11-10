@@ -2,7 +2,7 @@ import type { ProjectCards, ProjectCardView } from '../../src/ui/project-cards';
 import type { Rec } from './collections/runtime';
 
 /** Directory fields come from the shared records. Feeds remain the page's own until their source migration. */
-export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<string, Rec> | null): ProjectCards {
+export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<string, Rec> | null, quietSincePage: ReadonlySet<string> = new Set()): ProjectCards {
   if (!records) return cards;
   const prior = new Map([...cards.active, ...cards.quiet].map((c) => [`${c.agent ?? ''}:${c.slug}`, c]));
   const active: ProjectCardView[] = [], quiet: ProjectCardView[] = [];
@@ -18,7 +18,7 @@ export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<strin
     if (old) c.what = old.what;
     if (r.status === 'active') {
       // A quiet card never had its feeds counted. Do not promote its absent count to "nothing waiting".
-      if (old?.status === 'active') {
+      if (old?.status === 'active' && !quietSincePage.has(r.key)) {
         c.waiting = old.waiting; c.lately = old.lately; c.people = old.people; c.spark = old.spark; c.changes = old.changes;
       } else c.waiting = { unknown: "Couldn't count what's waiting: its sections haven't been read yet." };
       active.push(c);
@@ -28,4 +28,17 @@ export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<strin
   active.sort((a, b) => rank(a) - rank(b) || Date.parse(b.activity) - Date.parse(a.activity));
   quiet.sort((a, b) => Date.parse(b.activity) - Date.parse(a.activity));
   return { active, quiet, waiting: active.reduce((n, c) => n + (c.waiting && 'count' in c.waiting ? c.waiting.count : 0), 0) };
+}
+
+/** A card that left active cannot regain old feeds on return. Only a new page can supply fresh feeds. */
+export class ProjectDirectory {
+  private quiet = new Set<string>();
+  constructor(private cards: ProjectCards) {}
+  read(records: ReadonlyMap<string, Rec> | null): ProjectCards {
+    if (records) for (const c of this.cards.active) {
+      const key = `loom/project/${c.agent ?? ''}:${c.slug}`;
+      if (records.get(key)?.status !== 'active') this.quiet.add(key);
+    }
+    return projectDirectory(this.cards, records, this.quiet);
+  }
 }

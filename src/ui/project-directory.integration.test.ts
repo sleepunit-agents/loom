@@ -37,6 +37,15 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
       const page = await ctx.newPage();
       const asked: string[] = [], sets: string[] = [];
+      const emptyDelivered = page.waitForResponse(async (r) => {
+        if (!r.url().includes('/collections/query')) return false;
+        try {
+          const queries = r.request().postDataJSON().queries as Array<{ id: string; type: string }>;
+          const ids = new Set(queries.filter((q) => q.type === 'loom/project@^1').map((q) => q.id));
+          const body = await r.json() as { answers: Array<{ id: string; rows?: unknown[]; error?: string; at?: number }> };
+          return body.answers.some((a) => ids.has(a.id) && !a.error && a.rows?.length === 0 && typeof a.at === 'number');
+        } catch { return false; }
+      });
       page.on('request', (r) => {
         const u = new URL(r.url());
         if (u.pathname === '/projects' && r.resourceType() === 'fetch') asked.push(u.pathname);
@@ -45,8 +54,8 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       await page.goto(`${base}/projects`);
       await page.getByText(/^No projects yet/).waitFor();
       await expect.poll(() => sets.some((s) => s.includes('loom/project@^1'))).toBe(true);
-      // Wait for the initially empty shared answer, without inventing a browser polling timer in the product.
-      await expect.poll(() => page.evaluate(() => document.querySelector('.loom-projects') !== null)).toBe(true);
+      // Creation must follow the empty answer, rather than racing the initial directory query.
+      await emptyDelivered;
       const before = asked.length;
       write('new', 'First project'); await pullNow(h.home, 'loom/project');
       const card = page.locator('.pj-card[data-slug="new"]');

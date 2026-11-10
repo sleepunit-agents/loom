@@ -18,6 +18,7 @@ import { agentName } from './core.js';
 import { needsAskKey, needsAskText } from './push.js';
 import { openProjectsStore } from '../backends/projects.js';
 import type { CardPerson, ProjectCards, ProjectCardView } from './project-cards.js';
+import { NO_PROJECTS } from './project-cards.js';
 
 export type { CardPerson, ProjectCards, ProjectCardView };
 import { splitPage, validPath, type Block, type Page, type Section } from './vocab.js';
@@ -239,7 +240,7 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
   }
   if (!rows.length) {
     return { cards: { active: [], quiet: [], waiting: 0 }, page: { title: 'Projects', sections: [{ id: 'none', blocks: [{ type: 'text', tone: 'muted',
-      text: 'No projects yet. A project is an ongoing body of work with a goal (a product, a client, a season); an agent makes one with project_write, and its page here collects everything filed under it.' }] }] } };
+      text: NO_PROJECTS }] }] } };
   }
   const live = rows.filter((r) => r.p.status === 'active');
   const quiet = rows.filter((r) => r.p.status !== 'active');
