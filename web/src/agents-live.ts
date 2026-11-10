@@ -10,10 +10,23 @@ import type { QuerySpec, Rec, ViewState } from './collections/runtime';
 
 const SPEC: QuerySpec = { type: 'loom/agent-status@^1', order: [['agent', 'asc']], limit: 100 };
 
+/** "just now", "40m ago" (src/ui/render.ts agoText): a card's "Last seen", said again from when it was. */
+function ago(iso: string, now = Date.now()): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const m = Math.max(0, Math.round((now - t) / 60_000));
+  return m < 1 ? 'just now' : `${m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`} ago`;
+}
+/** A card with its "Last seen" said as of now: loom doesn't move the record for the minutes passing (handler.ts). */
+export function freshCard<C extends Card>(c: C, now = Date.now()): C {
+  if (!c.seen?.at || !c.readings?.some((x) => x.label === 'Last seen')) return c;
+  return { ...c, readings: c.readings.map((x) => (x.label === 'Last seen' ? { ...x, value: ago(c.seen!.at, now) || x.value } : x)) };
+}
+
 /** A record as Home's card: its id is the agent; `running` is the record's own (how many jobs run now). */
 export function cardOf(r: Rec): Card & { running: number } {
   const { key, agent: _a, ...rest } = r;
-  return { ...(rest as unknown as Card), id: key.slice(key.lastIndexOf('/') + 1), running: typeof r.running === 'number' ? r.running : 0 };
+  return freshCard({ ...(rest as unknown as Card), id: key.slice(key.lastIndexOf('/') + 1), running: typeof r.running === 'number' ? r.running : 0 });
 }
 
 export function cardsOf(state: ViewState, records: ReadonlyMap<string, Rec>): Card[] | null {
@@ -64,6 +77,6 @@ export function withAgentCards<V extends { view: string; chrome?: { shell?: { ag
       return state.get(a.id) === 'working' ? { ...rest, working: true } : rest;
     }) } } };
   }
-  if (data.view === 'house-home' && data.home && typeof data.home === 'object') out = { ...out, home: { ...(data.home as object), cards: live, headline: headlineOf(live) } };
+  if (data.view === 'house-home' && data.home && typeof data.home === 'object') out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live) } };
   return out;
 }

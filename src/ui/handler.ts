@@ -1251,7 +1251,7 @@ async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer
   // The snapshot holds no member's card, only that one moved: a card carries its member's own threads' jobs (their titles
   // and links), and the snapshot's audience is every owner of the agent. What anyone is shown is asked again as them.
   // A card's "Last seen 3 min ago" is left out of the digest: it moves every minute with nothing else moving, and
-  // would ask every viewer again each time (it's current on the next real change, and on Home's own page).
+  // would ask every viewer again each time. The window says it again from `seen.at` (web/src/agents-live.ts freshCard).
   const whose = new Map<string, string[]>();
   const copies = new Map<string, ReturnType<typeof createHash>>();
   for (const m of full.members) {
