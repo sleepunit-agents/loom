@@ -370,6 +370,8 @@ audit log, so it has no raw text to copy.
   for the one conversation the runtime said that house holds (`POST /api/loom/conversations/house`, the runtime's,
   set once per house; `household.db` `house_conversations`), and never from a house it named none for (t-2061): inside
   one house every body could read the others' ids, so the conversation named at identity proves nothing by itself.
+  A house that holds no body's conversation (a task's own house before it runs a job, an `up` house) writes none.
+  `comms_title` is held to the same rule.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
   above.
 
