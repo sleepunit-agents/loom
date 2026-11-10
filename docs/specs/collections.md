@@ -725,13 +725,15 @@ along with the listeners. The adapter is the only code that imports the client l
   `conversation`, `working_since`, `queued`, `failed`; still never a word), and the list draws its rows from the same
   subscription as the dock and the cards (`web/src/thread-rows.ts` `listOf`: pinned, then unread, then newest, as
   `threadsOf`). Archived threads, Background work and both are their own sets, subscribed only while the list shows
-  them. Live, nothing asks `GET /comms` again: not after a pin, an archive, a title, a delete, nor after every pull of
-  an open thread (`onChanged`); it's asked once for who can be written to. Parity
+  them (loom is asked for one only if its set hasn't answered in 2 s). Live, nothing asks `GET /comms` again: not
+  after a pin, an archive, a title, a delete, nor after every pull of an open thread (`onChanged`), and the Comms page
+  itself isn't refetched on a bare change or its timer (`liveViews`, now one entry per live set); it's asked once for
+  who can be written to, and once more if the set stops being live. Parity
   (`threads-live.integration.test.ts`): for each member and each of the four views, the rows the app draws are
   `GET /comms`'s, field for field and in order; in a real browser (`comms-app.integration.test.ts`) a thread renamed
   elsewhere moves in an open list with no `/comms` request (before: one).
 - **Another process's thread write arrives at once**: the subscriptions watch `comms.tick` (written by every thread
-  write, `comms.ts` `bump`) as well as the same-process bump, so a reply the runtime posts through another listener,
+  write, `comms.ts` `bump`; the same-process bump only where the file can't be watched, so one write is one pull), so a reply the runtime posts through another listener,
   or a CLI's write, is pulled within `GAP_MS`, not on the next 15 s pull (the test fails without it).
 - **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
   refs and previews, the conversation page, and a thread's asks as a view of the attention set.

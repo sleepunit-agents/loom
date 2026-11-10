@@ -91,11 +91,13 @@ export function collectionsRuntime(csrf: () => string): NonNullable<typeof colle
 }
 
 /**
- * Views read live from shared collections (attention.ts says the Inbox, once its set is live): a page showing one isn't
- * asked again on a bare change or on a timer, since what changes on it arrives on its own (t-2025).
+ * Views read live from shared collections (attention.ts says the Inbox, threads-live.ts Comms, once each set is live): a
+ * page showing one isn't asked again on a bare change or on a timer, since what changes on it arrives on its own (t-2025).
+ * Each live set says its own views; a view is live if any says so.
  */
-let readLive: (view: string) => boolean = () => false;
-export function liveViews(f: (view: string) => boolean): void { readLive = f; }
+const liveSayers: Array<(view: string) => boolean> = [];
+const readLive = (view: string): boolean => liveSayers.some((f) => f(view));
+export function liveViews(f: (view: string) => boolean): void { liveSayers.push(f); }
 
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });

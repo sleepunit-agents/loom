@@ -375,9 +375,13 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin, onAction }
  * them, so the set is held only then. It hands the list its rows; null while it isn't live (the list asks loom then). */
 function OtherThreads({ which, csrf, onRows }: { which: 'archived' | 'background' | 'both'; csrf: string; onRows: (rows: Thread[] | null) => void }) {
   const rows = useOtherThreads(csrf, which);
-  useEffect(() => { onRows(rows); }, [rows, onRows]);
+  const had = useRef(false);
+  useEffect(() => { if (rows) { had.current = true; onRows(rows); } else if (had.current) onRows(null); }, [rows, onRows]);
+  // A set that hasn't answered in OTHER_WAIT_MS isn't coming soon (the stream down, an error): loom is asked then.
+  useEffect(() => { const t = setTimeout(() => { if (!had.current) onRows(null); }, OTHER_WAIT_MS); return () => clearTimeout(t); }, [onRows]);
   return null;
 }
+const OTHER_WAIT_MS = 2_000;
 
 function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload, onRemoved }: { threads: Thread[]; live: boolean; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void; onRemoved: () => void }) {
   const [archived, setArchived] = useState<Thread[] | null>(null);
@@ -385,19 +389,23 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
   const [showBackground, setShowBackground] = useState(false);
   const which = showArchived && showBackground ? 'both' : showArchived ? 'archived' : showBackground ? 'background' : null;
   // Live, the other view's rows come from its own set (OtherThreads); loom is asked only while that set isn't live.
-  const [liveOther, setLiveOther] = useState<Thread[] | null>(null);
-  useEffect(() => { setLiveOther(null); }, [which]);
+  // Kept with the view they're for, so a switch never shows one view's rows under another's name, nor asks loom.
+  const [heldOther, setHeldOther] = useState<{ which: string; rows: Thread[] | null } | null>(null);
+  const onOtherRows = useCallback((rows: Thread[] | null) => { setHeldOther(which ? { which, rows } : null); }, [which]);
+  const liveOther = heldOther && heldOther.which === which ? heldOther.rows : null;
   const otherLive = live && liveOther !== null;
+  // The other view's own set: until it answers, a moment, nothing is asked of loom (live means it will).
+  const otherWaiting = live && which !== null && (heldOther === null || heldOther.which !== which);
   // What moves the asked-for copy: the list's rows, only while nothing's live (live, a row's move comes on the stream).
   const moved = live ? null : threads;
   useEffect(() => {
     if (!showArchived && !showBackground) return;
-    if (otherLive) return;
+    if (otherLive || otherWaiting) return;
     let cancelled = false;
     void getJson<{ threads: Thread[] }>(`/comms?archived=${showArchived ? 1 : 0}&background=${showBackground ? 1 : 0}`)
       .then((r) => { if (!cancelled) setArchived(r?.threads ?? []); });
     return () => { cancelled = true; };
-  }, [showArchived, showBackground, moved, otherLive]);
+  }, [showArchived, showBackground, moved, otherLive, otherWaiting]);
   const groups = useMemo(() => {
     const pinned = threads.filter((t) => t.pinned), unread = threads.filter((t) => !t.pinned && t.unread), rest = threads.filter((t) => !t.pinned && !t.unread);
     return [['Pinned', pinned], ['Unread', unread], ['Threads', rest]] as const;
@@ -438,7 +446,7 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
             onAction={(action) => void act(t, action)} onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
-      {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={setLiveOther} />}
+      {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={onOtherRows} />}
       {(showArchived || showBackground) && other?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
       {!threads.length && !showArchived && !showBackground && <p className="comms-empty">No threads yet. Start one with one of your agents.</p>}
       <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
@@ -1024,6 +1032,9 @@ export function CommsView({ data }: { data: CommsData }) {
   const isLive = live !== null;
   const reload = useCallback(() => { void getJson<{ threads: Thread[]; agents: string[] }>('/comms').then((r) => { if (r) { setThreads(r.threads); setAgents(r.agents); } }); }, []);
   const changed = useCallback(() => { if (!isLive) reload(); }, [isLive, reload]);
+  // Nothing kept the page's copy current while the set was live: when it stops being live, ask loom once.
+  const wasLive = useRef(false);
+  useEffect(() => { if (wasLive.current && !isLive) reload(); wasLive.current = isLive; }, [isLive, reload]);
   // A thread's view doesn't carry the list: on a desktop (two panes) or for New thread, it's fetched beside it (live:
   // only once, for who can be written to).
   const listed = useRef(false);

@@ -114,6 +114,11 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/comms' && r.method() === 'GET') asked.push(u.search); });
       setTitle(h, threadFor(h, h.members[0], thread.id), 'Renamed elsewhere', 'agent');
       await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      // Archived threads are their own live set: shown without asking loom either.
+      await page.getByRole('button', { name: 'Archived', exact: true }).click();
+      await page.locator('.comms-empty').filter({ hasText: 'No archived threads.' }).waitFor({ timeout: 5_000 });
+      await page.getByRole('button', { name: 'Back to active', exact: true }).click();
+      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
       await page.waitForTimeout(500);
       expect(asked).toEqual([]);
       expect(errors).toEqual([]);

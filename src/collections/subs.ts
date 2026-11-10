@@ -165,15 +165,15 @@ function ensureRunning(h: HomeState): void {
   }
   h.poll ??= setInterval(() => pass(h), PASS_MS);
   h.poll.unref?.();
-  // Core's own threads move through comms.ts: their domain is pulled when they do.
-  h.offBump ??= onBump(() => h.puller.soon('loom/thread'));
-  // And through the tick file every thread write leaves (comms.ts bump), so another process's write arrives at once,
-  // not on the next 15 s pull.
-  if (!h.commsWatcher) {
+  // Core's own threads move through comms.ts: their domain is pulled when they do. Every thread write, in this process
+  // or another (a reply the runtime posts through another listener, a CLI), leaves the tick file (comms.ts bump), so
+  // that's what's heard; only where it can't be watched, this process's own writes (onBump), and the poll.
+  if (!h.commsWatcher && !h.offBump) {
     try {
       h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick') h.puller.soon('loom/thread'); });
+      h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; h.offBump ??= onBump(() => h.puller.soon('loom/thread')); });
       h.commsWatcher.unref?.();
-    } catch { /* the poll still runs */ }
+    } catch { h.offBump = onBump(() => h.puller.soon('loom/thread')); }
   }
 }
 
