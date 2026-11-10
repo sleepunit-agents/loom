@@ -11,7 +11,7 @@
  * Runs where the app is built (npm run build) and a Chrome is installed.
  */
 import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { chromium, type Browser } from 'playwright-core';
@@ -76,6 +76,25 @@ if (verb === 'collections' && sub === 'query') {
 process.exit(2);
 `;
 
+// The changes piece, as far as its page goes: changes.json is its snapshot. `collections query` as loom-changes answers
+// (lib/loom_changes/collections.py: owners and loom only, keyset pages); `ui page` lists each change with its checks.
+const CHANGES_BIN = TASKS_BIN
+  .replace("'/tasks.json'", "'/changes.json'")
+  .replace("console.log(JSON.stringify({ v: 2, tab: { label: 'Tasks' } }))", "console.log(JSON.stringify({ v: 2, tab: { label: 'Changes' } }))")
+  .replace("const open = all().filter((t) => t.status !== 'closed');", "const open = all().filter((t) => t.state === 'open');")
+  .replace("console.log(JSON.stringify({ title: 'Tasks', sections: [{ id: 'open', title: 'Open · ' + open.length, blocks: [{ type: 'list', items: open.slice(0, 20).map((t) => ({ text: t.title })) }] }] }));",
+    "console.log(JSON.stringify({ title: 'Changes', sections: [{ id: 'open', title: 'Open', blocks: [{ type: 'list', items: open.slice(0, 20).map((t) => ({ text: t.title + ' · checks ' + t.checks })) }] }] }));");
+const STR_ = { class: 'household' } as const;
+const CHANGE = {
+  version: '1.0', schema: { type: 'object' },
+  fields: {
+    ref: { class: 'household', filter: ['eq', 'in'] }, title: STR_, state: { class: 'household', filter: ['eq', 'in'], order: true },
+    draft: STR_, checks: STR_, review: STR_, mergeable: STR_, head: STR_,
+    updated: { class: 'household', filter: ['gte'], order: true }, closed: STR_,
+  },
+  default_fields: ['ref', 'title', 'state'], max_page: 500,
+};
+
 const STR = { class: 'household' } as const;
 const TASK = {
   version: '1.1', schema: { type: 'object' },
@@ -126,6 +145,10 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
     h = loadHousehold(home)!;
     process.env.LOOM_HOME = h.home;
     piece(h.home, 'tasks', { role: 'tasks', collections: { query: ['loom-tasks', 'collections', 'query', '--json'], types: { task: TASK } } }, TASKS_BIN);
+    writeFileSync(join(home, 'changes.json'), JSON.stringify([
+      { id: 'github:acme:app:3', ref: 'github:acme/app#3', title: 'app#3 Ship the fix', state: 'open', draft: false, checks: 'running', review: 'required', mergeable: 'yes', head: 'a'.repeat(40), updated: at(2), closed: null },
+    ]));
+    piece(h.home, 'changes', { role: 'changes', collections: { query: ['loom-changes', 'collections', 'query', '--json'], types: { change: CHANGE } } }, CHANGES_BIN);
     process.env.PATH = `${join(h.home, 'pieces', 'bin')}:${process.env.PATH}`;
     tok.jonathan = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
     tok.sam = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
@@ -178,6 +201,29 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
     const settled = asked.length;
     await new Promise((r) => setTimeout(r, 3_000));
     expect(asked.length).toBe(settled);
+    await ctx.close();
+  });
+
+  it('a change whose checks pass reaches an open Changes page on the pull after (t-2029)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+    await ctx.request.post(`${base}/login`, { form: { token: tok.jonathan }, maxRedirects: 0 });
+    const page = await ctx.newPage();
+    const sets: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/collections/query') sets.push(r.postData() ?? ''); });
+    await page.goto(`${base}/p/changes`);
+    await page.getByText('app#3 Ship the fix · checks running').waitFor();
+    await expect.poll(() => sets.filter((x) => x.includes('changes/change@^1')).length).toBeGreaterThanOrEqual(2);
+    await new Promise((r) => setTimeout(r, 2_000));
+    // The sync service's read: the snapshot moved, and loom's next pull (here at once, as its 15 s pull would) logs it.
+    const file = join(h.home, 'changes.json');
+    const cs = JSON.parse(readFileSync(file, 'utf-8'));
+    cs[0].checks = 'passing'; cs[0].updated = new Date().toISOString();
+    writeFileSync(file, JSON.stringify(cs));
+    const t0 = Date.now();
+    const { pullNow } = await import('../collections/subs.js');
+    await pullNow(h.home, 'changes/change');
+    await page.getByText('app#3 Ship the fix · checks passing').waitFor({ timeout: 8_000 });
+    console.log(`[tasks-live] a change's checks moved -> on the open Changes page in ${Date.now() - t0} ms`);
     await ctx.close();
   });
 });

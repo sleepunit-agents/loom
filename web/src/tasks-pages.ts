@@ -7,7 +7,18 @@
 const TASKS = /^\/(?:a\/[a-z][a-z0-9-]{0,39}\/)?p\/tasks(\/[^?#]*)?(?:[?#]|$)/;
 const PROJECTS = /^\/projects(?:\/[^?#]*)?(?:[?#]|$)/;
 export function tasksPageKind(url: string): 'live' | 'also' | null {
+  if (CHANGES.test(url)) return 'also';
   const m = TASKS.exec(url);
   if (m) return !m[1] || m[1] === '/' ? 'live' : 'also';
   return PROJECTS.test(url) ? 'also' : null;
+}
+
+/** `/p/changes…` and an agent's: Changes' pages, drawn by the piece, which show rule verdicts too (so `also`). */
+const CHANGES = /^\/(?:a\/[a-z][a-z0-9-]{0,39}\/)?p\/changes(?:\/[^?#]*)?(?:[?#]|$)/;
+
+/** Which records a page moves with: `tasks`, `changes`, both (a project's page), or none. */
+export function pulseOf(url: string): string {
+  if (CHANGES.test(url)) return 'changes';
+  if (PROJECTS.test(url)) return 'tasks,changes';
+  return tasksPageKind(url) ? 'tasks' : '';
 }
