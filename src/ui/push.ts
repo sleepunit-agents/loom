@@ -114,7 +114,6 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
     const payload = JSON.stringify({ title: a.title, body: '', tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });
     for (const { member, ...sub } of w.subs) {
       if (a.member !== undefined && (member ?? firstMember?.()) !== a.member) continue;
-      if (a.members !== undefined && !a.members.includes(member ?? firstMember?.() ?? '')) continue;
       if (!hears(member, a)) continue;
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });

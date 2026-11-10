@@ -750,12 +750,15 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
   // watch), so one it falls to later hears of it then.
   return watch(storeFor(opts), async () => {
     if (!hh) return (await yourCall(opts)).map((a) => ({ key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text }));
-    const records = await attentionFor(opts, { kind: 'core' });
-    return [...records.filter((r) => r.attention === true && r.box !== 'done').map((r) => {
+    // Comms replies first (a burst of asks can't hold one back), and whatever the records do: a build that fails this
+    // minute leaves its asks unmarked, so they go next minute.
+    let records: MemRecord[] = [];
+    try { records = await attentionFor(opts, { kind: 'core' }); } catch (e) { process.stderr.write(`loom: push couldn't read the attention records: ${(e as Error).message}\n`); }
+    return [...commsAnnouncements(hh), ...records.filter((r) => r.attention === true && r.box !== 'done').map((r) => {
       const source = r.source as Source;
       return { key: String(r.id), title: pushTitle(r.kind as AskKind | undefined, (r.sourceLabel as string | undefined) ?? source.id), body: String(r.text ?? ''),
         members: ((r.audience as { members?: string[] }).members ?? []) };
-    }), ...commsAnnouncements(hh)];
+    })];
   }, subject, send, () => true, () => (hh ? firstOwner(hh).person : undefined),
   // A device whose person left the household goes (t-1978); none is the first owner's, who always belongs.
   (member) => !hh || member === undefined || !!memberOf(hh, member));
