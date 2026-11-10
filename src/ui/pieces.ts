@@ -360,7 +360,9 @@ function json(stdout: string): unknown {
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
   // From the piece's own service when it has one (piece-socket.ts, t-2114): no process, an answer from memory.
-  const fromSocket = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: sinceFor(path) });
+  // Not for an agent owner's window: a piece that understands owners (owners: 2) may narrow its answer by
+  // LOOM_OWNER_SCOPE, which a socket never hears. Their windows run it the one-shot way, with the scope.
+  const fromSocket = env.LOOM_OWNER_SCOPE ? undefined : await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: sinceFor(path) });
   let served: Manifest | undefined;
   if (fromSocket?.ok) {
     const parsed = json(fromSocket.stdout);

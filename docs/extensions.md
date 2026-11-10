@@ -334,13 +334,18 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
 ```
 
 A managed piece with a long-running service may answer the manifest from it instead: it listens on a Unix socket
-at `$LOOM_PIECE_HOME/run/ui.sock`, the directory and the socket this user's alone (no group or other bits), and
-answers each line `{"id": n, "op": "manifest"}` with one line `{"id": n, "ok": true, "version": "<realpath of the
-file it runs>", "stdout": "<what ui --json prints>"}`, in order. loom asks it first and runs `ui --json` when there's
-no socket, it isn't this user's alone, `version` isn't what the piece's bin resolves to now, or it fails. Only the
-manifest goes over it, with nothing about the viewer: it must be one answer for everyone, as a manifest that reads no
-scope is. A served manifest is asked again every few seconds, so a service keeps its answer ready rather than computing
-it per request (src/ui/piece-socket.ts; the runtime's src/ui-socket.mjs).
+at `$LOOM_PIECE_HOME/run/ui.sock`, the piece's home this user's and no one else's to write, `run/` and the socket this
+user's alone (no group or other bits). loom writes one line per ask, `{"id": n, "op": "manifest", "version":
+"<realpath of the piece's bin>@<its mtimeMs>", "since": <ms>}`, and reads one line per answer, in order: `{"id": n,
+"ok": true, "version": "<realpath of the file the service runs>@<its mtimeMs>", "at": <ms>, "stdout": "<what ui --json
+prints>"}`. `at` is when the computation that made the answer started, and must be at or after `since` (when an action
+last ran on the piece): an answer from before isn't taken. A service asked for another version answers `{"id": n, "ok":
+false, "version": …}` without computing. loom asks the socket first and runs `ui --json` when there's no socket, it or
+its directories aren't as above, the versions differ, the answer is `ok: false`, late, too large or older than `since`
+(and leaves a failing socket alone for 30 s). Only the manifest goes over it, with nothing about the viewer, so it must
+be one answer for everyone: a manifest that says `scope: true` is never taken from a socket, and an agent owner's window
+(LOOM_OWNER_SCOPE) always runs `ui --json`. A served manifest is asked again every few seconds, so a service keeps its
+answer ready rather than computing it per ask (src/ui/piece-socket.ts; the runtime's src/ui-socket.mjs).
 
 In a household, `caller` says who is looking or acting:
 `{"kind": "owner", "who": "jonathan-barket", "agents": "*"}`, the member and

@@ -191,4 +191,22 @@ describe('a piece\'s manifest from its service socket', () => {
     await pieceManifests(p.env);
     expect(seen.at(-1)!.since).toBeGreaterThanOrEqual(t);
   });
+
+  it('an agent owner\'s window and a piece home others may write never use the socket (fresh read 1, 5)', async () => {
+    const p = managed();
+    const seen = await serve(p.sock, ok(ver(p.path)));
+    const r = await pieceManifests({ ...p.env, LOOM_OWNER_SCOPE: 'mark' });
+    expect(r.pieces.find((x) => x.piece === 'gizmo')?.manifest.tile?.value).toBe('exec');
+    chmodSync(join(p.sock, '..', '..'), 0o775);
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
+    expect(seen).toEqual([]);
+  });
+
+  it('another version\'s service is left alone a while (fresh read 3)', async () => {
+    const p = managed();
+    const seen = await serve(p.sock, (id) => JSON.stringify({ id, ok: false, version: '/old@1' }) + '\n');
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
+    expect(seen.length).toBe(1);
+  });
 });

@@ -54,13 +54,16 @@ export function manifestSocket(path: string, env: NodeJS.ProcessEnv): string | u
   return typeof home === 'string' && home.startsWith('/') ? join(home, 'run', 'ui.sock') : undefined;
 }
 
-/** This user's alone: its own, and nothing for group or other. Never a symlink. */
-function ours(path: string, kind: 'socket' | 'dir'): boolean {
+/**
+ * This user's alone: its own, and nothing for group or other. Never a symlink. `home` (the piece's home): its own and
+ * no one else's to write, so it can't be swapped for a link to another piece's.
+ */
+function ours(path: string, kind: 'socket' | 'dir' | 'home'): boolean {
   try {
     const st = lstatSync(path);
     if (kind === 'socket' ? !st.isSocket() : !st.isDirectory()) return false;
     if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
-    return (st.mode & 0o077) === 0;
+    return (st.mode & (kind === 'home' ? 0o022 : 0o077)) === 0;
   } catch { return false; }
 }
 
@@ -107,8 +110,8 @@ function connect(at: string): Conn {
     let m: { id?: unknown; ok?: unknown; version?: unknown; at?: unknown; stdout?: unknown } | undefined;
     try { m = JSON.parse(line); } catch { m = undefined; }
     if (!m || m.id !== p.id || rest.length) { p.done(undefined); kill(at, c, true); return; }
-    // Another version's service (an install it hasn't restarted for yet): the one-shot way, this time.
-    if (m.version !== p.version) p.done(undefined);
+    // Another version's service (an install it hasn't restarted for yet): the one-shot way, and left alone a while.
+    if (m.version !== p.version) { failedAt.set(at, Date.now()); p.done(undefined); }
     // A service that can't make its manifest, or answers without it, too large, or from before what moved it: the
     // one-shot way, and this socket left alone a while (never the last answer kept for minutes instead).
     else if (m.ok !== true || typeof m.stdout !== 'string' || Buffer.byteLength(m.stdout) > p.maxBytes || typeof m.at !== 'number' || m.at < p.since) {
@@ -132,7 +135,7 @@ export function socketManifest(path: string, env: NodeJS.ProcessEnv, opts: { max
   if (!at) return Promise.resolve(undefined);
   const failed = failedAt.get(at);
   if (failed !== undefined && Date.now() - failed < SOCKET_FAIL_MS) return Promise.resolve(undefined);
-  if (!ours(dirname(at), 'dir') || !ours(at, 'socket')) return Promise.resolve(undefined);
+  if (!ours(dirname(dirname(at)), 'home') || !ours(dirname(at), 'dir') || !ours(at, 'socket')) return Promise.resolve(undefined);
   const version = versionOf(path);
   if (!version) return Promise.resolve(undefined);
   let c = conns.get(at);
