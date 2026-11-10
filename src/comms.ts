@@ -1502,7 +1502,8 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       // other step, when core saw it end (comms.md: "else when core saw it end").
       const instant = c.tool === 'text' || c.tool === 'TodoWrite' || c.tool === 'todo_list';
       const t1 = c.state !== 'running' ? (c.plain.t1 ?? (instant ? c.plain.t0 : undefined) ?? nowIso(now)) : undefined;
-      append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state, ...c.plain, ...(t1 ? { t1 } : {}) }, run, ...(c.words ? { step: JSON.stringify(c.words) } : {}) }, now);
+      const { t1: _end, ...plain } = c.plain;
+      append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state, ...plain, ...(t1 ? { t1 } : {}) }, run, ...(c.words ? { step: JSON.stringify(c.words) } : {}) }, now);
       added++;
     }
   }
@@ -1684,13 +1685,17 @@ export async function agentThreadRead(home: string, env: NodeJS.ProcessEnv, agen
  */
 export function threadState(home: string, thread: string): string {
   if (!existsSync(join(home, 'household.db'))) return '';
-  const r = withThreads(home, (db) => db.prepare('SELECT working_since, queued_since, last_failed, title, archived FROM comms_threads WHERE id = ?').get(thread) as Record<string, unknown> | undefined);
+  const r = withThreads(home, (db) => db.prepare('SELECT working_since, queued_since, last_failed, title, archived, alive_at, alive_tokens FROM comms_threads WHERE id = ?').get(thread) as Record<string, unknown> | undefined);
   if (!r) return '';
   const m = existsSync(join(home, COMMS_DB)) ? withMessages(home, (db) => db.prepare(`SELECT
       SUM(CASE WHEN kind = 'message' AND delivered IS NULL THEN 1 ELSE 0 END) AS sending,
       SUM(CASE WHEN kind = 'card' AND card_json LIKE '%"state":"running"%' THEN 1 ELSE 0 END) AS running
     FROM comms_messages WHERE thread = ?`).get(thread) as { sending: number | null; running: number | null }) : { sending: 0, running: 0 };
-  return JSON.stringify([r.working_since, r.queued_since, r.last_failed, r.title, r.archived, m.sending ?? 0, m.running ?? 0]);
+  // Its body's sign of life too (t-2109), so an open thread's working line hears it with no new step; in steps of 15 s
+  // and 500 tokens, so a stream isn't told of every post.
+  const alive = typeof r.alive_at === 'number' ? Math.floor(r.alive_at / 15_000) : null;
+  const tokens = typeof r.alive_tokens === 'number' ? Math.floor(r.alive_tokens / 500) : null;
+  return JSON.stringify([r.working_since, r.queued_since, r.last_failed, r.title, r.archived, m.sending ?? 0, m.running ?? 0, alive, tokens]);
 }
 
 /** Threads whose rows moved since `ms` (the live streams' cross-process read). */

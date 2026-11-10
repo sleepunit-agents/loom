@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, agentThreadRead, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadsOf, type AgentComms } from './comms.js';
+import { adapterCall, agentThreadRead, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadState, threadsOf, type AgentComms } from './comms.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 import { closeAllBackends } from './backends/index.js';
 
@@ -185,6 +185,10 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: later } });
     postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: new Date(Date.parse(later) - 5000).toISOString() } });
     expect(stateOf(tt()).alive_at).toBe(later);
+    // An open thread's stream hears a sign of life alone: the state it watches moves with it.
+    const before = threadState(h.home, t.id);
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: new Date(Date.parse(later) + 30_000).toISOString(), tokens: 9000 } });
+    expect(threadState(h.home, t.id)).not.toBe(before);
   });
 
   it('keeps a step\'s further parts sealed with its label, its times and exit plain, and its body\'s sign of life on the thread (t-2109)', async () => {
