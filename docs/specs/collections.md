@@ -474,7 +474,8 @@ data: { "seq": 1210, "piece": "clock" }
 - **Handover without a gap**: the provider's answer says the `{rev, txn}` it read at. Before answering, core pulls
   the domain until its log has reached that `rev`, and checks that its log has that `txn` there; a mismatch means the
   store's history changed, and core resets the domain (new epoch) and asks again rather than stamp new history with
-  an old epoch. Only then are the answer and the log known to agree. The answer's `at` is the stream `seq` it is
+  an old epoch. An answer read at a revision older than the oldest the log still holds can't be checked, so core
+  asks again rather than accept it unchecked. Only then are the answer and the log known to agree. The answer's `at` is the stream `seq` it is
   consistent with; core sends that subscription's later changes as frames after `at`. The answer and the stream are
   separate HTTP exchanges, so a frame can arrive first: **the client holds frames for a subscription it has asked
   for until that answer arrives**, then applies those with `seq` above `at`. When a later page extends a
