@@ -245,6 +245,7 @@ function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof
 export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
+  const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -472,6 +473,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
         sessions.set(sid, { transport, identity });
+        if (workerSocket) process.send?.({ type: 'loom-session-open', id: sid });
       },
     });
 
@@ -500,7 +502,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
     transport.onclose = () => {
       clearInterval(heartbeat);
-      if (transport.sessionId) sessions.delete(transport.sessionId);
+      if (transport.sessionId) {
+        sessions.delete(transport.sessionId);
+        if (workerSocket) process.send?.({ type: 'loom-session-close', id: transport.sessionId });
+      }
     };
     await server.connect(transport);
     return transport;
@@ -543,7 +548,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (req.headers['authorization'] === undefined) {
       const rec = piece === 'loom' ? undefined : readRecord(process.env, piece);
       if (!rec?.loom.strangers?.includes(subpath)) return sendError(res, 401, 'unauthorized: a bearer token is required');
-      return pieceCall(req, res, piece, subpath, { kind: 'stranger', address: req.socket.remoteAddress ?? 'unknown' }, STRANGER_MAX_BYTES);
+      return pieceCall(req, res, piece, subpath, { kind: 'stranger', address: (workerSocket && typeof req.headers['x-loom-peer-address'] === 'string' ? req.headers['x-loom-peer-address'] : req.socket.remoteAddress) ?? 'unknown' }, STRANGER_MAX_BYTES);
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
@@ -1131,8 +1136,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     http.once('error', reject);
     // A supervised worker has a private Unix socket, inaccessible to other
     // users. All request/auth handling stays in this server.
-    const socket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
-    if (socket) http.listen(socket, () => resolve());
+    if (workerSocket) http.listen(workerSocket, () => resolve());
     else http.listen(opts.port, opts.host, () => resolve());
   });
   const addr = http.address();

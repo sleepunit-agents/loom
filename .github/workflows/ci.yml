@@ -68,6 +68,7 @@ jobs:
         if: matrix.node-version == '24.x' && matrix.shard == 1
         run: |
           printf '%s\n' "$GITHUB_SHA" > deploy-commit
+          printf 'loom-worker-v1\n' > deploy-protocol
           # Install production dependencies in CI, including native modules.
           # No npm build/install runs on loom's machine.
           mkdir deploy-runtime
@@ -76,7 +77,7 @@ jobs:
           mv deploy-runtime/node_modules node_modules-runtime
           mv node_modules node_modules-dev
           mv node_modules-runtime node_modules
-          tar -czf loom-build.tar.gz dist assets package.json package-lock.json deploy-commit node_modules
+          tar -czf loom-build.tar.gz dist assets package.json package-lock.json deploy-commit deploy-protocol node_modules
           mv node_modules deploy-runtime/node_modules
           mv node_modules-dev node_modules
       - name: Keep deploy build
