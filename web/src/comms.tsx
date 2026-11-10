@@ -351,7 +351,7 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { 
       {list.map(([label, rows]) => rows.length ? (
         <div key={label} className="comms-group">
           <h3 className="comms-group__label loom-data">{label.toUpperCase()}</h3>
-          <ul data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
+          <ul>{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
             onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
@@ -812,10 +812,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         )}
         <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
-          {/* No living morph on the log's avatars and marks (data-motion="off", cojeev-motion category.ts): each host
-              reads computed style after the last one wrote it, and a thread of 40 messages spent seconds there
-              before its first frame on a busy machine (t-1925 F). */}
-          <AgentChatThread className="comms-msgs" jumpLabel="Latest" data-motion="off">
+          <AgentChatThread className="comms-msgs" jumpLabel="Latest">
             {swept && initial.earlier?.length ? (
               <div className="comms-earlier">
                 <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>

@@ -11,6 +11,22 @@ import {motionQuery} from "@/access"
 export { motionClock } from "@/lib/cojeev-motion/clock"
 export { enableMorph, disableMorph } from "@/lib/cojeev-motion/category"
 
+// A React commit may mount many hosts. Each iterator pauses at the same read/write
+// boundaries; the microtask runs after all layout effects and before first paint.
+// Cancellation is checked between phases, including StrictMode cleanup/remount.
+type MountJob={steps:Generator<void>,cancelled:boolean}
+const mounts=new Set<MountJob>()
+let mountQueued=false
+function queueMount(steps:Generator<void>){
+ const job={steps,cancelled:false};mounts.add(job)
+ if(!mountQueued){mountQueued=true;queueMicrotask(()=>{
+  mountQueued=false
+  const batch=[...mounts];for(const job of batch)mounts.delete(job)
+  let active=batch
+  while(active.length)active=active.filter(job=>!job.cancelled&&!job.steps.next().done)
+ })}
+ return ()=>{job.cancelled=true;mounts.delete(job)}
+}
 const instances=new Set<{measure:(t:number)=>void;invalidate:()=>void;frame:(t:number,dt:number)=>boolean;rewind:()=>void;reseed:()=>void;refresh:()=>void}>()
 let clock:number|null=null,previous:number|null=null,raf=0,seed:number|null=null
 const pointer={x:-1e4,y:-1e4}
@@ -81,7 +97,10 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
   // The source keeps its finite CSS radius captured at autoTag (morph.js:298)
   // until automatic decoration is removed, even if responsive dimensions shrink.
   let automaticRadius:number|undefined
-  let cornerSignature=''
+  let cornerSignature='',pending=false
+  let cancelMount=()=>{}
+  function attach(){cancelMount();pending=true;cancelMount=queueMount(mount());}
+  function cancelAttach(){cancelMount();pending=false}
   const visualSignature=()=>JSON.stringify([
    getComputedStyle(el).borderTopLeftRadius,
    el.className.split(/\s+/).filter(c=>!['v-morph-host','v-morph-live','v-morph-rel'].includes(c)).join(' '),
@@ -89,18 +108,21 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
    el.dataset.morph===autoMode?'':el.dataset.morph,el.style.getPropertyValue('--mfill'),el.style.getPropertyValue('--mstroke'),
    ...['aria-selected','aria-current','aria-pressed','aria-checked','aria-expanded','disabled','aria-disabled','aria-busy','data-state','data-highlighted'].map(name=>el.getAttribute(name)),
   ])
-  function attach(){
+  function* mount():Generator<void>{
+   if(ac.signal.aborted||!el.isConnected){pending=false;return}
    const nextCorner=getComputedStyle(el).borderTopLeftRadius
    if(nextCorner!==cornerSignature){automaticRadius=undefined;cornerSignature=nextCorner}
    const overrides=new Map<string,string>()
    if(lastPaint)for(const key of ['fill','stroke'] as const){const value=el.style.getPropertyValue('--m'+key);if(value!==lastPaint[key])overrides.set('--m'+key,value)}
+   yield // all hosts captured their old authored values
    destroyBody();destroyBody=()=>{};lastPaint=null
    for(const [key,value]of overrides){if(value)el.style.setProperty(key,value);else el.style.removeProperty(key)}
    repairBody=()=>{};retuneProfile=()=>attach();autoMode=undefined
+   yield // all old decorations removed before eligibility/style reads
    const settings=getMotionSettings(),profile=getMorphProfile(),resolved=resolveMorphHost(el,category,settings)
-   if(!resolved){automaticRadius=undefined;return}
+   if(!resolved){automaticRadius=undefined;signature=visualSignature();pending=false;return}
    const {mode,tierName,explicit}=resolved,cs=getComputedStyle(el)
-   const resolvedTier=resolveMorphTier(el,tierName,profile);if(!resolvedTier){automaticRadius=undefined;return};const tier={...resolvedTier}
+   const resolvedTier=resolveMorphTier(el,tierName,profile);if(!resolvedTier){automaticRadius=undefined;signature=visualSignature();pending=false;return};const tier={...resolvedTier}
    // A selection group owns one travelling body. Its controls and container
    // remain still, even when an authored profile enables breathing or press.
    const selectionGroup=el.closest<HTMLElement>('[data-flow-owned].v-glide')
@@ -125,10 +147,13 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
    // Only moving bodies opt out of that paint rule for animated color attributes.
    if(colors.length&&!staticBody)path.setAttribute('data-morph-colors','')
 
+   const relative=cs.position==='static'
+   yield // style snapshots are live objects: consume position before any writes
    if(!explicit){el.dataset.morph=mode;el.dataset.autoMorph=category;autoMode=mode}
-   el.classList.add('v-morph-host','v-morph-live');const relative=cs.position==='static';if(relative)el.classList.add('v-morph-rel')
-   const focused=el.ownerDocument.activeElement;el.prepend(svg);if(focused instanceof HTMLElement&&el.contains(focused)&&el.ownerDocument.activeElement!==focused)focused.focus({preventScroll:true})
-   const repaint=()=>{
+   el.classList.add('v-morph-host','v-morph-live');if(relative)el.classList.add('v-morph-rel')
+   let restorePaint=()=>{}
+   function* paintSteps():Generator<void>{
+    let transition='',transitionPriority='',fill=''
     // Explicit bodies take their paint from the author's live CSS variables.
     // Only the automatic category adapter captures the host background. Copying
     // inherited paint into an explicit body breaks its parent/theme inheritance.
@@ -141,21 +166,30 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
      // Capture the authored endpoint, not an in-flight background transition.
      // Otherwise busy/selected state changes can freeze the previous paint into
      // --mfill after the host's CSS transition has already finished.
-     const transition=el.style.getPropertyValue('transition-property'),transitionPriority=el.style.getPropertyPriority('transition-property')
+     transition=el.style.getPropertyValue('transition-property');transitionPriority=el.style.getPropertyPriority('transition-property')
+     restorePaint=()=>{if(transition)el.style.setProperty('transition-property',transition,transitionPriority);else el.style.removeProperty('transition-property')}
      el.style.setProperty('transition-property','none','important')
      svg.classList.remove('v-morph')
      el.style.removeProperty('--mfill')
+    }
+    yield // every host suspended its authored paint before sampling
+    if(!explicit&&mode!=='stroke'){
      const paint=getComputedStyle(el),bg=paint.backgroundColor,cssFill=paint.getPropertyValue('--mfill').trim()
      // A transparent CSS fill is meaningful: selected controls reveal the
      // travelling flow layer underneath their own morph body.
-     const fill=!clear(bg)?bg:old.fill||cssFill||surfaceFill(el)
+     fill=!clear(bg)?bg:old.fill||cssFill||surfaceFill(el)
+    }
+    yield // paint samples precede every fill/transition restoration
+    if(!explicit&&mode!=='stroke'){
      svg.classList.add('v-morph')
      el.style.setProperty('--mfill',fill)
-     if(transition)el.style.setProperty('transition-property',transition,transitionPriority)
-     else el.style.removeProperty('transition-property')
+     restorePaint();restorePaint=()=>{}
     }
-    lastPaint={fill:el.style.getPropertyValue('--mfill'),stroke:el.style.getPropertyValue('--mstroke')};signature=visualSignature()
+    lastPaint={fill:el.style.getPropertyValue('--mfill'),stroke:el.style.getPropertyValue('--mstroke')}
+    yield // all paint writes precede signature/geometry reads
+    signature=visualSignature()
    }
+   const repaint=()=>{for(const _ of paintSteps()){void _}}
    let rectValid=false,rAt=0,resize=true
    let lastD='',dirty=true
    repairBody=()=>{
@@ -163,23 +197,25 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
     el.classList.add('v-morph-host','v-morph-live');if(relative)el.classList.add('v-morph-rel')
     if(!explicit&&!el.dataset.morph)el.dataset.morph=mode
    }
-   function measure(){const R=el.getBoundingClientRect();b.R=R;const w=Math.round(R.width),h=Math.round(R.height);if(!w||!h)return;if(w===b.w&&h===b.h)return;b.w=w;b.h=h;const authored=el.dataset.r;const corner=getComputedStyle(el).borderTopLeftRadius,original=parseFloat(corner);
+   function measure():()=>void{const R=el.getBoundingClientRect();b.R=R;const w=Math.round(R.width),h=Math.round(R.height);if(!w||!h)return ()=>{};if(w===b.w&&h===b.h)return ()=>{};b.w=w;b.h=h;const authored=el.dataset.r;const corner=getComputedStyle(el).borderTopLeftRadius,original=parseFloat(corner);
     // Explicit bodies retain their original capsule default. Opt-in CSS corners
     // let a component's radius control change the painted contour as well.
     const cssRadius=Number.isFinite(original)?Math.min(Math.min(w,h)/2,corner.endsWith('%')?Math.min(w,h)*original/100:original):Math.min(w,h)/2;
-    const radius=authored==='css'?cssRadius:authored?+authored:explicit?Math.min(w,h)/2:Number.isFinite(original)&&original<200?(automaticRadius??=Math.min(original,Math.min(el.offsetWidth,el.offsetHeight)/2)):Math.min(w,h)/2;b.base=el.dataset.shape&&SHAPES[el.dataset.shape]?fromShape(el.dataset.shape,w,h,Math.max(1,cfg.quality)*.7):rim(w,h,radius,Math.max(1,cfg.quality));const pad=bodyPadding(tier,cfg,w,h);svg.setAttribute('viewBox',`${-pad} ${-pad} ${w+2*pad} ${h+2*pad}`);svg.style.cssText=`position:absolute;left:${-pad}px;top:${-pad}px;width:${w+2*pad}px;height:${h+2*pad}px;pointer-events:none;overflow:visible;z-index:-1`;el.style.setProperty('--mpad',pad+'px');dirty=true}
+    const radius=authored==='css'?cssRadius:authored?+authored:explicit?Math.min(w,h)/2:Number.isFinite(original)&&original<200?(automaticRadius??=Math.min(original,Math.min(el.offsetWidth,el.offsetHeight)/2)):Math.min(w,h)/2;b.base=el.dataset.shape&&SHAPES[el.dataset.shape]?fromShape(el.dataset.shape,w,h,Math.max(1,cfg.quality)*.7):rim(w,h,radius,Math.max(1,cfg.quality));const pad=bodyPadding(tier,cfg,w,h);return ()=>{svg.setAttribute('viewBox',`${-pad} ${-pad} ${w+2*pad} ${h+2*pad}`);svg.style.cssText=`position:absolute;left:${-pad}px;top:${-pad}px;width:${w+2*pad}px;height:${h+2*pad}px;pointer-events:none;overflow:visible;z-index:-1`;el.style.setProperty('--mpad',pad+'px');dirty=true}}
    // Match the source's read pass before any body writes its press transform.
    // A release keeps the last pressed rect until it is stale or interaction
    // demands another read; reading every frame changes the pressure axis.
+   let commitMeasure=()=>{}
    function premeasure(t:number){
     if(!el.isConnected){automaticRadius=undefined;rectValid=false;return}
     const R=b.R,margin=tier.R+40
     const near=rectValid&&pointer.x>-1e3&&pointer.x>R.left-margin&&pointer.x<R.right+margin&&pointer.y>R.top-margin&&pointer.y<R.bottom+margin
     if(!rectValid||t-rAt>250||near||b.press.to||b.lobe.x>.02||b.jiggle>0){b.R=el.getBoundingClientRect();rAt=t;rectValid=true}
     resize=Math.round(b.R.width)!==b.w||Math.round(b.R.height)!==b.h
+    commitMeasure=resize?measure():()=>{}
    }
    const invalidate=()=>{rectValid=false;dirty=true}
-   const instance={measure:premeasure,invalidate,frame:(t:number,dt:number)=>{if(!el.isConnected)return false;if(resize){resize=false;b.lob=null;dirty=true;lastD='';measure()}if(!b.w||!b.h||!b.R.width||!b.R.height)return false;const out=stepBody(b,pointer,dt,(staticBody?0:t/1000),cfg,staticBody,!dirty&&!colors.length&&tierName!=='spinner');if(out.d!==lastD){path.setAttribute('d',out.d);lastD=out.d}if(cfg.echo){const m=cfg.echoScale,ox=cfg.echoOff*Math.cos(b.seed),oy=cfg.echoOff*Math.sin(b.seed);echo.setAttribute('d',serializePath(out.points.map(([x,y])=>[b.w/2+(x-b.w/2)*m+ox,b.h/2+(y-b.h/2)*m+oy]),!!b.base.poly));echo.style.display=''}else echo.style.display='none';if(cfg.dots){while(dots.childElementCount>cfg.dots)dots.lastElementChild?.remove();while(dots.childElementCount<cfg.dots)dots.append(svgNode('circle',{r:(2+((dots.childElementCount*7+b.seed)%3)).toFixed(1)}));for(let i=0;i<cfg.dots;i++){const j=Math.floor((i/cfg.dots)*b.base.length+b.seed*3)%b.base.length,q=b.base[j],dot=dots.children[i];dot.setAttribute('cx',(out.points[j][0]+q[2]*(8+i*3)).toFixed(2));dot.setAttribute('cy',(out.points[j][1]+q[3]*(8+i*3)).toFixed(2))}dots.style.display=''}else dots.style.display='none';overlays?.paint(out.points,b,cfg);if(colors.length&&!staticBody)path.setAttribute('fill',morphColor(colors,t/1000));if(tierName==='spinner')svg.style.transform=staticBody?'':`rotate(${((t/1000)*40)%360}deg)`;if(el.hasAttribute('data-stable-hit')){el.style.transform=old.transform;if(tierName!=='spinner')svg.style.transform=out.press>.004&&!staticBody?`scale(${1-out.press*.03},${1-out.press*.015})`:''}else if(out.press>.004&&!staticBody)el.style.transform=`scale(${1-out.press*.03},${1-out.press*.015})`;else el.style.transform=old.transform;const work=out.active||dirty||(!staticBody&&(colors.length>0||tierName==='spinner'||!!(tier.depth&&tier.lobes&&cfg.drift&&(b.near||b.inside))));dirty=false;return work},rewind:()=>{rewindBody(b);rectValid=false;rAt=0;dirty=true;lastD=''},reseed:()=>{b.seed=bodySeed(el)},refresh:()=>{repaint();dirty=true;wake()}}
+   const instance={measure:premeasure,invalidate,frame:(t:number,dt:number)=>{if(!el.isConnected)return false;if(resize){resize=false;b.lob=null;dirty=true;lastD='';commitMeasure()}if(!b.w||!b.h||!b.R.width||!b.R.height)return false;const out=stepBody(b,pointer,dt,(staticBody?0:t/1000),cfg,staticBody,!dirty&&!colors.length&&tierName!=='spinner');if(out.d!==lastD){path.setAttribute('d',out.d);lastD=out.d}if(cfg.echo){const m=cfg.echoScale,ox=cfg.echoOff*Math.cos(b.seed),oy=cfg.echoOff*Math.sin(b.seed);echo.setAttribute('d',serializePath(out.points.map(([x,y])=>[b.w/2+(x-b.w/2)*m+ox,b.h/2+(y-b.h/2)*m+oy]),!!b.base.poly));echo.style.display=''}else echo.style.display='none';if(cfg.dots){while(dots.childElementCount>cfg.dots)dots.lastElementChild?.remove();while(dots.childElementCount<cfg.dots)dots.append(svgNode('circle',{r:(2+((dots.childElementCount*7+b.seed)%3)).toFixed(1)}));for(let i=0;i<cfg.dots;i++){const j=Math.floor((i/cfg.dots)*b.base.length+b.seed*3)%b.base.length,q=b.base[j],dot=dots.children[i];dot.setAttribute('cx',(out.points[j][0]+q[2]*(8+i*3)).toFixed(2));dot.setAttribute('cy',(out.points[j][1]+q[3]*(8+i*3)).toFixed(2))}dots.style.display=''}else dots.style.display='none';overlays?.paint(out.points,b,cfg);if(colors.length&&!staticBody)path.setAttribute('fill',morphColor(colors,t/1000));if(tierName==='spinner')svg.style.transform=staticBody?'':`rotate(${((t/1000)*40)%360}deg)`;if(el.hasAttribute('data-stable-hit')){el.style.transform=old.transform;if(tierName!=='spinner')svg.style.transform=out.press>.004&&!staticBody?`scale(${1-out.press*.03},${1-out.press*.015})`:''}else if(out.press>.004&&!staticBody)el.style.transform=`scale(${1-out.press*.03},${1-out.press*.015})`;else el.style.transform=old.transform;const work=out.active||dirty||(!staticBody&&(colors.length>0||tierName==='spinner'||!!(tier.depth&&tier.lobes&&cfg.drift&&(b.near||b.inside))));dirty=false;return work},rewind:()=>{rewindBody(b);rectValid=false;rAt=0;dirty=true;lastD=''},reseed:()=>{b.seed=bodySeed(el)},refresh:()=>{repaint();dirty=true;wake()}}
    const bodyAC=new AbortController(),bo={signal:bodyAC.signal}
    const press=()=>{if(!cfg.press||el.matches(':disabled,[aria-disabled="true"]'))return;b.press.to=1;b.press.k=260;wake()}
    const release=()=>{if(b.press.to){b.press.to=0;b.ripple=1;wake()}}
@@ -199,26 +235,29 @@ export function useMorph<T extends HTMLElement>(category:Category,externalRef?:R
     if(resize)b.w=b.h=0
     dirty=true;const time=clock??performance.now();instance.measure(time);instance.frame(time,0);wake()
    }
-   repaint();instances.add(instance);const time=clock??performance.now();instance.measure(time);instance.frame(time,0);wake()
-   destroyBody=()=>{instances.delete(instance);bodyAC.abort();ro.disconnect();overlays?.dispose();svg.remove();el.classList.remove('v-morph-host','v-morph-live');if(relative)el.classList.remove('v-morph-rel');el.removeAttribute('data-hover');if(!explicit&&el.dataset.morph===mode)delete el.dataset.morph;if(!explicit)delete el.dataset.autoMorph;for(const [key,value]of [['--mfill',old.fill],['--mstroke',old.stroke],['--mpad',old.pad]]){if(value)el.style.setProperty(key,value);else el.style.removeProperty(key)}el.style.transform=old.transform;if(!instances.size)stop()}
+   destroyBody=()=>{restorePaint();instances.delete(instance);bodyAC.abort();ro.disconnect();overlays?.dispose();svg.remove();el.classList.remove('v-morph-host','v-morph-live');if(relative)el.classList.remove('v-morph-rel');el.removeAttribute('data-hover');if(!explicit&&el.dataset.morph===mode)delete el.dataset.morph;if(!explicit)delete el.dataset.autoMorph;for(const [key,value]of [['--mfill',old.fill],['--mstroke',old.stroke],['--mpad',old.pad]]){if(value)el.style.setProperty(key,value);else el.style.removeProperty(key)}el.style.transform=old.transform;if(!instances.size)stop()}
+   const focused=el.ownerDocument.activeElement;el.prepend(svg);if(focused instanceof HTMLElement&&el.contains(focused)&&el.ownerDocument.activeElement!==focused)focused.focus({preventScroll:true})
+   yield* paintSteps()
+   const time=clock??performance.now();instance.measure(time)
+   yield // all initial geometry reads precede SVG/frame writes
+   instances.add(instance);instance.frame(time,0);pending=false;wake()
   }
   attach()
-  signature=visualSignature()
-  const sync=()=>{if(visualSignature()!==signature){attach();signature=visualSignature()}else repairBody()}
+  const sync=()=>{if(pending)return;if(visualSignature()!==signature){attach();signature=visualSignature()}else repairBody()}
   syncHost.current=sync
-  const children=new MutationObserver(()=>{repairBody()});children.observe(el,{childList:true})
+  const children=new MutationObserver(()=>{if(!pending)repairBody()});children.observe(el,{childList:true})
   let inputs=morphInputs()
   const unsubscribe=subscribeMotion(()=>{const next=morphInputs();if(next===inputs)return;inputs=next;retuneProfile();signature=visualSignature()})
-  const unregister=registerMorphHost(el,{refresh:()=>{attach();signature=visualSignature()},disable:()=>{destroyBody();automaticRadius=undefined;destroyBody=()=>{};repairBody=()=>{}}})
-  const attributes=new MutationObserver(()=>{if(visualSignature()!==signature){attach();signature=visualSignature()}})
+  const unregister=registerMorphHost(el,{refresh:()=>{attach();signature=visualSignature()},disable:()=>{cancelAttach();destroyBody();automaticRadius=undefined;destroyBody=()=>{};repairBody=()=>{}}})
+  const attributes=new MutationObserver(()=>{if(!pending&&visualSignature()!==signature){attach();signature=visualSignature()}})
   attributes.observe(el,{attributes:true,attributeFilter:['class','style','data-morph','data-tier','data-motion','data-reach','data-inside','data-amp','data-lobes','data-depth','data-asym','data-spread','data-r','data-shape','data-sw','data-dash','data-colors','aria-selected','aria-current','aria-pressed','aria-checked','aria-expanded','disabled','aria-disabled','aria-busy','data-state','data-highlighted']})
-  const ancestors=new MutationObserver(records=>{if(records.some(record=>record.attributeName==='data-motion'||record.attributeName==='hidden')||visualSignature()!==signature){attach();signature=visualSignature()}})
+  const ancestors=new MutationObserver(records=>{if(!pending&&(records.some(record=>record.attributeName==='data-motion'||record.attributeName==='hidden')||visualSignature()!==signature)){attach();signature=visualSignature()}})
   // Root style changes use the shared environment observer, which filters out
   // flow-only writes before any host reads its visual signature.
   for(let parent=el.parentElement;parent;parent=parent.parentElement)ancestors.observe(parent,{attributes:true,attributeFilter:parent===el.ownerDocument.documentElement?['data-motion','hidden','class']:['data-motion','hidden','style','class']})
   mq.addEventListener('change',attach,opts)
   const releaseEnvironment=acquireEnvironment(sync)
-  return ()=>{syncHost.current=()=>{};children.disconnect();attributes.disconnect();ancestors.disconnect();unregister();unsubscribe();destroyBody();automaticRadius=undefined;ac.abort();releaseEnvironment()}
+  return ()=>{cancelAttach();syncHost.current=()=>{};children.disconnect();attributes.disconnect();ancestors.disconnect();unregister();unsubscribe();destroyBody();automaticRadius=undefined;ac.abort();releaseEnvironment()}
  },[host,category])
  React.useLayoutEffect(()=>{syncHost.current()})
  return ref

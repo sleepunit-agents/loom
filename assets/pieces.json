@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "e0ba495ef9b2e9fe6c1b75e6b8e8f593a7935b89",
+      "commit": "3cda9791b25fab759ca17444c390380bac77f95e",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -28,8 +28,8 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "5e1175594c8aab0a8a0f008f7b915060f0d3c65c",
-      "version": "0.6.1",
+      "commit": "e9365c65f3c1d4e7460ad9e38da31f817797eb59",
+      "version": "0.7.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
     },

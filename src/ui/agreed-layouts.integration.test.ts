@@ -44,7 +44,12 @@ describe.runIf(existsSync(`${root}dist/web/index.html`) && existsSync(chrome))('
       // A still-open check must gate the card's own buttons, not only the separate Needs you band.
       await art.getByRole('button', { name: 'Yes', exact: true }).waitFor();
       if (process.env.LOOM_LAYOUT_SHOTS) { mkdirSync(process.env.LOOM_LAYOUT_SHOTS, { recursive: true }); await p.screenshot({ path: `${process.env.LOOM_LAYOUT_SHOTS}/cards-${width}.png`, fullPage: true }); }
-      await p.route('**/inbox/open?*', (route) => route.fulfill({ contentType: 'application/json', body: '{"open":false}' }));
+      // Become stale at the click: the background refresh must not remove Yes before Playwright can press it.
+      await art.getByRole('button', { name: 'Yes', exact: true }).evaluate((el) => el.addEventListener('click', () => { (window as unknown as { staleAnswer: boolean }).staleAnswer = true; }, { capture: true }));
+      await p.route('**/inbox/open?*', async (route) => {
+        if (await p.evaluate(() => (window as unknown as { staleAnswer?: boolean }).staleAnswer)) await route.fulfill({ contentType: 'application/json', body: '{"open":false}' });
+        else await route.continue();
+      });
       let sends = 0; p.on('request', (r) => { if (r.method() === 'POST' && /act\//.test(r.url())) sends++; });
       await art.getByRole('button', { name: 'Yes', exact: true }).click();
       await art.getByText(/This isn’t open any more/).waitFor();

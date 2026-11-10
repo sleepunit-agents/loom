@@ -187,7 +187,9 @@ export interface Doing { text: string; kind?: DoingKind; where?: string; since?:
   href?: string }
 export type DoingKind = 'talk' | 'lane' | 'task' | 'session' | 'other';
 export const DOING_KINDS: ReadonlySet<string> = new Set(['talk', 'lane', 'task', 'session', 'other']);
-export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
+export type JobStatus = 'running' | 'waiting' | 'scheduled' | 'backlog';
+export interface Job extends Doing { id: string; status: JobStatus; tasks?: string[]; run?: string; wake?: string; at?: string }
+export interface AgentReport { jobs?: Job[]; state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
 /** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
 export type Level = 'loom' | 'agent';
 
@@ -1054,6 +1056,18 @@ export function parseManifest(value: unknown): Manifest | string {
             const d = obj(x, 'reading');
             return { label: str(d.label, 'reading.label'), value: str(d.value, 'reading.value'), detail: optStr(d.detail, 'reading.detail'), tone: tone(d.tone), page: page(d.page, 'reading.page') };
           }),
+          ...(r.jobs !== undefined ? { jobs: arr(r.jobs, `agents.${id}.jobs`, 10000).map((x): Job => {
+            const j = obj(x, 'job');
+            if (!['running', 'waiting', 'scheduled', 'backlog'].includes(String(j.status))) throw new Invalid('job.status is running, waiting, scheduled or backlog');
+            const at = optStr(j.at, 'job.at'), since = optStr(j.since, 'job.since');
+            if ([at, since].some((t) => t !== undefined && !Number.isFinite(Date.parse(t)))) throw new Invalid('job times are ISO 8601');
+            return { id: str(j.id, 'job.id'), status: j.status as JobStatus, text: str(j.text, 'job.text'),
+              ...(j.tasks !== undefined ? { tasks: arr(j.tasks, 'job.tasks', 1000).map((t) => str(t, 'job.task')) } : {}),
+              ...(j.conversation !== undefined ? { conversation: conversationRef(j.conversation) } : {}),
+              ...(j.page !== undefined ? { page: page(j.page, 'job.page') } : {}),
+              ...(at ? { at } : {}), ...(since ? { since } : {}),
+              ...(j.run !== undefined ? { run: str(j.run, 'job.run') } : {}), ...(j.wake !== undefined ? { wake: str(j.wake, 'job.wake') } : {}) };
+          }) } : {}),
           ...(r.doing !== undefined ? { doing: arr(r.doing, `agents.${id}.doing`, LIMITS.doing).map((x) => {
             const d = obj(x, 'doing');
             if (d.kind !== undefined && (typeof d.kind !== 'string' || !DOING_KINDS.has(d.kind))) throw new Invalid(`doing.kind must be one of ${[...DOING_KINDS].join(', ')}`);

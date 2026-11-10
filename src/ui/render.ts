@@ -4,7 +4,7 @@
  * the app (web/, docs/specs/ui-app.md); the old HTML renderer went 2026-10-29. Every string that reaches the
  * sign-in pages goes through esc().
  */
-import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
+import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing, Job } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -304,6 +304,7 @@ export interface AgentCard {
   reason: string;
   /** What it has going right now, from every piece: a summary, the details a tap away (Jonathan, 2026-10-29). */
   doing: Array<Doing & { source: Source }>;
+  jobs?: Array<Job & { source: Source }>;
   /** Only what's wrong: a reading a piece marked bad or warn. Nothing here means its things are fine. */
   problems: Array<{ text: string; source: Source; page?: string; tone: 'bad' | 'warn' }>;
   /** When it was last on the tape, and where. */
