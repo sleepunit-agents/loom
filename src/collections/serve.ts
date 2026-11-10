@@ -250,7 +250,9 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   const complete = a.next === null && q.after === null;
   // A provider's numbers can't be rechecked, so only household owners get them unless the type passed the per-viewer
   // count fixtures. A complete answer core counts itself: every row in it passed core's checks.
-  const counts = (isHouseholdOwner(viewer) || decl.scoped_counts) && !dropped;
+  // `scoped_counts` isn't honoured yet, whatever an installed record says: install refuses it until the conformance run
+  // exists (t-2026), and a record from before that, or edited by hand, mustn't widen who gets numbers.
+  const counts = isHouseholdOwner(viewer) && !dropped;
   const coverage: ClientAnswer['coverage'] = { complete };
   if (complete) coverage.total = { n: rows.length, exact: true };
   else if (counts && count(a.total)) coverage.total = { n: a.total.n, exact: a.total.exact };
