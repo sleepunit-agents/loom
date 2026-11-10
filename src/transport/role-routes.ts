@@ -38,7 +38,8 @@ export const MERGE_ROUTE = 'people/merge';
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
   // comms/adapter and comms/activity: venue loom's adapter calls and tool cards (docs/specs/comms.md).
   // pieces/changed: its manifest moved (a body at work, or done), so open apps ask again now (docs/extensions.md, t-1945).
-  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config', ENSURE_ROUTE, MERGE_ROUTE, 'comms/adapter', 'comms/activity', 'pieces/changed'],
+  // conversations/house: which one conversation a body's house holds, said before it's handed a body (t-2061).
+  runtime: ['review/token', 'conversations/turn', 'conversations/house', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config', ENSURE_ROUTE, MERGE_ROUTE, 'comms/adapter', 'comms/activity', 'pieces/changed'],
   review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 

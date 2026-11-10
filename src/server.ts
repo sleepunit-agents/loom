@@ -71,6 +71,7 @@ import {
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
 import { conversationsList, conversationView, homeFor } from './conversations.js';
+import { houseConversation } from './household-store.js';
 import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
 import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
@@ -83,6 +84,12 @@ function agentOfDir(contextDir: string): string {
 
 export interface LoomServerConfig {
   contextDir: string;
+  /**
+   * The house this session's agent token names, and its service if it's one (t-2061): set by the household HTTP server
+   * from the token, never from what the session says. A body's house (not a service's) writes a digest only for the
+   * one conversation the runtime said it holds (household-store.ts, house_conversations).
+   */
+  caller?: { house?: string; service?: string };
   /**
    * Optional path to the knowledge-gaps directory (e.g. `~/Art/.knowledge-gaps`).
    * When set, zero-result knowledge_recall calls append a miss entry to
@@ -120,6 +127,23 @@ function schemaOf(json: Record<string, unknown>): z.ZodType {
 
 export interface LoomServerInstance {
   server: McpServer;
+}
+
+/**
+ * Why a session from `caller`'s house may not write for `conversation` (a digest, a Comms title), or null when it may (t-2061). No house
+ * (loom's machine, an owner's session) or a service's house (a bridge runs many conversations): as before. A body's
+ * house: only the conversation the runtime said it holds, and nothing at all when it said none (fail closed).
+ */
+export function houseWriteProblem(contextDir: string, caller: LoomServerConfig['caller'], conversation: string | undefined): string | null {
+  const house = caller?.house;
+  if (!house || caller?.service) return null;
+  const home = homeFor(contextDir);
+  const self = householdOf(contextDir)?.agent;
+  let held: { agent: string; conversation: string } | null = null;
+  try { held = home ? houseConversation(home, house) : null; } catch { held = null; }
+  if (!held || held.agent !== self) return `${house} holds no conversation the runtime named, so it writes for none`;
+  if (held.conversation !== conversation) return `${house} holds ${held.conversation}: it writes for that conversation only`;
+  return null;
 }
 
 // ─── Server Factory ───────────────────────────────────────────────────────────
@@ -1478,6 +1502,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (input) => convText(() => {
+      // From a body's house, only the conversation that house holds (t-2061): inside one house every body could read
+      // another's ids, so the conversation it names at identity proves nothing by itself.
+      const notHeld = houseWriteProblem(contextDir, config.caller, here?.conversation);
+      if (notHeld) throw new ConversationError(notHeld, 403);
       // A Comms thread's own project is the fallback for a digest that names none (comms.md, "Project").
       const home = here ? homeFor(contextDir) : undefined;
       const self = householdOf(contextDir)?.agent;
@@ -1534,6 +1562,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // Whose body this is: the server's own agent dir, never anything the caller sends.
       const self = householdOf(contextDir)?.agent;
       if (!here || !home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
+      // From a body's house, only the conversation it holds (t-2061), as conversation_digest.
+      const notHeld = houseWriteProblem(contextDir, config.caller, here.conversation);
+      if (notHeld) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: notHeld }) }], isError: true };
       try {
         const t = titleFromAgent(home, self, here.conversation, title);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };

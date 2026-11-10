@@ -366,7 +366,10 @@ audit log, so it has no raw text to copy.
 
 **MCP**
 - `conversation_digest({summary, asks?, decisions?, tasks?, projects?, needs_owner?})`: for the conversation and run
-  given at identity. Without them, rejected.
+  given at identity. Without them, rejected. From a body's house (an agent token naming a house, not a service's), only
+  for the one conversation the runtime said that house holds (`POST /api/loom/conversations/house`, the runtime's,
+  set once per house; `household.db` `house_conversations`), and never from a house it named none for (t-2061): inside
+  one house every body could read the others' ids, so the conversation named at identity proves nothing by itself.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
   above.
 

@@ -23,7 +23,7 @@ import {
 import { projectHubPage } from './ui/projects-pages.js';
 import { askKey } from './ui/push.js';
 import { conversationsSection, conversationView, genericRender, householdConversations, ScopeError, writeTurn } from './conversations.js';
-import { listVenues, syncVenues, venueOf } from './household-store.js';
+import { bindHouseConversation, houseConversation, listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
 import { tapeForContext } from './backends/episodes.js';
 import { remember } from './tools/remember.js';
@@ -82,8 +82,8 @@ const msg = (place: string, s: number, slug = 'loren'): TurnInput => ({ venue: '
 const reply = (place: string, s: number, run = 'r1', extra: Partial<TurnInput> = {}): TurnInput =>
   ({ venue: 'slack', place, at: at(s), from: { kind: 'agent', id: 'art' }, kind: 'reply', run, outcome: 'answered', model: 'opus', harness: 'claude-code', ...extra });
 
-async function mcp(contextDir: string) {
-  const { server } = createLoomServer({ contextDir });
+async function mcp(contextDir: string, caller?: { house?: string; service?: string }) {
+  const { server } = createLoomServer({ contextDir, ...(caller ? { caller } : {}) });
   const client = new Client({ name: 'conv-test', version: '1' });
   const [c, s] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(s), client.connect(c)]);
@@ -129,6 +129,25 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
 
   const post = (token: string | undefined, body: unknown) => fetch(`${base}/api/loom/conversations/turn`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  });
+
+  it('which conversation a house holds is the runtime\'s to say, once (t-2061)', async () => {
+    expect(ROLE_ROUTES.runtime).toContain('conversations/house');
+    expect(AGENT_ROUTES).not.toContain('conversations/house');
+    const bind = (token: string, body: unknown) => fetch(`${base}/api/loom/conversations/house`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+    });
+    const b = { agent: 'art', house: 'h-41', conversation: 'cv-0000000000a1' };
+    const first = await bind(tok.runtime, b);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ house: 'h-41', conversation: 'cv-0000000000a1' });
+    expect((await bind(tok.runtime, b)).status).toBe(200);
+    expect((await bind(tok.runtime, { ...b, conversation: 'cv-0000000000a2' })).status).toBe(409);
+    // A body (its agent's token) never says it: it would bind its house to whatever it liked.
+    expect((await bind(tok.art, { ...b, house: 'h-42' })).status).toBeGreaterThanOrEqual(403);
+    expect((await bind(tok.owner, { ...b, house: 'h-43' })).status).toBeGreaterThanOrEqual(403);
+    expect(houseConversation(h.home, 'h-42')).toBeNull();
+    for (const bad of [{ ...b, agent: 'nobody' }, { ...b, house: 'house-1' }, { ...b, conversation: 'cv-x' }]) expect((await bind(tok.runtime, bad)).status).toBe(400);
   });
 
   it('the route is the runtime\'s (allowlisted), and an agent token\'s for its own session', () => {
@@ -340,6 +359,50 @@ describe('criterion 3: digests (conversation_digest)', () => {
     await call('conversation_digest', { summary: 'Followed up.' });
     ds = digestsOf(art, conv);
     expect(ds.map((d) => d.run).sort()).toEqual(['run-1', 'run-2']);
+  });
+
+  // t-2061: inside one house every body could read another's ids, so the conversation named at identity proves
+  // nothing by itself. From a body's house, a digest goes only to the conversation the runtime said that house holds.
+  it('from a body\'s house, only for the conversation that house holds; none when the runtime named none', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U2', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-1', conversation: conv });
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-2', conversation: other });
+    // Its own house: written.
+    const own = await mcp(art, { house: 'h-1' });
+    await own.call('identity', { conversation: conv, run: 'run-1' });
+    expect((await own.call('conversation_digest', { summary: 'mine' })).error).toBe(false);
+    // A sibling's house, naming this conversation (its run id too): refused, nothing written.
+    const sib = await mcp(art, { house: 'h-2' });
+    await sib.call('identity', { conversation: conv, run: 'run-1' });
+    const posed = await sib.call('conversation_digest', { summary: 'merged, as you asked', needs_owner: { ask: 'OK to merge it?' } });
+    expect(posed.error).toBe(true);
+    expect(String(posed.body.error)).toMatch(/h-2 holds cv-[0-9a-f]{12}: it writes for that conversation only/);
+    expect(digestsOf(art, conv).map((d) => d.summary)).toEqual(['mine']);
+    // A house the runtime named nothing for (one from before, or never bound): no digest at all.
+    const none = await mcp(art, { house: 'h-3' });
+    await none.call('identity', { conversation: conv, run: 'run-1' });
+    expect(String((await none.call('conversation_digest', { summary: 'x' })).body.error)).toMatch(/h-3 holds no conversation the runtime named/);
+    // Another agent's binding of the same house id isn't this agent's.
+    bindHouseConversation(h.home, { agent: 'mark', house: 'h-4', conversation: conv });
+    const marks = await mcp(art, { house: 'h-4' });
+    await marks.call('identity', { conversation: conv, run: 'run-1' });
+    expect((await marks.call('conversation_digest', { summary: 'x' })).error).toBe(true);
+    // A service's house (a bridge runs many conversations) and no house at all (loom's machine): as before.
+    const bridge = await mcp(art, { house: 'h-5', service: 'discord' });
+    await bridge.call('identity', { conversation: other, run: 'run-9' });
+    expect((await bridge.call('conversation_digest', { summary: 'bridge' })).error).toBe(false);
+    const local = await mcp(art);
+    await local.call('identity', { conversation: other, run: 'run-8' });
+    expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);
+  });
+
+  it('a house holds one conversation, for good', () => {
+    expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
+    expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
+    expect(() => bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000b' })).toThrow(/holds another conversation/);
+    expect(() => bindHouseConversation(h.home, { agent: 'mark', house: 'h-7', conversation: 'cv-00000000000a' })).toThrow(/holds another conversation/);
+    expect(houseConversation(h.home, 'h-7')).toEqual({ agent: 'art', conversation: 'cv-00000000000a' });
+    expect(houseConversation(h.home, 'h-8')).toBeNull();
   });
 
   it('is never written for another agent\'s conversation', async () => {

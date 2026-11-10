@@ -65,7 +65,7 @@ import { pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
-import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
+import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
 import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
@@ -445,7 +445,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const serverFor = (c: Caller | undefined, identity: string) => {
     if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
-    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true, tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true,
+      // Which house this session's agent token names (t-2061): its digests go only to the conversation that house holds.
+      ...(c.role.kind === 'agent' && c.role.house ? { caller: { house: c.role.house, ...(c.role.service ? { service: c.role.service } : {}) } } : {}),
+      tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
   };
 
   /**
@@ -846,6 +849,23 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
         return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
+      }
+    }
+    // POST /api/loom/conversations/house (t-2061): the runtime says which one conversation a body's house holds, before it
+    // hands the house a body. Set once: another conversation for the same house is a 409. conversation_digest from that
+    // house then writes only there (server.ts).
+    if (subpath === 'conversations/house' && role.kind === 'runtime') {
+      const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+      const h = live!();
+      if (typeof b.agent !== 'string' || !h.agents.includes(b.agent)) return sendError(res, 400, `bad-input: agent names one of this household's agents (${h.agents.join(', ')})`);
+      if (typeof b.house !== 'string' || !/^h-[0-9]{1,9}$/.test(b.house)) return sendError(res, 400, 'bad-input: house is a house id (h-<n>)');
+      if (typeof b.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(b.conversation)) return sendError(res, 400, 'bad-input: conversation is a conversation id (cv-<12 hex>)');
+      try {
+        return sendJson(res, 200, bindHouseConversation(h.home, { agent: b.agent, house: b.house, conversation: b.conversation }));
+      } catch (e) {
+        if (e instanceof HouseBindingError) return sendError(res, 409, `conflict: ${e.message}`);
+        process.stderr.write(`loom: couldn't record a house's conversation: ${(e as Error).name}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t record the house\'s conversation; see the daemon log');
       }
     }
     // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
