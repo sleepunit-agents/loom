@@ -214,3 +214,21 @@ it('releases abandoned unresolved promises when GC destroys them', () => {
   expect(counts.before).toBeGreaterThanOrEqual(1000);
   expect(counts.after).toBe(0);
 });
+
+it('keeps a reusable interval attributed after its first invocation', async () => {
+  const lines: string[] = [];
+  w = watchStalls({ thresholdMs: 100, tickMs: 20, log: (l) => lines.push(l) });
+  let calls = 0;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await new Promise<void>((resolve) => {
+      timer = backgroundJob('reusable interval', () => setInterval(() => {
+        calls++;
+        if (calls === 2) { block(220); clearInterval(timer); resolve(); }
+      }, 30));
+    });
+    await wait(60);
+    expect(calls).toBe(2);
+    expect(lines.find((l) => l.startsWith('loom: event loop stalled'))).toMatch(/slowest: reusable interval 2\d\d ms/);
+  } finally { clearInterval(timer); }
+});
