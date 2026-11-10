@@ -207,6 +207,9 @@ async function sendWebResponse(res: ServerResponse, webRes: Response): Promise<v
     headers[key] = value;
   });
   res.writeHead(webRes.status, headers);
+  // Announce SSE immediately, before the first heartbeat, so the proxy can
+  // recognize and drain an otherwise idle stream.
+  if (headers['content-type']?.startsWith('text/event-stream')) res.flushHeaders();
   if (!webRes.body) {
     res.end();
     return;

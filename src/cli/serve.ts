@@ -172,8 +172,22 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       });
       process.send?.({ type: 'loom-ready' }, () => undefined);
     }
-    // Hold open until the process is signalled.
-    await new Promise<void>(() => {});
+    // A drained worker must close piece process groups and watchers before
+    // exiting; the stable listener no longer restarts their whole systemd unit.
+    await new Promise<void>((resolve) => {
+      if (!process.connected || !process.env.LOOM_WORKER_SOCKET) return;
+      let closing = false;
+      const shutdown = () => {
+        if (closing) return;
+        closing = true;
+        void handle.close().then(resolve, (error: unknown) => {
+          io.stderr(`loom: worker cleanup failed: ${(error as Error).message}\n`);
+          resolve();
+        });
+      };
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+    });
     return 0;
   }
 
