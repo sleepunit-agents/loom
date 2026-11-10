@@ -86,6 +86,8 @@ interface Sub {
    * hidden field moved, one they didn't ask for) isn't sent, so no frame says that something hidden changed.
    */
   sent: Map<string, string>;
+  /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
+  retry?: boolean;
 }
 
 /**
@@ -452,7 +454,8 @@ async function passOnce(h: HomeState): Promise<void> {
       }
       if (gone || !s.subs.has(sub.id)) continue;
       trim(sub);
-      if (ask && domainMoved) {
+      if (ask && (domainMoved || sub.retry)) {
+        sub.retry = false;
         if (!sub.waiting) reaskSoon(h, sub.reask, s, sub, p);
         continue;
       }
@@ -491,8 +494,9 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
     if (s.subs.get(sub.id) !== sub || !v || !still()) return;
-    // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something).
-    if (!got) return;
+    // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something), and
+    // it's asked again on the next pass.
+    if (!got) { sub.retry = true; return; }
     // Only what differs from what this subscription was sent.
     const now = new Set<string>();
     got.admitted.forEach((r, i) => {

@@ -206,7 +206,8 @@ export class CollectionRuntime {
     const op = opId();
     this.pendingOps.add(op);
     let undo: (() => void) | undefined;
-    if (opts.optimistic && (opts.kind ?? 'other') === 'other') {
+    // Asked for, for an ordinary change only: never by default, never for a grant or an approval.
+    if (opts.optimistic && opts.kind === 'other') {
       const { type, rec } = opts.optimistic;
       const store = this.stores.get(type);
       const before = store?.records.get(rec.key);
@@ -225,15 +226,19 @@ export class CollectionRuntime {
       }
     }
     try {
-      for (let tries = 0, polls = 0; ;) {
+      for (let tries = 0, polls = 0, dropped = false; ;) {
         let r: { status: number; json: unknown };
         try { r = await send(op); } catch {
+          dropped = true;
           if (++tries > COMMAND_RETRIES) return this.settle(op, { op, state: 'unknown' }, undo);
           await wait(500 * tries);
           continue;
         }
         if (r.status === 401) { this.clear(); return this.settle(op, { op, state: 'failed', why: 'signed out' }, undo); }
         const j = (r.json ?? {}) as { ok?: boolean; message?: string; receipt?: { state?: string; why?: string } };
+        // After a try that dropped, only a receipt says how it went: the first try may have run (an approval spent), so
+        // anything else is unknown, never failed (which would invite pressing again under a new id).
+        if (dropped && !j.receipt) return this.settle(op, { op, state: 'unknown', answer: r.json }, undo);
         const state = j.receipt?.state ?? (r.status >= 400 ? 'failed' : j.ok ? 'done' : 'failed');
         if (state === 'accepted') {
           if (++polls > COMMAND_POLLS) return this.settle(op, { op, state: 'unknown' }, undo);

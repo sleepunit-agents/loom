@@ -281,7 +281,7 @@ describe('commands: one operation, its receipt, and an honest preview', () => {
   it('an optimistic preview shows at once and is taken back on failure, unless the record moved since', async () => {
     const { rt, v } = await setup();
     const p = rt.command(async (op) => ({ status: 200, json: { ok: false, message: 'No.', receipt: { op, state: 'failed', why: 'No.' } } }),
-      { optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'closed' } } }, now);
+      { kind: 'other', optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'closed' } } }, now);
     expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'closed' });
     expect(await p).toMatchObject({ state: 'failed', why: 'No.' });
     expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'open' });
@@ -298,6 +298,16 @@ describe('commands: one operation, its receipt, and an honest preview', () => {
     expect(rt.pending()).toBe(1);
     release();
     expect((await p).state).toBe('done');
+  });
+
+  it('without kind: other, there\'s no preview; after a dropped try, an answer with no receipt is unknown, not failed', async () => {
+    const { rt } = await setup();
+    const p = rt.command(async (op) => ({ status: 200, json: { ok: true, receipt: { op, state: 'done' } } }), { optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'closed' } } }, now);
+    expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'open' });
+    await p;
+    let n = 0;
+    const r = await rt.command(async () => { if (++n === 1) throw new Error('dropped'); return { status: 500, json: null }; }, {}, now);
+    expect(r.state).toBe('unknown');
   });
 
   it('one never heard the end of is unknown, never sent again past its retries', async () => {

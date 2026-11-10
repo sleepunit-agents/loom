@@ -1775,7 +1775,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // (a dropped connection, another listener) gets the first one's answer and never runs it twice: a single-use
     // approval is spent once. Only the page's own fetch sends one.
     const op = form.get('_op');
-    const opSession = streamOwner(req, who);
+    // Whose an operation is, as live.db keeps it: a keyed hash of the session (or the bearer), never the cookie itself,
+    // which would sign whoever read the file in (sessions.ts keeps only hashes for the same reason).
+    const opSession = createHmac('sha256', storeFor(opts).key).update(`loom-op\0${streamOwner(req, who)}`).digest('base64url');
     const opHome = (opts.household?.() ?? hh)?.home;
     if (op !== null) {
       if (!/^[A-Za-z0-9_-]{16,64}$/.test(op) || !opHome) return send(res, 400, 'text/plain', 'bad operation id');
@@ -1783,6 +1785,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       if ('other' in b) return sendJson(res, 409, { error: 'that operation id is another session\'s' });
       if ('answer' in b) return send(res, 200, 'application/json', b.answer);
       if ('state' in b) return sendJson(res, 202, { ok: false, message: b.state === 'accepted' ? 'Still working on it.' : 'loom didn\'t hear how that went: look before trying again.', receipt: { op, state: b.state } });
+      // A way out before the action ran (a piece that isn't there, a form refused) says so in its receipt; one after it
+      // ran that never answered stays accepted, and becomes unknown: never run again.
+      res.once('finish', () => {
+        if ([400, 403, 404, 413].includes(res.statusCode)) {
+          try { withLog(opHome, (db) => finishOp(db, op, opSession, 'failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true)); } catch { /* it stays accepted, then unknown */ }
+        }
+      });
     }
     const backLink = splitPage(back) ? back : '';
     // A form has up to LIMITS.fields fields plus LIMITS.hidden hidden values.
@@ -1937,7 +1946,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     }
     // What it changed is in the log before the answer (collections.md, "Commands"): its piece's domains (or core's) are
     // pulled now, and the other listeners nudged, so every window hears it through its stream, this one included.
-    if (opHome) await pullAfterAction(opHome, opts.env, source.id === 'loom' ? 'loom' : source.id);
+    if (opHome && result.ok) await pullAfterAction(opHome, opts.env, source.id === 'loom' ? 'loom' : source.id);
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
     // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
@@ -1962,11 +1971,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }), ...receipt });
       // A retry gets this same answer, never a second run. A one-time message (a secret, a link: `keep`) is never written
       // down: a retry hears it was done, and that it was shown once.
-      const kept = result.keep ? JSON.stringify({ ok: result.ok, message: 'Done. What it showed was shown once.', receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
+      const kept = result.keep ? JSON.stringify({ ok: result.ok, message: result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.', ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
       if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', kept));
       return send(res, 200, 'application/json', answer);
     }
-    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? 'Done. What it showed was shown once.' : result.message, receipt: { op, state: result.ok ? 'done' : 'failed' } })));
+    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } })));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 
