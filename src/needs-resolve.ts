@@ -138,7 +138,7 @@ export function pieceCheckers(env: NodeJS.ProcessEnv): WaitCheckers {
       try { out = JSON.parse(b.stdout); } catch { return undefined; }
       const comments = Array.isArray(out.task?.comments) ? out.task!.comments as { actor?: unknown; at?: unknown; text?: unknown }[] : undefined;
       // Only the owner's answer, as the tasks page writes it (its comment as TASKSTORE_OWNER): no owner set, no asks there.
-      const owner = readSettings(env, p.name).TASKSTORE_OWNER?.trim();
+      const owner = (readSettings(env, p.name).TASKSTORE_OWNER || env.TASKSTORE_OWNER)?.trim();   // as missingSettings reads it
       if (out.ok === false || !comments || !owner) return undefined;
       return comments.some((c) => c.actor === owner && typeof c.at === 'string' && typeof c.text === 'string' && c.at >= since
         && sameAskWords(answeredAsk(c.text) ?? '', ask));
