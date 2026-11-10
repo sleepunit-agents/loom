@@ -22,7 +22,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  addMemberMessage, agentsComms, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
+  addMemberMessage, threadsAbout, agentsComms, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, isBackground, isJob, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { getConversation } from '../backends/conversations.js';
@@ -238,6 +238,13 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       send(200, { agents: await agentsComms(h, c.env, m) });
       return true;
     }
+    if (pathname === '/comms/about') {
+      if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
+      if (!m) return send(403, { error: 'forbidden' }), true;
+      const q = new URL(req.url ?? '/', 'http://x').searchParams;
+      const about = parseAbout({ label: 'item', ...(q.get('ref') ? { ref: q.get('ref') } : {}), ...(q.get('page') ? { page: q.get('page') } : {}) });
+      return send(200, { threads: threadsAbout(h, m, q.get('agent') ?? '', about.ref ? `ref:${about.ref}` : `page:${about.page}`) }), true;
+    }
     if (pathname === '/comms/route') {
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
@@ -255,12 +262,15 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       // Chat about this (t-2034): what it's about goes in the first message, so the same about and words are the same
       // thread again (openThread's repeat), never a second one.
+      let aboutKey: string | undefined;
       if (body.about !== undefined) {
         if (typeof body.text !== 'string') return send(400, { error: 'bad-input: text is the first message' }), true;
-        body.text = withAbout(body.text, parseAbout(body.about));
+        const about = parseAbout(body.about);
+        aboutKey = about.ref ? `ref:${about.ref}` : `page:${about.page}`;
+        body.text = withAbout(body.text, about);
         delete body.about;
       }
-      const o = openThread(h, c.env, m, body);
+      const o = openThread(h, c.env, m, body, new Date(), aboutKey);
       if (o.created) {
         deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
         send(200, { thread: view(o.thread), seq: o.seq, delivery: 'sending' });

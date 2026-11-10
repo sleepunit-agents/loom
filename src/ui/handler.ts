@@ -2543,7 +2543,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const cv = /^\/conversation\/(cv-[0-9a-f]{12})$/.exec(pathname);
     if (cv) {
       const owner = hh.agents.find((x) => existsSync(agentDir(hh, x)) && conversationOf(agentDir(hh, x), cv[1]));
-      const page = owner ? await conversationPage(agentDir(hh, owner), owner, cv[1], { env: opts.env }) : null;
+      const page = owner ? await conversationPage(agentDir(hh, owner), owner, cv[1], { env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) }) : null;
       return send200(page ?? notFound, owner ? `a/${owner}` : '', ctxOf(`conversation/${cv[1]}`), owner ? { ...agentsOf(hh)![owner], tabs: agentTabs(owner, 'conversation', pieces) } : undefined);
     }
     if (pathname === '/new-agent') return send200(newAgentPage(hh), '', ctxOf('new-agent'));
@@ -2603,7 +2603,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       }
       if (rest === 'setup') return send200(agentSetup(hh, agent, { ownerTokens: !opts.ownerScope }), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
       const acv = /^conversation\/(cv-[0-9a-f]{12})$/.exec(rest);
-      if (acv) return send200((await conversationPage(dir, agent, acv[1], { env: opts.env })) ?? notFound, `a/${agent}`, ctxOf(rest, src), head('conversation'));
+      if (acv) return send200((await conversationPage(dir, agent, acv[1], { env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) })) ?? notFound, `a/${agent}`, ctxOf(rest, src), head('conversation'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
       return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);
     }

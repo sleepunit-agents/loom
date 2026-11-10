@@ -14,6 +14,7 @@ import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
 import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, surfaceOf, whereLabel, type MemoryView } from './data.js';
+import { conversationSteps } from '../comms.js';
 import { conversationView } from '../conversations.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
@@ -504,7 +505,7 @@ export async function coreAct(contextDir: string, action: string, fields: Record
  * One conversation as a page: its render (the venue's own when its piece offers one and answers,
  * else core's generic render), drawn group by group. Null when the agent has no such conversation.
  */
-export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string } = {}): Promise<Page | null> {
+export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string; before?: number; page?: string; home?: string; days?: number } = {}): Promise<Page | null> {
   const view = await conversationView(contextDir, agent, id, opts.env ?? process.env);
   if (!view) return null;
   const tz = opts.timeZone ?? uiTimeZone();
@@ -522,6 +523,16 @@ export async function conversationPage(contextDir: string, agent: string, id: st
       })),
     }],
   }));
+  const watchable = c.venue !== 'loom' && c.venue !== 'spawn';
+  let steps: Awaited<ReturnType<typeof conversationSteps>> = [];
+  let unavailable = false;
+  try { if (watchable && opts.home) steps = await conversationSteps(opts.home, opts.env ?? process.env, id, opts.before, opts.days); } catch { unavailable = true; }
+  if (watchable) sections.unshift({ id: 'watching', title: 'Watching', blocks: [
+    { type: 'text', text: 'Live steps · Read only. Closing this leaves the conversation as it is. Replies stay in its original venue.', tone: 'muted' },
+    ...(steps.length ? [{ type: 'list' as const, wrap: true, items: steps.map((s) => ({ text: s.text ?? 'Step unavailable', meta: `${when(s.at)} · ${s.run}`, badge: s.state })) }]
+      : [{ type: 'text' as const, text: unavailable ? 'Live steps are unavailable right now.' : 'No recent steps yet. A managed body sends steps while it works.', tone: 'muted' as const }]),
+    ...(steps.length === 100 ? [{ type: 'list' as const, items: [{ text: 'Earlier steps', page: `loom:${opts.page ?? `a/${agent}/conversation/${id}`}?before=${steps[0].seq}` }] }] : []),
+  ] });
   if (view.render.error) sections.push({ id: 'render', blocks: [{ type: 'text', tone: 'muted', text: `Shown by loom: ${view.render.error}.` }] });
-  return { title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
+  return { refresh: watchable && opts.before === undefined && (steps.some((s) => s.state === 'running') || Date.now() - Math.max(Date.parse(steps.at(-1)?.at ?? c.last), Date.parse(c.last)) < 15 * 60_000) ? 2 : undefined, title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
 }
