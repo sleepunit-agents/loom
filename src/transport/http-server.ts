@@ -84,6 +84,7 @@ import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../ba
 import { agentName } from '../ui/core.js';
 import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
+import { watchStalls } from './stall-watch.js';
 import {
   assertSafeBind,
   checkBearer,
@@ -382,6 +383,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (household) for (const a of household.agents) createBackend(agentDir(household, a));
   else if (!opts.createServer) createBackend(opts.contextDir);
 
+  // What held the loop, when it's held (stall-watch.ts): the background jobs below run through stalls.timed.
+  const stalls = watchStalls();
   // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
   // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
   // start and daily. Neither ever stops the daemon.
@@ -389,10 +392,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (!backgroundActive) return;
     const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
     for (const d of dirs) {
-      try { foldConversations(d); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
+      try { stalls.timed('conversations fold', () => foldConversations(d)); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
     }
   };
-  if (household && backgroundActive) syncVenuesQuietly(process.env);
+  if (household && backgroundActive) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
   foldAll();
   const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
   foldTimer.unref();
@@ -402,9 +405,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const sweepAll = () => {
     if (!backgroundActive || !live) return;
     const h = live();
-    try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
+    try { stalls.timed('audit sweep', () => sweepAudit(h.home)); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
     for (const day of recentDays()) {
-      try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
+      try { stalls.timed(`scorecard measures ${day}`, () => computeMeasures(h, day)); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
     }
   };
   sweepAll();
@@ -412,10 +415,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   sweepTimer.unref();
   // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
   // listener watches for thread moves, so a member's own shared stream hears of their threads.
-  const commsTimer = live && !opts.createServer ? setInterval(() => { if (!backgroundActive) return; try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
+  const commsTimer = live && !opts.createServer ? setInterval(() => { if (!backgroundActive) return; try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
   commsTimer?.unref();
   if (live && !opts.createServer) {
-    try { if (backgroundActive) sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
+    try { if (backgroundActive) stalls.timed('comms sweep', () => sweepComms(live())); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     watchComms(live().home);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
     if (backgroundActive) void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
@@ -1001,16 +1004,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
     if (!backgroundActive) return;
-    void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
-      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
+    stalls.timed('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`)));
   }, WATCH_S * 1000);
   pushTimer?.unref();
   // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
     if (!backgroundActive || !live) return;
-    void resolveNeeds(live(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`));
+    stalls.timed('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`)));
   };
   const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
   needsTimer?.unref();
@@ -1019,13 +1022,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
-  const backupTick = () => { try { if (backgroundActive && live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTick = () => { try { if (backgroundActive && live) stalls.timed('backup tick', () => spawnBackupTick(live!(), process.env)); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
   const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
   const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
   backupFirst?.unref();
 
   const http = createServer((req, res) => {
+    const done = stalls.request(req.method, req.url);
+    res.once('close', done);
     void (async () => {
       // loom's web page (src/ui), at the root. Its own auth (a session from
       // the bearer, or the bearer header), so it comes before the bearer gate.
@@ -1219,16 +1224,17 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     setBackgroundActive(active) {
       const was = backgroundActive;
       backgroundActive = active;
-      if (active && !was) {
-        if (household) syncVenuesQuietly(process.env);
+      if (active && !was) stalls.timed('worker activation', () => {
+        if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
         foldAll(); sweepAll();
         if (live && !opts.createServer) {
-          try { sweepComms(live()); } catch { /* next timer retries */ }
-          void backfillRefs(live(), process.env).catch(() => undefined);
+          try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch { /* next timer retries */ }
+          stalls.timed('comms refs backfill', () => void backfillRefs(live!(), process.env).catch(() => undefined));
         }
-      }
+      });
     },
     async close() {
+      stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
       if (backupTimer) clearInterval(backupTimer);

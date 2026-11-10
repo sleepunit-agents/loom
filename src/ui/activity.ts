@@ -144,6 +144,8 @@ interface ConvRow { id: string; venue: string; place: string; label: string | nu
 
 interface Ctx {
   h: Household; tz: string; member?: Member; ownerPerson?: string;
+  /** Whether a conversation's asks are the viewer's (handler.ts seesConversation; t-2084): none, none are. */
+  seesAsk?: (cv: string, agent: string) => boolean;
   /** Comms threads by conversation, looked up once. */
   threads: Map<string, Thread | null>;
 }
@@ -308,7 +310,10 @@ async function openEntry(c: Ctx, env: NodeJS.ProcessEnv, id: string, shown: Acti
     const refs = refsIn([d?.summary ?? '', ...decided].join('\n'), github);
     const links: ActivityLink[] = [];
     if (thread) links.push({ label: 'The thread in Comms', href: threadPath(thread.id) });
-    if (d?.needs_owner_href) links.push({ label: 'What it needs you for', href: d.needs_owner_href });
+    // An ask is only whom it's for (a Comms thread's, a spawned job's: its member's; comms.md rule 2; t-2084): anyone
+    // else sees what it did, not what it asks. No rule given, no one's.
+    const theirs = !!c.seesAsk?.(cv.id, agent);
+    if (d?.needs_owner_href && theirs) links.push({ label: 'What it needs you for', href: d.needs_owner_href });
     // The steps of a Comms run (its tool cards), the labels its thread shows: its own member only (commsThread).
     let steps: ActivityOpen['steps'];
     if (thread && d?.run) {
@@ -320,7 +325,7 @@ async function openEntry(c: Ctx, env: NodeJS.ProcessEnv, id: string, shown: Acti
     const more = (db.prepare('SELECT id, at FROM conversation_digests WHERE conversation = ? AND id != ? ORDER BY at DESC LIMIT 8').all(cv.id, d?.id ?? '') as Array<{ id: string; at: string }>)
       .map((x) => ({ id: `d~${agent}~${x.id}`, at: x.at, title }));
     return { ...fallback, asked, decided, ...(d ? { story: d.summary } : {}), tasks: [...new Set([...tasks, ...refs.tasks])].map(taskLink), prs: refs.prs, links,
-      ...(d?.needs_owner ? { needs: d.needs_owner } : {}), ...(steps?.length ? { steps } : {}), more };
+      ...(d?.needs_owner && theirs ? { needs: d.needs_owner } : {}), ...(steps?.length ? { steps } : {}), more };
   } finally { db.close(); }
 }
 
@@ -332,6 +337,7 @@ const list = (v: string | undefined, ok: (s: string) => boolean) => [...new Set(
  */
 export async function activityView(h: Household, query: Record<string, string | undefined>, opts: {
   member?: Member; ownerPerson?: string; ownerLabel: string; tz: string; env: NodeJS.ProcessEnv; nowMs?: number; github?: string;
+  seesAsk?: (cv: string, agent: string) => boolean;
 }): Promise<ActivityView> {
   const nowMs = opts.nowMs ?? Date.now();
   const today = isoDay(nowMs, opts.tz);
@@ -346,7 +352,7 @@ export async function activityView(h: Household, query: Record<string, string | 
   };
   const fromMs = startOf(days[days.length - 1]);
   const untilMs = to === today ? nowMs + 60_000 : startOf(dayBefore(to, -1));
-  const c: Ctx = { h, tz: opts.tz, member: opts.member, ownerPerson: opts.ownerPerson, threads: new Map() };
+  const c: Ctx = { h, tz: opts.tz, member: opts.member, ownerPerson: opts.ownerPerson, threads: new Map(), seesAsk: opts.seesAsk };
   const entries = collect(c, fromMs, Math.max(untilMs, fromMs + DAY_MS / 24));
   const venues: Record<string, string> = {};
   for (const e of entries) venues[e.venue] = VENUES[e.venue] ?? venueLabel(h.home, e.venue);

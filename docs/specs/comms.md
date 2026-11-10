@@ -62,6 +62,24 @@ _Avoid_: log, trace, transcript
 2. **A thread is its opener's.** With several owners on one agent (owners.md), each owner sees only the threads they
    opened. A thread's words are never shown to another member, household owner included. The conversation record
    (its metadata and digests) is still visible to the agent's owners, as for any venue (conversations.md, "Reading").
+   Its asks are its member's too (t-2084): a Needs you of its conversation, an approval asked from it, and either's
+   history are in their Inbox, Home, badges, live attention records, Projects counts and devices' pushes alone, and
+   only they can answer them: `needs-*`, and a piece's Allow or Deny on a card they alone see, are refused to anyone
+   else as an ask that isn't there. Exceptions, so an ask is never no one's for good:
+   - a card only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset, a host step,
+     a write-off) also goes to household owners, as the ones who answer it;
+   - a thread whose member no longer owns its agent (left the household, or lost the agent): household owners';
+   - a card on a piece its member can't reach (one that doesn't understand agent owners, `owners` not 2, which an
+     agent owner never sees): household owners';
+   - a merge someone else says no to (the approvals piece's Deny, or Changes' Not yet, on the same target) still stops
+     the thread's card if it was already allowed: a no stops every earlier yes. A card still waiting stays its asker's
+     to answer, and their answer after it is the newer decision. Changes' Yes never answers it;
+   - a spawned job the runtime couldn't open a thread for: household owners' once 10 minutes have passed (loom can't
+     tell whose it is); until then, no one's, since its thread may still open.
+   A deleted thread's asks stay its member's (`comms_deleted`, by its place and its conversation); a `loom`
+   conversation with no thread, live or deleted, is no one's, as is a `loom` or `spawn` one while the thread store
+   can't be read. The approvals piece's Allow, Deny and Allow every time fail closed: on a card the caller sees, or
+   else only when the piece's own record (`state`) names where it was asked and that's theirs to answer.
 3. **The server enforces both, on every route in "Routes" below.** Each request resolves the signed-in member's
    `agents` from `members` (owners.md), never from what the caller sends. Then:
    - a thread route answers `403` unless the member owns the thread's agent **and** is the thread's `member`;
