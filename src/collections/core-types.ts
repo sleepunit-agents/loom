@@ -131,7 +131,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
   // code makes it for this member (src/ui/handler.ts agentCards over their pieces; a Comms thread's job is its member's
   // alone, handler.ts atWorkFor). So it's an `ask` type, each row's audience the viewer, as attention is.
   'agent-status': declare('agent-status', {
-    version: '1.0',
+    version: '1.1',
     schema: { type: 'object', properties: { agent: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' } } },
     agent: 'agent',
     fields: {
@@ -150,10 +150,12 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       seen: { class: 'member' },
       readings: { class: 'member' },
       steps: { class: 'member' },
+      // What's moving for it (1.1): each piece that says it's working, and why; Home's list is every card's.
+      moving: { class: 'member' },
       // A digest of every member's own copy (the core viewer's snapshot alone): a copy that moves moves the record.
       copies: { class: 'owner' },
     },
-    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps'],
+    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps', 'moving'],
     max_page: 100,
     aggregates: { count: {} },
     audience: 'ask',

@@ -159,7 +159,10 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
       expect(a.error, who).toBeUndefined();
       expect(a.coverage.complete, who).toBe(true);
       expect((a.rows as Data[]).map(asCard).map(strip), who).toEqual((page.home.cards as Data[]).map(strip));
+      // Home's "moving" is every card's own (1.1), so a window keeps it live from the records.
+      expect((a.rows as Data[]).flatMap((r) => r.moving), who).toEqual(page.home.moving);
     }
+    expect((await home('jonathan')).home.moving).toEqual([expect.objectContaining({ agent: 'art', text: 'On two things' })]);
     const sam = await ask('sam');
     expect((sam.rows as Data[]).map((r) => r.agent)).toEqual(['art']);
     const jon = (await ask('jonathan')).rows as Data[];

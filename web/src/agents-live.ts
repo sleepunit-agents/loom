@@ -77,6 +77,8 @@ export function withAgentCards<V extends { view: string; chrome?: { shell?: { ag
       return state.get(a.id) === 'working' ? { ...rest, working: true } : rest;
     }) } } };
   }
-  if (data.view === 'house-home' && data.home && typeof data.home === 'object') out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live) } };
+  if (data.view === 'house-home' && data.home && typeof data.home === 'object') {
+    out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live), moving: live.flatMap((c) => c.moving ?? []) } };
+  }
   return out;
 }
