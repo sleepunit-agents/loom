@@ -2,8 +2,8 @@
  * Shared collection queries through the real HTTP server (docs/specs/collections.md, "What the tests must pin":
  * bounds, hidden fields, viewer authority, counts, consumer capability, provider failure), with stub providers:
  *
- *  - `tasks` (role tasks, `owners: 2`): a leaky provider by default (it answers every record whoever asks), so every
- *    row a viewer gets is one core's own checks let through; `honest` mode answers by the viewer as a real one does.
+ *  - `tasks` (role tasks, `owners: 2`): it answers by the viewer it's told, as the contract says; in `leaky` mode it
+ *    answers every record whoever asks, and core must take it out of contract.
  *  - `notes`: no `owners: 2`, so household owners only.
  *  - `broken`: always fails.
  *  - `authority`: the grants authority, answering from $LOOM_HOME/grants.json.
@@ -20,6 +20,7 @@ import { agentDir, createToken, loadHousehold, type Household } from '../househo
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from '../ui/pieces.js';
 import { clearGrantAnswers } from '../grants.js';
+import { clearOutOfContract } from './serve.js';
 import { allThreads } from '../comms.js';
 
 const NOW = Date.now();
@@ -45,7 +46,21 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   if (mode === 'fail') process.exit(1);
   const all = JSON.parse(fs.readFileSync(home + '/records.json', 'utf-8'));
   const v = ask.viewer;
-  const mine = (r) => mode !== 'honest' || v.kind === 'core' || (v.kind === 'member' && (v.agents === '*' || (r.agent && v.agents.includes(r.agent)))) || (v.kind === 'agent' && r.agent === v.agent);
+  // Honest unless told otherwise: it decides for the viewer it's told, as the contract says.
+  const mine = (r) => {
+    if (mode === 'leaky') return true;
+    const a = r.audience;
+    if (!a || (r.expires && r.expires <= Date.parse(ask.now))) return false;
+    if (v.kind === 'core') return true;
+    if (v.kind === 'member') {
+      const named = (a.members || []).includes(v.who);
+      if (v.agents === '*') return named || !!(a.household || a.owners || a.ownersOf || a.agents);
+      if (!r.agent) return named;
+      if (!v.agents.includes(r.agent)) return false;
+      return named || !!a.household || (a.ownersOf || []).some((x) => v.agents.includes(x));
+    }
+    return (a.agents || []).includes(v.agent);
+  };
   const answers = ask.queries.map((q) => {
     if (mode === 'big' && q.id === 'big') return { id: q.id, rows: [{ id: 'x', audience: { owners: true }, title: 'y'.repeat(q.limit * 20000) }], next: null };
     let rs = all.filter(mine).filter((r) => q.where.every(([f, op, val]) => op === 'eq' ? r[f] === val : op === 'in' ? val.includes(r[f]) : true));
@@ -174,9 +189,10 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
     grants({ art: ['loom/collections/tasks/task', 'loom/collections/loom/agent'], 'pond-bot': ['loom/collections/tasks/task'] });
     clearPieceCache();
     clearGrantAnswers();
+    clearOutOfContract();
   });
 
-  describe('viewer authority: core checks every row, whatever the provider answers', () => {
+  describe('viewer authority', () => {
     it('a household owner sees every record an audience admits them to, but not another member\'s own', async () => {
       const a = await one(tok.jonathan, { limit: 3, fields: ['title', 'status', 'cost'] });
       expect(keys(a)).toEqual(['tasks/task/t-1', 'tasks/task/t-2', 'tasks/task/t-3']);
@@ -188,13 +204,27 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(all).toEqual(['tasks/task/t-1', 'tasks/task/t-2', 'tasks/task/t-3', 'tasks/task/t-4', 'tasks/task/t-8']);
     });
 
-    it('an owner of some agents gets only their agents\' records from a provider that ignores who\'s asking, and core told it who they are', async () => {
+    it('an owner of some agents gets only their agents\' records, and core told the provider who they are', async () => {
       const all: string[] = [];
       let next: unknown = null;
-      do { const p = await one(tok.loren, { limit: 3, after: next ?? undefined }); all.push(...keys(p)); next = p.next; } while (next);
-      // Not art's or mark's, not the household's t-4, not sam's own t-5, not expired t-6 or audience-less t-7.
+      do { const p = await one(tok.loren, { limit: 1, after: next ?? undefined }); all.push(...keys(p)); next = p.next; } while (next);
       expect(all).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
       expect(runs('tasks')[0]).toMatchObject({ viewer: { kind: 'member', who: 'loren', household: false, agents: ['pond-bot'] }, scope: 'pond-bot' });
+    });
+
+    it('a provider that answers a row its viewer may not have is out of contract: unavailable to everyone, so nothing about the hidden row shows', async () => {
+      mode('tasks', 'leaky');
+      // Even its first page (limit 1, a row loren may have) is refused once the run held one she may not.
+      expect(await one(tok.loren, { where: [['status', 'eq', 'open']], limit: 3 })).toEqual({ id: 'q', error: 'unavailable' });
+      mode('tasks', '');
+      // Honest again, but out of contract until it's reinstalled or loom restarts: for a household owner too, and the
+      // provider isn't even run.
+      rmSync(join(h.home, 'tasks-ran'), { force: true });
+      expect(await one(tok.jonathan, {})).toEqual({ id: 'q', error: 'unavailable' });
+      expect(await one(tok.loren, {})).toEqual({ id: 'q', error: 'unavailable' });
+      expect(runs('tasks')).toEqual([]);
+      clearOutOfContract();
+      expect(keys(await one(tok.loren, { where: [['agent', 'eq', 'pond-bot']] }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
     });
 
     it('two members sharing an agent: sam\'s own record is sam\'s, and the field it\'s withheld from is listed', async () => {
@@ -248,28 +278,18 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
   describe('counts', () => {
     it('a provider\'s totals and aggregates go to household owners only; core counts a complete answer itself', async () => {
       const jon = await one(tok.jonathan, { limit: 3, aggregates: ['count'] });
-      expect(jon.coverage).toEqual({ complete: false, total: { n: 8, exact: true } });
-      expect(jon.aggregates).toEqual({ count: { n: 8, exact: true, by: { open: 6, closed: 2 } } });
-      // A page where core dropped a row the provider shouldn't have answered: its numbers aren't this viewer's either.
-      const dropped = await one(tok.jonathan, { limit: 5, aggregates: ['count'] });
-      expect(keys(dropped)).toEqual(['tasks/task/t-1', 'tasks/task/t-2', 'tasks/task/t-3', 'tasks/task/t-4']);
-      expect(dropped.coverage).toEqual({ complete: false });
-      expect(dropped).not.toHaveProperty('aggregates');
-      // loren: the leaky provider's 8 (and its by-status counts) would reveal others' records. Partial: no number.
+      expect(jon.coverage).toEqual({ complete: false, total: { n: 5, exact: true } });
+      expect(jon.aggregates).toEqual({ count: { n: 5, exact: true, by: { open: 3, closed: 2 } } });
+      // loren, on a partial page: the provider's number can't be checked, so there's none.
       const loren = await one(tok.loren, { limit: 1, aggregates: ['count'] });
       expect(loren.coverage).toEqual({ complete: false });
       expect(loren).not.toHaveProperty('aggregates');
       // Complete: core counted what it let through.
-      // Complete (the provider's whole answer fit one page): core counts the rows it let through, never the provider's 5.
       const whole = await one(tok.loren, { where: [['agent', 'eq', 'pond-bot']], aggregates: ['count'] });
       expect(keys(whole)).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
       expect(whole.coverage).toEqual({ complete: true, total: { n: 2, exact: true } });
-      mode('tasks', 'honest');
-      const honest = await one(tok.loren, { where: [['status', 'eq', 'closed']], aggregates: ['count'] });
-      expect(keys(honest)).toEqual(['tasks/task/t-8']);
-      expect(honest.coverage).toEqual({ complete: true, total: { n: 1, exact: true } });
       // A count with a `by` is the provider's to give, so it isn't.
-      expect(honest).not.toHaveProperty('aggregates');
+      expect(whole).not.toHaveProperty('aggregates');
     });
   });
 
@@ -313,12 +333,12 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(runs('tasks')[0]).toMatchObject({ ids: ['a', 'b'], share: 512 * 1024 });
     });
 
-    it('an expiry out of a date\'s range drops that row, and never fails the batch', async () => {
+    it('an expiry out of a date\'s range is out of contract for that provider, and never fails the batch', async () => {
       writeFileSync(join(h.home, 'records.json'), JSON.stringify([...RECORDS, { id: 't-9', agent: 'art', title: 'far', status: 'open', expires: 1e300, audience: { owners: true } }]));
       try {
         const r = await query(tok.jonathan, [{ id: 'q', type: 'tasks/task@^1', where: [['status', 'eq', 'open']] }, { id: 'a', type: 'loom/agent@^1' }]);
         expect(r.status).toBe(200);
-        expect(keys(r.body.answers[0])).not.toContain('tasks/task/t-9');
+        expect(r.body.answers[0]).toEqual({ id: 'q', error: 'unavailable' });
         expect(r.body.answers[1]).toHaveProperty('rows');
       } finally { writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS)); }
     });

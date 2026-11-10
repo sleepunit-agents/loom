@@ -10,7 +10,7 @@
  *  Only then is the provider run: one process per provider per batch, never mixing viewers, in a pool of its own.
  *  5. Every row it answers is checked again by core: its audience and the agent rule admit the viewer, it hasn't
  *     expired, and it carries only the fields the viewer may see and asked for. A provider that ignores the viewer
- *     leaks nothing.
+ *     leaks nothing: it's out of contract, and answers no one until it's reinstalled (outOfContract).
  *  6. Counts a provider makes go to household owners only, unless the type declares scoped counts. Where an answer
  *     is complete, core counts the rows it checked itself.
  *
@@ -45,6 +45,8 @@ export interface Provider {
   owners2: boolean;
   types: Readonly<Record<string, TypeDecl>>;
   query?: string[];
+  /** Which install this is (the piece and when it was installed): a reinstall is a new chance (outOfContract). */
+  install?: string;
 }
 
 /** Core and every installed piece publishing collections, by provider name, from their installed declarations. */
@@ -56,10 +58,19 @@ export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
     const name = providerName(r);
     // Install refuses a taken name; were two ever present (piece.json edited by hand), neither is served.
     if (out.has(name)) { out.delete(name); continue; }
-    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query });
+    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed}` });
   }
   return out;
 }
+
+/**
+ * Providers that answered a row their viewer may not have, by install. Whatever core then does differently (a shorter
+ * page, no next cursor, an error) would tell the viewer a hidden record matched their query, and a viewer choosing the
+ * queries could read hidden values that way. So such a provider is out of contract: it answers `unavailable` to
+ * everyone until it's reinstalled or loom restarts, and the asking viewer learns one bit, once.
+ */
+const outOfContract = new Set<string>();
+export const clearOutOfContract = (): void => outOfContract.clear();
 
 const pools = new Map<string, Pool>();
 const poolOf = (provider: string): Pool => {
@@ -150,12 +161,21 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     const asks: ProviderQuery[] = list.map((q) => ({ id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit, after: q.after,
       // The agent field too: core's agent rule reads it. It's dropped again unless asked for.
       fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...(p.types[q.type].agent ? [p.types[q.type].agent!] : [])])], aggregates: q.aggregates }));
-    const got = await runProvider(ctx, p, viewer, asks, share, now);
-    for (const q of list) {
+    const broken = () => p.install !== undefined && outOfContract.has(p.install);
+    const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, asks, share, now);
+    const checked = list.map((q) => {
       const a = typeof got === 'string' ? undefined : got.get(q.id);
-      if (!a) { answers.set(q.id, { id: q.id, error: 'unavailable' }); continue; }
-      answers.set(q.id, checkAnswer(viewer, p, q, a, share, now, (c) => sealer.seal(c, vid, queryShape({ provider: q.provider, type: q.type, major: q.major }, q.where, q.order), now)));
+      if (!a) return { id: q.id, error: 'unavailable' } as QueryError;
+      return checkAnswer(viewer, p, q, a, share, now, (c) => sealer.seal(c, vid, queryShape({ provider: q.provider, type: q.type, major: q.major }, q.where, q.order), now));
+    });
+    // One row out of contract makes the whole run's answers unavailable, not just its own query's: the batch's other
+    // answers came from the same provider, deciding for the same viewer.
+    const bad = checked.some((a) => a === OUT_OF_CONTRACT);
+    if (bad && p.install !== undefined && !broken()) {
+      outOfContract.add(p.install);
+      process.stderr.write(`loom: collections provider ${p.name} (${p.piece}) answered a row its viewer may not have; it answers no one until it's reinstalled or loom restarts\n`);
     }
+    list.forEach((q, i) => answers.set(q.id, bad || checked[i] === OUT_OF_CONTRACT ? { id: q.id, error: 'unavailable' } : checked[i] as ClientAnswer | QueryError));
   }));
   return { status: 200, body: { answers: (qs as QueryIn[]).map((q) => answers.get(q.id)!) } };
 }
@@ -208,35 +228,44 @@ function expiresAt(v: unknown): number {
   return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : Number.NaN;
 }
 
-/** One provider answer checked for this viewer: every row admitted again, trimmed, and its counts gated. */
-export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string): ClientAnswer | QueryError {
+/** What checkAnswer answers when the provider answered a row it shouldn't have (see outOfContract). */
+export const OUT_OF_CONTRACT = Symbol('out of contract');
+
+/**
+ * One provider answer checked for this viewer: every row admitted again, trimmed, and its counts gated. A row the
+ * viewer may not have, or one that isn't a row, makes the answer OUT_OF_CONTRACT; a row that expired since the
+ * provider read it (it was the viewer's) is only left out.
+ */
+export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string): ClientAnswer | QueryError | typeof OUT_OF_CONTRACT {
   if (a.error) return { id: q.id, error: a.error as QueryError['error'] } as QueryError;
   const decl = p.types[q.type];
-  // A provider that ignores the page size broke the contract: nothing it says about coverage can be trusted.
-  if (a.rows.length > q.limit) return { id: q.id, error: 'unavailable' };
+  // A provider that ignores the page size broke the contract: how many it sent may count rows the viewer can't have.
+  if (a.rows.length > q.limit) return OUT_OF_CONTRACT;
   const seen = new Set<string>();
   const rows: Record<string, unknown>[] = [];
-  // A provider that answered a row this viewer may not have didn't answer for this viewer, so its numbers can't be
-  // for them either: any row core drops drops the provider's counts too.
+  // A row left out (it expired since the provider read it) isn't in the provider's numbers' view of things: its
+  // counts go too.
   let dropped = false;
   for (const raw of a.rows as unknown[]) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { dropped = true; continue; }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return OUT_OF_CONTRACT;
     const r = raw as Record<string, unknown>;
-    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) { dropped = true; continue; }
+    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) return OUT_OF_CONTRACT;
     const audience = parseAudience(r.audience);
-    if (!audience) { dropped = true; continue; }
+    if (!audience) return OUT_OF_CONTRACT;
     let agent: string | undefined;
     if (decl.agent !== undefined) {
       const v = Object.hasOwn(r, decl.agent) ? r[decl.agent] : undefined;
-      if (v !== undefined && v !== null && typeof v !== 'string') { dropped = true; continue; }
+      if (v !== undefined && v !== null && typeof v !== 'string') return OUT_OF_CONTRACT;
       agent = typeof v === 'string' ? v : undefined;
     }
+    if (!admits(viewer, audience, agent, decl)) return OUT_OF_CONTRACT;
     let expires: number | undefined;
     if (r.expires !== undefined) {
       expires = expiresAt(r.expires);
-      if (!Number.isFinite(expires) || expires <= now) { dropped = true; continue; }
+      if (!Number.isFinite(expires)) return OUT_OF_CONTRACT;
+      // Expired since the provider read it: the viewer's own row, so leaving it out tells them nothing hidden.
+      if (expires <= now) { dropped = true; continue; }
     }
-    if (!admits(viewer, audience, agent, decl)) { dropped = true; continue; }
     const out: Record<string, unknown> = { key: `${p.name}/${q.type}/${r.id}` };
     for (const f of q.fields) {
       if (f === 'audience') out.audience = audience;

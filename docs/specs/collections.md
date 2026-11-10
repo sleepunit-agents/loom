@@ -280,7 +280,10 @@ A record is visible to a viewer when **every one** of these holds:
    change, there's no viewer to hand it (one change goes to many), so the provider's word is the record's
    `audience`; a type whose rules an audience can't express declares `"audience": "ask"` (below).
 2. **The audience admits them** (below). Core checks this on every row of every answer and every change, whatever the
-   provider said: a provider that ignores who's asking leaks no rows.
+   provider said: a provider that ignores who's asking leaks no rows. Nor does it leak through what core does
+   about it: a shorter page, a missing `next` or an error would each tell the viewer a hidden record matched their
+   query, so a provider that answers any row its viewer may not have is **out of contract**. That answer, and every
+   answer from it after, to anyone, is `unavailable` until it's reinstalled or loom restarts (one bit, once).
 3. **The agent rule admits them.** For an owner of some agents, core admits only records whose `agent` field names
    one of their agents. A record with no agent, or of a type with no `agent` field, is household owners' only, except
    through a `members` term that names that member: their own read markers, prefs and session list are theirs. This is
@@ -757,7 +760,7 @@ The conformance suite (t-2026) runs against core's provider and every installed 
 - **Viewer authority**: for a household owner, an owner of some agents, two members sharing an agent, an agent
   token, a task house's token and a service house's token, each query, search result and change reaches exactly the
   records and fields that the provider, the audience, the agent rule and the classes allow; a withheld field is
-  absent and listed in `withheld`; a provider that ignores the viewer leaks no rows (core's own checks); a record
+  absent and listed in `withheld`; a provider that ignores the viewer leaks no rows and is taken out of contract (core's own checks); a record
   with no agent never reaches an agent owner; a provider without `owners: 2` answers only household owners; a
   member's Comms thread never reaches another owner of the same agent, and stops reaching its member the moment
   they stop owning its agent; `audience` is never sent to anyone but household owners.

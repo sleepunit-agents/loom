@@ -251,7 +251,8 @@ own schema:
   limits are its own: 15 s and 1 MB an answer, four at once and sixteen waiting
   per provider. Core checks every row it answers against the viewer (the
   record's audience, core's agent rule, the field classes), so a provider that
-  ignores who's asking leaks nothing (`src/collections/`).
+  ignores who's asking leaks nothing: it's out of contract, and answers no one
+  until it's reinstalled (`src/collections/`).
 - **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
   delivers on it (the clock) declares an empty entry for it, which defines
   nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
