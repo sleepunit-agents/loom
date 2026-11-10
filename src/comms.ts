@@ -377,7 +377,7 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS conversation_steps (
 const threadsReady = new Set<string>();
 function withThreads<T>(home: string, f: (db: Database) => T): T {
   return withHouseholdDb(home, (db) => {
-    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); addColumn(db, 'comms_threads', 'about_key', 'TEXT'); threadsReady.add(home); }
+    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); addColumn(db, 'comms_threads', 'about_key', 'TEXT'); addColumn(db, 'comms_deleted', 'conversation', 'TEXT'); threadsReady.add(home); }
     return f(db);
   });
 }
@@ -1021,7 +1021,8 @@ export function deleteThread(h: Household, t: Thread, now: Date = new Date()): v
   // SQLite databases: removing words first permits a lost-receipt retry to
   // recreate a reply if the process dies before the thread tombstone commits.
   withThreadsAt(h.home, (db) => db.transaction(() => {
-    db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
+    // Its conversation too: a deleted thread's asks stay its member's (t-2084), a spawned job's as well as a talk's.
+    db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at, conversation) VALUES (?, ?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now), t.conversation);
     db.prepare('INSERT OR IGNORE INTO comms_delete_pending (id) VALUES (?)').run(t.id);
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
@@ -1500,14 +1501,18 @@ export function threadOfAgentConversation(home: string, agent: string, conversat
 
 /**
  * Whose each thread is, in one read (t-2084: a thread's asks are its member's): every live thread by its conversation,
- * and every deleted one by its id (its place), each with its member and agent.
+ * and every deleted one by its id (its place) and, deleted since it was kept, by its conversation, each with its member
+ * and agent.
  */
 export function threadMembers(home: string): { live: Map<string, { member: string; agent: string }>; deleted: Map<string, { member: string; agent: string }> } {
   if (!existsSync(join(home, 'household.db'))) return { live: new Map(), deleted: new Map() };
-  return withThreadsAt(home, (db) => ({
-    live: new Map((db.prepare('SELECT conversation, member, agent FROM comms_threads').all() as Array<{ conversation: string; member: string; agent: string }>).map((r) => [r.conversation, { member: r.member, agent: r.agent }])),
-    deleted: new Map((db.prepare('SELECT id, member, agent FROM comms_deleted').all() as Array<{ id: string; member: string; agent: string }>).map((r) => [r.id, { member: r.member, agent: r.agent }])),
-  }));
+  return withThreadsAt(home, (db) => {
+    const gone = db.prepare('SELECT id, member, agent, conversation FROM comms_deleted').all() as Array<{ id: string; member: string; agent: string; conversation: string | null }>;
+    return {
+      live: new Map((db.prepare('SELECT conversation, member, agent FROM comms_threads').all() as Array<{ conversation: string; member: string; agent: string }>).map((r) => [r.conversation, { member: r.member, agent: r.agent }])),
+      deleted: new Map(gone.flatMap((r) => [[r.id, { member: r.member, agent: r.agent }] as const, ...(r.conversation ? [[r.conversation, { member: r.member, agent: r.agent }] as const] : [])])),
+    };
+  });
 }
 
 /** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */

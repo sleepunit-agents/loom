@@ -57,8 +57,8 @@ import { answeredNeeds, answerNeeds, ConversationError, getConversation as conve
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { commsRoute, pageRefused } from './comms-routes.js';
-import { recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
-import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
+import { OWNER_KINDS, recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
+import { pieceCheckers, pieceWithRole, resolveNeeds, type ApprovalState } from '../needs-resolve.js';
 import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
@@ -762,13 +762,19 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
   // A household owners' ask (a lead card, a job with no thread, a departed member's thread's) has no agent, so `hears`
   // admits household owners alone. One that's no one's ('no one') goes to a member that's no one.
   return watch(storeFor(opts), async () => {
+    // Threads that can't be read: skip this minute (an ask announced to no one would be marked pushed, never to come).
+    if (hh) threadMembers(hh.home);
     const whose = hh ? askOwners(hh) : () => undefined;
     const asks = await yourCall(opts);
     // A lead card a member's Needs you absorbed is still the household owners' to give: they hear of its own card, by
     // the key their Inbox files it under (theirs doesn't absorb it), and its member hears of the Needs you.
     const leads = hh ? (await pieceManifests(opts.env)).pieces.flatMap((p) => p.manifest.asks.filter((x) => x.lead && x.conversation && x.attention !== false)
       .map((x) => ({ ...x, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece } as HomeAsk))) : [];
-    const absorbed = leads.filter((x) => !asks.some((a) => askKey(a) === askKey(x)));
+    // Only one asked from a thread whose member can't give it: one of a household owner's thread is in his Needs you.
+    const absorbed = leads.filter((x) => !asks.some((a) => askKey(a) === askKey(x)) && (() => {
+      const o = whose(x.conversation!, x.agent);
+      return typeof o === 'object' && memberOf(hh!, o.member)?.agents !== '*';
+    })());
     return [...[...asks, ...absorbed].map((a) => {
       const cv = a.reply?.fields.conversation ?? a.conversation;
       const o = cv ? whose(cv, a.agent) : undefined;
@@ -851,30 +857,33 @@ export function lookerOf(opts: UiOptions, _h: Household): Looker {
 /** Whose a conversation's asks are: a member's (`member`, of `agent`), household owners' only, no one's, or its agent's owners' (undefined). */
 type AskOwner = { member: string; agent: string } | 'household' | 'no one' | undefined;
 
+/** How long a spawned job may wait for the runtime to open its thread before its asks fall to household owners. */
+const SPAWN_GRACE_MS = 10 * 60_000;
+
 /**
  * Whose each conversation's asks are (t-2084; docs/specs/comms.md, rule 2), read once a call:
  * - a live Comms thread's (a spawned job's thread too): its member's;
  * - a deleted thread's (its conversation is still in the agent's store): still its member's (comms_deleted);
  * - a `loom` conversation with no thread, live or deleted: no one's (as Activity has it);
- * - a spawned job with no thread (the runtime opens one for every spawn; this is one that failed): household owners',
- *   since loom can't tell whose it is;
- * - any other: undefined, its agent's owners' as always. A store that can't be read makes every one no one's.
+ * - a spawned job with no thread: no one's while the runtime may still open one (SPAWN_GRACE_MS), then household
+ *   owners' (one it couldn't open), since loom can't tell whose it is;
+ * - any other: undefined, its agent's owners' as always.
+ * A thread store that can't be read makes every `loom` and `spawn` conversation no one's, and leaves the rest as they are.
  */
-function askOwners(h: Household): (cv: string, agent?: string) => AskOwner {
+function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: string) => AskOwner {
   let t: ReturnType<typeof threadMembers> | undefined;
-  let failed = false;
-  try { t = threadMembers(h.home); } catch { failed = true; }
+  try { t = threadMembers(h.home); } catch { t = undefined; }
   const seen = new Map<string, AskOwner>();
   return (cv, agent) => {
-    if (failed) return 'no one';
     const k = `${agent ?? ''}\0${cv}`;
     if (seen.has(k)) return seen.get(k);
-    let o: AskOwner = t!.live.get(cv);
+    let o: AskOwner = t?.live.get(cv) ?? t?.deleted.get(cv);
     if (!o) {
+      // Its own agent's store first, then any other's: an ask may name another agent than the one it's of.
       let c: ReturnType<typeof conversationOf> | undefined;
-      try { for (const a of agent ? [agent] : h.agents) { if (h.agents.includes(a) && (c = conversationOf(agentDir(h, a), cv))) break; } } catch { c = undefined; o = 'no one'; }
-      if (c?.venue === COMMS_VENUE) o = t!.deleted.get(c.place) ?? 'no one';
-      else if (c?.venue === 'spawn') o = 'household';
+      try { for (const a of [...(agent && h.agents.includes(agent) ? [agent] : []), ...h.agents.filter((x) => x !== agent)]) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
+      if (c?.venue === COMMS_VENUE) o = t?.deleted.get(c.place) ?? 'no one';
+      else if (c?.venue === 'spawn') o = !t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household';
     }
     seen.set(k, o);
     return o;
@@ -921,16 +930,32 @@ export function asksFor(pieces: PieceInfo[], h: Household | undefined, who: Look
   return pieces.map((p) => (!named(p) ? p : { ...p, manifest: { ...p.manifest, asks: keep(p.manifest.asks)!, notices: keep(p.manifest.notices), answered: keep(p.manifest.answered) } }));
 }
 
+/** The approval kinds only a household owner answers (the approvals piece's OWNER_ANSWERED): its lead cards' kinds. */
+const HOUSEHOLD_KINDS: ReadonlySet<string> = new Set([...OWNER_KINDS, 'host']);
+
 /**
- * Whether a piece action names only an ask `who` may not see (t-2084): its card's own button (the action and every
- * field it posts) is on a hidden ask and on none they see. Hiding a card isn't the protection: its Allow is refused too.
+ * Whether a piece action answers an ask `who` may not see (t-2084). Hiding a card isn't the protection, so:
+ * - any piece: an action whose button (the action and every field it posts) is on a card they can't see, and on none
+ *   they can, is refused;
+ * - the approvals piece's Allow, Deny and Allow every time fail closed: allowed when the approval is on a card they see,
+ *   else only when the piece's own record says where it was asked (`conversation`, null for nowhere) and that's theirs
+ *   to answer. The piece lists only so many cards at a time, so an id on none of them is read from it; one it can't
+ *   read, or a piece too old to say where it was asked, is refused. One it has no record of goes on (it refuses it).
  */
-function actOnHidden(pieces: PieceInfo[], piece: string, action: string, fields: Record<string, string>, h: Household, who: Looker): boolean {
+async function actOnHidden(pieces: PieceInfo[], piece: string, action: string, fields: Record<string, string>, h: Household, who: Looker, env: NodeJS.ProcessEnv): Promise<boolean> {
   const names = (a: Ask) => (a.actions ?? []).some((b) => b.action === action && Object.entries(b.fields ?? {}).every(([k, v]) => fields[k] === v));
   const all = pieces.find((p) => p.piece === piece)?.manifest.asks ?? [];
-  if (!all.some(names)) return false;
   const seen = asksFor(pieces.filter((p) => p.piece === piece), h, who)[0]?.manifest.asks ?? [];
-  return !seen.some(names);
+  if (seen.some(names)) return false;
+  if (all.some(names)) return true;
+  const id = fields.id ?? '';
+  if (pieceWithRole(env, 'approvals')?.name !== piece || !['allow', 'deny', 'every-time'].includes(action) || !/^a-[0-9a-f]{4,32}$/.test(id)) return false;
+  let st: ApprovalState | null | undefined;
+  try { st = (await pieceCheckers(env).approvals([id]))?.[id]; } catch { st = undefined; }
+  if (st === null) return false;
+  if (!st || !('conversation' in st)) return true;
+  if (!st.conversation) return false;
+  return !seesConversation(h, who)(st.conversation, st.agent) && !(who.householdOwner && !!st.kind && HOUSEHOLD_KINDS.has(st.kind));
 }
 
 /**
@@ -2216,7 +2241,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
       // A card asked from another member's Comms thread is refused as one that isn't there (t-2084): hiding it isn't the protection.
-      result = hh && actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh)) ? { ok: false, message: 'That ask isn\'t open any more.' }
+      result = hh && await actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh), opts.env) ? { ok: false, message: 'That ask isn\'t open any more.' }
         : await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       // The approvals piece answered from an agent's pages (should it ever have a tab there): its grant applied the same.
       if (result.ok && hh && action === 'allow' && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
@@ -2329,7 +2354,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const before = hh && pieceVerdict && fields.id
         ? askBefore(hh, pieces, opts, (it) => [...(it.source.id === src ? it.actions ?? [] : []), ...(it.approval?.source.id === src ? it.approval.actions : [])].some((b) => b.action === action && b.fields?.id === fields.id)) : undefined;
       // A card asked from another member's Comms thread is refused as one that isn't there (t-2084): hiding it isn't the protection.
-      result = hh && actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh)) ? { ok: false, message: 'That ask isn\'t open any more.' }
+      result = hh && await actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh), opts.env) ? { ok: false, message: 'That ask isn\'t open any more.' }
         : await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       // The piece's answer is what counts (its own record): its thread keeps it after, whatever comes of the grant below.
       const answered = result.ok && !!pieceVerdict;

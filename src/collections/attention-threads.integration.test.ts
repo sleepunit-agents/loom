@@ -44,9 +44,15 @@ process.stdin.on('end', () => {
   const cv = (x) => (x.conversation ? { conversation: x.conversation } : {});
   if (a[0] === 'ui' && a.length === 1) {
     return console.log(JSON.stringify({ v: 2, owners: 2, tab: { label: 'Approvals', kind: 'setting' },
-      asks: mine.filter(([, x]) => !x.state).map(([id, x]) => ({ text: x.text, kind: 'permission', agent: x.agent, page: '', at: x.at, ...(x.lead ? { lead: true } : {}), ...cv(x),
+      asks: mine.filter(([, x]) => !x.state && !x.unlisted).map(([id, x]) => ({ text: x.text, kind: 'permission', agent: x.agent, page: '', at: x.at, ...(x.lead ? { lead: true } : {}), ...cv(x),
         actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })),
       answered: mine.filter(([, x]) => x.state).map(([, x]) => ({ text: x.text, outcome: x.state, at: x.at, agent: x.agent, ...cv(x) })) }));
+  }
+  if (a[0] === 'api') {
+    const req = JSON.parse(input);
+    if (req.path !== 'state' || process.env.APPROVALS_NO_STATE) return console.log(JSON.stringify({ status: 404, body: { error: 'no' } }));
+    return console.log(JSON.stringify({ status: 200, body: { approvals: Object.fromEntries(req.body.ids.filter((id) => s[id]).map((id) => [id, {
+      state: s[id].state ? 'allowed' : 'pending', agent: s[id].agent, kind: s[id].kind ?? 'merge', ...(s[id].old ? {} : { conversation: s[id].conversation ?? null }) }])) } }));
   }
   if (a[0] === 'ui' && a[1] === 'act') {
     const req = JSON.parse(input);
@@ -313,16 +319,42 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     for (const who of ['sam', 'jonathan']) expect(texts((await get(who, '/inbox')).items), who).not.toContain('Stray: OK to do the stray thing?');
   }, 30_000);
 
-  it('a spawned job\'s ask follows its thread\'s member; one with no thread is the household owners\'', async () => {
+  it('a spawned job\'s ask follows its thread\'s member, deleted or not; one with no thread is no one\'s, then the household owners\'', async () => {
     const parent = thread('sam');
     const job = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-1', label: 'job', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime').conversation;
     needs(job, 'Job: OK to restart the build?');
-    // Before the runtime opened its thread: household owners' only.
-    expect(texts((await get('sam', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
-    expect(texts((await get('jonathan', '/inbox')).items)).toContain('Job: OK to restart the build?');
-    adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' });
+    // Before the runtime opened its thread (it may yet): no one's.
+    for (const who of ['sam', 'jonathan']) expect(texts((await get(who, '/inbox')).items), who).not.toContain('Job: OK to restart the build?');
+    const r = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' }) as { id: string };
     expect(texts((await get('sam', '/inbox')).items)).toContain('Job: OK to restart the build?');
     expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
+    // Its thread deleted: still Sam's, never the household owner's.
+    deleteThread(h, threadFor(h, member('sam'), r.id));
+    expect(texts((await get('sam', '/inbox')).items)).toContain('Job: OK to restart the build?');
+    expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
+    // A job whose thread never opened (long past the runtime's step): the household owners'.
+    const old = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-2', label: 'job', at: new Date(Date.now() - 3_600_000).toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime').conversation;
+    needs(old, 'Old job: OK to rerun it?');
+    expect(texts((await get('sam', '/inbox')).items)).not.toContain('Old job: OK to rerun it?');
+    expect(texts((await get('jonathan', '/inbox')).items)).toContain('Old job: OK to rerun it?');
+  }, 30_000);
+
+  it('an approval on no card (the piece lists only so many) is answered by its own record: refused unless it\'s theirs, or the piece can\'t say', async () => {
+    const t = thread('sam');
+    cards({
+      'a-00000011': { agent: 'art', text: 'Sam\'s unlisted one?', at: '2026-11-10T10:00:00Z', conversation: t.conversation, unlisted: true },
+      'a-00000012': { agent: 'art', text: 'A bridge\'s unlisted one?', at: '2026-11-10T10:00:00Z', unlisted: true },
+      'a-00000013': { agent: 'art', text: 'An old piece\'s unlisted one?', at: '2026-11-10T10:00:00Z', unlisted: true, old: true },
+      'a-00000014': { agent: 'art', text: 'A grant from Sam\'s thread?', at: '2026-11-10T10:00:00Z', conversation: t.conversation, unlisted: true, kind: 'grant' },
+    });
+    const state = (id: string) => JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))[id].state;
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000011' })).message).toBe('That ask isn\'t open any more.');
+    expect(state('a-00000011')).toBeUndefined();
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000013' })).message).toBe('That ask isn\'t open any more.');
+    expect(state('a-00000013')).toBeUndefined();
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000012' })).ok).toBe(true);
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000014' })).ok).toBe(true);
+    expect((await act('sam', '/act/approvals', { _action: 'deny', id: 'a-00000011' })).ok).toBe(true);
   }, 30_000);
 
   it('a thread whose member no longer owns its agent: its ask goes to household owners, never lost', async () => {

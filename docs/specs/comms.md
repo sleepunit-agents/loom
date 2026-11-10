@@ -69,9 +69,12 @@ _Avoid_: log, trace, transcript
    - a card only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset, a host step,
      a write-off) also goes to household owners, as the ones who answer it;
    - a thread whose member no longer owns its agent (left the household, or lost the agent): household owners';
-   - a spawned job the runtime couldn't open a thread for: household owners' (loom can't tell whose it is).
-   A deleted thread's asks stay its member's (`comms_deleted`); a `loom` conversation with no thread, live or deleted,
-   or a thread store that can't be read, is no one's.
+   - a spawned job the runtime couldn't open a thread for: household owners' once 10 minutes have passed (loom can't
+     tell whose it is); until then, no one's, since its thread may still open.
+   A deleted thread's asks stay its member's (`comms_deleted`, by its place and its conversation); a `loom`
+   conversation with no thread, live or deleted, is no one's, as is a `loom` or `spawn` one while the thread store
+   can't be read. The approvals piece's Allow, Deny and Allow every time fail closed: on a card the caller sees, or
+   else only when the piece's own record (`state`) names where it was asked and that's theirs to answer.
 3. **The server enforces both, on every route in "Routes" below.** Each request resolves the signed-in member's
    `agents` from `members` (owners.md), never from what the caller sends. Then:
    - a thread route answers `403` unless the member owns the thread's agent **and** is the thread's `member`;
