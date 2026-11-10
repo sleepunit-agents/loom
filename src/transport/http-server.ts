@@ -1,4 +1,3 @@
-import { FileLockBusy } from '../file-lock.js';
 import { withNonblockingSqlite, isSqliteBusy, retrySqlite } from '../sqlite.js';
 /**
  * loom HTTP MCP transport (c-loom-transport) — the mesh-reachable surface.
@@ -1210,10 +1209,6 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
       const webRes = await transport.handleRequest(nodeRequestToWebRequest(req), { parsedBody: parsed });
       await sendWebResponse(res, webRes);
     }).catch((e: unknown) => {
-      if (e instanceof FileLockBusy) {
-        res.setHeader('retry-after', '1');
-        return sendError(res, 503, 'unavailable: state busy; try again');
-      }
       if (isSqliteBusy(e)) {
         res.setHeader('retry-after', '1');
         return sendError(res, 503, 'unavailable: database busy; try again');

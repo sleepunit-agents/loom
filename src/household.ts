@@ -16,8 +16,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import BetterSqlite3, { sqliteMustYield } from './sqlite.js';
-import { FileLockBusy } from './file-lock.js';
+import BetterSqlite3 from './sqlite.js';
 import { basename, dirname, join, resolve } from 'node:path';
 
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -378,7 +377,6 @@ function withLock<T>(home: string, f: () => T): T {
       if (Number.isSafeInteger(holder) && holder > 0 && !alive(holder)) {
         if (clearDead(lock, holder, mine)) continue;
       }
-      if (sqliteMustYield()) throw new FileLockBusy();
       if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process (pid ${Number.isNaN(holder) ? '?' : holder}); try again`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
