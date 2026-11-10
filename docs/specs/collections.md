@@ -3,22 +3,22 @@
 *2026-11-09. Status: **draft, for the owner's review** (t-2020, epic t-2019). Nothing here is built. A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
-loom has today with the task that moves it, or the reason it stays where it is.*
+loom has today with the task that moves it, or the reason it stays where it is. One cold review round is folded in
+(changes are pulled, not pushed; owner and grants gates kept; hidden fields can't be queried on).*
 
 ## Why
 
-> "all data should go out this way that can." — the owner, 2026-11-09 (conversation cv-3bf9030e8e0b)
+> "all data should go out this way that can." — the owner, 2026-11-09
 
 Every window asks for its own page and recounts what it shows. One changed ask made Home, Inbox and Comms each
-fetch a fresh page (3.8 KB, 5.4 KB and 67 B in the measured run). The badge, the Needs-you band and the Inbox list
-each count the same asks their own way. The live stream says only `change`, so every open app asks again for
-everything it shows (src/ui/live.ts). Pieces are polled every 15 s while an app is open, in case their manifest
-moved.
+fetch a fresh page (3.8 KB, 5.4 KB and 67 B in the measured run). "Needs you" is counted eight different ways
+(below). The live stream says only `change`, so every open app asks again for everything it shows
+(src/ui/live.ts), and every piece's manifest is re-run every 15 s per open scope to notice whether it moved.
 
-The measured comparison (note:research/2026-11-09-desktop-data-decision) settled the client side: **TanStack DB
-collections**, pinned to the tested versions, behind a loom adapter. That isn't reopened here. What it didn't settle,
-and this spec does, is the **contract**: how records are named, who may see them, how they're asked for, how
-changes reach a window, and how pieces with their own stores take part without core reading those stores.
+The measured comparison (t-2018) settled the client side: **TanStack DB collections**, pinned to the tested
+versions, behind a loom adapter. That isn't reopened here. What it didn't settle, and this spec does, is the
+**contract**: how records are named, who may see them, how they're asked for, how changes reach a window, and how
+pieces with their own stores take part without core reading those stores.
 
 ## Decided (by the owner, before this spec)
 
@@ -45,21 +45,21 @@ documents in a piece's store). The two must not be confused, so this spec always
   a contract; its storage is the provider's business.
 - **Provider**: what serves a shared collection. Core is the provider for its own records (`loom`); a piece is the
   provider for its role's records.
-- **Record type**: one kind of record a provider publishes (`task`, `ask`, `thread`, `message`), with a versioned
-  schema.
+- **Record type**: one kind of record a provider publishes (`task`, `approval`, `thread`), with a versioned schema.
 - **Record key**: a record's stable name, `<provider>/<type>/<id>` (below).
-- **Viewer**: who is looking: a signed-in member's session, an agent's token, or a house's token. Viewer authority
-  decides which records exist for them.
+- **Domain**: what a revision counts over: one record type, or all of a provider's types (`<provider>/*`).
+- **Revision**: `(epoch, rev)`. `rev` is a provider's monotonic counter for one domain; `epoch` is minted by the
+  provider at install, replacement and restore, so a new implementation or a rolled-back store never collides with
+  an old counter.
+- **Viewer**: who is looking: a member's session (a household owner, or an owner of some agents), an agent's
+  token, or a house's token. Viewer authority decides which records and fields exist for them.
 - **Consumer**: the code asking on the viewer's behalf: a core window, a piece's widget, a piece's own page. Its
   capability (granted or not) decides which record types it may ask for at all.
 - **Query**: a bounded request for records of one type: filter, order, page, fields.
 - **Coverage**: what a query's answer says about completeness: complete, or partial with a total that is exact, a
   lower bound, or unknown.
-- **Revision**: a provider's monotonic counter for one **revision domain** (usually one record type). Every record
-  carries the revision it was last changed at.
-- **Change**: an upsert or a delete of one record at one revision, delivered on the window's stream.
-- **Tombstone**: a delete, kept for a while so a window that was away learns of it.
-- **Subscription**: a live query: its snapshot, then its changes.
+- **Change**: an upsert or a delete of one record at one revision.
+- **Subscription**: a live query: its snapshot, then its changes, on one stream.
 
 ## Identities
 
@@ -70,33 +70,38 @@ documents in a piece's store). The two must not be confused, so this spec always
 loom/thread/cv-80d1a580c2b3
 tasks/task/t-2020
 approvals/approval/a-7693c00e
-runtime/job/<job id>
 ```
 
 - **`<provider>` is the role, not the package**, for a piece with a role contract (`tasks`, not `taskstore`;
   `runtime`, not `loom-box`). Swapping taskstore for another tasks implementation keeps every key. A piece with no
-  role uses its installed name. Core is `loom`. Names follow the existing piece-name rules.
+  role uses its installed name. Core is `loom`, which is reserved. **Install refuses** a piece whose provider name
+  is already taken, by another piece's role or installed name, and a second installed piece with the same role.
 - **`<type>`** is `[a-z][a-z0-9-]{0,31}`, declared by the provider.
-- **`<id>` is the provider's own stable id**, opaque to core and the client: `t-2020`, `a-7693c00e`,
-  `cv-…`. It must not change when the record changes, must not be reused after a delete within the tombstone
-  window, and must not contain `/`. A provider whose source has no stable id (a computed row) must make one that is
-  stable for the same underlying thing (a hash of its natural key), never a list position.
+- **`<id>` is the provider's own stable id**, opaque to core and the client: `t-2020`, `a-7693c00e`, `cv-…`. It
+  never changes while the record lives, and it matches `[A-Za-z0-9._:-]{1,128}` (no `/`). A provider whose source has
+  no stable id (a computed row) makes one that is stable for the same underlying thing (a hash of its natural key),
+  never a list position. **Text is not a natural key**: an ask's wording is not its identity, because rewording it
+  would make a new item and a hash of short text can be guessed back. Asks get provider ids (Inventory, "Before any
+  domain moves"). An id may come back after a delete: the new record has a higher revision, which is what keeps a
+  late copy of the old one from winning.
 - **One record, one key.** The same ask shown on Home, in Inbox, on an agent card and in a thread is one record,
-  `approvals/approval/a-…`, read once and shared by every window. Views that need a different shape use a
-  projection or a derived selector, not a copy under another key.
+  read once and shared by every window. Views that need a different shape use a projection or a derived selector,
+  not a copy under another key.
 - **Cross-record references** are record keys in fields (`"thread": "loom/thread/cv-…"`). The client resolves them
-  only if it subscribes to that type; a reference to a record the viewer can't see stays an unresolved key and is
-  never an error.
+  only if it subscribes to that type. A reference to a record the viewer can't see stays an unresolved key and is
+  never an error. That a key exists can show that a hidden record exists. That's accepted; a provider that must hide
+  even that leaves the field out for viewers who can't see the target.
 
 ### Versions
 
 - Each record type has a **schema version** `major.minor`. A minor version only adds optional fields. A major
-  version is a new type for compatibility purposes: a provider may serve `task@1` and `task@2` side by side while
-  consumers move, and drops the old major only when no installed consumer declares it.
+  version is a separate collection: a provider may serve `task@1` and `task@2` side by side while consumers move,
+  and drops the old major only when no installed consumer declares it. **The client keys collections by
+  `type@major`**, and one consumer reads one major of a type.
 - A consumer declares the range it reads (`tasks/task@^1`). A query for a major the provider doesn't serve answers
   `unsupported-version`, never a reshaped record.
-- A field a consumer doesn't know is ignored. A field missing from a record means **unknown, not empty, and never
-  deleted** (a projection that left it out, or a provider that doesn't fill it).
+- A field a consumer doesn't know is ignored. **A field missing from a record means unknown**: a projection left it
+  out, or the viewer may not see it. A provider clears a field with an explicit `null`.
 
 ## Declaring a provider: the `collections` offer
 
@@ -106,48 +111,59 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
 ```jsonc
 "loom": {
   "role": "tasks",
+  "owners": 2,                                                     // agent owners may see its records (owners.md)
   "collections": {
-    "query":  ["loom-tasks", "collections", "query", "--json"],   // a batch of queries on stdin
+    "query":   ["loom-tasks", "collections", "query", "--json"],   // one viewer, a batch of queries, on stdin
+    "changes": ["loom-tasks", "collections", "changes", "--json"], // domains and their last revisions, on stdin
+    "search":  ["loom-tasks", "collections", "search", "--json"],  // optional
     "types": {
       "task": {
         "version": "1.2",
         "schema": { /* JSON schema of one record, at most 16 KB */ },
         "fields": {
-          "title":    { "class": "member" },
-          "status":   { "class": "member", "filter": ["eq", "in"], "order": true },
-          "priority": { "class": "member", "filter": ["eq", "in", "lte"], "order": true },
-          "updated":  { "class": "member", "order": true },
+          "title":       { "class": "member" },
+          "status":      { "class": "member", "filter": ["eq", "in"], "order": true },
+          "priority":    { "class": "member", "filter": ["eq", "in", "lte"], "order": true },
+          "updated":     { "class": "member", "order": true },
+          "assignee":    { "class": "member", "filter": ["eq", "has"] },
           "description": { "class": "member", "heavy": true }
         },
         "default_fields": ["title", "status", "priority", "updated"],
         "max_page": 200,
         "aggregates": { "count": { "by": ["status"] } },
-        "revisions": "type"              // or "provider": one counter for all its types
+        "domain": "type",               // or "provider": one counter for all its types, named tasks/*
+        "audience": "rows",             // or "ask" (below)
+        "houses": false                 // house tokens never see this type (below)
       }
     }
   }
 }
 ```
 
-- **`query`** is an argv like every other offer's: run through the manifest's runner, `argv[0]` one of the
-  package's `bin` names. It takes a **batch** on stdin: up to 32 queries, each with its viewer context, so that one
-  window opening ten views costs one subprocess per provider, not ten (offers run as subprocesses with a 3 s budget
-  and six at once: per-field or per-row calls would be unaffordable).
-- **`fields`** lists every field the type has, with:
-  - **`class`**: who may ever be sent it. `household` (any signed-in viewer of the household), `member` (viewers the
-    record's audience allows), `owner` (household owners only). **There is no class for secret values**: a token,
-    a key or a password is not a field of any record. A provider that has one keeps it behind its own dedicated
-    exchange (exceptions, below).
-  - **`filter`**: the operators allowed on it (`eq`, `in`, `prefix`, `lt`/`lte`/`gt`/`gte`, `has`). A field without
-    `filter` can't be filtered on.
+- **`query`**: an argv run through the manifest's runner. It gets **one viewer** and up to 32 queries for that
+  viewer on stdin, so a window opening ten views costs one subprocess per provider, not ten. A batch never mixes
+  viewers.
+- **`changes`**: an argv that gets `{domain: {epoch, rev}}` and answers what changed in each domain after that
+  revision, in commit order (the next section).
+- **`search`**: optional. It gets one viewer and a query text, and answers references and snippets (below).
+- **Their limits are their own** (`OFFER_LIMITS`): 15 s, 1 MB an answer, and a pool apart from the page's pieces
+  (four running, sixteen waiting per provider), so live data can't starve page loads or the other way round.
+- **`fields`** lists every field the type has:
+  - **`class`**: who may ever be sent it. `household` (household members, and agents and houses only where the
+    record's audience admits them), `member` (viewers the record's audience admits), `owner` (household owners
+    only). **There is no class for secret values**: a token, a key or a password is not a field of any record. A
+    provider that has one keeps it behind its own dedicated exchange (exceptions, below).
+  - **`filter`**: the operators allowed on it: `eq`, `in`, `prefix`, `lt`, `lte`, `gt`, `gte`, and `has` (the field
+    is present and not null). A field without `filter` can't be filtered on.
   - **`order`**: whether it can sort a query. Order always ends with the record id, so pages are stable.
   - **`heavy`**: a large field (a body, a transcript, a description) left out of lists unless asked for by name, and
     only for a page of at most `max_page / 10` records.
 - **`aggregates`**: the counts the provider computes authoritatively (below). A consumer never derives a total by
   counting rows it happens to hold.
+- **`owners: 2`** is the gate [owners.md](owners.md) already has: **a provider without it answers only household
+  owners**, and core refuses any other viewer's query before running it.
 - Validation at install refuses: unknown keys, a type or field name out of grammar, a schema over 16 KB, a
-  `max_page` over 500, an aggregate over an undeclared field, a role's type that another installed piece also
-  declares under the same provider name.
+  `max_page` over 500, an aggregate or filter over an undeclared field, and a provider name or role already taken.
 
 Core declares its own types (thread, message, memory, knowledge page, person, project, agent, …) in code, through
 the same structures, and serves them in-process. **Core's types obey the same contract and the same tests as a
@@ -155,14 +171,16 @@ piece's.** Core gets no shortcut that a piece can't have.
 
 ## Asking: queries
 
-A query, as a window sends it to core (`POST /collections/query`, a batch of up to 32). It's a UI route like every
-other the browser uses: same-origin and CSRF-checked like `/act`, because browsers can never reach `/api/*`
-(http-server.ts refuses any `/api` request with an `Origin` header). Agents and houses reach the same queries at
-`POST /api/loom/collections/query` with their bearer token, as a viewer of their own kind:
+A window sends a batch of up to 32 queries to `POST /collections/query`. That's a UI route like `/act`: it needs the
+same-origin check and the session's `_csrf`, because browsers can never reach `/api/*` (http-server.ts refuses any
+`/api` request with an `Origin` header). A bearer token on a UI route needs no CSRF token, as today. Agents and
+houses send the same queries to `POST /api/loom/collections/query`, as viewers of their own kind (Who may see what,
+below), and may not subscribe there: there is no stream on `/api`.
 
 ```jsonc
 {
-  "id": "q1",                                   // the client's, echoed back
+  "id": "q1",                                   // the client's: it names the subscription too
+  "stream": "e-…",                              // the stream its changes go to (below)
   "type": "tasks/task@^1",
   "where": [["status", "in", ["open", "in_progress"]], ["priority", "lte", 2]],
   "order": [["priority", "asc"], ["updated", "desc"]],
@@ -174,29 +192,34 @@ other the browser uses: same-origin and CSRF-checked like `/act`, because browse
 }
 ```
 
-- **Bounded by construction**: only declared filter operators on declared fields, at most 8 `where` clauses, an
-  `in` list of at most 100, `limit` at most the type's `max_page`. No free-form expressions, no joins, no
-  provider-side search language. (Search is its own type whose query is the search text, below.)
-- **Pages are keyset pages**: `after` is an opaque cursor the provider made from the last row's order values and id.
-  Offset paging is not offered.
-- **Fields**: the answer carries the record key, its revision, and only the fields named (or the type's
-  `default_fields`), further cut down to what the viewer's class allows. A field the viewer may not see is
-  **absent**, not null. The answer says which named fields were withheld, so a window shows "hidden", not "empty".
-- **Joins are client-side**: a field holding another record's key is resolved by a second query on that type (batched
-  with the first). This keeps each provider ignorant of every other.
+- **Bounded by construction**: only declared operators on declared fields, at most 8 `where` clauses, an `in` list
+  of at most 100, `limit` at most the type's `max_page`. No free-form expressions, no joins, no provider-side search
+  language.
+- **Never on a hidden field.** Core refuses a query as `bad-query` when a `where`, `order` or `aggregates.by` names
+  a field the viewer's class can't see, before the provider runs, and the provider refuses the same for `member`
+  fields it hides by record. Otherwise a viewer could learn a hidden value from which rows come back, character by
+  character with `prefix`, or from the order.
+- **Pages are keyset pages**: `after` is an opaque cursor. Core seals every cursor (a MAC over the provider's cursor,
+  the viewer, the scope and the query), so a cursor can't be read, edited or reused by another viewer or query.
+- **Fields**: an answer carries the record key, its revision, its audience, and only the fields named (or the
+  type's `default_fields`), further cut down to what the viewer's class allows. A field the viewer may not see is
+  **absent**, not null, and the answer lists which named fields were withheld, so a window shows "hidden", not
+  "empty".
+- **Joins are client-side**: a field holding another record's key is resolved by a second query on that type
+  (batched with the first). This keeps each provider ignorant of every other.
 
 The answer, per query:
 
 ```jsonc
 {
   "id": "q1",
-  "rows": [ { "key": "tasks/task/t-2020", "rev": 8812, "title": "…", "status": "in_progress", … } ],
-  "next": "opaque-cursor" ,                     // or null at the end
+  "rows": [ { "key": "tasks/task/t-2020", "rev": 8812, "audience": { … }, "title": "…", "status": "in_progress" } ],
+  "next": "sealed-cursor",                      // or null at the end
   "coverage": { "complete": false, "total": { "n": 214, "exact": true } },
   "aggregates": { "count": { "n": 214, "exact": true, "by": { "open": 190, "in_progress": 24 } } },
   "withheld": ["assignee"],
-  "asOf": { "domain": "tasks/task", "rev": 8812 },
-  "subscription": "s-…"                         // when subscribe was asked
+  "asOf": { "domain": "tasks/task", "epoch": "e7f2", "rev": 8812 },
+  "scope": 41                                   // the viewer's scope epoch (below)
 }
 ```
 
@@ -204,190 +227,257 @@ The answer, per query:
   (unknown). The UI shows "20 of 214", "20 of 1000+", or "20", accordingly. A badge reads an **aggregate**, never
   `rows.length`.
 - **Aggregates are computed under the same viewer authority as the rows**: a count never includes a record the
-  viewer couldn't fetch. Bench finding: a count and its rows must be published together (below).
-- **`asOf`** is the revision the snapshot reflects. It is the handover point to the change stream.
-- **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `denied` (the consumer may not
-  read this type), `unavailable` (the provider timed out or failed). One provider's failure never fails another's
-  query in the same batch. A window shows that provider's data as unavailable, keeping what it already held, marked
-  stale.
+  viewer couldn't fetch.
+- **`asOf`** is the revision the snapshot reflects: the handover point to its changes.
+- **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `denied` (the viewer or the
+  consumer may not read this type), `unavailable` (the provider timed out or failed). One provider's failure never
+  fails another's query in the same batch. A window shows that provider's data as unavailable, keeping what it
+  already held, marked stale.
 
 ## Who may see what: three separate questions
 
 The bench showed that a cache library's isolation is not loom's permission model. This contract keeps three
-questions apart, and each has its own enforcement point:
+questions apart, and gives each its own enforcement point:
 
-1. **Viewer authority: may this viewer see this record, and these fields?** Decided **by the provider**, for every
-   query and every change, from the viewer context core hands it: the member (and whether they're a household
-   owner), or the agent and house, plus the scope core already computes for pages (`LOOM_SCOPE`,
-   `LOOM_OWNER_SCOPE`, [owners.md](owners.md)). Core never filters a provider's rows on the provider's behalf, and
-   never relaxes a provider's no. Each record carries an **audience** (below) so core can route its changes without
-   asking the provider again for every subscriber.
-2. **Consumer capability: may this code ask for this type at all?** Decided **by core**, before the provider runs.
-   Core's own windows may read any type. A piece's widget or page may read its own provider's types, plus the types
-   the grants authority allows it (path `collections/<provider>/<type>`, through the existing `grants` offer:
-   t-1746 is the single grants list, and this adds paths to it, not a second authority). Being installed is not a
-   grant. A namespace is not a permission.
+1. **Viewer authority: may this viewer see this record, and these fields?**
+   - **The provider decides first**, for every query and every change, from the viewer core hands it: the member
+     (and whether they're a household owner, and which agents they own), or the agent, house and service of a
+     token, plus the scope core already computes for pages (`LOOM_SCOPE`, `LOOM_OWNER_SCOPE`, [owners.md](owners.md)).
+   - **Core checks again, on everything that passes it**: it drops every row in an answer and every change whose
+     `audience` doesn't admit the viewer, and every field above the viewer's class. Today core's own owner filter
+     (`forOwner`) is the real boundary, and it stays one: a provider that ignores who's asking leaks nothing.
+   - **A provider without `owners: 2` answers household owners only**, as above.
+2. **Consumer capability: may this code ask for this type at all?** Decided by core, before the provider runs.
+   - Core's own windows may read any type.
+   - A piece's widget or page may read its own provider's types, plus the types the grants authority allows it
+     (path `collections/<provider>/<type>`, through the existing `grants` offer: t-1746 is the single grants list,
+     and this adds paths to it, not a second authority). Being installed is not a grant. A namespace is not a
+     permission.
+   - **An agent or house token asks the grants authority too**, with `{agent, house, service}` and the same path,
+     and fails closed exactly like `/api/<piece>/…` today. A house's own token never reads a type that doesn't
+     declare `houses: true`, whatever the grants say: a service house that strangers can steer must not see the
+     household's asks because its agent may.
+   - Piece, peer, review and runtime tokens are refused on the query route: they're programs with their own seams.
 3. **Code isolation: can this code reach what it wasn't granted?** Same-origin JavaScript shares the page's memory,
    cookies and cache, so **a widget running in the page has every capability the page has**, whatever the
    collection API says. Today's widgets are first-party and run in the page; that's acceptable only because they're
-   reviewed code. A piece widget that isn't first-party must run in a sandboxed frame (opaque origin, no
-   cookies), talking to the page over a message port that serves only its granted types. The collection runtime
-   (t-2023) must not be reachable from a sandboxed frame except through that port. Until that frame exists, only
-   first-party pieces may ship widgets (t-2026).
+   reviewed code. A piece widget that isn't first-party must run in a sandboxed frame (opaque origin, no cookies),
+   talking to the page over a message port that serves only its granted types. The collection runtime (t-2023) must
+   not be reachable from a sandboxed frame except through that port. Until that frame exists, only first-party
+   pieces may ship widgets (t-2026).
 
 ### Audience
 
-Every record carries an `audience`, set by its provider:
+Every record carries an `audience`, set by its provider. Its terms are a **union**: a viewer any term admits is in.
 
 ```jsonc
-"audience": { "household": true }                   // every signed-in viewer
-"audience": { "owners": true }                      // household owners only
-"audience": { "agents": ["art"], "members": ["jonathan-barket"] }   // these agents' scopes, these members
+{ "household": true }                    // every household member
+{ "owners": true }                       // household owners
+{ "ownersOf": ["art"] }                  // members who own agent art (and household owners)
+{ "members": ["jonathan-barket"] }       // these members only, whatever agents they own
+{ "agents": ["art"] }                    // agent art's own tokens; its houses only where the type says houses: true
 ```
 
-- It uses the scopes core already uses for the live stream: a member who sees agent `art` sees records whose
-  audience names `art` ([owners.md](owners.md); src/ui/live.ts, `Sees`).
-- It is a **routing hint for changes, checked against the provider's own answer**: core uses it to decide which
-  subscriptions a change may reach. When a record's audience *narrows*, the change carries both old and new
-  audience, and core sends a delete to every subscriber who's dropped from it.
-- A provider whose visibility can't be expressed as an audience (it depends on per-field rules, say) marks the type
-  `"audience": "ask"`. Core then re-runs the subscription's query (batched, debounced) for each change rather than
-  routing by audience. Slower, never wrong.
+- Household owners are admitted by every term but `members`. A Comms thread uses `members` alone, so another owner
+  of the same agent never sees a member's private thread (comms.md).
+- **Core keeps each key's last audience** in its change log. When a record's audience narrows, core works out who
+  was dropped and sends them a delete; it doesn't rely on the provider remembering the old audience. A delete is
+  routed by the last audience core holds.
+- A provider whose visibility can't be expressed as an audience (per-field rules, say) declares
+  `"audience": "ask"` for the type. Core then re-runs each subscription's query when the domain changes (batched,
+  at most once per 1.5 s, in the provider's own pool, and at most 16 subscriptions per domain per round, the rest
+  reset) rather than routing by audience. Slower, never wrong.
 
-### Revocation and sign-out
+### The viewer is checked on every frame
 
-- A session that signs out, or is revoked, has its stream closed and its subscriptions dropped at once. The client
-  runtime clears every record that came through that session from memory (t-2023).
-- A grant revoked or a membership changed raises a **scope change** for the affected viewers: core closes their
-  subscriptions on the affected types with `{"reset": "scope"}`, and the client drops those collections and asks
-  again. A stream opened after a revocation is refused (the bench's revoke-before-open case is a regression test).
+- Core resolves a stream's viewer again before every frame it sends, the way the Comms thread stream already
+  re-checks its member (`may()`, comms-live.ts): the session still live, the member's agents unchanged, the token not
+  revoked. Every listener learns of a change to the household file, sessions or tokens from a tick file, as Comms
+  does, so a session revoked on one listener ends on all of them.
+- Each viewer has a **scope epoch** that changes when anything their authority rests on changes: membership, agents
+  owned, a session, a grant. Every answer and frame carries it. On a change, core closes the viewer's affected
+  subscriptions with `reset: scope`, and the client drops those collections and any answer still in flight from the
+  older epoch.
+- **Grants change in the grants authority**, which is a piece: it publishes them as a collection
+  (`runtime/grant`, t-1746), and core subscribes to it as the core viewer (below) to bump scope epochs and re-check
+  consumers.
+- Sign-out or revocation closes the session's streams and drops its subscriptions at once. The client runtime clears
+  every record that came through that session from memory (t-2023). A stream opened after a revocation is refused
+  (the bench's revoke-before-open case is a regression test).
 - Nothing in a shared collection persists to disk in the browser (no IndexedDB, no service-worker cache) until a
   separate decision says which types may, and how they're cleared.
 
+### Core as a viewer
+
+Core does work with no window open: the push watch, Needs auto-resolve, applying an owner's Allow. For that it reads
+as the **core viewer**, which sees what a household owner sees, and is never handed to a window. Whatever it
+produces for a person is filtered for that person again: a push goes to the ask's owners only (owners.md), through
+the same audience check.
+
 ## Changes: from provider to window
 
-### Provider to core
+### Core pulls; anyone may nudge
 
-A provider says what changed by posting to core, as pieces already do for manifests (`POST
-/api/loom/pieces/changed`, t-1945), with the piece's own token:
+A provider never pushes records to core. Core **pulls** them with the provider's `changes` verb:
 
 ```jsonc
-POST /api/loom/collections/changed
-{ "domain": "tasks/task", "changes": [
-    { "op": "upsert", "id": "t-2020", "rev": 8813, "audience": { … }, "fields": { "status": "closed", … } },
-    { "op": "delete", "id": "t-1999", "rev": 8814, "audience": { … } }
-  ],
-  "aggregates": { "count": { "by": { "open": 189, "in_progress": 23, "closed": … } } },   // optional, see below
-  "txn": "optional id: these changes become visible together" }
+// stdin
+{ "tasks/task": { "epoch": "e7f2", "rev": 8812 } }
+// stdout
+{ "tasks/task": { "epoch": "e7f2", "changes": [
+    { "op": "upsert", "id": "t-2020", "rev": 8813, "txn": "x91", "audience": { … }, "record": { /* whole, non-heavy */ } },
+    { "op": "delete", "id": "t-1999", "rev": 8814, "txn": "x91" }
+  ], "more": false } }
 ```
 
-- **Who may post**: a managed piece that declares `collections`, with its own credential, for its own provider's
-  domains only. Today only the runtime may call `pieces/changed`; this route is open to every provider, and refuses
-  a post for a domain the piece doesn't declare. Core posts its own changes in-process through the same function.
-- **Revisions are per domain and monotonic**: a provider never posts a lower revision for a domain than one it has
-  posted. Core rejects one that is (and logs it), so an old snapshot can never overwrite a newer change.
-- **Fields in an upsert may be partial**: the changed ones plus anything the provider likes. Fields left out keep
-  their values. The provider includes every field whose *class* is lower than any it changed, so core can trim per
-  viewer without asking again.
-- **A batch is atomic for viewers**: all changes in one post (or one `txn` across posts, closed by a final post)
-  are delivered to a subscriber in one frame, with the aggregates that go with them. The badge and the list move
-  together.
-- **A provider that can't say what changed** (its source has no change log) may post `{"domain": …, "invalidate":
-  true}` instead. Core then re-runs the domain's open subscriptions' queries (batched, at most once per 1.5 s, the
-  existing `GAP_MS`) and diffs the answers itself. That's the bridge for sources not yet migrated (t-2022), and the
-  inventory below lists which ones it carries. **A page-wide `change` with no data is retired** once every domain is
-  covered (t-2032).
+- **The provider answers from a commit-ordered log**: every change it has committed after that revision, in order,
+  up to 1000 a call (`more: true` asks core to call again). Two writers racing can't reorder it, because the log's
+  order is the commit order. A crash between a write and a nudge loses nothing, because the next pull still finds
+  it.
+- **A change carries the whole record** (every non-heavy field) and its audience, so core can trim it for each
+  subscriber and work out filter membership without asking again. Heavy fields are re-read only when a subscription
+  asked for them.
+- **A transaction is never split**: an answer ends on a transaction boundary, and core delivers one transaction to a
+  subscriber in one frame, with the aggregates that go with it.
+- **Too old**: a revision older than the provider's log answers `{"reset": true}` for that domain. A new epoch (a
+  replaced implementation, a restored store) answers with the new epoch and no changes. Either way core resets the
+  domain's subscriptions.
+- **No change log yet**: a provider that can't say what changed answers `{"invalidate": true}`. Core then re-runs
+  the domain's open subscriptions' queries (batched, at most once per 1.5 s, the existing `GAP_MS`), diffs the
+  answers, and numbers the differences with its own sequence for that domain. That's the bridge for sources not yet
+  migrated (t-2022), and the inventory lists which ones it carries.
+- **When core pulls**: whenever it's nudged, and every 15 s for every domain that has an open subscription (this
+  replaces today's 15 s manifest round). A nudge is `POST /api/loom/collections/nudge {"domain": …}` with any token
+  core accepts on `/api`, or `loom collections nudge <domain>` on loom's machine (it touches a tick file every
+  listener watches, as Comms does). **A nudge carries nothing but a domain name**: a forged one costs one pull. So a
+  piece's CLI run directly by an agent, which has no token of its own, can still say it wrote.
+- **Expiry**: a record with a natural end (an ask that expires, a reading's `observedAt` plus its lifetime) carries
+  `expires`. Core writes its delete into the log at that time itself, so aggregates and lists drop it together
+  whether or not the provider is ever run again.
+- Core posts its own changes into the same log, in-process.
+
+### Core's change log
+
+- loom runs several HTTP listeners (LAN, tailnet, localhost) over one `$LOOM_HOME`. So the log is **a table in
+  `household.db`**: domain, epoch, revision, transaction, key, audience, the trimmed record, time. Whichever listener
+  pulls writes it once; every listener reads it.
+- It keeps each domain's last 1000 changes or 10 minutes, whichever is more, and never more than 5000. A window
+  further behind gets `reset: gap`.
 
 ### Core to window
 
-The window keeps its one stream (`GET /events`, today's), and gets frames on it, one per subscription that a change
-reaches:
+A window opens its one stream (`GET /events`, today's), which first sends its id:
+
+```
+event: hello
+data: { "stream": "e-…", "scope": 41 }
+```
+
+Queries name that stream, and their changes come on it:
 
 ```jsonc
 event: rows
-data: { "subscription": "s-…", "from": 8812, "to": 8814,
-        "upserts": [ { "key": "tasks/task/t-2020", "rev": 8813, "status": "closed" } ],
+data: { "sub": "q1", "scope": 41, "domain": "tasks/task", "epoch": "e7f2", "from": 8812, "to": 8814,
+        "upserts": [ { "key": "tasks/task/t-2020", "rev": 8813, "status": "closed", "title": "…" } ],
         "deletes": [ { "key": "tasks/task/t-1999", "rev": 8814 } ],
         "aggregates": { "count": { "n": 213, "exact": true, "by": { … } } } }
 
 event: reset
-data: { "subscription": "s-…", "reason": "gap" | "scope" | "provider-gone" | "version" }
+data: { "sub": "q1", "reason": "gap" | "scope" | "provider-gone" | "epoch" | "version" }
+
+event: page
+data: { "piece": "clock" }
 ```
 
-- **Handover without a gap**: the snapshot's `asOf` is the revision the subscription starts from. Core buffers a
-  domain's changes from the moment a subscription is asked until its snapshot is answered, then sends those above
-  `asOf`. A change at or below `asOf` is already in the snapshot and is dropped. A change that arrives on the stream
-  before its snapshot is held by the client until the snapshot lands.
-- **Membership, not just records**: a change can move a record into or out of a subscription's filter (a task
-  closed leaves an "open tasks" list). Core evaluates the subscription's `where` against the changed fields and
-  sends an upsert (entering) or a delete (leaving). When the change doesn't carry a field the filter needs, core
-  re-reads that record through a batched query.
+- **Subscriptions belong to a stream.** The client names them (`id`), and a stream holds at most 64. The stream
+  check is the one `/act` has: same origin (`Sec-Fetch-Site` or `Origin`), plus the session, so a page on another
+  port of the same host can't open streams in a member's name and push out their real ones.
+- **Handover without a gap**: a subscription starts at its snapshot's `asOf`. Core sends the log's changes above it
+  as soon as the answer has gone, and drops any at or below it. A frame never reaches a client before its answer,
+  because both are sent by the same listener in order.
+- **Reconnecting**: listeners keep subscriptions in memory, so a client that reconnects (to the same listener or
+  another) sends its queries again, each with the revision it last held. Inside the log it gets what it missed; past
+  it, `reset: gap`. An unknown subscription is `reset`.
+- **Upserts are trimmed** to the subscription's `fields`, the viewer's class and its audience, like an answer. A
+  record that enters a subscription arrives whole (as far as the subscription asked for it), never as a partial
+  row.
+- **Which changes reach a subscription** is defined by its **window**: the records matching its `where` that sort no
+  later than the last row it has loaded (all of them, once it has loaded the last page). A changed record that
+  enters the window is an upsert; one that leaves it (no longer matches, or now sorts past the last loaded row) is a
+  delete; one outside the window sends nothing but its aggregate. Changes carry the whole record, so core always has
+  the fields to decide.
+- **Aggregates are kept per subscription by core**, not posted by providers: core adds and subtracts as records enter
+  and leave the subscription's `where` for its viewer, and asks the provider again when it can't (an `ask` type, an
+  invalidated domain, a total that wasn't exact).
 - **Ordering**: within a domain, frames go out in revision order. Across domains there is no global order, and none
   is promised. A view joining two domains shows each at its own revision.
-- **Duplicates and old revisions are ignored** by the client: a record's revision only moves forward.
-- **One log for every listener**: loom runs several HTTP listeners (LAN, tailnet, localhost) over one `$LOOM_HOME`,
-  which today meet only through tick files and polling. So the change buffer is **a table in `household.db`**
-  (domain, revision, change, audience, time), written once by whichever listener received the provider's post and
-  read by all. A listener learns of new rows the way Comms already does (a tick file plus fs.watch), not by polling
-  every provider.
-- **Gaps**: core keeps each domain's last 1000 changes or 10 minutes, whichever is more. A window that reconnects
-  sends each subscription's last revision. If that is still in the buffer, it gets what it missed; if not, it gets
-  `reset: gap` and asks for a fresh snapshot. No replay is promised beyond the buffer, and no zero-transfer resume
-  is claimed.
-- **Tombstones**: a delete stays in the buffer like any change. A provider must also answer a query from a cursor or
-  revision older than the buffer honestly, by core sending `reset`, never by the window keeping a deleted row.
-- **Expiry**: a record with a natural end (an ask that expires, a reading's `observedAt` plus its lifetime) carries
-  `expires` and the provider posts its delete when it does. The client also hides it at `expires`, in case the
-  delete is late.
-- **Back-pressure**: at most 64 subscriptions per stream and the existing six streams a session. A window that falls
-  more than 256 frames behind is sent `reset: gap` for its biggest subscriptions instead of more frames.
-- **Provider removed or replaced**: `reset: provider-gone` for its domains. A replacement under the same role whose
-  types satisfy the subscriptions' version ranges gets the next snapshot; otherwise the views show the provider as
-  missing (a missing piece is a feature that isn't there, extensions.md rule 3).
+- **Duplicates and old revisions are ignored** by the client: a record's `(epoch, rev)` only moves forward, and a
+  new epoch arrives only after a reset.
+- **Back-pressure**: a window more than 256 frames behind is sent `reset: gap` for its biggest subscriptions
+  instead of more frames.
+- **Provider removed or replaced**: `reset: provider-gone` (removed) or `reset: epoch` (replaced or restored) for
+  its domains. A replacement under the same role whose types satisfy the subscriptions' version ranges answers the
+  next snapshot; otherwise the views show the provider as missing (a missing piece is a feature that isn't there,
+  extensions.md rule 3).
+- **Piece pages stay piece-rendered**, as blocks. They aren't records, so a `page` frame tells a viewer's windows
+  that a piece's pages moved (today's manifest fingerprint, now per piece and per viewer). Only the page-wide bare
+  `change` is retired (t-2032).
 
 ## Commands (shared with t-2024)
 
 Actions keep their own routes, CSRF checks, principals, grants and approval semantics. What changes is what they
-answer: alongside today's result, an action answers **what it changed**, as the same change records (key, revision,
-fields) or as named invalidations, plus an operation receipt (`accepted`, `done`, `failed`, with why). Core
-applies those to the acting window at once and they reach every other window through the stream as usual, so no
-window refetches after its own action. A window may show its own action as pending, but never shows a grant or an
-approval as done until the receipt says so. t-2024 owns the details.
+answer: alongside today's result, an action answers an operation receipt (`accepted`, `done`, `failed`, with why)
+and the revision its effect landed at, if the provider has one. Its changes go into the log like any other and reach
+every window, the acting one included, through the stream, trimmed as usual and in revision order. So no window
+refetches after its own action, and none gets a record its viewer couldn't read. A window may show its own action as
+pending, but never shows a grant or an approval as done until the receipt says so. t-2024 owns the details.
 
 ## Read state and other per-viewer records
 
-What a viewer has read is a record, not a side effect of looking. `loom/read-marker/<member>:<item key>` (for an
-Inbox item) and the Comms `read_seq` per member and thread (`loom/thread-read/<member>:<thread>`) are both
-records whose audience is that member alone, changed only by an explicit action (`POST /inbox/read`, the thread's
-`read`). Today `GET /inbox?i=` also marks an item read, and neither `/inbox/read` nor `/appearance/prefs` tells other
-windows. Both go: a GET never writes, and every write posts its change. Preferences that follow a member between
-devices (`loom/prefs/<member>`) are the same kind of record; the per-device ones stay local.
+What a viewer has read is a record, not a side effect of looking:
+
+- `loom/read-marker/<member>:<hash of the item key>` for an Inbox item, and `loom/thread-read/<member>:<thread>` for
+  Comms' read cursor. Both have audience `members: [<member>]`.
+- They change only by an explicit action (`POST /inbox/read`, the thread's `read`). Today `GET /inbox?i=` also
+  marks an item read, and neither `/inbox/read` nor `/appearance/prefs` tells other windows. Both go: a GET never
+  writes, and every write lands in the log.
+- Preferences that follow a member between devices (`loom/prefs/<member>`) are the same kind of record; the
+  per-device ones stay local.
 
 ## Chrome becomes a few small queries
 
 Every page answer today embeds `chrome` (nav, every badge, agent states, tiles, backup, prefs), rebuilt in full on
 every request and every refetch, and a 304 saves bytes but none of that work (handler.ts, `chrome()`). Under this
 contract chrome stops being a transport. The shell holds a handful of live queries, each answered once and then kept
-current by changes: the attention aggregate and per-agent counts (t-2025), Comms unread (t-2027), agent status and
-place tiles (t-2028), installed places and nav (t-2031), backup and health (t-2031), and the member's prefs (t-2031).
-A page answer carries only what's particular to that page, and the clock, CSRF token and flash stay in the page.
+current by changes:
+
+- the attention aggregate and per-agent counts (t-2025);
+- Comms unread (t-2027);
+- agent status and place tiles (t-2028);
+- installed places and nav, backup and health, and the member's prefs (t-2031).
+
+A page answer carries only what's particular to that page. The clock, CSRF token and flash stay in the page.
 
 ## Search and other query-shaped reads
 
-Search results aren't a filter over one collection: each search is its own result set. They're a record type whose
-query is the search text (`loom/search-result`, `where: [["q", "eq", "…"]]`), whose records are references
-(`{"ref": "loom/knowledge-page/…", "score": …, "snippet": …}`) and whose subscription isn't live (`subscribe` is
-refused). Two searches never share a collection. Launcher suggestions are the same. A newer query cancels the
-older one's request.
+Search results aren't a filter over one collection: each search is its own result set.
+
+- **One result type**, `loom/search-result`, whose query is the text (`where: [["q", "eq", "…"]]`) and whose records
+  are references (`{"ref": "tasks/task/t-2020", "score": …, "snippet": …}`). It can't be subscribed to, and two
+  searches never share a collection. A newer query cancels the older one's request.
+- **Core asks each provider's `search` verb** as that viewer (core can't index a piece's store), plus its own, and
+  merges by score. A provider without `search` isn't searched.
+- **Snippets come only from fields the viewer may see**, and the result is checked against the target's audience
+  like any row. Launcher suggestions work the same way.
 
 ## The client runtime, in one paragraph (t-2023 builds it)
 
-One registry per signed-in session, keyed by viewer and scope, holding one collection per record type the open
-windows read, with one in-flight request per identical query and one subscription per live query, shared by every
-window. Windows bind derived views (filters, sorts, joins by key) to it and keep their own presentation state.
-Collections nobody reads for 5 minutes are dropped, and any cap on memory drops the least recently read first.
-Sign-out, scope change or provider removal clears what they affected, with its listeners. The adapter is the only
-code that imports the client library.
+The client keeps one registry per signed-in session, keyed by viewer, scope epoch and `type@major`. It holds one
+collection per record type the open windows read, one in-flight request per identical query, and one subscription
+per live query, shared by every window. Windows bind derived views (filters, sorts, joins by key) to it and keep their
+own presentation state. A collection nobody has read for 5 minutes is dropped, and any memory cap drops the least
+recently read first. Sign-out, a scope change or a provider's removal clears what it affected, along with the
+listeners. The adapter is the only code that imports the client library.
 
 ## What stays on its own transport (exceptions)
 
@@ -402,6 +492,7 @@ Each needs its own rationale, and safe status and metadata about them still go t
 | Terminal, log tail and other byte streams, model token streams | Ordered byte streams, high rate, no record identity | The job or step record, its status and progress |
 | Local UI state: drafts, layout, scroll, open sheets, filter text | The viewer's own, per window | — |
 | Service-worker push payloads | The push service forwards an opaque payload | The notification's record, read on open |
+| Piece-to-piece reads (one piece's CLI or API answering another) | Program reads under the grants authority, not app data for a window | — |
 
 ## Inventory: every flow and where it goes
 
@@ -485,10 +576,10 @@ a row here unassigned**, and a new flow added before t-2032 gets a row here.
 | `chrome.shell.backup`, backup ask and FYI, setup row | backup status in four places | t-2031 (one health record; the ask is t-2025's) |
 | `chrome.prefs`; `POST /appearance/prefs` | the member's prefs | t-2031 |
 | `chrome.shell.permissions`, `chrome.shell.icons` | links, icon set version | t-2031 |
-| `/events` bare `change` | invalidation | replaced by `rows` / `reset` frames (t-2022); retired in t-2032 |
+| `/events` bare `change` | invalidation | replaced by `rows` / `reset` frames (t-2022), plus `page` frames for piece-rendered pages; the bare `change` is retired in t-2032 |
 | Page refetch timers (20 s / 60 s / a piece's `refresh`) | polling | retired per domain as it moves (t-2032); a piece's `refresh` becomes its provider's changes |
 | Hover prefetch of any link | preload | t-2023 (preload a live query, never a URL that writes) |
-| Service worker view cache (every JSON view, per session tag) | offline copies | t-2023 decides; no shared record persists without a separate decision (above) |
+| Service worker view cache (every JSON view, per session tag) | offline copies | not carried over: collection routes are POST and the worker never caches them; no shared record persists without a separate decision (above). The view cache goes with the views (t-2032) |
 | Push watch (60 s), push display | notifications | t-2025 (notification metadata from the same attention records); delivery stays Web Push |
 | Needs auto-resolve (60 s; reads approvals `state`, tasks `run show`) | cross-piece resolution | t-2025 (subscribes to the approval and task records it waits on) |
 | Comms sweep, fold, audit sweep | retention jobs | t-2027, t-2030 (they post deletes) |
@@ -512,7 +603,7 @@ a row here unassigned**, and a new flow added before t-2032 gets a row here.
 | runtime | box credentials, join codes, house claim tokens, model login links and codes, remote-control URLs, body proofs, sealed slots, review token | exception: secrets and credentials | |
 | clock | wakes, schedules, lanes, next and last wake, jobs | t-2028 | **a stable job id** (wake ids churn); key by schedule, lane or place meanwhile |
 | clock | deliveries on the `wake` venue | t-2027 | |
-| clock | wake prompts, lane text, principal statements, raw log | exception: text the owner hasn't shared with every viewer; shown on the clock's own page, not cached | |
+| clock | wake prompts, lane text, principal statements, raw log | exception: text the owner hasn't shared with every viewer; shown on the clock's own page only | those pages answered `no-store`, kept out of core's page cache and the service worker |
 | approvals | pending and answered approvals, their states | t-2025 | ids on its manifest asks (they're only in `actions[].fields.id` today); deletes for records past its 300 kept |
 | approvals | standing rules, grant metadata | t-2031 | per-member filtering of `for`, `people`, where |
 | tasks | tasks, ready and blocked queues, details, comments | t-2029 | **a revision per task** (none today; its interactions log can seed one); paging instead of re-reading every task |
@@ -528,6 +619,8 @@ a row here unassigned**, and a new flow added before t-2032 gets a row here.
 | discord, slack | messages in and out | t-2027, through core's conversations (they deliver; they don't publish collections) | |
 | discord, slack | bot, app and deliver tokens, signing secret, strangers' channel text read back | exception: credentials; text stays in its conversation's audience | |
 
+| core and pieces | piece-to-piece reads through each other's CLI or API: changes → approvals rules and grants; runtime → approvals (spending) and the clock (labels); core → approvals state and tasks `run show` (needs auto-resolve); discord → shuttle route map; a local piece reading a channel through discord | exception: program reads between pieces under the grants authority, not app data for a window. Core's own server-side reads become subscriptions as the core viewer (below) in t-2025 | |
+
 Pieces installed in one household but not in the catalog (local pieces) are surveyed per household, not here, and
 fall under t-2031 unless their rows say otherwise. Every household runs its own survey before t-2031 closes.
 
@@ -540,51 +633,58 @@ The contract can't be met by today's pieces without these, which the domain task
 2. **A stable clock job id** (t-2028).
 3. **Revisions per record** for tasks (t-2029), the clock (t-2028), approvals (t-2025) and changes (t-2029); and a
    true change log over core's piece store (t-2022), since its revision table is pruned.
-4. **Any provider may post its changes** (t-2022): today only the runtime may call `pieces/changed`.
-5. **The owner scope in every cache key** that a provider's answer passes through (t-2021).
+4. **A `changes` verb and an epoch** for every provider (t-2022, t-2026): an ordered log it can answer from, and an
+   epoch it mints at install, replace and restore.
+5. **The owner scope in every cache key** that a provider's answer passes through (t-2021), and `owners: 2` declared
+   by every piece whose records agent owners should see.
 
 ## What the tests must pin
 
 The conformance suite (t-2026) runs against core's provider and every installed piece's, with fixtures:
 
-- **Identity**: keys are stable across updates; a deleted id isn't reused inside the tombstone window; a replacement
-  provider for the same role serves the same keys.
+- **Identity**: keys are stable across updates; a re-created id carries a higher revision than its delete; a
+  replacement provider for the same role serves the same keys; install refuses a taken provider name or role.
 - **Bounds**: an undeclared filter, an operator not allowed, a page over `max_page`, more than 8 clauses, or a heavy
   field in a big list is refused as `bad-query`, before the provider runs.
-- **Viewer authority**: for two members and two agents with different scopes, each query and each change reaches
-  exactly the records and fields their audience and classes allow; aggregates count only what the viewer could
-  fetch; a withheld field is absent and listed in `withheld`.
-- **Consumer capability**: a piece widget asking for an ungranted type gets `denied` and the provider never runs; a
-  grant revoked mid-subscription resets it.
-- **Handover**: a change posted between the query and its answer is delivered exactly once; a snapshot older than a
-  delivered change never overwrites it.
-- **Order and duplicates**: out-of-order, duplicate and old-revision changes leave the client at the newest
-  revision; a provider posting a lower revision is refused.
-- **Membership**: an update that moves a record out of a filter deletes it from that subscription and updates the
-  aggregate in the same frame.
-- **Gaps**: reconnect inside the buffer replays what was missed; outside it, `reset: gap`.
-- **Revocation**: sign-out, session revocation, grant revocation and a stream opened after revocation clear or
-  refuse as above.
+- **Hidden fields**: a `where`, `order` or `aggregates.by` on a field the viewer can't see is refused; a sealed
+  cursor replayed by another viewer or for another query is refused.
+- **Viewer authority**: for a household owner, an owner of some agents, two members sharing an agent, an agent
+  token and a house token, each query, aggregate, search result and change reaches exactly the records and fields
+  their audience and classes allow; a withheld field is absent and listed in `withheld`; a provider that ignores the
+  viewer leaks nothing (core's own check); a provider without `owners: 2` answers only household owners; a member's
+  Comms thread never reaches another owner of the same agent.
+- **Consumer capability**: a piece widget, an agent token or a house token asking for an ungranted type gets
+  `denied` and the provider never runs; a type without `houses: true` is denied to every house token; a grant revoked
+  mid-subscription resets it.
+- **Revocation**: sign-out, session revocation on another listener, an agent owner's agents narrowed, and a stream
+  opened after revocation all close, reset or refuse; an answer from an older scope epoch is dropped by the client.
+- **Pull**: a change committed by a process that dies before nudging still arrives within one pull period; two
+  writers committing out of order are delivered in commit order; a forged nudge causes one pull and no change.
+- **Handover**: a change committed between the query and its answer is delivered exactly once; a snapshot older than
+  a delivered change never overwrites it.
+- **Windows and membership**: an update that moves a record out of a filter, or past the last loaded row, deletes
+  it from that subscription and updates the aggregate in the same frame; one that enters arrives whole.
+- **Transactions**: a transaction's changes and the aggregates they move arrive in one frame.
+- **Gaps and epochs**: reconnect inside the log replays what was missed; outside it, `reset: gap`; a replaced or
+  restored provider answers a new epoch and every subscription resets.
+- **Expiry**: an expired record leaves lists and aggregates together, with no provider run.
 - **Provider failure**: one provider timing out leaves other queries in the batch answered, and its own views marked
   unavailable and stale, not empty.
 - **Versions**: a consumer asking for an unserved major gets `unsupported-version`; a minor addition doesn't break an
-  older consumer; install, update, remove and replace all reset or continue subscriptions as above.
-- **No secrets**: a scan of every type's declared fields and every fixture record finds no field classed or named as
-  a credential.
+  older consumer.
+- **No secrets**: a scan of every type's declared field names and every fixture record's values finds nothing
+  shaped like a credential.
 
 ## Open questions for the owner
 
-1. **One stream or two?** This keeps today's single `/events` stream and adds `rows` and `reset` frames to it.
-   The alternative is a second stream just for collections. One stream is fewer connections (six per session is
-   the cap) and a single gap story. Leaning one.
-2. **Audience routing or always ask?** Routing changes by each record's audience is cheap but trusts the provider's
-   audience labels as much as its query answers. "Always ask" re-queries per subscriber per change and costs
-   subprocesses. Leaning audience, with `ask` per type where needed.
-3. **A memory proposal: one item per agent, or one per proposal?** The Inbox shows one item per agent with
+1. **One stream or two?** This keeps today's single `/events` stream and adds `hello`, `rows`, `reset` and `page`
+   frames to it. The alternative is a second stream just for collections. One stream means fewer connections (six
+   a session is the cap) and one story for gaps. Leaning one.
+2. **A memory proposal: one item per agent, or one per proposal?** The Inbox shows one item per agent with
    proposals; the per-agent badge and Today count each proposal. One record type can't be both. Leaning one record
    per proposal, with the Inbox grouping them per agent, so every count agrees.
-4. **Comms unread: threads or messages?** The dock counts unread threads and the agent card counts unread messages.
+3. **Comms unread: threads or messages?** The dock counts unread threads and the agent card counts unread messages.
    Both can come from the same read-state records, but they'll still show different numbers side by side. Leaning
    threads everywhere, with the message count shown only inside a thread.
-5. **Third-party widgets**: should loom allow non-first-party piece widgets at all before the sandboxed frame
+4. **Third-party widgets**: should loom allow piece widgets that aren't first-party before the sandboxed frame
    exists? Leaning no (code isolation, above).
