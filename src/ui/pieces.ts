@@ -111,6 +111,8 @@ type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
 const cache = new Map<string, CacheEntry>();
 let manifestGeneration = 0;
+/** When a piece last said it moved, or an action ran: a served manifest must be made since (piece-socket.ts). */
+let movedAt = 0;
 /** The runs under way, by cache key: whoever asks while one runs shares it (unless a piece's word came since). */
 const running = new Map<string, { generation: number; result: Promise<ManifestResult> }>();
 /**
@@ -127,11 +129,13 @@ const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
  */
 export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
+  movedAt = Date.now();
   for (const [k, e] of cache) if (path === undefined || k.startsWith(`${path}\0`)) e.expired = true;
 }
 
 export function clearPieceCache(path?: string): void {
   manifestGeneration++;
+  movedAt = Date.now();
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
   for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
@@ -346,15 +350,23 @@ function json(stdout: string): unknown {
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
   // From the piece's own service when it has one (piece-socket.ts, t-2114): no process, an answer from memory.
-  const served = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES });
-  const r = served ?? await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
+  const fromSocket = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: movedAt });
+  let served: Manifest | undefined;
+  if (fromSocket?.ok) {
+    const parsed = json(fromSocket.stdout);
+    const m = parsed === undefined ? 'not JSON' : parseManifest(parsed);
+    // One answer for every viewer is all a socket can give (it hears nothing of the viewer): a manifest that says it
+    // reads the viewer's scope is never taken from one, nor a broken one. The one-shot way, with the scope in its env.
+    if (typeof m !== 'string' && m.scope !== true) served = m;
+  }
+  if (served) { servedPaths.add(path); return { piece, path, manifest: served }; }
+  servedPaths.delete(path);
+  const r = await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
   if (!r.ok) return { piece, reason: r.reason };
   const parsed = json(r.stdout);
   if (parsed === undefined) return { piece, reason: 'invalid: not JSON' };
   const m = parseManifest(parsed);
-  if (typeof m === 'string') return { piece, reason: `invalid: ${m}` };
-  if (served) servedPaths.add(path); else servedPaths.delete(path);
-  return { piece, path, manifest: m };
+  return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
 }
 
 /**

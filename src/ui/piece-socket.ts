@@ -5,8 +5,8 @@
  * LOOM_PIECE_HOME, never a path the piece hands core). With no socket there, or any doubt about it, the manifest runs
  * the one-shot way, as before.
  *
- * Protocol (loom-runtime src/ui-socket.mjs): one request per line, `{"id": n, "op": "manifest"}`; one answer per line,
- * in order, `{"id": n, "ok": true, "version": "<the file it runs>", "at": <ms>, "stdout": "<what ui --json prints>"}`.
+ * Protocol (loom-runtime src/ui-socket.mjs): one request per line, `{"id": n, "op": "manifest", "version": "<the bin's file>@<mtime>", "since": <ms>}`; one answer per line,
+ * in order, `{"id": n, "ok": true, "version": "<the file it runs>@<mtime>", "at": <ms>, "stdout": "<what ui --json prints>"}`.
  * The answer is used only when `version` is what the piece's bin resolves to now (an install is a new answer at once,
  * not the old service's), and it's read exactly as `ui --json`'s stdout is, with the same size limit.
  *
@@ -20,25 +20,27 @@
  * its manifests run the one-shot way meanwhile.
  */
 import { createConnection, type Socket } from 'node:net';
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pieceOfPath, pieceEnvFor } from '../cli/pieces-managed.js';
 
-/** How long an answer may take: the service computes one at most when its last is stale (seconds under load). */
-export const SOCKET_WAIT_MS = 10_000;
+/** How long an answer may take, from the ask: the service computes one only when its last is stale or older than a move. */
+export const SOCKET_WAIT_MS = 5_000;
 /** After a socket failed, its manifests run the one-shot way this long. */
 export const SOCKET_FAIL_MS = 30_000;
 
 export type SocketAnswer = { ok: true; stdout: string } | { ok: false; reason: string };
+
+interface Pending { id: number; done: (r: SocketAnswer | undefined) => void; maxBytes: number; version: string; since: number }
 
 interface Conn {
   sock: Socket;
   buf: string;
   bytes: number;
   dead: boolean;
-  queue: Array<() => void>;
+  queue: Array<{ go: () => void; drop: () => void }>;
   busy: boolean;
-  pending?: { id: number; done: (r: SocketAnswer | undefined) => void; timer: NodeJS.Timeout; maxBytes: number; version: string };
+  pending?: Pending;
 }
 
 const conns = new Map<string, Conn>();
@@ -62,6 +64,11 @@ function ours(path: string, kind: 'socket' | 'dir'): boolean {
   } catch { return false; }
 }
 
+/** What the bin runs now: the file it resolves to and when that last changed (a rebuild in place is a new version). */
+function versionOf(path: string): string | undefined {
+  try { const real = realpathSync(path); return `${real}@${statSync(real).mtimeMs}`; } catch { return undefined; }
+}
+
 function kill(at: string, c: Conn, failure: boolean): void {
   if (c.dead) return;
   c.dead = true;
@@ -70,8 +77,8 @@ function kill(at: string, c: Conn, failure: boolean): void {
   c.sock.destroy();
   const p = c.pending;
   c.pending = undefined;
-  if (p) { clearTimeout(p.timer); p.done(undefined); }
-  for (const next of c.queue.splice(0)) next();
+  if (p) p.done(undefined);
+  for (const q of c.queue.splice(0)) q.drop();
 }
 
 function connect(at: string): Conn {
@@ -97,48 +104,63 @@ function connect(at: string): Conn {
     c.buf = '';
     c.bytes = 0;
     c.pending = undefined;
-    clearTimeout(p.timer);
-    let m: { id?: unknown; ok?: unknown; version?: unknown; stdout?: unknown } | undefined;
+    let m: { id?: unknown; ok?: unknown; version?: unknown; at?: unknown; stdout?: unknown } | undefined;
     try { m = JSON.parse(line); } catch { m = undefined; }
     if (!m || m.id !== p.id || rest.length) { p.done(undefined); kill(at, c, true); return; }
-    if (m.ok !== true) p.done({ ok: false, reason: 'the piece\'s service couldn\'t make its manifest' });
     // Another version's service (an install it hasn't restarted for yet): the one-shot way, this time.
-    else if (m.version !== p.version) p.done(undefined);
-    else if (typeof m.stdout !== 'string') p.done({ ok: false, reason: 'the piece\'s service answered without its output' });
-    else if (Buffer.byteLength(m.stdout) > p.maxBytes) p.done({ ok: false, reason: 'answer too large' });
-    else p.done({ ok: true, stdout: m.stdout });
+    if (m.version !== p.version) p.done(undefined);
+    // A service that can't make its manifest, or answers without it, too large, or from before what moved it: the
+    // one-shot way, and this socket left alone a while (never the last answer kept for minutes instead).
+    else if (m.ok !== true || typeof m.stdout !== 'string' || Buffer.byteLength(m.stdout) > p.maxBytes || typeof m.at !== 'number' || m.at < p.since) {
+      failedAt.set(at, Date.now());
+      p.done(undefined);
+    } else p.done({ ok: true, stdout: m.stdout });
     c.busy = false;
-    c.queue.shift()?.();
+    c.queue.shift()?.go();
   });
   return c;
 }
 
 /**
  * The manifest of the piece at `path` from its service: its answer, or undefined when there's no service to ask (no
- * socket, one that isn't this user's alone, a version that isn't the bin's, a failure lately): then run it the one-shot
- * way. `version` is what the bin resolves to now (realpath).
+ * socket, one that isn't this user's alone, a version that isn't the bin's, a failure lately, no answer in time): then
+ * run it the one-shot way. `since`: the answer must be made at or after it (when core last heard the piece moved, or an
+ * action ran), so a look right after an action never gets the manifest from before it.
  */
-export function socketManifest(path: string, env: NodeJS.ProcessEnv, opts: { maxBytes: number; waitMs?: number }): Promise<SocketAnswer | undefined> {
+export function socketManifest(path: string, env: NodeJS.ProcessEnv, opts: { maxBytes: number; waitMs?: number; since?: number }): Promise<SocketAnswer | undefined> {
   const at = manifestSocket(path, env);
   if (!at) return Promise.resolve(undefined);
   const failed = failedAt.get(at);
   if (failed !== undefined && Date.now() - failed < SOCKET_FAIL_MS) return Promise.resolve(undefined);
   if (!ours(dirname(at), 'dir') || !ours(at, 'socket')) return Promise.resolve(undefined);
-  let version: string;
-  try { version = realpathSync(path); } catch { return Promise.resolve(undefined); }
+  const version = versionOf(path);
+  if (!version) return Promise.resolve(undefined);
   let c = conns.get(at);
   if (!c || c.dead) { c = connect(at); conns.set(at, c); }
   const conn = c;
+  const since = Math.floor(opts.since ?? 0);
   return new Promise((resolve) => {
-    const go = () => {
-      if (conn.dead) { resolve(undefined); return; }
-      conn.busy = true;
-      const id = nextId++;
-      const timer = setTimeout(() => { if (conn.pending?.id === id) kill(at, conn, true); }, opts.waitMs ?? SOCKET_WAIT_MS);
-      conn.pending = { id, done: resolve, timer, maxBytes: opts.maxBytes, version };
-      conn.sock.write(JSON.stringify({ id, op: 'manifest' }) + '\n');
+    let settled = false;
+    const done = (r: SocketAnswer | undefined) => { if (settled) return; settled = true; clearTimeout(timer); resolve(r); };
+    const id = nextId++;
+    const entry = {
+      go: () => {
+        if (conn.dead || settled) { done(undefined); return; }
+        conn.busy = true;
+        conn.pending = { id, done, maxBytes: opts.maxBytes, version, since };
+        conn.sock.write(JSON.stringify({ id, op: 'manifest', version, since }) + '\n');
+      },
+      drop: () => done(undefined),
     };
-    if (conn.busy) conn.queue.push(go); else go();
+    // From the ask, not from its turn: one waiting behind a slow answer gives up as soon.
+    const timer = setTimeout(() => {
+      if (conn.pending?.id === id) { kill(at, conn, true); return; }
+      const i = conn.queue.indexOf(entry);
+      if (i >= 0) conn.queue.splice(i, 1);
+      failedAt.set(at, Date.now());
+      done(undefined);
+    }, opts.waitMs ?? SOCKET_WAIT_MS);
+    if (conn.busy) conn.queue.push(entry); else entry.go();
   });
 }
 

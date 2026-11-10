@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearPieceCache, pieceManifests, SERVED_CACHE_MS } from './pieces.js';
+import { clearPieceCache, expirePieceManifests, pieceManifests, SERVED_CACHE_MS } from './pieces.js';
 import { closePieceSockets, manifestSocket, socketManifest } from './piece-socket.js';
 
 // t-2114: a managed piece's manifest from its own service over <home>/run/ui.sock, instead of a `ui --json` process.
@@ -59,23 +59,24 @@ describe('a piece\'s manifest from its service socket', () => {
     return seen;
   }
 
-  const ok = (version: string, value = 'served') => (id: number) =>
-    JSON.stringify({ id, ok: true, version, at: Date.now(), stdout: JSON.stringify({ v: 2, asks: [], tile: { label: 'Gizmo', value } }) + '\n' }) + '\n';
+  const ver = (path: string) => { const r = realpathSync(path); return `${r}@${statSync(r).mtimeMs}`; };
+  const ok = (version: string, value = 'served', extra: Record<string, unknown> = {}) => (id: number) =>
+    JSON.stringify({ id, ok: true, version, at: Date.now(), stdout: JSON.stringify({ v: 2, asks: [], tile: { label: 'Gizmo', value }, ...extra }) + '\n' }) + '\n';
 
   it('answers from the socket with no process, and only a manifest request goes over it', async () => {
     const p = managed();
     expect(manifestSocket(p.path, p.env)).toBe(p.sock);
-    const seen = await serve(p.sock, ok(realpathSync(p.path)));
+    const seen = await serve(p.sock, ok(ver(p.path)));
     const r = await pieceManifests(p.env);
     expect(r.pieces.find((x) => x.piece === 'gizmo')?.manifest.tile?.value).toBe('served');
     expect(p.ran()).toBe(0);
     // Nothing about the viewer: an id and the op, nothing else.
-    expect(seen).toEqual([{ id: expect.any(Number), op: 'manifest' }]);
+    expect(seen).toEqual([{ id: expect.any(Number), op: 'manifest', version: ver(p.path), since: expect.any(Number) }]);
   });
 
   it('a served piece is asked again after SERVED_CACHE_MS, on the same connection', async () => {
     const p = managed();
-    const seen = await serve(p.sock, ok(realpathSync(p.path)));
+    const seen = await serve(p.sock, ok(ver(p.path)));
     const t = Date.now();
     await pieceManifests(p.env, t);
     await pieceManifests(p.env, t + 1);
@@ -96,7 +97,7 @@ describe('a piece\'s manifest from its service socket', () => {
 
   it('never asks a socket others may reach: group bits on it or its directory', async () => {
     const p = managed();
-    const seen = await serve(p.sock, ok(realpathSync(p.path)), { sockMode: 0o660 });
+    const seen = await serve(p.sock, ok(ver(p.path)), { sockMode: 0o660 });
     expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
     chmodSync(p.sock, 0o600);
     chmodSync(join(p.sock, '..'), 0o750);
@@ -114,13 +115,13 @@ describe('a piece\'s manifest from its service socket', () => {
 
   it('an answer out of turn, too large or too slow drops the connection and falls back, then leaves it alone a while', async () => {
     const p = managed();
-    const seen = await serve(p.sock, (id) => JSON.stringify({ id: id + 1, ok: true, version: realpathSync(p.path), stdout: '{}' }) + '\n');
+    const seen = await serve(p.sock, (id) => JSON.stringify({ id: id + 1, ok: true, version: ver(p.path), stdout: '{}' }) + '\n');
     expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
     expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
     expect(seen.length).toBe(1);   // the second didn't ask: failed lately
     closePieceSockets();
-    const big = await (async () => { for (const s of servers.splice(0)) await new Promise((r) => s.close(r)); return serve(p.sock, ok(realpathSync(p.path), 'x'.repeat(5000))); })();
-    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toMatchObject({ ok: false, reason: expect.stringMatching(/too large/) });
+    const big = await (async () => { for (const s of servers.splice(0)) await new Promise((r) => s.close(r)); return serve(p.sock, ok(ver(p.path), 'x'.repeat(5000))); })();
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
     expect(big.length).toBe(1);
     closePieceSockets();
     for (const s of servers.splice(0)) await new Promise((r) => s.close(r));
@@ -130,9 +131,45 @@ describe('a piece\'s manifest from its service socket', () => {
 
   it('requests wait their turn on one connection', async () => {
     const p = managed();
-    const seen = await serve(p.sock, ok(realpathSync(p.path)));
+    const seen = await serve(p.sock, ok(ver(p.path)));
     const rs = await Promise.all([1, 2, 3].map(() => socketManifest(p.path, p.env, { maxBytes: 1024 })));
     expect(rs.every((r) => r?.ok)).toBe(true);
     expect(seen.length).toBe(3);
+  });
+
+  it('a service that can\'t make its manifest falls back to ui --json and is left alone a while (W1)', async () => {
+    const p = managed();
+    const seen = await serve(p.sock, (id) => JSON.stringify({ id, ok: false, version: ver(p.path) }) + '\n');
+    const r = await pieceManifests(p.env);
+    expect(r.pieces.find((x) => x.piece === 'gizmo')?.manifest.tile?.value).toBe('exec');
+    expect(p.ran()).toBe(1);
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024 })).toBeUndefined();
+    expect(seen.length).toBe(1);
+  });
+
+  it('never takes a manifest that reads the viewer\'s scope from a socket (W3)', async () => {
+    const p = managed();
+    await serve(p.sock, ok(ver(p.path), 'served', { scope: true }));
+    const r = await pieceManifests({ ...p.env, LOOM_SCOPE: 'mark' });
+    expect(r.pieces.find((x) => x.piece === 'gizmo')?.manifest.tile?.value).toBe('exec');
+    expect(p.ran()).toBe(1);
+  });
+
+  it('asks for an answer made since the piece last moved, and refuses an older one (W2)', async () => {
+    const p = managed();
+    const seen = await serve(p.sock, (id) => JSON.stringify({ id, ok: true, version: ver(p.path), at: 1, stdout: '{"v":2,"asks":[]}' }) + '\n') as Array<{ since: number }>;
+    expirePieceManifests();
+    const before = Date.now();
+    expect(await socketManifest(p.path, p.env, { maxBytes: 1024, since: before })).toBeUndefined();
+    expect(seen[0].since).toBe(before);
+  });
+
+  it('one waiting behind a slow answer gives up from when it asked (N4)', async () => {
+    const p = managed();
+    await serve(p.sock, () => '');
+    const t = Date.now();
+    const rs = await Promise.all([1, 2].map(() => socketManifest(p.path, p.env, { maxBytes: 1024, waitMs: 80 })));
+    expect(rs).toEqual([undefined, undefined]);
+    expect(Date.now() - t).toBeLessThan(1000);
   });
 });
