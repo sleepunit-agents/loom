@@ -1291,6 +1291,13 @@ async function memberInbox(base: UiOptions, full: Household, m: Member): Promise
   return { items, reader };
 }
 
+/** An attention record back as the Inbox item it was made from (attentionRecord's inverse, less the viewer's read state). */
+export function inboxItemOf(r: MemRecord): InboxItem {
+  const { id, audience: _a, sort: _s, unread, seen: _seen, reads: _r, copies: _c, expires, ...rest } = r as MemRecord & Record<string, unknown>;
+  return { ...(rest as unknown as Omit<InboxItem, 'key' | 'unread'>), key: String(id), unread: unread === true,
+    ...(typeof expires === 'number' ? { expires: new Date(expires).toISOString() } : {}) } as InboxItem;
+}
+
 /** An Inbox item as a record: its key is its id, its time its sort (one with no time first, as the Inbox files it). */
 export function attentionRecord(it: InboxItem, audience: Record<string, unknown>, perViewer: boolean): MemRecord {
   const t = it.at ? Date.parse(it.at) : NaN;
@@ -1865,6 +1872,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
+  /** The options as they came, before this request's member narrows them: what the attention records are made with. */
+  const unscoped = opts;
   // The attention records are the Inbox's own (t-2025): registered for this household, with the options as they came
   // (never an agent owner's narrowed ones: each viewer's are made from their own membership).
   if (full) {
@@ -2003,11 +2012,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
       pieces: commsPieces, session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard,
       // A thread's asks are the member's own Inbox items (comms.md, "Asks inline"): the same household, pieces and rule.
+      // Read from the member's own attention records (t-2025): the same build their Inbox, Home and badges read.
       inbox: () => (inboxOnce ??= (async () => {
         const seen = opts.household?.();
         const ps = await commsPieces();
         const appr = pieceWithRole(opts.env, 'approvals')?.name;
-        return { items: seen ? inboxItems(seen, ps, opts.env, [], lookerOf(opts, seen)) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+        const recs = seen && who.member ? await attentionFor(unscoped, memberViewer(full, who.member)) : [];
+        return { items: recs.map(inboxItemOf), leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
           ...(appr ? { approvals: pieceSource(appr).id } : {}) };
       })()) });
     return;
