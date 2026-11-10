@@ -25,6 +25,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { ageLock, type FileLock } from '../lock-gate.js';
 import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, type Household } from '../household.js';
 
 /**
@@ -727,6 +728,11 @@ export function sessionEnded(s: { issuedAt: number; agent?: true; device?: strin
 const stores = new Map<string, SessionStore>();
 
 /** The store for a directory (one per process per directory). */
+/** The sessions file's lock, for a request to wait out before it takes it (lock-gate.ts). */
+export function sessionsLock(dir: string): FileLock {
+  return ageLock(join(dir, 'ui-sessions.lock'), LOCK_STALE_MS);
+}
+
 export function sessionStore(dir: string): SessionStore {
   let s = stores.get(dir);
   if (!s) { s = new SessionStore(dir); stores.set(dir, s); }

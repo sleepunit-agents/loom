@@ -31,7 +31,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
-import { PieceStore, readGrant, StoreError, type Grant } from '../stores.js';
+import { PieceStore, readGrant, StoreError, storesDir, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
@@ -82,7 +82,13 @@ import { PersonMergeError } from '../backends/people-merge.js';
 import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
-import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, householdLock, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { join } from 'node:path';
+import { resolveSqliteDbPath } from '../config.js';
+import { HOUSEHOLD_DB } from '../household-store.js';
+import { AUDIT_DB } from '../audit.js';
+import { COMMS_DB } from '../comms.js';
+import { isSqliteBusy, waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import { watchStalls } from './stall-watch.js';
 import {
@@ -819,6 +825,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     return sendError(res, 503, `unavailable: couldn't ${what}; see the daemon log`);
   };
 
+  // Each route waits out the locks it will take, off the event loop (lock-gate.ts). A spent budget fails nothing:
+  // the route goes on to its own synchronous wait, as before, and only a lock still held after that is a 503.
+  const householdDb = (h: Household) => join(h.home, HOUSEHOLD_DB);
+  const commsDbs = (h: Household) => [householdDb(h), join(h.home, COMMS_DB)];
+
   /**
    * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
    * the caller already passed roleReaches. Like /api: JSON only, no Origin.
@@ -844,6 +855,24 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     let body: unknown = {};
     try { if (raw !== '') body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // A turn, an audit entry, a Comms post or live update must land: each waits for its databases first.
+    if (household) {
+      const h = live!();
+      const named = (body as { agent?: unknown } | null)?.agent;
+      const agent = role.kind === 'agent' ? role.agent : typeof named === 'string' && h.agents.includes(named) ? named : undefined;
+      const memories = agent ? [resolveSqliteDbPath(agentDir(h, agent))] : [];
+      const write = subpath === 'conversations/turn' ? [householdDb(h), ...memories]
+        : subpath === 'audit' ? [join(h.home, AUDIT_DB), householdDb(h), ...memories]
+        : subpath === 'conversations/house' ? [householdDb(h)]
+        : subpath === 'comms/adapter' || subpath === 'comms/activity' ? commsDbs(h)
+        : [];
+      // A continuation's reconciliation answers a store it can't take as unresolved (comms.ts): the runtime asks again.
+      const b = body as { op?: unknown; ref?: unknown };
+      const reconcile = subpath === 'comms/adapter' && b.op === 'reconcile' && agent !== undefined
+        && typeof b.ref === 'string' && /^continuation-[0-9a-f]{64}$/.test(b.ref);
+      if (reconcile && !await waitForLocks({ write })) return sendJson(res, 200, { ok: true, state: 'unresolved' });
+      if (write.length) await waitForLocks({ write, budgetMs: WRITE_WAIT_MS });
+    }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
     if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try {
@@ -851,6 +880,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       } catch (e) {
         if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
+        if (isSqliteBusy(e)) res.setHeader('retry-after', '1');
         return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
       }
     }
@@ -890,6 +920,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       } catch (e) {
         if (e instanceof CommsError) return sendError(res, e.status, e.message.startsWith(`${statusWord(e.status)}:`) ? e.message : `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: a Comms runtime call failed: ${(e as Error).name}\n`);
+        if (isSqliteBusy(e)) res.setHeader('retry-after', '1');
         return sendError(res, 503, 'unavailable: Comms couldn\'t answer; see the daemon log');
       }
     }
@@ -950,6 +981,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     try { b = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     const rec = readRecord(process.env, storePiece);
     if (!rec) return sendError(res, 404, `not-found: no managed piece ${storePiece}`);
+    const stored = [join(storesDir(live!().home), `${storePiece}.db`)];
+    const writes = op === 'put' || op === 'del' || op === 'revert';
+    await waitForLocks(writes ? { write: stored, budgetMs: WRITE_WAIT_MS } : { read: stored });
     const st = new PieceStore(live!().home, storePiece);
     try {
       const decl = rec.loom.store ?? {};
@@ -1098,6 +1132,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 413, `oversized: declared ${declared} bytes exceeds cap ${maxBytes}`);
       }
 
+      // A tool call or CLI verb, once its caller is known, reads its agent's memories first: a recovery or an
+      // exclusive lock there is waited out here (lock-gate.ts), and household.json's lock, which a change takes. Not
+      // its writes: a read must not queue behind every writer. The page waits in its own handler (ui/handler.ts).
+      if (req.method === 'POST') {
+        const h = household ? live!() : undefined;
+        await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])], files: h ? [householdLock(h.home)] : [] });
+      }
+
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
       // as /mcp above. Full server only: a scoped server (knowledge-only)
       // can't offer the memory verbs, so it has no /cli at all.
@@ -1200,7 +1242,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // error) are the SDK server's job from here — never a raw throw out.
       const webRes = await transport.handleRequest(nodeRequestToWebRequest(req), { parsedBody: parsed });
       await sendWebResponse(res, webRes);
-    })().catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
+    })().catch((e: unknown) => {
+      // A lock still held after the old synchronous wait: try again, not an internal error.
+      if (isSqliteBusy(e) && !res.headersSent) {
+        res.setHeader('retry-after', '1');
+        return sendError(res, 503, 'unavailable: busy; try again');
+      }
+      sendError(res, 500, `internal: ${(e as Error).message}`);
+    });
   });
 
   // Traefik keeps backend connections idle for up to 90 seconds. Close

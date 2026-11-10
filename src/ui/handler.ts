@@ -45,7 +45,7 @@ import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
+import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionsLock, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
 import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
 import { askKey, needsAskText, publicKey, pushSub, pushTitle, sendTest, watch, type Announce } from './push.js';
@@ -60,7 +60,8 @@ import { commsRoute, pageRefused } from './comms-routes.js';
 import { OWNER_KINDS, recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds, type ApprovalState } from '../needs-resolve.js';
 import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
-import { venueLabel } from '../household-store.js';
+import { HOUSEHOLD_DB, venueLabel } from '../household-store.js';
+import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
@@ -71,8 +72,8 @@ import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPeopleApp, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
-import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
-import { COMMS_VENUE, owns, threadMembers, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
+import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, householdLock, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { COMMS_DB, COMMS_VENUE, owns, threadMembers, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -1865,6 +1866,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const token = form.get('token')?.trim() ?? '';
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
+    // The sessions file's lock, waited out off the event loop (lock-gate.ts), once the token matched: never for a stranger.
+    await waitForLocks({ files: [sessionsLock(opts.household?.().home ?? opts.contextDir)] });
     return redirect(res, '/', {
       'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
@@ -1921,6 +1924,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method === 'GET') return redirect(res, '/login');
     return send(res, 401, 'text/plain', 'unauthorized');
   }
+
+  // Locks this signed-in request may meet, waited out off the event loop before its synchronous code (lock-gate.ts):
+  // Comms' pages and posts read (or write) its two databases; a change may take household.json's lock or the
+  // sessions file's. A spent wait goes on to the old synchronous one: nothing fails sooner.
+  const reads = req.method === 'GET' || req.method === 'HEAD';
+  if (full && (pathname === '/comms' || pathname.startsWith('/comms/'))) {
+    const dbs = [join(full.home, HOUSEHOLD_DB), join(full.home, COMMS_DB)];
+    await waitForLocks(reads ? { read: dbs } : { write: dbs, budgetMs: WRITE_WAIT_MS });
+  }
+  if (!reads) await waitForLocks({ files: [...(full ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
