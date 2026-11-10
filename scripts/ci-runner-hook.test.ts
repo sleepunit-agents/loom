@@ -33,8 +33,13 @@ function run(event: string, payload: unknown, opts: { repo?: string; queue?: unk
 const pr = (head: string | null, user = 'art-e-fish') => ({
   pull_request: { head: { repo: head === null ? null : { full_name: head } }, user: { login: user } },
 });
-const queue = (entries: Array<{ number: number; isCrossRepository: boolean }>, totalCount = entries.length) => ({
-  data: { repository: { mergeQueue: { entries: { totalCount, nodes: entries.map((pullRequest) => ({ pullRequest })) } } } },
+const SHA = 'a'.repeat(40);
+const group = (base = 'refs/heads/main', head_sha = SHA) => ({ merge_group: { base_ref: base, head_sha } });
+// Queue entries in order; the last one's head commit is SHA unless said otherwise.
+const queue = (entries: Array<{ number: number; isCrossRepository: boolean }>, totalCount = entries.length, last = SHA) => ({
+  data: { repository: { mergeQueue: { entries: { totalCount, nodes: entries.map((pullRequest, i) => ({
+    headCommit: { oid: i === entries.length - 1 ? last : String(i).repeat(40) }, pullRequest,
+  })) } } } },
 });
 
 describe('ci-runner-hook.sh', () => {
@@ -63,19 +68,26 @@ describe('ci-runner-hook.sh', () => {
   });
 
   it('lets a merge-queue group run while only our own pull requests are queued', () => {
-    expect(run('merge_group', {}, { queue: queue([{ number: 1, isCrossRepository: false }]) }).status).toBe(0);
+    expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }]) }).status).toBe(0);
   });
 
   it("refuses a merge-queue group while a fork's pull request is queued", () => {
-    const r = run('merge_group', {}, { queue: queue([{ number: 1, isCrossRepository: false }, { number: 2, isCrossRepository: true }]) });
+    const r = run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }, { number: 2, isCrossRepository: true }]) });
     expect(r.status).not.toBe(0);
     expect(r.stdout).toContain('#2');
   });
 
+  it('refuses a merge-queue group no longer queued, or not on main', () => {
+    const ours = queue([{ number: 1, isCrossRepository: false }]);
+    expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }], 1, 'b'.repeat(40)) }).status).not.toBe(0);
+    expect(run('merge_group', group('refs/heads/hat-v1'), { queue: ours }).status).not.toBe(0);
+    expect(run('merge_group', group('refs/heads/main', ''), { queue: ours }).status).not.toBe(0);
+  });
+
   it("refuses a merge-queue group when it can't read the whole queue", () => {
-    expect(run('merge_group', {}).status).not.toBe(0); // curl fails
-    expect(run('merge_group', {}, { queue: { errors: [{ message: 'nope' }] } }).status).not.toBe(0);
-    expect(run('merge_group', {}, { queue: queue([{ number: 1, isCrossRepository: false }], 101) }).status).not.toBe(0);
-    expect(run('merge_group', {}, { queue: queue([]), token: false }).status).not.toBe(0);
+    expect(run('merge_group', group()).status).not.toBe(0); // curl fails
+    expect(run('merge_group', group(), { queue: { errors: [{ message: 'nope' }] } }).status).not.toBe(0);
+    expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }], 101) }).status).not.toBe(0);
+    expect(run('merge_group', group(), { queue: queue([]), token: false }).status).not.toBe(0);
   });
 });
