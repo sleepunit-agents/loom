@@ -889,7 +889,7 @@ function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: strin
       let c: ReturnType<typeof conversationOf> | undefined;
       try { for (const a of agent ? (h.agents.includes(agent) ? [agent] : []) : h.agents) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
       if (c?.venue === COMMS_VENUE) o = t?.deleted.get(c.place) ?? 'no one';
-      else if (c?.venue === 'spawn') o = (t && agent ? t.deletedSpawn(agent, cv) : undefined) ?? (!t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household');
+      else if (c?.venue === 'spawn') o = (() => { try { return t && agent ? t.deletedSpawn(agent, cv) : undefined; } catch { return 'no one' as const; } })() ?? (!t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household');
     }
     seen.set(k, o);
     return o;
