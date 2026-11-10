@@ -52,6 +52,11 @@ describe('the working line', () => {
     expect(aliveOf({ alive_at: iso(3_600_000 * 5) }, [], T0 + STUCK_MS + 1000).face).toBe('working');
     expect(aliveOf({ alive_at: iso(3_600_000 * 5), working_since: iso(0) }, [], T0 + 3_600_000 * 5 + STUCK_MS + 1000).face).toBe('stuck');
   });
+  it('a step from an earlier run, never told ended, isn\'t running now', () => {
+    const stale = card('old', 'Bash', 'running', { t0: iso(0), limit: 60 }, 'Ran an old thing');
+    const a = aliveOf({ working_since: iso(3_600_000), alive_at: iso(3_650_000) }, [stale], T0 + 3_660_000);
+    expect(a).toMatchObject({ face: 'working', over: false, step: null });
+  });
   it('a body that says nothing at all is quiet, then stuck, counted from when it started working', () => {
     expect(aliveOf({ working_since: iso(0) }, [], T0 + 30_000).face).toBe('working');
     expect(aliveOf({ working_since: iso(0) }, [], T0 + QUIET_MS + 1000).face).toBe('quiet');

@@ -22,12 +22,12 @@ import { prose } from '../../src/ui/prose';
 import type { Chrome } from './loom';
 import type { FaceState } from './face';
 import { useFollow } from './comms-follow';
-import { refBits, RefText, ThreadRefs, useHtmlRefs } from './comms-refs';
+import { refBits, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
 import { attentionNow, onAttention } from './attention';
 import { useOtherThreads, useThreads } from './threads-live';
-import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
+import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatThread } from '@/components/ui/agent-chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -65,7 +65,7 @@ export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrom
 /** A message's id: 16 characters of RFC 4648 base32, lowercased (comms.md, "The message id"). */
 export { newId } from './comms-id';
 import { newId } from './comms-id';
-import { aliveOf, folded, groupLabel, isPlan, stepOf, took, tokensWord, type WorkCard } from './steps';
+import { aliveOf, isPlan, took, tokensWord, type WorkCard } from './steps';
 import { WorkSteps } from './work-steps';
 
 async function post(path: string, csrf: string, body: Record<string, unknown> = {}): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
@@ -616,7 +616,6 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   );
 }
 
-const asStep = (c: Msg, owner?: string): AgentChatStep => ({ id: String(c.seq), label: c.text ? <RefText text={c.text} owner={owner} /> : 'a step', status: stepOf(c) });
 
 /**
  * A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list: a `now:` line on
@@ -628,22 +627,12 @@ function Steps({ cards: all, owner, watch, now }: { cards: Msg[]; owner?: string
   const plan = all.filter(isPlan).at(-1);
   const cards = all.filter((c) => !isPlan(c) && String(c.card?.tool ?? '') !== 'text');
   const newest = cards.at(-1) ?? plan ?? all.at(-1)!;
-  const rich = all.some((c) => c.card && ('step' in c.card || 't0' in c.card));
   return (
-    <div className="comms-steps" data-open={open || undefined} data-rich={rich || undefined}>
+    <div className="comms-steps" data-open={open || undefined}>
       <button type="button" className="comms-steps__line loom-data" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? '▾' : '▸'} {cards.length} step{cards.length === 1 ? '' : 's'} · {newest.text ?? 'a step'}
       </button>
-      {open && rich && <WorkSteps cards={all as unknown as WorkCard[]} now={now} />}
-      {open && !rich && <>
-        <p className="comms-steps__now loom-data">now: <RefText text={(cards.findLast((c) => stepOf(c) === 'current') ?? newest).text ?? 'a step'} owner={owner} />{plan?.text ? <><br /><RefText text={plan.text} owner={owner} /></> : null}</p>
-        {folded(cards).map((g) => ('few' in g
-          ? <AgentChatProgress key={g.few[0].seq} steps={g.few.map((c) => asStep(c, owner))} />
-          : <details key={g.many[0].seq} className="comms-steps__group">
-              <summary className="comms-steps__line loom-data">{groupLabel(g.many)} · {g.many.at(-1)!.text}</summary>
-              <AgentChatProgress steps={g.many.map((c) => asStep(c, owner))} />
-            </details>))}
-      </>}
+      {open && <WorkSteps cards={all as unknown as WorkCard[]} now={now} owner={owner} />}
     </div>
   );
 }
@@ -888,7 +877,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const face = faceOf({ failed: thread.state.failed, asking: asks.some((a) => a.state === 'open'), talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
-  // Working, quiet or stuck (t-2109): the system says so itself, from the body's last sign of life and its steps.
+  // Working, quiet or stuck (t-2109): the system says so itself, from the body's last sign of life and this spell's steps.
   const alive = aliveOf(thread.state, messages.filter((m) => m.kind === 'card') as unknown as WorkCard[], now);
   // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
   const running = (() => {

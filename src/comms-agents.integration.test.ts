@@ -220,7 +220,7 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // A post of a card is the card whole: its words replace those kept.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts' }] }).updated).toBe(1);
     expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts' });
-    for (const bad of [{ body: 'nel\u0085line' }, { body: 'csi\u009b2J' }, { result: 'x\u0085y' }, { body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
+    for (const bad of [{ summary: 'a\u0085b' }, { detail: 'x'.repeat(4001) }, { body: 'x'.repeat(32_001) }, { result: 'x'.repeat(121) }, { items: Array.from({ length: 21 }, () => ({ text: 'a', state: 'todo' })) }, { items: [{ text: 'x'.repeat(101), state: 'todo' }] }, { body: 'nel\u0085line' }, { body: 'csi\u009b2J' }, { result: 'x\u0085y' }, { body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
       expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...bad }] })).toThrow(/bad-input/);
     }
     // Nothing a command printed or a file held is anywhere in the store, sealed or not.

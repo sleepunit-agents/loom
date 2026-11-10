@@ -75,6 +75,10 @@ export function workTree<T extends WorkCard>(cards: T[]): Array<WorkNode<T>> {
 /** Every step under a group (not its words), for its header's count. */
 export const stepsUnder = <T extends WorkCard>(n: WorkNode<T>): number => n.kids.reduce((k, x) => k + (isText(x.c) ? 0 : 1) + stepsUnder(x), 0);
 
+/** Whether a running step is past its own time limit, with a 30-second grace (the runtime polls a few seconds behind). */
+export const LIMIT_GRACE_MS = 30_000;
+export const pastLimit = (c: WorkCard, now: number) => spanOf(c).end === null && Number.isInteger(c.card?.limit) && now - spanOf(c).start > (c.card!.limit as number) * 1000 + LIMIT_GRACE_MS;
+
 /** Quiet this long, its body still up: "quiet". Twice the plain quiet, or a step past its own limit: "stuck". */
 export const QUIET_MS = 2 * 60_000;
 export const STUCK_MS = 12 * 60_000;
@@ -92,11 +96,12 @@ export function aliveOf(state: { alive_at?: string; tokens?: number; working_sin
   const seen = (t: number) => (Number.isFinite(t) ? Math.min(t, now) : 0);
   let last = Math.max(seen(ms(state.alive_at)), seen(ms(state.working_since)));
   let step: WorkCard | null = null, late: WorkCard | null = null;
-  const pastLimit = (c: WorkCard) => Number.isInteger(c.card?.limit) && now - spanOf(c).start > (c.card!.limit as number) * 1000 + 30_000;
-  for (const c of cards) {
+  // Only this spell's steps: one from an earlier run (its end never told) isn't running now.
+  const since = Number.isFinite(ms(state.working_since)) ? ms(state.working_since) - 60_000 : -Infinity;
+  for (const c of cards.filter((x) => spanOf(x).start >= since)) {
     const s = spanOf(c);
     last = Math.max(last, seen(s.end ?? s.start));
-    if (s.end === null && !isPlan(c)) { step = c; if (!late && pastLimit(c)) late = c; }
+    if (s.end === null && !isPlan(c)) { step = c; if (!late && pastLimit(c, now)) late = c; }
   }
   // Any step still running past its own limit, not only the newest (a helper's, while its child runs).
   if (late) step = late;

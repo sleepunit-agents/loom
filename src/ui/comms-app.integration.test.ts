@@ -217,7 +217,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     const run = 'run-0123456789ac';
     const post = (cards: Array<Record<string, unknown>>, alive?: Record<string, unknown>) => postActivity(h, process.env, { conversation: cv.conversation, run, cards, ...(alive ? { alive } : {}) });
     post([{ id: 'p', at: ago(300), tool: 'TodoWrite', summary: 'Plan (1/3): Fixing the race', state: 'done', items: [{ text: 'Reproduce the flake', state: 'done' }, { text: 'Fixing the race', state: 'now' }, { text: 'Run the deploy tests', state: 'todo' }] }]);
-    post([{ id: 'w1', at: ago(290), tool: 'text', summary: 'The test reads the lock before deploy-loom writes it.', state: 'done', body: 'The test reads the lock before deploy-loom writes it.\nI\'ll wait on the lock file instead of sleeping.' }]);
+    post([{ id: 'w1', at: ago(290), tool: 'text', summary: 'The test reads the lock before deploy-loom writes it.', state: 'done', body: 'The test reads the lock before deploy-loom writes it.\nI\'ll wait on the lock file instead of sleeping. <b id="injected">not bold</b>' }]);
     post([{ id: 'b1', at: ago(280), end: ago(268), tool: 'Bash', summary: 'Ran the deploy tests', state: 'failed', exit: 1, detail: 'npm test -- deploy', result: 'exit 1: 11 passed, 1 failed',
       body: '\x1b[32m✔ builds\x1b[0m\n\x1b[31m✖ waits for the lock\x1b[0m\n  AssertionError: lock missing\nℹ pass 11\nℹ fail 1' }]);
     post([{ id: 'e1', at: ago(200), end: ago(199), tool: 'Edit', summary: 'Edited deploy.test.mjs', state: 'done', detail: 'deploy.test.mjs', result: '2 additions, 1 removal',
@@ -252,6 +252,9 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
           expect(await page.locator('.work-plan li[data-state="now"]').textContent()).toContain('Fixing the race');
           // Its own words, as prose.
           expect(await page.locator('.work-text').first().textContent()).toContain('wait on the lock file');
+          // Its words are text, never markup.
+          expect(await page.locator('#injected').count()).toBe(0);
+          expect(await page.locator('.work-text').first().textContent()).toContain('<b id="injected">not bold</b>');
           // Rows, folded: a name, a time and how it went; a helper's steps not shown until opened.
           const failed = page.locator('.work-row[data-state="error"]').first();
           expect(await failed.locator('.work-row__name').textContent()).toBe('Ran the deploy tests');

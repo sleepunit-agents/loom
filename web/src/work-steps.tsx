@@ -7,7 +7,8 @@ import { useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
 import './work-steps.css';
-import { ansiRuns, isPlan, isText, spanOf, stepOf, stepsUnder, took, wordsOf, workTree, type WorkCard, type WorkNode } from './steps';
+import { RefText } from './comms-refs';
+import { ansiRuns, isPlan, isText, pastLimit, spanOf, stepOf, stepsUnder, took, wordsOf, workTree, type WorkCard, type WorkNode } from './steps';
 
 const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'file_change']);
 const SHELL_TOOLS = new Set(['Bash', 'command_execution']);
@@ -45,12 +46,12 @@ function Status({ c }: { c: WorkCard }) {
   return <Icon name="circle-check" size="sm" className="work-row__icon" data-state="done" aria-label="Done" />;
 }
 
-function Row({ n, now }: { n: WorkNode<WorkCard>; now: number }) {
+function Row({ n, now, owner }: { n: WorkNode<WorkCard>; now: number; owner?: string }) {
   const [open, setOpen] = useState(false);
   const { c } = n;
   if (isText(c)) {
     const w = wordsOf(c);
-    return <div className="work-text"><Ansi text={w.body ?? c.text ?? ''} />{n.kids.length ? <Rows nodes={n.kids} now={now} /> : null}</div>;
+    return <div className="work-text"><Ansi text={w.body ?? c.text ?? ''} />{n.kids.length ? <Rows nodes={n.kids} now={now} owner={owner} /> : null}</div>;
   }
   const w = wordsOf(c);
   const tool = String(c.card?.tool ?? '');
@@ -58,14 +59,15 @@ function Row({ n, now }: { n: WorkNode<WorkCard>; now: number }) {
   const time = took((end ?? now) - start);
   const exit = Number.isInteger(c.card?.exit) ? c.card!.exit as number : null;
   const limit = Number.isInteger(c.card?.limit) ? (c.card!.limit as number) * 1000 : null;
-  const over = end === null && limit !== null && now - start > limit + 30_000;
+  const over = pastLimit(c, now);
   const count = n.kids.length ? stepsUnder(n) : 0;
   const has = !!(w.detail || w.body || w.result || n.kids.length);
   return (
     <li className="work-row" data-state={stepOf(c)} data-open={open || undefined}>
       <button type="button" className="work-row__head" aria-expanded={open} disabled={!has} onClick={() => setOpen(!open)}>
         <Status c={c} />
-        <span className="work-row__name">{c.text ?? 'A step (older than this thread keeps)'}</span>
+        {/* A label's refs become chips, as in a reply (comms.md, "Chips"). */}
+        <span className="work-row__name">{c.text ? <RefText text={c.text} owner={owner} /> : 'A step (older than this thread keeps)'}</span>
         {count > 0 && <span className="work-row__count loom-data">{count} step{count === 1 ? '' : 's'}</span>}
         {stepOf(c) === 'error' && exit !== null && <span className="work-row__exit loom-data">exit {exit}</span>}
         {over && <span className="work-row__over loom-data">past its {took(limit!)} limit</span>}
@@ -81,30 +83,30 @@ function Row({ n, now }: { n: WorkNode<WorkCard>; now: number }) {
             </pre>
           )}
           {w.result && <p className="work-row__result loom-data">{w.result}</p>}
-          {n.kids.length > 0 && <Rows nodes={n.kids} now={now} />}
+          {n.kids.length > 0 && <Rows nodes={n.kids} now={now} owner={owner} />}
         </div>
       )}
     </li>
   );
 }
 
-function Rows({ nodes, now }: { nodes: Array<WorkNode<WorkCard>>; now: number }) {
+function Rows({ nodes, now, owner }: { nodes: Array<WorkNode<WorkCard>>; now: number; owner?: string }) {
   // Prose sits between rows as itself; rows group into lists.
   const out: ReactNode[] = [];
   let list: Array<WorkNode<WorkCard>> = [];
-  const flush = () => { if (list.length) { out.push(<ul key={`l${list[0].c.seq}`} className="work-rows">{list.map((x) => <Row key={x.c.seq} n={x} now={now} />)}</ul>); list = []; } };
-  for (const x of nodes) { if (isText(x.c)) { flush(); out.push(<Row key={x.c.seq} n={x} now={now} />); } else list.push(x); }
+  const flush = () => { if (list.length) { out.push(<ul key={`l${list[0].c.seq}`} className="work-rows">{list.map((x) => <Row key={x.c.seq} n={x} now={now} owner={owner} />)}</ul>); list = []; } };
+  for (const x of nodes) { if (isText(x.c)) { flush(); out.push(<Row key={x.c.seq} n={x} now={now} owner={owner} />); } else list.push(x); }
   flush();
   return <>{out}</>;
 }
 
 /** A run's work: the plan on top, then its steps and words in order. */
-export function WorkSteps({ cards, now }: { cards: WorkCard[]; now: number }) {
+export function WorkSteps({ cards, now, owner }: { cards: WorkCard[]; now: number; owner?: string }) {
   const plan = cards.filter(isPlan).at(-1);
   return (
     <div className="work">
       {plan && <Plan card={plan} />}
-      <Rows nodes={workTree(cards)} now={now} />
+      <Rows nodes={workTree(cards)} now={now} owner={owner} />
     </div>
   );
 }

@@ -1445,7 +1445,7 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
     if (keys.length) return fail(`bad-input: card ${i} has unknown keys: ${keys.join(', ')}`);
     if (typeof o.id !== 'string' || !CARD_ID.test(o.id)) return fail(`bad-input: card ${i}'s id`);
     if (typeof o.tool !== 'string' || !TOOL.test(o.tool)) return fail(`bad-input: card ${i}'s tool`);
-    if (typeof o.summary !== 'string' || o.summary.length < 1 || o.summary.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.summary)) return fail(`bad-input: card ${i}'s summary is 1-${MAX_SUMMARY} printable characters on one line`);
+    if (typeof o.summary !== 'string' || o.summary.length < 1 || o.summary.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.summary) || !STEP_LINE.test(o.summary)) return fail(`bad-input: card ${i}'s summary is 1-${MAX_SUMMARY} printable characters on one line`);
     if (o.state !== 'running' && o.state !== 'done' && o.state !== 'failed') return fail(`bad-input: card ${i}'s state is running, done or failed`);
     return { id: o.id, tool: o.tool, summary: o.summary, state: o.state as CardState, ...stepOfCard(o, i) };
   });
