@@ -7,6 +7,7 @@ import { chromium, type Browser } from 'playwright-core';
 import { loadHousehold, agentDir, createToken, type Household } from '../household.js';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { openProjectsStore } from '../backends/projects.js';
+import { forgetProjectCounts } from './projects-pages.js';
 import { pullNow } from '../collections/subs.js';
 import { stopCommsWatch } from './comms-live.js';
 vi.setConfig({ testTimeout: 60_000 });
@@ -75,4 +76,37 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally { await ctx.close(); }
   });
+  it('a mounted view replaces cached page cards against a warm directory and adopts fresh feed details', async () => {
+    write('cached', 'Cached project');
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    try {
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const cached = await (await ctx.request.get(`${base}/projects`, { headers: { accept: 'application/json' } })).json();
+      const page = await ctx.newPage();
+      let reads = 0, queries = 0;
+      page.on('request', (r) => { if (r.url().endsWith('/collections/query') && r.postData()?.includes('loom/project@^1')) queries++; });
+      await page.goto(`${base}/projects`);
+      const card = page.locator('.pj-card[data-slug="cached"]');
+      await card.getByText('Nothing waiting on you', { exact: true }).waitFor();
+      write('cached', 'Changed project'); await pullNow(h.home, 'loom/project');
+      await card.getByText('Changed project', { exact: true }).waitFor();
+      await card.getByText(/Couldn't count what's waiting/).waitFor();
+      const warm = queries;
+      await page.route('**/projects', async (route) => {
+        if (route.request().resourceType() !== 'fetch') return route.continue();
+        reads++; await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cached) });
+      });
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await expect.poll(() => reads).toBeGreaterThan(0);
+      await card.getByText(/Couldn't count what's waiting/).waitFor();
+      await page.unroute('**/projects');
+      forgetProjectCounts();
+      const refreshed = page.waitForResponse((r) => new URL(r.url()).pathname === '/projects' && r.request().resourceType() === 'fetch');
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await refreshed;
+      await card.getByText('Nothing waiting on you', { exact: true }).waitFor();
+      expect(queries).toBe(warm);
+    } finally { await ctx.close(); }
+  });
+
 });

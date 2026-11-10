@@ -267,7 +267,7 @@ describe('the Projects pages, directly', () => {
   it('cached feed details keep the directory stamp they were counted for after a card edit', async () => {
     write(dir, { slug: 'stamped', name: 'Before' });
     const calls = { n: 0 };
-    const hub = hubWith([], calls);
+    const hub = hubWith([{ key: 'piece:tasks', groups: [{ title: 'Work', waiting: true, items: [{ title: 'Choose a date', when: new Date(NOW).toISOString(), who: ['Ada'] }] }] }], calls);
     const first = await projectsApp([{ dir }], { hub, nowMs: NOW });
     const store = openProjectsStore(dir, { now: () => NOW + 1000 })!;
     try { store.write({ slug: 'stamped', name: 'After' }); } finally { store.close(); }
@@ -276,6 +276,10 @@ describe('the Projects pages, directly', () => {
     expect(after.cards!.active[0].directoryUpdated).toBe(first.cards!.active[0].directoryUpdated);
     expect(after.cards!.active[0].directoryUpdated).toBe(new Date(NOW).toISOString());
     expect(calls.n).toBe(1);
+    for (const field of ['waiting', 'lately', 'people', 'spark', 'changes'] as const) expect(after.cards!.active[0][field]).toEqual(first.cards!.active[0][field]);
+    expect(after.cards!.active[0].waiting).toEqual({ count: 1, items: ['Choose a date'] });
+    expect(after.cards!.active[0].people).toEqual([{ name: 'Ada' }]);
+    expect(after.cards!.active[0].spark).toBeDefined();
     forgetProjectCounts();
     const fresh = await projectsApp([{ dir }], { hub, nowMs: NOW + 3000 });
     expect(fresh.cards!.active[0].directoryUpdated).toBe(new Date(NOW + 1000).toISOString());
