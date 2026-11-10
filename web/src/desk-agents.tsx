@@ -16,6 +16,7 @@ import { guardedEnv, LIVE_SAYS, useAskLive } from './ask-open';
 import { As, type InboxItem } from './views';
 import { askerOf, plain } from './plain';
 import { markColor } from './look';
+import { reducedMotion } from './access';
 import { onLive } from './page';
 import { onThreads, threadsNow } from './threads-live';
 import { newId } from './comms-id';
@@ -459,9 +460,42 @@ export function openInRail(agents: DeskAgent[], onAir: string | null): string | 
     ?? agents.find((a) => a.unread > 0) ?? agents[0])?.id;
 }
 
+/** How long the agent you're with takes to slide up out of the list, or back down into it (t-2075). */
+export const SLIDE_MS = 260;
+
 /**
- * The rail beside the apps: Needs you at the top, then a compact card per agent. When they don't all fit at their own
- * size, the accordion: each a line, one open (openInRail). Measured before it's painted, so it never flashes.
+ * The agent you're with leaves the list (t-2075; docs/specs/agent-desk.md, "Work"): when it moves between its place in
+ * the list and the top of the rail, it slides from where it was to where it is now. Only that agent moves; the others
+ * just close up. Not with reduced motion.
+ */
+function useSlideUp(box: React.RefObject<HTMLElement | null>, top: string | undefined) {
+  const was = useRef<{ top: string | undefined; at: Map<string, number> }>({ top, at: new Map() });
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const prev = was.current;
+    const find = (id: string) => el.querySelector<HTMLElement>(`[data-slide="${CSS.escape(id)}"]`);
+    if (prev.top !== top && !reducedMotion()) {
+      for (const id of [top, prev.top]) {
+        const node = id ? find(id) : null;
+        const from = id ? prev.at.get(id) : undefined;
+        if (!node || from === undefined || typeof node.animate !== 'function') continue;
+        const dy = from - node.getBoundingClientRect().top;
+        if (Math.abs(dy) < 2) continue;
+        node.animate([{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }], { duration: SLIDE_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      }
+    }
+    const at = new Map<string, number>();
+    el.querySelectorAll<HTMLElement>('[data-slide]').forEach((n) => at.set(n.dataset.slide!, n.getBoundingClientRect().top));
+    was.current = { top, at };
+  });
+}
+
+/**
+ * The rail beside the apps: the agent whose thread Comms shows on top (it leaves the list and is the thread's companion
+ * there, t-2075), then Needs you, then a compact card per agent, alphabetical. When they don't all fit at their own
+ * size, the accordion: each a line, one open (openInRail; with an agent on top, that's the open one, and the rest are
+ * lines). Measured before it's painted, so it never flashes.
  */
 export function AgentRail({ agents, d, onAir, screen, slot, over, onEnter, onLeave }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null;
   /** the agent whose card is the comm screen (its thread is in Comms beside the rail), and where the screen goes */
@@ -487,13 +521,18 @@ export function AgentRail({ agents, d, onAir, screen, slot, over, onEnter, onLea
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const open = fold ? openInRail(agents, onAir) : undefined;
+  const top = onAir ? agents.find((a) => a.id === onAir) : undefined;
+  const rest = top ? agents.filter((a) => a !== top) : agents;
+  const open = fold && !top ? openInRail(agents, onAir) : undefined;
+  useSlideUp(box, top?.id);
+  const one = (a: DeskAgent) => (a.id === screen ? <ScreenCard a={a} slot={slot} />
+    : fold && a !== top && a.id !== open ? <RailRow a={a} onOpen={() => go(a.open)} /> : <RailCard a={a} />);
   return (
     <aside ref={box} className={over ? 'loom-arail loom-arail--over' : 'loom-arail'} aria-label="Agents" data-fold={fold || undefined}
       onPointerEnter={onEnter} onPointerLeave={(e) => { if (e.pointerType === 'mouse') onLeave?.(); }}>
+      {top && <div key={top.id} className="loom-arail__with" data-slide={top.id} data-agent-top={top.id} role="group" aria-label={`With ${top.label} in Comms`}>{one(top)}</div>}
       <RailNeeds d={d} />
-      {agents.map((a) => (a.id === screen ? <ScreenCard key={a.id} a={a} slot={slot} />
-        : fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <RailCard key={a.id} a={a} />))}
+      {rest.map((a) => <div key={a.id} className="loom-arail__one" data-slide={a.id}>{one(a)}</div>)}
     </aside>
   );
 }

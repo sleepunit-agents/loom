@@ -81,6 +81,14 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
   with an ask, else one with something unread, else the first. A Comms pane in a tile says whose thread it shows
   (desk-rail.ts `RailContext`); a line opens its agent's thread. The rail measures before it paints, so a fold never
   flashes, and tries the cards at full size again whenever its height or what they hold changes.
+- **The agent you're with leaves the list** (t-2075, built): while Comms shows an agent's thread, that agent isn't in the
+  alphabetical list: it sits on top of the rail, above Needs you, set apart by a rule ("With Mark in Comms"), as the
+  thread's companion (the comm screen when the rail is shown for good, else its card). The rest stay alphabetical under
+  Needs you; when they don't fit they all fold to lines, and the one on top stays whole. Only that agent moves, with a
+  short slide (260 ms) from its place in the list up to the top, and back down when Comms closes or shows another
+  agent's thread; with reduced motion it just moves. This softens t-1959's "never reshuffle": the others never move
+  among themselves, they only close up. (Owner, 2026-11-09: "they left the list and became something new and relevant
+  up there.") Whether other windows that deal with one agent do the same is still open.
 - **The comm screen moves to the rail** (phase 3, built): the avatar appears once. While Comms shows an agent's thread and
   the rail is shown, that agent's rail card is the comm screen (static on a reply, talking, its channel line) and the
   Comms band drops its avatar. With the rail hidden or auto-hiding, under 1280 px, and on a phone, the band keeps it.
