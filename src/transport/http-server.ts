@@ -1,4 +1,3 @@
-import { withNonblockingSqlite, isSqliteBusy, retrySqlite } from '../sqlite.js';
 /**
  * loom HTTP MCP transport (c-loom-transport) — the mesh-reachable surface.
  *
@@ -251,11 +250,7 @@ function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof
   });
 }
 
-export function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
-  return withNonblockingSqlite(() => startHttpServerImpl(opts));
-}
-
-async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHandle> {
+export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
@@ -955,26 +950,23 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
     try { b = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     const rec = readRecord(process.env, storePiece);
     if (!rec) return sendError(res, 404, `not-found: no managed piece ${storePiece}`);
+    const st = new PieceStore(live!().home, storePiece);
     try {
-      const out = await retrySqlite(() => {
-        const st = new PieceStore(live!().home, storePiece);
-        try {
-          const decl = rec.loom.store ?? {};
-          const c = String(b.collection ?? ''), k = String(b.key ?? '');
-          const ifRev = typeof b.ifRev === 'number' ? b.ifRev : undefined;
-          const out = op === 'get' ? st.get(c, k)
-            : op === 'list' ? st.list(c, { prefix: typeof b.prefix === 'string' ? b.prefix : undefined, limit: typeof b.limit === 'number' ? b.limit : undefined })
-            : op === 'put' ? { rev: st.put(c, k, b.doc, grant, decl, ifRev) }
-            : op === 'del' ? { deleted: st.del(c, k, grant, decl, ifRev) }
-            : op === 'history' ? st.history(c, k)
-            : { rev: st.revert(c, k, Number(b.revision), grant, decl) };
-          return out;
-        } finally { st.close(); }
-      });
-      return sendJson(res, out === null ? 404 : 200, out ?? { error: `no ${String(b.collection ?? '')}/${String(b.key ?? '')}` });
+      const decl = rec.loom.store ?? {};
+      const c = String(b.collection ?? ''), k = String(b.key ?? '');
+      const ifRev = typeof b.ifRev === 'number' ? b.ifRev : undefined;
+      const out = op === 'get' ? st.get(c, k)
+        : op === 'list' ? st.list(c, { prefix: typeof b.prefix === 'string' ? b.prefix : undefined, limit: typeof b.limit === 'number' ? b.limit : undefined })
+        : op === 'put' ? { rev: st.put(c, k, b.doc, grant, decl, ifRev) }
+        : op === 'del' ? { deleted: st.del(c, k, grant, decl, ifRev) }
+        : op === 'history' ? st.history(c, k)
+        : { rev: st.revert(c, k, Number(b.revision), grant, decl) };
+      return sendJson(res, out === null ? 404 : 200, out ?? { error: `no ${c}/${k}` });
     } catch (e) {
       if (e instanceof StoreError) return sendError(res, e.status, e.message);
       throw e;
+    } finally {
+      st.close();
     }
   }
 
@@ -1039,7 +1031,7 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
   const http = createServer((req, res) => {
     const done = stalls.request(req.method, req.url);
     res.once('close', done);
-    void withNonblockingSqlite(async () => {
+    void (async () => {
       // loom's web page (src/ui), at the root. Its own auth (a session from
       // the bearer, or the bearer header), so it comes before the bearer gate.
       // Full scope only: a scoped server has no memory to show.
@@ -1208,13 +1200,7 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
       // error) are the SDK server's job from here — never a raw throw out.
       const webRes = await transport.handleRequest(nodeRequestToWebRequest(req), { parsedBody: parsed });
       await sendWebResponse(res, webRes);
-    }).catch((e: unknown) => {
-      if (isSqliteBusy(e)) {
-        res.setHeader('retry-after', '1');
-        return sendError(res, 503, 'unavailable: database busy; try again');
-      }
-      sendError(res, 500, `internal: ${(e as Error).message}`);
-    });
+    })().catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
   });
 
   // Traefik keeps backend connections idle for up to 90 seconds. Close
@@ -1236,7 +1222,6 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
     port,
     host: opts.host,
     setBackgroundActive(active) {
-      return withNonblockingSqlite(() => {
       const was = backgroundActive;
       backgroundActive = active;
       if (active && !was) stalls.timed('worker activation', () => {
@@ -1246,7 +1231,6 @@ async function startHttpServerImpl(opts: HttpServeOptions): Promise<HttpServeHan
           try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch { /* next timer retries */ }
           stalls.timed('comms refs backfill', () => void backfillRefs(live!(), process.env).catch(() => undefined));
         }
-      });
       });
     },
     async close() {

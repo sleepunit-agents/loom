@@ -11,8 +11,7 @@
  * which is generated).
  */
 import { existsSync } from 'node:fs';
-import BetterSqlite3 from '../sqlite.js';
-import type { Database } from 'better-sqlite3';
+import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { runMigrations } from './migrations.js';
 import { EPISODE_CATEGORY } from '../categories.js';

@@ -21,7 +21,7 @@
 import { existsSync } from 'node:fs';
 import { conversationsSection } from '../conversations.js';
 import type { HubConversation } from '../backends/conversations.js';
-import BetterSqlite3 from '../sqlite.js';
+import BetterSqlite3 from 'better-sqlite3';
 import { resolveIdentityName } from '../config.js';
 import { expiresAt, notesDbPath, type Lifespan } from '../notes.js';
 import { CardError, fieldState, marker } from '../backends/cards.js';

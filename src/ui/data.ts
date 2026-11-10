@@ -5,8 +5,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import BetterSqlite3 from '../sqlite.js';
-import type { Database, Statement } from 'better-sqlite3';
+import BetterSqlite3 from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { plainEpisode, type ConversationFacts } from './episode-title.js';
 import { DEFAULT_HALF_LIFE_DAYS, HALF_LIVES, decayedRecallHeat, heatOf, pickForDigest, temperature, tierOf, type Tier } from '../backends/salience.js';
@@ -63,7 +62,7 @@ interface Row {
 
 const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
 
-function open(contextDir: string): Database | null {
+function open(contextDir: string): BetterSqlite3.Database | null {
   const path = resolveSqliteDbPath(contextDir);
   if (!existsSync(path)) return null;
   const db = new BetterSqlite3(path, { readonly: true });
@@ -71,12 +70,12 @@ function open(contextDir: string): Database | null {
   return db;
 }
 
-function hasColumns(db: Database): Set<string> {
+function hasColumns(db: BetterSqlite3.Database): Set<string> {
   return new Set((db.pragma('table_info(memories)') as { name: string }[]).map((c) => c.name));
 }
 
 /** Older stores lack some columns; select what exists and default the rest. */
-function selectList(db: Database): string {
+function selectList(db: BetterSqlite3.Database): string {
   const have = hasColumns(db);
   return COLUMNS.split(', ').map((c) => (have.has(c) ? c : `NULL AS ${c}`)).join(', ');
 }
@@ -207,8 +206,8 @@ export interface TapeEntry { ref: string; title: string; created: string; where:
   meta?: Record<string, unknown> }
 
 /** The conversations table's row an episode names, from the same store (memories.db holds both). */
-function conversationLookup(db: Database): (id: string) => ConversationFacts | undefined {
-  let q: Statement | null | undefined;
+function conversationLookup(db: BetterSqlite3.Database): (id: string) => ConversationFacts | undefined {
+  let q: BetterSqlite3.Statement | null | undefined;
   return (id) => {
     if (q === undefined) {
       try { q = db.prepare('SELECT venue, place, label FROM conversations WHERE id = ?'); } catch { q = null; }
