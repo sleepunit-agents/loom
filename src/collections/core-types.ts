@@ -9,7 +9,7 @@
  * tasks (t-2025 onward) add the rest.
  */
 import { agentDir, type Household } from '../household.js';
-import { allThreads } from '../comms.js';
+import { allThreads, threadRowStates } from '../comms.js';
 import { agentName } from '../ui/core.js';
 import { parseTypeDecl, type TypeDecl } from './contract.js';
 import { answerFrom, type MemRecord, type ProviderAnswer, type ProviderQuery } from './memory.js';
@@ -51,7 +51,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     aggregates: { count: {} },
   }),
   thread: declare('thread', {
-    version: '1.0',
+    version: '1.1',
     schema: { type: 'object', properties: { agent: { type: 'string' }, title: { type: ['string', 'null'] }, updated: { type: 'string' } } },
     agent: 'agent',
     fields: {
@@ -60,8 +60,14 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       updated: { class: 'member', filter: ['lt', 'lte', 'gt', 'gte'], order: true },
       opened: { class: 'member', order: true },
       pinned: { class: 'member', filter: ['eq'] },
-      archived: { class: 'member', filter: ['has'] },
+      archived: { class: 'member', filter: ['eq', 'has'] },
       project: { class: 'member', filter: ['eq', 'has'] },
+      // Its list row's state (comms.ts threadRowStates, t-2027): a reply past its member's read, its body at work, a job's
+      // thread its member hasn't written in (Background work), and its newest message's seq. Never its words.
+      unread: { class: 'member', filter: ['eq'] },
+      working: { class: 'member', filter: ['eq'] },
+      background: { class: 'member', filter: ['eq'] },
+      last_seq: { class: 'member' },
     },
     default_fields: ['agent', 'title', 'updated', 'pinned'],
     max_page: 200,
@@ -122,9 +128,11 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
   }
   if (type === 'thread') {
     if (viewer.kind === 'agent') return [];
-    return allThreads(h.home)
-      .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))))
-      .map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project, audience: { members: [t.member] } }));
+    const mine = allThreads(h.home)
+      .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
+    const state = threadRowStates(h, mine);
+    return mine.map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project,
+        ...state.get(t.id)!, audience: { members: [t.member] } }));
   }
   return [];
 }

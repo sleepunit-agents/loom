@@ -1,10 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, configDefaults } from 'vitest/config';
+import CiSequencer from './scripts/ci-sequencer.js';
 
 export default defineConfig({
   // The app's own imports (web/src: `@/components/ui/…`), for the tests that draw a piece of it (app-tint.test.ts).
   resolve: { alias: { '@': fileURLToPath(new URL('./web/src', import.meta.url)) } },
   test: {
+    sequence: { sequencer: CiSequencer },
     // `.claude/worktrees/` holds abandoned agent worktrees — full stale copies
     // of this repo. Without this they get collected too, so the suite silently
     // reports hundreds of extra passes from old code against current

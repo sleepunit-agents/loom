@@ -107,10 +107,11 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
       await expect.poll(() => art.locator('[data-row="last"] dd').textContent()).toMatch(/^An offsite copy for the backup · /);
       if (await art.locator('[data-row="wake"]').count()) expect(await art.locator('[data-row="wake"] dd').textContent()).toBe('tonight · 03:00 · backup check');
       expect(await art.locator('[data-kind="ask"]').textContent()).toContain('OK to clear the stale lock');
-      // Mark: quiet, two new replies and the first one's line; Sam's thread never counts.
+      // Mark: quiet, one thread with new replies (unread counts threads: the owner's decision, collections.md "Owner
+      // decisions" 3; the replies are the thread's own count) and the first one's line; Sam's thread never counts.
       const mark = card(p, 'mark');
       expect(await mark.locator('.loom-bigcard__eb').textContent()).toMatch(/quiet/i);
-      await expect.poll(() => mark.locator('[data-kind="unread"]').textContent()).toBe('2 new‘On it. I’ll keep Wednesday clear and move the house jobs around it.’');
+      await expect.poll(() => mark.locator('[data-kind="unread"]').textContent()).toBe('1 new‘On it. I’ll keep Wednesday clear and move the house jobs around it.’');
       // Nova: nothing at all yet, said plainly.
       expect(await card(p, 'nova').locator('[data-kind="none"]').textContent()).toBe('No new messages');
       for (const id of ['art', 'mark', 'nova']) expect(await card(p, id).locator('input[aria-label^="Message"]').count()).toBe(1);

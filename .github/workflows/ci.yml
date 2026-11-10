@@ -8,6 +8,12 @@ on:
   # The merge queue (t-1935) tests each group before it lands on main.
   merge_group:
 
+# Superseded PR heads must not occupy runners needed by their replacement.
+# Main and merge-queue runs retain distinct groups and are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -134,17 +140,7 @@ jobs:
           pattern: ci-node-*
           path: reports
       - name: Merge reports per Node version
-        run: |
-          for version in 22.x 24.x; do
-            mkdir -p "merged/$version/blobs"
-            for shard in reports/ci-node-$version-shard-*; do
-              [ -f "$shard/shard.blob.json" ] || continue
-              cp "$shard/shard.blob.json" "merged/$version/blobs/$(basename "$shard").json"
-            done
-            if [ -n "$(ls -A "merged/$version/blobs")" ]; then
-              npx vitest --merge-reports="merged/$version/blobs" --reporter=json --outputFile="merged/$version/vitest.json" || exit 1
-            fi
-          done
+        run: bash scripts/merge-ci-reports.sh
       - name: Collect every retried test
         if: always()
         run: |
