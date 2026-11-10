@@ -6,6 +6,9 @@
  * Needs `age` (CI installs it) and python3 (to hold a recovery's locks, as SQLite's own recovery does).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createHash } from 'node:crypto';
+import { request, type ClientRequest } from 'node:http';
+import { sessionStore } from './ui/sessions.js';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -14,7 +17,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
-import { agentDir, createToken, loadHousehold, type Household } from './household.js';
+import { AUDIT_DB, openAuditDb } from './audit.js';
+import { agentDir, createToken, loadHousehold, revokeToken, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { createConversationTables } from './backends/conversations.js';
 import { COMMS_DB } from './comms.js';
@@ -284,6 +288,163 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(done.status).toBe(200);
       expect(await done.json()).toMatchObject({ ok: true });
     } finally { holder.kill(); rmSync(lock, { force: true }); }
+  }, 20_000);
+
+
+  /** Send only part of a body first: the original pre-body probe has run before the test takes the lock. */
+  const uploading = (path: string, body: string, headers: Record<string, string>) => {
+    let req!: ClientRequest;
+    const result = new Promise<number>((resolve, reject) => {
+      req = request(`${base}${path}`, { method: 'POST', headers }, (res) => {
+        res.resume(); res.on('end', () => resolve(res.statusCode ?? 0));
+      });
+      req.on('error', reject);
+      req.write(body.slice(0, 1));
+    });
+    return { finish: () => req.end(body.slice(1)), result };
+  };
+
+  it('MCP waits for a recovery that began during its slow body', async () => {
+    const memory = join(agentDir(h, 'art'), 'memories.db');
+    const keeper = new BetterSqlite3(memory);
+    keeper.pragma('journal_mode = WAL');
+    keeper.prepare('SELECT 1 FROM sqlite_master').get();
+    const upload = uploading('/mcp', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+      protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'lock-test', version: '1' },
+    } }), { authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' });
+    await delay(100);
+    const held = await hold(memory, 'recovery');
+    try {
+      const began = performance.now();
+      upload.finish();
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(upload.result)).toBe(true);
+      await held.release();
+      expect(await upload.result).toBe(200);
+    } finally { await held.release(); keeper.close(); }
+  }, 20_000);
+
+  it('activation-time audit maintenance waits off the loop', async () => {
+    openAuditDb(h.home).close();
+    const held = await hold(join(h.home, AUDIT_DB), 'exclusive');
+    try {
+      const began = performance.now();
+      handle.setBackgroundActive(false);
+      handle.setBackgroundActive(true);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      await held.release();
+      await delay(30);
+    } finally { await held.release(); }
+  }, 20_000);
+
+  it('a caller revoked while its slow Comms body arrives cannot post', async () => {
+    const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'slow-revoked' }).token;
+    const upload = uploading('/comms/new', JSON.stringify({ agent: 'art', id: mid(n++), text: 'must not land' }), {
+      authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json',
+    });
+    await delay(100);
+    revokeToken(h, 'slow-revoked');
+    upload.finish();
+    expect(await upload.result).toBe(403);
+  }, 20_000);
+
+  it('a verified sign-in link waits asynchronously; an unknown link never queues', async () => {
+    const store = sessionStore(h.home);
+    const code = store.createLink(createHash('sha256').update(tok.jonathan).digest(), 300);
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect((await fetch(`${base}/login/${'e'.repeat(64)}`, { method: 'POST', redirect: 'manual' })).status).toBe(401);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(signin)).toBe(true);
+      rmSync(lock);
+      const signed = await signin;
+      expect(signed.status).toBe(303);
+      expect(signed.headers.has('set-cookie')).toBe(true);
+      expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' })).status).toBe(401);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a link expired during its wait is still refused without a session', async () => {
+    const store = sessionStore(h.home);
+    const code = store.createLink(createHash('sha256').update(tok.jonathan).digest(), 300);
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
+      await delay(100);
+      expect(await pending(signin)).toBe(true);
+      const path = join(h.home, 'ui-sessions.json');
+      const file = JSON.parse(readFileSync(path, 'utf8'));
+      file.links[createHash('sha256').update(code).digest('hex')].expires = 0;
+      writeFileSync(path, JSON.stringify(file));
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401);
+      expect(denied.headers.has('set-cookie')).toBe(false);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('sign-out waits asynchronously then revokes the cookie', async () => {
+    const login = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const logout = fetch(`${base}/logout`, { method: 'POST', headers: { cookie }, redirect: 'manual' });
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(logout)).toBe(true);
+      rmSync(lock);
+      expect((await logout).status).toBe(303);
+      expect((await fetch(`${base}/account`, { headers: { cookie }, redirect: 'manual' })).status).toBe(303);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('an action waits for locks taken while its body was still arriving', async () => {
+    const body = '_action=mark-set&agent=art&mark=1';
+    const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
+    await delay(100);
+    const lock = join(h.home, '.household.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      upload.finish();
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(upload.result)).toBe(true);
+      rmSync(lock);
+      expect(await upload.result).toBe(200);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a Comms post waits for a lock taken during its slow body', async () => {
+    await open();
+    const upload = uploading('/comms/new', JSON.stringify({ agent: 'art', id: mid(n++), text: 'slow body' }), {
+      authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/json', accept: 'application/json',
+    });
+    await delay(100);
+    const held = await hold(join(h.home, COMMS_DB), 'exclusive');
+    try {
+      const began = performance.now();
+      upload.finish();
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(upload.result)).toBe(true);
+      await held.release();
+      expect(await upload.result).toBe(200);
+    } finally { await held.release(); }
   }, 20_000);
 
   it('a sign-in waits out the sessions file\'s lock, and the sign-in page stays fast', async () => {

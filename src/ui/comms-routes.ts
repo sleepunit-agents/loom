@@ -32,7 +32,7 @@ import { resolveSqliteDbPath } from '../config.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
 import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { deliverAsOwner } from '../delivery.js';
-import type { Household, Member } from '../household.js';
+import { memberOf, type Household, type Member } from '../household.js';
 import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
@@ -224,6 +224,14 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     return send(503, { error: 'unavailable: Comms couldn\'t answer; see the daemon log' });
   };
   const m = c.member;
+  const postReady = async (body: Record<string, unknown>) => {
+    await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB), join(h.home, 'comms.db')], budgetMs: WRITE_WAIT_MS });
+    const why = c.guard(req, body);
+    if (why) throw new CommsError(why, 403);
+    const current = c.live(), member = current && m ? memberOf(current, m.person) : undefined;
+    if (!current || !member) throw new CommsError('forbidden: Comms is for an agent\'s owners', 403);
+    return { household: current, member };
+  };
   try {
     if (pathname === '/comms') {
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
@@ -277,7 +285,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         body.text = withAbout(body.text, about);
         delete body.about;
       }
-      const o = openThread(h, c.env, m, body, new Date(), aboutKey);
+      const current = await postReady(body);
+      const o = openThread(current.household, c.env, current.member, body, new Date(), aboutKey);
       if (o.created) {
         deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
         send(200, { thread: view(o.thread), seq: o.seq, delivery: 'sending' });
@@ -330,6 +339,9 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     if (!body) return send(400, { error: 'bad-input: a JSON object' }), true;
     const why = c.guard(req, body);
     if (why) return send(403, { error: why }), true;
+    const current = await postReady(body);
+    // The thread and the member's scope may have moved while the body arrived or its locks were held.
+    t = threadFor(current.household, current.member, t.id);
     switch (verb) {
       case 'model': {
         if (typeof body.harness !== 'string') return send(400, { error: 'model is auto, claude or codex' }), true;

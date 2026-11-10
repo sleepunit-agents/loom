@@ -5,9 +5,10 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { request } from 'node:http';
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
@@ -133,6 +134,63 @@ describe('passkeys', () => {
     else process.env.LOOM_PUBLIC_URL = saved;
     await rm(stack, { recursive: true, force: true });
   });
+
+  it('public passkey options share an async wait and leave the sign-in page responsive', async () => {
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const options = Array.from({ length: 5 }, () => call('POST', '/login/passkey/options', { json: {} }));
+      await delay(100);
+      expect((await call('GET', '/login')).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await Promise.race([options[0].then(() => false), delay(20).then(() => true)])).toBe(true);
+      rmSync(lock);
+      expect((await Promise.all(options)).every((r) => r.status === 200)).toBe(true);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a passkey removed during its lock wait cannot open a session', async () => {
+    const cookie = await signIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      // The lock holder removes the key before releasing it, as another listener can.
+      const path = join(stack, 'ui-sessions.json');
+      const file = JSON.parse(readFileSync(path, 'utf8'));
+      delete file.passkeys[device.id.toString('base64url')];
+      writeFileSync(path, JSON.stringify(file));
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401);
+      expect(denied.headers['set-cookie']).toBeUndefined();
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a verified passkey waits asynchronously for the sessions lock, then signs in', async () => {
+    const cookie = await signIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect((await call('GET', '/login')).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      rmSync(lock);
+      expect((await signin).status).toBe(200);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
 
   it('adds one from a signed-in browser, then signs in with it alone', async () => {
     const cookie = await signIn();

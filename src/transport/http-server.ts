@@ -391,16 +391,31 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   // What held the loop, when it's held (stall-watch.ts): the background jobs below run through stalls.timed.
   const stalls = watchStalls();
+  // Maintenance never has overlapping passes. Each lock is waited out asynchronously first, with the original
+  // synchronous operation (and its old timeouts) still the fallback, exactly like a request's wait.
+  let closing = false;
+  const maintaining = new Map<string, Promise<void>>();
+  const maintain = (name: string, work: () => Promise<void>): Promise<void> => {
+    const running = maintaining.get(name);
+    if (running) return running;
+    const run = work().catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
+      .finally(() => maintaining.delete(name));
+    maintaining.set(name, run);
+    return run;
+  };
   // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
   // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
   // start and daily. Neither ever stops the daemon.
-  const foldAll = () => {
-    if (!backgroundActive) return;
-    const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
+  const foldAll = () => maintain('conversations fold', async () => {
+    if (!backgroundActive || closing) return;
+    const h = live?.();
+    const dirs = h ? h.agents.map((a) => agentDir(h, a)) : opts.createServer ? [] : [opts.contextDir];
     for (const d of dirs) {
+      await waitForLocks({ write: [resolveSqliteDbPath(d)], budgetMs: WRITE_WAIT_MS });
+      if (!backgroundActive || closing) return;
       try { stalls.timed('conversations fold', () => foldConversations(d)); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
     }
-  };
+  });
   if (household && backgroundActive) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
   foldAll();
   const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
@@ -408,26 +423,40 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
   // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
   // measures on the scorecards. Neither ever stops the daemon.
-  const sweepAll = () => {
-    if (!backgroundActive || !live) return;
+  const sweepAll = () => maintain('audit and measures sweep', async () => {
+    if (!backgroundActive || !live || closing) return;
     const h = live();
+    await waitForLocks({ write: [join(h.home, AUDIT_DB)], budgetMs: WRITE_WAIT_MS });
+    if (!backgroundActive || closing) return;
     try { stalls.timed('audit sweep', () => sweepAudit(h.home)); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
     for (const day of recentDays()) {
+      await waitForLocks({ read: h.agents.map((a) => resolveSqliteDbPath(agentDir(h, a))), write: [householdDb(h)], budgetMs: WRITE_WAIT_MS });
+      if (!backgroundActive || closing) return;
       try { stalls.timed(`scorecard measures ${day}`, () => computeMeasures(h, day)); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
     }
-  };
+  });
   sweepAll();
   const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
   sweepTimer.unref();
   // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
   // listener watches for thread moves, so a member's own shared stream hears of their threads.
-  const commsTimer = live && !opts.createServer ? setInterval(() => { if (!backgroundActive) return; try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
+  const commsSweep = () => maintain('Comms sweep', async () => {
+    if (!backgroundActive || !live || closing) return;
+    const h = live();
+    await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB), join(h.home, COMMS_DB)], budgetMs: WRITE_WAIT_MS });
+    if (!backgroundActive || closing) return;
+    stalls.timed('comms sweep', () => sweepComms(h));
+  });
+  const refsBackfill = () => maintain('Comms refs backfill', () => backgroundJob('comms refs backfill', async () => {
+    if (live && backgroundActive && !closing) await backfillRefs(live(), process.env, new Date(), () => backgroundActive && !closing);
+  }));
+  const commsTimer = live && !opts.createServer ? setInterval(() => void commsSweep(), 60_000) : undefined;
   commsTimer?.unref();
   if (live && !opts.createServer) {
-    try { if (backgroundActive) stalls.timed('comms sweep', () => sweepComms(live())); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
+    void commsSweep();
     watchComms(live().home);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
-    if (backgroundActive) void backgroundJob('comms refs backfill', () => backfillRefs(live(), process.env)).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
+    void refsBackfill();
   }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
@@ -1137,13 +1166,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 413, `oversized: declared ${declared} bytes exceeds cap ${maxBytes}`);
       }
 
-      // A tool call or CLI verb, once its caller is known, reads its agent's memories first: a recovery or an
-      // exclusive lock there is waited out here (lock-gate.ts). Not its writes: a read must not queue behind every
-      // writer. The page waits in its own handler (ui/handler.ts).
-      if (req.method === 'POST') {
+      // Wait after the complete, capped body: a lock can start while a slow upload is still arriving. Authentication
+      // and route guards stay before this gate, and a spent budget still goes on to the old synchronous wait.
+      const waitForMemory = async () => {
         const h = household ? live!() : undefined;
         await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])] });
-      }
+      };
 
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
       // as /mcp above. Full server only: a scoped server (knowledge-only)
@@ -1169,6 +1197,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         } catch (e) {
           return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
         }
+        await waitForMemory();
         // From a house (or a service's token), what it reads is the conversation it holds (t-2118).
         const cliRole = caller?.role.kind === 'agent' ? caller.role : undefined;
         const held = cliRole && (cliRole.house || cliRole.service)
@@ -1227,6 +1256,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
       }
 
+      await waitForMemory();
       let transport = existingSession?.transport;
       if (!transport) {
         if (sessionId) {
@@ -1282,12 +1312,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
         foldAll(); sweepAll();
         if (live && !opts.createServer) {
-          try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch { /* next timer retries */ }
-          backgroundJob('comms refs backfill', () => void backfillRefs(live!(), process.env).catch(() => undefined));
+          void commsSweep();
+          void refsBackfill();
         }
       });
     },
     async close() {
+      closing = true;
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
