@@ -1451,6 +1451,8 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       vi.spyOn(Date, 'now').mockReturnValue(realNow);
       expect(adapterCall(h, process.env, { ...missing, op: 'reconcile' })).toMatchObject({ state: 'unresolved' });
       expect(() => adapterCall(h, process.env, missing)).toThrow('clock moved backwards');
+      // A hold, not a refusal: 503, so the runtime retries the same ref rather than giving the report up.
+      try { adapterCall(h, process.env, missing); } catch (e) { expect((e as { status?: number }).status).toBe(503); }
       const { expiresAt: _, ...legacy } = missing;
       expect(adapterCall(h, process.env, { ...legacy, op: 'reconcile' })).toMatchObject({ state: 'unresolved' });
       expect(() => adapterCall(h, process.env, legacy)).toThrow();

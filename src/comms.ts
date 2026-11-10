@@ -660,7 +660,8 @@ function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind:
     return { seq };
   }).immediate());
   // Refusals leave the highwater committed, including across a restart.
-  if (result.problem) return fail(result.problem, 409);
+  // A backwards clock is a hold until wall time recovers (503: retry the same ref later); a reached deadline is final.
+  if (result.problem) return fail(result.problem, result.problem === 'continuation clock moved backwards' ? 503 : 409);
   const seq = result.seq!;
   // The work it names, as refs only, beside the thread (comms.md, "The refs index").
   if (inserted) noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
