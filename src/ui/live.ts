@@ -131,7 +131,8 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
     tickRunning = undefined;
     const again = tickAgain, round = roundAgain;
     tickAgain = false; roundAgain = false;
-    if (again) void tick(true, again === true ? undefined : again);
+    // A piece's word first; a regular round still due waits for it, never dropped (one of every piece covers both).
+    if (again) { if (again !== true) roundAgain = round; void tick(true, again === true ? undefined : again); }
     else if (round) void tick();
   });
   return tickRunning;

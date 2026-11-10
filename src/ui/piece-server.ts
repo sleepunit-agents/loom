@@ -79,11 +79,12 @@ function startServer(key: string, path: string, env: NodeJS.ProcessEnv): Server 
   child.stdout?.on('data', (d: string) => {
     const p = s.pending;
     if (!p) { killServer(s); return; }   // an answer nobody asked for: it's not speaking the protocol
+    const from = s.buf.length;
     s.buf += d;
     s.bytes += Buffer.byteLength(d);
     // The answer is JSON inside JSON: escaping can double it. Its own size is checked once it's read.
     if (s.bytes > 2 * p.maxBytes + 4096) { s.pending = undefined; clearTimeout(p.timer); p.done({ ok: false, reason: 'answer too large' }); killServer(s); return; }
-    const nl = s.buf.indexOf('\n');
+    const nl = s.buf.indexOf('\n', from);   // only the new text: an earlier chunk had none
     if (nl < 0) return;
     const line = s.buf.slice(0, nl);
     const rest = s.buf.slice(nl + 1);
@@ -120,6 +121,7 @@ export function serveCall(path: string, resolved: string, env: NodeJS.ProcessEnv
   for (const [k, list] of servers) if (k !== key && k.startsWith(`${path}\0`)) for (const s of [...list]) if (!s.busy) killServer(s, false);
   const at = failed.get(key);
   if (at !== undefined && Date.now() - at < FAIL_MS) return undefined;
+  if (at !== undefined) failed.delete(key);
   // One past its lifetime and idle goes now, not at its idle timer: it would hold a place it can't be given.
   for (const x of [...(servers.get(key) ?? [])]) if (!x.busy && Date.now() - x.started >= LIFETIME_MS) killServer(x, false);
   const list = servers.get(key) ?? [];
