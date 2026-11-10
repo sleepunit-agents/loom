@@ -40,6 +40,7 @@ type BlockShape =
       series: { key: string; label: string; color?: 'pink' | 'blue' | 'olive' | 'yellow' | 'ink' }[]; data: ({ label: string } & Record<string, number | string | null>)[] }
   | { type: string; [k: string]: unknown };
 export interface PanelRow {
+  ref?: string;
   label: string; value?: string; detail?: string; tone?: Tone; agent?: string; page?: string; href?: string;
   toggle?: { action: string; on: boolean; fields?: Record<string, string> };
   choice?: { action: string; name: string; value: string; options: { value: string; label: string }[]; fields?: Record<string, string> };
@@ -47,7 +48,7 @@ export interface PanelRow {
   sheet?: { title?: string; blocks: Block[] };
   act?: Button;
 }
-export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button;
+export interface ListItem { text: string; ref?: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button;
   /** Opens in place to these pairs; its page is then a link inside, named `open` (src/ui/vocab.ts RowMore). */
   more?: { items: { label: string; value: string }[]; open?: string } }
 export interface Section { id: string; title?: string; place?: 'side'; /** The older spelling, in a copy kept from before. */ side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
