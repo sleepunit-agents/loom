@@ -1859,6 +1859,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!stored) return sendJson(res, 401, { error: 'loom doesn\'t know that passkey (it may have been removed)' });
     try {
       let a = verifyAssertion(body, stored, rp);
+      if (!store.hasChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
       // Only a verified credential joins the wait; reread and verify after it as a key may have been removed or
       // replaced meanwhile. Challenge consumption and counter checks stay inside the same synchronous section.
       if (!opts.auth.live(Buffer.from(stored.secret, 'hex'))) return sendJson(res, 401, { error: passkeyStopped(stored) });
@@ -1896,6 +1897,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     // The sessions file's lock, waited out off the event loop (lock-gate.ts), once the token matched: never for a stranger.
     await waitForLocks({ files: [sessionsLock(opts.household?.().home ?? opts.contextDir)] });
+    if (!opts.auth.live(match)) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
       'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
@@ -1970,8 +1972,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     await waitForLocks(reads ? { read: dbs } : { write: dbs, budgetMs: WRITE_WAIT_MS });
   }
   const tokens = pathname.startsWith('/act/') || /^\/a\/[a-z][a-z0-9-]{0,39}\/act\//.test(pathname) || pathname.startsWith('/passkeys') || pathname === '/account';
-  const waitForWrite = () => waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
-  if (!reads) await waitForWrite();
+  const authority = JSON.stringify([who.member ?? null, full?.agents ?? null]);
+  const waitForWrite = async (): Promise<boolean> => {
+    await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+    const current = whoIs(req, unscoped);
+    // Do not reuse the request's captured owner scope after it changed. The page can reload under the new scope;
+    // this action runs only when the same credentials and authority still hold after the final lock wait.
+    if (!current || JSON.stringify([current.member ?? null, householdNow?.().agents ?? null]) !== authority) {
+      sendJson(res, 403, { error: 'this sign-in or its permissions changed; reload and try again' });
+      return false;
+    }
+    return true;
+  };
+  if (!reads && !await waitForWrite()) return;
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
@@ -2029,6 +2042,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, COLLECTIONS_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    if (!await waitForWrite()) return;
     const r = await answerBatch({ env: opts.env, household: full, live: () => householdNow!(), page: { session: streamOwner(req, who) } }, memberViewer(full, who.member), body);
     return sendJson(res, r.status, r.body);
   }
@@ -2094,7 +2108,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, PASSKEY_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
-    await waitForWrite();
+    if (!await waitForWrite()) return;
     const sub = pushSub(body.sub);
     if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
     if (pathname === '/push/unsubscribe') { storeFor(opts).removePushSub(sub.endpoint); return sendJson(res, 200, { ok: true }); }
@@ -2111,7 +2125,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, PASSKEY_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
-    await waitForWrite();
+    if (!await waitForWrite()) return;
     const store = storeFor(opts);
     const session = store.get(who.cookie);
     if (!session) return sendJson(res, 401, { error: 'signed out' });
@@ -2175,7 +2189,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, LOGIN_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
-    await waitForWrite();
+    if (!await waitForWrite()) return;
     const p = prefsOf(body);
     if (!p) return sendJson(res, 400, { error: 'not an Appearance choice loom keeps' });
     if (!Object.keys(p).length) return sendJson(res, 400, { error: 'no Appearance choice to save' });
@@ -2216,7 +2230,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const form = await readForm(req, ACT_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
     if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) return send(res, 403, 'text/plain', 'forbidden: this form is stale; reload and try again');
-    await waitForWrite();
+    if (!await waitForWrite()) return;
     const key = form.get('i') ?? '';
     if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
     storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
@@ -2240,7 +2254,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) {
       return send(res, 403, 'text/plain', 'forbidden: this form is stale or not from loom\'s page; reload and try again');
     }
-    await waitForWrite();
+    if (!await waitForWrite()) return;
     const action = form.get('_action') ?? '';
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');

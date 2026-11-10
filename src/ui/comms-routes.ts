@@ -345,7 +345,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     switch (verb) {
       case 'model': {
         if (typeof body.harness !== 'string') return send(400, { error: 'model is auto, claude or codex' }), true;
-        const r = await threadModel(c, t, m!, body.harness); send(r.status, r.body); return true;
+        const r = await threadModel(c, t, current.member, body.harness); send(r.status, r.body); return true;
       }
       case 'send': {
         // Accepted once recorded (t-1881): the delivery goes on in the background, and the thread's live state says
@@ -365,7 +365,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'unpin': setPinned(h, t, false); send(200, { ok: true }); return true;
       case 'archive':
       case 'delete': {
-        const r = await threadControl(c, t, m!, 'interrupt');
+        const r = await threadControl(c, t, current.member, 'interrupt');
         // A new thread may never have reached the runtime: there is no body to stop.
         if (r.status !== 200 && !noRuntimeConversation(r)) { send(r.status, r.body); return true; }
         if (verb === 'archive') setArchived(h, t, true); else deleteThread(h, t);
@@ -375,7 +375,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'read': markRead(h, t, body.seq); send(200, { ok: true }); return true;
       case 'stop':
       case 'resume': {
-        const r = await threadControl(c, t, m!, verb === 'stop' ? 'interrupt' : 'resume');
+        const r = await threadControl(c, t, current.member, verb === 'stop' ? 'interrupt' : 'resume');
         if (noRuntimeConversation(r) && verb === 'stop') send(200, { ok: true, state: 'idle' });
         else send(r.status, r.body);
         return true;

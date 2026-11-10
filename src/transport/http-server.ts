@@ -1173,6 +1173,22 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])] });
       };
 
+      const stillAuthorized = (): boolean => {
+        if (household) {
+          const current = callerFor(req.headers['authorization'], target);
+          if ('status' in current) { sendError(res, current.status, current.error); return false; }
+          if (current.key !== identity || JSON.stringify(current.role) !== JSON.stringify(caller?.role)) {
+            sendError(res, 403, 'forbidden: authorization changed during this request; try again');
+            return false;
+          }
+          caller = current;
+        } else {
+          const current: { ok: boolean; error?: string; identity?: string } = opts.tokens ? checkBearerMulti(opts.tokens, req.headers['authorization']) : checkBearer(opts.token, req.headers['authorization']);
+          if (!current.ok || (current.identity ?? 'art') !== identity) { sendError(res, 401, current.error ?? 'unauthorized: identity changed during the request'); return false; }
+        }
+        return true;
+      };
+
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
       // as /mcp above. Full server only: a scoped server (knowledge-only)
       // can't offer the memory verbs, so it has no /cli at all.
@@ -1198,6 +1214,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
         }
         await waitForMemory();
+        if (!stillAuthorized()) return;
         // From a house (or a service's token), what it reads is the conversation it holds (t-2118).
         const cliRole = caller?.role.kind === 'agent' ? caller.role : undefined;
         const held = cliRole && (cliRole.house || cliRole.service)
@@ -1257,6 +1274,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
 
       await waitForMemory();
+      if (!stillAuthorized()) return;
       let transport = existingSession?.transport;
       if (!transport) {
         if (sessionId) {

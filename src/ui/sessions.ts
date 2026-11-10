@@ -449,6 +449,12 @@ export class SessionStore {
     return challenge;
   }
 
+  /** Non-consuming check before a verified assertion joins a wait. useChallenge still consumes it under the lock. */
+  hasChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): boolean {
+    const c = this.read().challenges?.[hashId(challenge)];
+    return !!c && c.expires > nowS && c.purpose === purpose;
+  }
+
   /** Spend a challenge: it's gone either way; null unless it was this purpose and unexpired. */
   useChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): { secret: Buffer | null } | null {
     if (!existsSync(this.file)) return null;

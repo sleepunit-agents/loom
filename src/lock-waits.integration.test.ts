@@ -5,7 +5,7 @@
  * #776 failed these posts at once instead ("comms/adapter: unavailable", SQLITE_BUSY_RECOVERY): never again.
  * Needs `age` (CI installs it) and python3 (to hold a recovery's locks, as SQLite's own recovery does).
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { request, type ClientRequest } from 'node:http';
 import { sessionStore } from './ui/sessions.js';
@@ -18,12 +18,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { AUDIT_DB, openAuditDb } from './audit.js';
-import { agentDir, createToken, loadHousehold, revokeToken, type Household } from './household.js';
+import { agentDir, createToken, loadHousehold, markIndexOf, revokeToken, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
-import { createConversationTables } from './backends/conversations.js';
+import { createConversationTables, recordTurn } from './backends/conversations.js';
+import { backfillRefs, backfilled } from './comms-work.js';
 import { COMMS_DB } from './comms.js';
 import { HOUSEHOLD_DB } from './household-store.js';
-import { waitForLocks } from './lock-gate.js';
+import * as lockGate from './lock-gate.js';
+import { pendingLockWaits, waitForLocks } from './lock-gate.js';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 
@@ -293,15 +295,18 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
 
   /** Send only part of a body first: the original pre-body probe has run before the test takes the lock. */
   const uploading = (path: string, body: string, headers: Record<string, string>) => {
-    let req!: ClientRequest;
+    let req!: ClientRequest, text = '';
+    let received!: () => void;
+    const started = new Promise<void>((resolve) => { received = resolve; });
     const result = new Promise<number>((resolve, reject) => {
-      req = request(`${base}${path}`, { method: 'POST', headers }, (res) => {
-        res.resume(); res.on('end', () => resolve(res.statusCode ?? 0));
+      req = request(`${base}${path}`, { method: 'POST', headers: { ...headers, expect: '100-continue' } }, (res) => {
+        res.on('data', (d) => { text += d; }); res.on('end', () => resolve(res.statusCode ?? 0));
       });
       req.on('error', reject);
+      req.once('continue', received);
       req.write(body.slice(0, 1));
     });
-    return { finish: () => req.end(body.slice(1)), result };
+    return { finish: () => req.end(body.slice(1)), result, started, text: () => text };
   };
 
   it('MCP waits for a recovery that began during its slow body', async () => {
@@ -312,7 +317,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const upload = uploading('/mcp', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
       protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'lock-test', version: '1' },
     } }), { authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' });
-    await delay(100);
+    await upload.started;
     const held = await hold(memory, 'recovery');
     try {
       const began = performance.now();
@@ -327,28 +332,89 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   }, 20_000);
 
   it('activation-time audit maintenance waits off the loop', async () => {
-    openAuditDb(h.home).close();
+    const db = openAuditDb(h.home);
+    db.prepare('INSERT OR REPLACE INTO audit_entries VALUES (?, ?, ?, ?, ?, ?, ?)').run('art', 'cv-maintenance', 1, 'loom', 'message', '2020-01-01T00:00:00Z', Buffer.from('expired'));
+    db.close();
     const held = await hold(join(h.home, AUDIT_DB), 'exclusive');
     try {
       const began = performance.now();
       handle.setBackgroundActive(false);
       handle.setBackgroundActive(true);
+      handle.setBackgroundActive(false);
+      handle.setBackgroundActive(true);
+      expect(pendingLockWaits()).toBe(1);
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(performance.now() - began).toBeLessThan(1000);
       await held.release();
-      await delay(30);
+      await expect.poll(() => {
+        const check = new BetterSqlite3(join(h.home, AUDIT_DB));
+        try { return check.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE conversation = 'cv-maintenance'").get(); } finally { check.close(); }
+      }).toEqual({ n: 0 });
     } finally { await held.release(); }
   }, 20_000);
 
-  it('a caller revoked while its slow Comms body arrives cannot post', async () => {
+  for (const path of ['/mcp', '/cli']) {
+    it(`${path} refuses a token revoked during its database wait`, async () => {
+      const label = path === '/mcp' ? 'queued-mcp' : 'queued-cli';
+      const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label }).token;
+      const memory = join(agentDir(h, 'art'), 'memories.db');
+      const keeper = new BetterSqlite3(memory);
+      keeper.pragma('journal_mode = WAL');
+      keeper.prepare('SELECT 1 FROM sqlite_master').get();
+      const held = await hold(memory, 'recovery');
+      try {
+        const request = fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+          body: JSON.stringify(path === '/mcp' ? { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'revoked', version: '1' } } } : { argv: ['memory', 'list'] }) });
+        await delay(100);
+        expect(await pending(request)).toBe(true);
+        revokeToken(h, label);
+        await held.release();
+        expect((await request).status).toBe(401);
+      } finally { await held.release(); keeper.close(); }
+    }, 20_000);
+  }
+
+  it('Comms refuses a caller revoked during the final lock wait', async () => {
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'slow-revoked' }).token;
     const upload = uploading('/comms/new', JSON.stringify({ agent: 'art', id: mid(n++), text: 'must not land' }), {
       authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json',
     });
-    await delay(100);
-    revokeToken(h, 'slow-revoked');
-    upload.finish();
-    expect(await upload.result).toBe(403);
+    await upload.started;
+    const held = await hold(join(h.home, COMMS_DB), 'exclusive');
+    try {
+      upload.finish();
+      await delay(100);
+      expect(await pending(upload.result)).toBe(true);
+      revokeToken(h, 'slow-revoked');
+      await held.release();
+      expect(await upload.result).toBe(403);
+    } finally { await held.release(); }
+  }, 20_000);
+
+  it.each(['revoked', 'scope reduced'])('an action refuses authority %s during its final wait', async (change) => {
+    const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: `action-${change}` }).token;
+    const original = readFileSync(join(h.home, 'household.json'), 'utf8');
+    const upload = uploading('/act/loom', '_action=mark-set&agent=art&mark=3', {
+      authorization: `Bearer ${token}`, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1',
+    });
+    await upload.started;
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      upload.finish();
+      await delay(100);
+      expect(await pending(upload.result)).toBe(true);
+      if (change === 'revoked') revokeToken(h, `action-${change}`);
+      else {
+        const file = JSON.parse(original);
+        file.members[0].agents = ['art'];
+        file.members.push({ person: 'sam', role: 'owner', agents: '*' });
+        writeFileSync(join(h.home, 'household.json'), JSON.stringify(file));
+      }
+      rmSync(lock);
+      expect(await upload.result).toBe(403);
+      expect(markIndexOf(loadHousehold(h.home)!, 'art')).not.toBe(3);
+    } finally { rmSync(lock, { force: true }); writeFileSync(join(h.home, 'household.json'), original); }
   }, 20_000);
 
   it('a verified sign-in link waits asynchronously; an unknown link never queues', async () => {
@@ -392,6 +458,35 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
 
+  it('an unknown sign-out cookie never joins the sessions queue', async () => {
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const r = await fetch(`${base}/logout`, { method: 'POST', headers: { cookie: `loom_ui=${'a'.repeat(64)}` }, redirect: 'manual' });
+      expect(r.status).toBe(303);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(pendingLockWaits()).toBe(0);
+    } finally { rmSync(lock, { force: true }); }
+  });
+
+  it('a link whose token was revoked during its wait cannot sign in', async () => {
+    const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'link-revoked' }).token;
+    const code = sessionStore(h.home).createLink(createHash('sha256').update(token).digest(), 300);
+    const lock = join(h.home, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
+      await delay(100);
+      expect(await pending(signin)).toBe(true);
+      revokeToken(h, 'link-revoked');
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401);
+      expect(denied.headers.has('set-cookie')).toBe(false);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
   it('sign-out waits asynchronously then revokes the cookie', async () => {
     const login = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie')!.split(';')[0];
@@ -411,9 +506,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   }, 20_000);
 
   it('an action waits for locks taken while its body was still arriving', async () => {
-    const body = '_action=mark-set&agent=art&mark=1';
+    const body = '_action=mark-set&agent=art&mark=2';
     const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
-    await delay(100);
+    await upload.started;
     const lock = join(h.home, '.household.lock');
     writeFileSync(lock, String(process.pid));
     try {
@@ -425,6 +520,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(await pending(upload.result)).toBe(true);
       rmSync(lock);
       expect(await upload.result).toBe(200);
+      expect(markIndexOf(loadHousehold(h.home)!, 'art')).toBe(2);
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
 
@@ -433,7 +529,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const upload = uploading('/comms/new', JSON.stringify({ agent: 'art', id: mid(n++), text: 'slow body' }), {
       authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/json', accept: 'application/json',
     });
-    await delay(100);
+    await upload.started;
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
       const began = performance.now();
@@ -444,6 +540,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(await pending(upload.result)).toBe(true);
       await held.release();
       expect(await upload.result).toBe(200);
+      const id = JSON.parse(upload.text()).thread.id;
+      const persisted = await fetch(`${base}/comms/${id}`, { headers: { authorization: `Bearer ${tok.jonathan}`, accept: 'application/json' } });
+      const view = await persisted.json() as { messages: { text: string }[] };
+      expect(view.messages.some((m) => m.text === 'slow body')).toBe(true);
     } finally { await held.release(); }
   }, 20_000);
 
@@ -463,4 +563,144 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
+  it('a slow collection query rechecks its caller after its body arrives', async () => {
+    const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'slow-query' }).token;
+    const upload = uploading('/collections/query', JSON.stringify({ queries: [] }), { authorization: `Bearer ${token}`, 'content-type': 'application/json' });
+    await upload.started;
+    revokeToken(h, 'slow-query');
+    upload.finish();
+    expect(await upload.result).toBe(403);
+  });
+
+  it('refs backfill waits before enumerating existing threads under a Comms lock', async () => {
+    await open();
+    const index = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+    index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.close();
+    const held = await hold(join(h.home, COMMS_DB), 'exclusive');
+    try {
+      const began = performance.now();
+      const backfill = backfillRefs(h, process.env);
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(backfill)).toBe(true);
+      await held.release();
+      expect(await backfill).toBeGreaterThan(0);
+      expect(backfilled(h.home)).toBe(true);
+    } finally { await held.release(); }
+  }, 20_000);
+
+  it('folding and scorecard measures wait for memory recovery, then both finish', async () => {
+    const dir = agentDir(h, 'art'), memory = join(dir, 'memories.db');
+    const old = recordTurn(dir, 'art', { venue: 'loom', place: 'fold-fixture', at: '2020-01-01T00:00:00Z', from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime');
+    recordTurn(dir, 'art', { venue: 'loom', place: 'measure-fixture', at: new Date(Date.now() - 2000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime');
+    recordTurn(dir, 'art', { venue: 'loom', place: 'measure-fixture', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply', model: 'maintenance-fixture', harness: 'codex' }, 'runtime');
+    const keeper = new BetterSqlite3(memory); keeper.pragma('journal_mode = WAL'); keeper.prepare('SELECT 1 FROM sqlite_master').get();
+    const held = await hold(memory, 'recovery');
+    try {
+      const began = performance.now();
+      handle.setBackgroundActive(false); handle.setBackgroundActive(true);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      await held.release();
+      await expect.poll(() => {
+        const check = new BetterSqlite3(memory);
+        try { return check.prepare('SELECT COUNT(*) AS n FROM conversation_days WHERE conversation = ?').get(old.conversation); }
+        finally { check.close(); }
+      }).toEqual({ n: 1 });
+      await expect.poll(() => {
+        const check = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+        try { return check.prepare("SELECT COUNT(*) AS n FROM scorecards WHERE model = 'maintenance-fixture' AND measure = 'first_reply_s'").get(); }
+        finally { check.close(); }
+      }).toEqual({ n: 1 });
+    } finally { await held.release(); keeper.close(); }
+  }, 20_000);
+
+  it('the Comms sweep waits for its words store and expires old words after release', async () => {
+    const t = await open();
+    const path = join(h.home, COMMS_DB), db = new BetterSqlite3(path);
+    db.prepare("UPDATE comms_messages SET at = '2020-01-01T00:00:00Z' WHERE thread = ?").run(t.id); db.close();
+    const held = await hold(path, 'exclusive');
+    try {
+      const began = performance.now();
+      handle.setBackgroundActive(false); handle.setBackgroundActive(true);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      await held.release();
+      await expect.poll(() => {
+        const check = new BetterSqlite3(path);
+        try { return check.prepare('SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ? AND text IS NOT NULL').get(t.id); }
+        finally { check.close(); }
+      }).toEqual({ n: 0 });
+    } finally { await held.release(); }
+  }, 20_000);
+
+  it('a refs backfill cancelled during its first wait never marks itself done', async () => {
+    const index = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+    index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.close();
+    const held = await hold(join(h.home, COMMS_DB), 'exclusive');
+    let active = true;
+    try {
+      const backfill = backfillRefs(h, process.env, new Date(), () => active);
+      await delay(100); expect(await pending(backfill)).toBe(true);
+      active = false;
+      await held.release();
+      expect(await backfill).toBe(0);
+      expect(backfilled(h.home)).toBe(false);
+    } finally { active = false; await held.release(); }
+  }, 20_000);
+
+  it('a failed probe never becomes a failed sign-in', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try { expect(await waitForLocks({ files: [{ path: 'test-probe-error', held: () => { throw new Error('probe unavailable'); } }] })).toBe(false); }
+    finally { error.mockRestore(); }
+    const original = lockGate.waitForLocks;
+    const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation((w) => w.files?.some((f) => f.path === join(h.home, 'ui-sessions.lock')) ? Promise.resolve(false) : original(w));
+    try {
+      const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
+      expect(r.status).toBe(303); expect(r.headers.has('set-cookie')).toBe(true);
+    } finally { probe.mockRestore(); }
+  });
+
+  it('a spent async budget still runs the original synchronous sign-in wait', async () => {
+    const lock = join(h.home, 'ui-sessions.lock');
+    const holder = spawn(process.execPath, ['-e', `
+      const fs = require('node:fs'); const lock = process.argv[1];
+      fs.writeFileSync(lock, String(process.pid)); console.log('held');
+      process.stdin.once('data', () => { fs.rmSync(lock, {force:true}); process.exit(0); });
+      setTimeout(() => { fs.rmSync(lock, {force:true}); process.exit(2); }, 15000).unref();
+    `, lock], { stdio: 'pipe' });
+    await once(holder.stdout, 'data');
+    const original = lockGate.waitForLocks;
+    let expired = false;
+    const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation(async (w) => {
+      const free = await original(w);
+      if (!free && w.files?.some((f) => f.path === lock)) { expired = true; holder.stdin.end('release'); }
+      return free;
+    });
+    try {
+      const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
+      expect(expired).toBe(true);
+      expect(r.status).toBe(303); expect(r.headers.has('set-cookie')).toBe(true);
+    } finally { probe.mockRestore(); holder.kill(); rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a maintenance pass delayed by a lock does not write after its listener closes', async () => {
+    const db = openAuditDb(h.home);
+    db.prepare('INSERT OR REPLACE INTO audit_entries VALUES (?, ?, ?, ?, ?, ?, ?)').run('art', 'cv-cancelled', 1, 'loom', 'message', '2020-01-01T00:00:00Z', Buffer.from('expired'));
+    db.close();
+    const held = await hold(join(h.home, AUDIT_DB), 'exclusive');
+    let other: HttpServeHandle | undefined;
+    try {
+      other = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
+      expect(pendingLockWaits()).toBeGreaterThan(0);
+      await other.close(); other = undefined;
+      await held.release();
+      await delay(100);
+      const check = new BetterSqlite3(join(h.home, AUDIT_DB));
+      try { expect(check.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE conversation = 'cv-cancelled'").get()).toEqual({ n: 1 }); }
+      finally { check.close(); }
+    } finally { await held.release(); await other?.close(); }
+  }, 20_000);
+
 });
