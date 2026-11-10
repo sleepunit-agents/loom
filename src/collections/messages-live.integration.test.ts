@@ -170,7 +170,7 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     expect((await ask('jonathan', { where: [['thread', 'eq', t.id]] })).rows[0].message.text).toBe('never put these words in a collection log');
   });
 
-  it('reports a refused live payload read once and recovers even when the words are unchanged', async () => {
+  it.each([true, false])('reports a refused live payload read once and recovers atomically (unchanged=%s)', async (unchanged) => {
     const t = thread('jonathan', 'art', 'words before the key disappeared');
     const stream = await openEvents(base, tok.jonathan); streams.push(stream);
     const a = await ask('jonathan', { where: [['thread', 'eq', t.id]], subscribe: true, stream: stream.hello.stream });
@@ -193,11 +193,13 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     } finally {
       // Restore the original row before the key: successful retry has exactly the original projection.
       const db = new BetterSqlite3(join(h.home, 'comms.db'));
-      db.prepare('UPDATE comms_messages SET delivered = NULL WHERE thread = ?').run(t.id); db.close();
+      if (unchanged) db.prepare('UPDATE comms_messages SET delivered = NULL WHERE thread = ?').run(t.id); db.close();
       renameSync(join(h.home, 'comms.key.saved'), join(h.home, 'comms.key'));
     }
     expect(await until(() => stream.frames.some((f) => f.event === 'rows' && f.data.status === 'live'))).toBe(true);
-    expect(stream.frames.filter((f) => f.event === 'rows' && f.data.sub === 'q' && f.data.upserts)).toHaveLength(0);
+    const recovery = stream.frames.find((f) => f.event === 'rows' && f.data.status === 'live')!;
+    if (unchanged) expect(recovery.data.upserts).toBeUndefined();
+    else expect((recovery.data.upserts as Data[])[0].message.delivered).toBe(true);
     expect(stream.frames.filter((f) => f.event === 'rows' && f.data.status).every((f) => f.data.sub === 'q')).toBe(true);
     expect(stream.frames.some((f) => f.event === 'rows' && f.data.sub === 'metadata' && (f.data.upserts as Data[] | undefined)?.some((r) => r.delivered === true))).toBe(true);
     stream.stop();

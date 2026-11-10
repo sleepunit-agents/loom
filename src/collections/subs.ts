@@ -398,12 +398,13 @@ function reset(s: Stream, sub: Sub, reason: 'gap' | 'scope' | 'provider-gone' | 
   s.port.frame('reset', { sub: sub.id, reason, scope: s.scope });
 }
 
-function send(s: Stream, sub: Sub): void {
+function send(s: Stream, sub: Sub, status?: 'live'): void {
   const f = sub.frame;
-  if (!f.upserts.size && !f.leaves.size && !f.deletes.size) return;
+  if (!status && !f.upserts.size && !f.leaves.size && !f.deletes.size) return;
   if (sub.aggMode === 'core') sub.aggs = coreAggs(sub);
   s.port.frame('rows', {
     sub: sub.id, scope: s.scope,
+    ...(status ? { status } : {}),
     ...(f.upserts.size ? { upserts: [...f.upserts.values()] } : {}),
     ...(f.leaves.size ? { leaves: [...f.leaves] } : {}),
     ...(f.deletes.size ? { deletes: [...f.deletes] } : {}),
@@ -545,10 +546,8 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
       sub.unavailable = true;
       return;
     }
-    if (sub.unavailable) {
-      sub.unavailable = false;
-      s.port.frame('rows', { sub: sub.id, scope: s.scope, status: 'live' });
-    }
+    const recovered = sub.unavailable;
+    sub.unavailable = false;
     // Only what differs from what this subscription was sent.
     const now = new Set<string>();
     got.admitted.forEach((r, i) => {
@@ -561,7 +560,8 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
       sub.frame.upserts.set(key, got.rows[i]);
     });
     for (const key of [...sub.delivered.keys()]) if (!now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.leaves.add(key); }
-    send(s, sub);
+    // Recovery and any changed rows arrive atomically; an unchanged recovery still sends its status.
+    send(s, sub, recovered ? 'live' : undefined);
   })();
 }
 
