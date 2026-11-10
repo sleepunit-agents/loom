@@ -135,11 +135,20 @@ describe('one session ended alone (t-1871)', () => {
     expect(s.revoke(s.refOf(shots))).toBe(false);
   });
 
-  it('a ref must be exactly 16 hex: a prefix that could name several, or anything else, ends nothing', () => {
+  it.each(['0123456789012345', 'abcdef0123456789'])('a ref must be exactly 16 lowercase hex: malformed refs end nothing (%s)', (ref) => {
     const s = new SessionStore(dir);
-    const id = s.create(links);
-    for (const bad of ['', s.refOf(id).slice(0, 15), `${s.refOf(id)}0`, s.refOf(id).toUpperCase(), '*', id]) expect(s.revoke(bad), bad).toBe(false);
-    expect(s.get(id)).not.toBeNull();
+    s.create(links);
+    // Keep both cases deterministic: uppercasing a digits-only ref leaves it valid. A malformed
+    // uppercase ref must actually contain a letter; the exact numeric ref must still revoke.
+    const file = join(dir, 'ui-sessions.json');
+    const f = JSON.parse(readFileSync(file, 'utf-8'));
+    f.sessions = { [`${ref}${'0'.repeat(48)}`]: { issuedAt: 1, secret: links.toString('hex') } };
+    writeFileSync(file, JSON.stringify(f));
+    for (const bad of ['', ref.slice(0, 15), `${ref}0`, `A${ref.slice(1)}`, '*', `${ref}${'0'.repeat(48)}`]) expect(s.revoke(bad), bad).toBe(false);
+    if (ref.toUpperCase() !== ref) expect(s.revoke(ref.toUpperCase())).toBe(false);
+    expect(s.list().map((x) => x.ref)).toEqual([ref]);
+    expect(s.revoke(ref)).toBe(true);
+    expect(s.list()).toEqual([]);
   });
 
   it('a ref two sessions share ends neither', () => {
