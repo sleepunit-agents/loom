@@ -67,9 +67,9 @@ const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && abo
  * What else hears "something changed", by household home: the shared collections, whose attention records are made
  * from everything a change can move (t-2025: subs.ts nudges `loom/attention`, which costs at most one pull per GAP_MS).
  */
-const changeHooks = new Map<string, (fromFiles: boolean) => void>();
-export function onChanged(home: string, f: (fromFiles: boolean) => void): void { changeHooks.set(home, f); }
-function hooks(fromFiles = false): void { for (const f of changeHooks.values()) { try { f(fromFiles); } catch { /* a hint; the poll still pulls */ } } }
+const changeHooks = new Map<string, () => void>();
+export function onChanged(home: string, f: () => void): void { changeHooks.set(home, f); }
+function hooks(): void { for (const f of changeHooks.values()) { try { f(); } catch { /* a hint; the poll still pulls */ } } }
 
 /** Tell the open apps that may see it that something changed (soon, and once for a burst). */
 export function changed(about: Sees = '*'): void {
@@ -220,9 +220,9 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       watcher = watch(home, { recursive: true }, (_e, file) => {
         if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
-        // A store's file moved: a write, or only a read's connection closing (SQLite folds its -wal back then), which
-        // a hook that reads the stores would hear as its own echo: those hooks hear it as such (fromFiles).
-        else if (file && DATA.test(String(file))) { hooks(true); tell(whose(String(file))); }
+        // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
+        // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
+        else if (file && DATA.test(String(file))) tell(whose(String(file)));
       });
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }

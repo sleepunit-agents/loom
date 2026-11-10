@@ -1071,27 +1071,26 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
  * once each, without anyone's own read state, and with how many members have opened each, so a read moves it.
  */
 /**
- * "Something changed" (live.ts) moves the attention records: a nudge, at most one per GAP_MS a household (a burst of
- * changes costs one write; the pull itself is coalesced the same way). A change seen only in the stores' files waits
- * FILES_GAP_MS: building the records reads those stores, and a read's closing connection moves their files too, so a
- * shorter gap would have the records rebuild themselves forever (measured: every 1.5 s, with nothing changing).
+ * "Something changed" (live.ts: an action, a piece's manifest moving) moves the attention records: a nudge, at most one
+ * per GAP_MS a household (a burst costs one write; one inside the gap lands at its end). The stores' own file changes
+ * aren't heard here: building the records reads them, and that reading writes to them, so hearing it would rebuild the
+ * records forever (measured: every 1.5 s, with nothing changing). An agent's ask nudges itself (the digest tool,
+ * src/server.ts); anything else of theirs waits for the 15 s pull.
  */
-const FILES_GAP_MS = 5_000;
 const nudgedAt = new Map<string, number>();
 const nudgeLater = new Map<string, NodeJS.Timeout>();
-const laterFromFiles = new Set<string>();
-function nudgeAttention(home: string, fromFiles = false): void {
-  // A change that isn't only the files' doesn't wait out the files' longer gap.
-  if (nudgeLater.has(home) && (fromFiles || !laterFromFiles.has(home))) return;
-  clearTimeout(nudgeLater.get(home)); nudgeLater.delete(home); laterFromFiles.delete(home);
-  const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + (fromFiles ? FILES_GAP_MS : GAP_MS) - Date.now());
-  const go = () => { nudgeLater.delete(home); laterFromFiles.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
+/** How many times each household's attention records were built (the echo test counts them). */
+const builds = new Map<string, number>();
+export const attentionBuilds = (home: string): number => builds.get(home) ?? 0;
+
+function nudgeAttention(home: string): void {
+  if (nudgeLater.has(home)) return;
+  const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
+  const go = () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
   if (!wait) { go(); return; }
-  // One within the gap still lands, at its end: a change is never left for the 15 s pull to find.
   const t = setTimeout(go, wait);
   t.unref?.();
   nudgeLater.set(home, t);
-  if (fromFiles) laterFromFiles.add(home);
 }
 
 async function memberInbox(base: UiOptions, full: Household, m: Member): Promise<{ items: InboxItem[]; reader?: string }> {
@@ -1126,6 +1125,10 @@ export function attentionRecord(it: InboxItem, audience: Record<string, unknown>
 async function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
   const full = base.household?.();
   if (!full || viewer.kind === 'agent') return [];
+  try { return await buildAttention(base, full, viewer); } finally { builds.set(full.home, (builds.get(full.home) ?? 0) + 1); }
+}
+
+async function buildAttention(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
   if (viewer.kind === 'member') {
     const m = full.members.find((x) => x.person === viewer.person);
     if (!m) return [];
@@ -1577,7 +1580,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (full) {
     const base = opts, home = full.home;
     registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
-    onChanged(home, (fromFiles) => nudgeAttention(home, fromFiles));
+    onChanged(home, () => nudgeAttention(home));
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };

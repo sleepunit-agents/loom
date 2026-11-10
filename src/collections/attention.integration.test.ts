@@ -19,9 +19,11 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
-import { createConversationTables } from '../backends/conversations.js';
+import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
+import { nudge } from './pull.js';
 import { clearPieceCache } from '../ui/pieces.js';
 import { closeAllBackends } from '../backends/index.js';
+import { attentionBuilds } from '../ui/handler.js';
 
 const APPROVALS_BIN = `#!${process.execPath}
 const fs = require('node:fs');
@@ -174,6 +176,30 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
       expect(n.aggregates.count.n, who).toBe((p.items as Data[]).filter((i) => i.attention).length);
     }
   });
+
+  it('left alone, a live subscription costs nothing: its own reads never read as news (the -wal echo)', async () => {
+    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
+    await page('jonathan');
+    await ask('jonathan', { subscribe: true, stream: jon.hello.stream });
+    // Let the first pulls and their echoes settle, then count builds over twelve quiet seconds: at most the 15 s pull.
+    await new Promise((r) => setTimeout(r, 3_000));
+    const before = attentionBuilds(h.home);
+    await new Promise((r) => setTimeout(r, 12_000));
+    expect(attentionBuilds(h.home) - before).toBeLessThanOrEqual(2);
+  }, 30_000);
+
+  it('an agent\'s new ask (its digest, and the nudge its tool sends) reaches a live window', async () => {
+    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
+    await page('jonathan');
+    await ask('jonathan', { subscribe: true, stream: jon.hello.stream });
+    const art = agentDir(h, 'art');
+    const cv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:x', label: 'x', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
+    const t0 = Date.now();
+    writeDigest(art, { conversation: cv, run: 'r1' }, { summary: 'Checked.', needs_owner: { ask: 'OK to restart the backup now?', if_yes: 'I restart it.', if_no: 'I wait.' } } as never);
+    nudge(h.home, 'loom/attention');
+    expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.text === 'OK to restart the backup now?')))).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(3_000);
+  }, 30_000);
 
   it('an agent owner never gets another agent\'s item', async () => {
     const a = await ask('sam', {});

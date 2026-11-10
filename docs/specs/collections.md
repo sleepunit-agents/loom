@@ -678,11 +678,13 @@ along with the listeners. The adapter is the only code that imports the client l
   0.10 s (0.18 s while it awaited the attention pull); a read reached the member's other windows in 0.06 s (was their
   next timed refetch, 20 to 60 s); the first load is one 6 ms, 4.9 KB answer (was the Inbox's page, 12 ms and 6.9 KB,
   and Home's, 12 ms and 4.6 KB, each carrying its own copy). Actions closer than 1.5 s apart coalesce by design.
-- **The stores' files echo reads.** Building the records reads the agents' stores, and a read's closing connection
-  makes SQLite fold its `-wal` back, which loom's file watcher (`live.ts`) hears as "something changed". Nudged on
-  that at once, the records rebuilt themselves every 1.5 s with nothing changing; a change seen only in those files
-  now nudges at most once per 5 s (`handler.ts` `nudgeAttention`), anything else at once. The old bare `change` hears
-  the same echo (an open page asked again after its own read is the likely result); that is t-2032's to retire.
+- **The stores' files echo reads.** Building the records reads the agents' stores, and that code writes to them
+  (and closing a connection folds SQLite's `-wal` back), which loom's file watcher (`live.ts`) hears as "something
+  changed". Nudged on that, the records rebuilt themselves every 1.5 s with nothing changing (and every 5 s when
+  throttled, every ~3 s with an echo window: the file events can't tell a write from an echo). So the stores' file
+  changes don't move them; the digest tool (`server.ts`) nudges `loom/attention` when an agent writes an ask, and
+  anything else of an agent's waits for the 15 s pull. The test counts builds over 12 idle seconds. The old bare
+  `change` hears the same echo (noted on t-2032).
 - **`GET /inbox?i=` no longer marks read**; the app posts `/inbox/read` for the item it opens.
 - **The manifest cache key now includes `LOOM_OWNER_SCOPE`** (`pieces.ts` `scopeKey`): the parity test found a
   household owner's Inbox missing another agent's ask after an agent owner's request had cached its narrowed answer.
