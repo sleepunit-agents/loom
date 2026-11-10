@@ -392,6 +392,8 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
   // Kept with the view they're for, so a switch never shows one view's rows under another's name, nor asks loom.
   const [heldOther, setHeldOther] = useState<{ which: string; rows: Thread[] | null } | null>(null);
   const onOtherRows = useCallback((rows: Thread[] | null) => { setHeldOther(which ? { which, rows } : null); }, [which]);
+  // Closed, its rows go: the set stopped, so reopened, they're asked for again, never shown from before.
+  useEffect(() => { if (!which) setHeldOther(null); }, [which]);
   const liveOther = heldOther && heldOther.which === which ? heldOther.rows : null;
   const otherLive = live && liveOther !== null;
   // The other view's own set: until it answers, a moment, nothing is asked of loom (live means it will).
@@ -1034,7 +1036,9 @@ export function CommsView({ data }: { data: CommsData }) {
   const changed = useCallback(() => { if (!isLive) reload(); }, [isLive, reload]);
   // Nothing kept the page's copy current while the set was live: when it stops being live, ask loom once.
   const wasLive = useRef(false);
-  useEffect(() => { if (wasLive.current && !isLive) reload(); wasLive.current = isLive; }, [isLive, reload]);
+  // (A thread's view already asks again then: the effect below.)
+  const listView = !(data.which === 'thread' || !data.threads);
+  useEffect(() => { if (wasLive.current && !isLive && listView) reload(); wasLive.current = isLive; }, [isLive, reload, listView]);
   // A thread's view doesn't carry the list: on a desktop (two panes) or for New thread, it's fetched beside it (live:
   // only once, for who can be written to).
   const listed = useRef(false);

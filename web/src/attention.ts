@@ -45,6 +45,9 @@ const set = liveSet<Attention>(SPEC, attentionOf, (next) => {
   if (typeof document !== 'undefined') document.documentElement.dataset.attention = next ? 'live' : 'page';
 });
 
+/** The set now, or null while it isn't live. */
+export const attentionNow = (): Attention | null => set.current();
+
 /** Hear the live set move (and keep it live while listening). */
 export const onAttention = (f: () => void): (() => void) => set.subscribe(f);
 

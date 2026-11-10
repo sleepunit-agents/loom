@@ -6,6 +6,7 @@
 // view reads its page's copy then.
 import { liveSet } from './live-set';
 import { liveViews } from './page';
+import { attentionNow } from './attention';
 import { listOf, SPEC, type ListThread } from './thread-rows';
 import type { Rec, ViewState } from './collections/runtime';
 
@@ -39,8 +40,9 @@ export function threadsOf(state: ViewState, records: ReadonlyMap<string, Rec>): 
 const set = liveSet<Threads>(SPEC, threadsOf);
 
 // Comms (the list, and a thread, whose own stream and reads keep it current: comms.tsx ThreadPane) isn't asked again
-// on loom's bare "something changed" or a timer once its threads are live: the list moves on the stream.
-liveViews((view) => view === 'comms' && set.current() !== null);
+// on loom's bare "something changed" or a timer once its threads are live, and what needs you too (its chrome's
+// badges, attention.ts): the list and the counts move on the stream.
+liveViews((view) => view === 'comms' && set.current() !== null && attentionNow() !== null);
 export const useThreads = (csrf: string | undefined): Threads | null => set.use(csrf);
 export const onThreads = (f: () => void): (() => void) => set.subscribe(f);
 export const threadsNow = (): Threads | null => set.current();

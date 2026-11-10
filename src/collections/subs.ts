@@ -28,7 +28,7 @@ import { onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
 import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
-import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
+import { domainOfType, domainsOf, GAP_MS, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
 import { isOutOfContract as outOfContract, providers, type Provider } from './serve.js';
@@ -120,6 +120,8 @@ interface HomeState {
   offBump?: () => void;
   /** comms.tick: a thread moved by another process (a reply the runtime posted to another listener, a CLI). */
   commsWatcher?: FSWatcher;
+  /** When this process last bumped a thread (its own tick's echo is skipped). */
+  bumpedAt?: number;
 }
 
 const homes = new Map<string, HomeState>();
@@ -165,15 +167,16 @@ function ensureRunning(h: HomeState): void {
   }
   h.poll ??= setInterval(() => pass(h), PASS_MS);
   h.poll.unref?.();
-  // Core's own threads move through comms.ts: their domain is pulled when they do. Every thread write, in this process
-  // or another (a reply the runtime posts through another listener, a CLI), leaves the tick file (comms.ts bump), so
-  // that's what's heard; only where it can't be watched, this process's own writes (onBump), and the poll.
-  if (!h.commsWatcher && !h.offBump) {
+  // Core's own threads move through comms.ts: their domain is pulled when they do, here (onBump) and in any other
+  // process (a reply the runtime posts through another listener, a CLI), by the tick file every write leaves (comms.ts
+  // bump). A tick heard within GAP_MS of this process's own bump is that bump's echo: one write, one pull.
+  h.offBump ??= onBump(() => { h.bumpedAt = Date.now(); void h.puller.soon('loom/thread'); });
+  if (!h.commsWatcher) {
     try {
-      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick') h.puller.soon('loom/thread'); });
-      h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; h.offBump ??= onBump(() => h.puller.soon('loom/thread')); });
+      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick' && Date.now() - (h.bumpedAt ?? 0) >= GAP_MS) void h.puller.soon('loom/thread'); });
+      h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; });
       h.commsWatcher.unref?.();
-    } catch { h.offBump = onBump(() => h.puller.soon('loom/thread')); }
+    } catch { /* the poll still runs */ }
   }
 }
 
