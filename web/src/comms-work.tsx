@@ -3,11 +3,11 @@
 //
 // Desktop, with the comm screen in the right column: a framed panel under the comm screen and YOU. Anywhere else (a
 // phone, or a desktop pane under 760 px, where the comm screen sits at the top): a strip, "Work (N)", folded until
-// tapped. Read when the thread opens, 5 s after each new reply, and when a task it shows (or one made in it) moves:
-// the tasks' own records, live (tasks-live.ts, t-2029). Every 60 s while the page is visible only while those aren't
-// live, or while it shows a change (Changes has no shared records of its own yet).
+// tapped. Read when the thread opens, 5 s after each new reply, and when a task it shows (or one made in it) moves, or
+// a change it shows does: the tasks' and the changes' own records, live (tasks-live.ts, t-2029). Every 60 s while the
+// page is visible only while those it needs aren't live.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { tasksLive, watchTasks } from './tasks-live';
+import { changesLive, tasksLive, watchChanges, watchTasks } from './tasks-live';
 import './comms-work.css';
 
 export interface WorkItem { title: string; ref: string; status: string; tone?: 'bad' | 'warn' | 'ok'; when?: string; url?: string; made?: true; from: string }
@@ -56,6 +56,13 @@ export function concerns(keys: ReadonlySet<string>, records: ReadonlyMap<string,
   return false;
 }
 
+/** Whether these moved changes concern the panel: one it shows, by its ref (github:owner/repo#N). */
+export function changesConcern(keys: ReadonlySet<string>, records: ReadonlyMap<string, Record<string, unknown>>, shown: readonly WorkItem[]): boolean {
+  const refs = new Set(shown.filter((i) => i.ref.startsWith('github:')).map((i) => i.ref));
+  for (const k of keys) { const ref = records.get(k)?.ref; if (typeof ref === 'string' && refs.has(ref)) return true; }
+  return false;
+}
+
 export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: string; conversation: string; csrf: string; replySeq: number }) {
   const [work, setWork] = useState<Work | null>(null);
   const shown = useRef<WorkItem[]>([]);
@@ -72,7 +79,7 @@ export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: st
     alive.current = true;
     void load();
     const t = setInterval(() => {
-      if (document.visibilityState === 'visible' && (!tasksLive() || shown.current.some((i) => i.ref.startsWith('github:')))) void load();
+      if (document.visibilityState === 'visible' && (!tasksLive() || (!changesLive() && shown.current.some((i) => i.ref.startsWith('github:'))))) void load();
     }, 60_000);
     return () => { alive.current = false; clearInterval(t); };
   }, [load]);
@@ -80,12 +87,11 @@ export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: st
   useEffect(() => {
     if (!csrf) return;
     let t: ReturnType<typeof setTimeout> | undefined;
-    const off = watchTasks(csrf, (keys, records) => {
-      if (!concerns(keys, records, shown.current, conversation)) return;
-      clearTimeout(t);
-      t = setTimeout(() => void load(), 250);
-    });
-    return () => { clearTimeout(t); off(); };
+    const again = () => { clearTimeout(t); t = setTimeout(() => void load(), 250); };
+    const offT = watchTasks(csrf, (keys, records) => { if (concerns(keys, records, shown.current, conversation)) again(); });
+    // A change it shows moved (its checks, its review, merged): Changes' own records (loom-changes' changes/change).
+    const offC = watchChanges(csrf, (keys, records) => { if (changesConcern(keys, records, shown.current)) again(); });
+    return () => { clearTimeout(t); offT(); offC(); };
   }, [csrf, conversation, load]);
   // A new reply may have made or named work: read again 5 s after it, once the pieces have seen it.
   const first = useRef(true);

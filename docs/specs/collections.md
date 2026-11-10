@@ -779,8 +779,14 @@ along with the listeners. The adapter is the only code that imports the client l
   browser (`tasks-live.integration.test.ts`): a task closed through the API left an open Tasks page in 0.88 s with one
   page ask, and nothing asked again while idle (before: 5.9 s, and a page ask every 1.5 s from the bare change).
 - **A thread's work panel** asks `/comms/<t>/work` again when a task it shows, or one made in its conversation, moves,
-  not every 60 s; it keeps the 60 s read only while it shows a change (Changes has no records yet) or the tasks aren't
-  live.
+  or a change it shows does (`changes/change`, by its `ref`), not every 60 s; it keeps the 60 s read only while the
+  tasks aren't live, or it shows a change and the changes aren't.
+- **Changes' pages and a project's move with the changes too** (`tasks-pages.ts` `pulseOf`): the same chunk holds the open
+  changes and those that moved in eight days, while a Changes page (`/p/changes…`), a project's page or a work panel is
+  shown, and asks the page again when one moves. Both stay asked on the bare change as well (they show a merge rule's
+  verdict, which the approvals piece holds). The two sets are held apart, so a household without the Changes piece still
+  has its tasks live. In a real browser, a change's checks passing reached an open Changes page 0.85 s after core's
+  pull logged it.
 - **Still to move**: project feeds and counts as records (project pages are only asked again on a task's move), the
   agent cards' backlog jobs, a `changes` verb (owed before ~10,000 tasks), and Changes (PRs, checks, merge state), which
   needs its own provider in loom-changes.

@@ -4,8 +4,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { movedKeys, recordsOf } from '../../web/src/tasks-live';
-import { tasksPageKind } from '../../web/src/tasks-pages';
-import { concerns, type WorkItem } from '../../web/src/comms-work';
+import { pulseOf, tasksPageKind } from '../../web/src/tasks-pages';
+import { changesConcern, concerns, type WorkItem } from '../../web/src/comms-work';
 import type { Rec, ViewState } from '../../web/src/collections/runtime';
 
 const rec = (id: string, more: Record<string, unknown> = {}): Rec => ({ key: `tasks/task/${id}`, ...more });
@@ -15,7 +15,7 @@ describe('the tasks\' live records', () => {
   it('a Tasks work page is theirs alone; a task\'s own page and a project\'s read them too; nothing else does', () => {
     expect(['/p/tasks', '/p/tasks?sort=new&show=open', '/p/tasks/', '/a/art/p/tasks'].map(tasksPageKind)).toEqual(['live', 'live', 'live', 'live']);
     expect(['/p/tasks/task/t-12', '/projects', '/projects/art/app', '/projects/app?x=1'].map(tasksPageKind)).toEqual(['also', 'also', 'also', 'also']);
-    expect(['/', '/p/tasksx', '/p/changes', '/inbox', '/a/art/p/changes', '/projectsx'].map(tasksPageKind)).toEqual([null, null, null, null, null, null]);
+    expect(['/', '/p/tasksx', '/inbox', '/a/art/p/approvals', '/projectsx'].map(tasksPageKind)).toEqual([null, null, null, null, null]);
   });
 
   it('a set is whole once it\'s live with no next page, and inside the window core keeps current', () => {
@@ -42,5 +42,20 @@ describe('the tasks\' live records', () => {
     expect(concerns(new Set(['tasks/task/t-5']), records, shown, cv)).toBe(true);
     expect(concerns(new Set(['tasks/task/t-9']), records, shown, cv)).toBe(true);
     expect(concerns(new Set(['tasks/task/t-8', 'tasks/task/t-7']), records, shown, cv)).toBe(false);
+  });
+
+  it('Changes\' pages move with the changes, a project\'s with both, a Tasks page with the tasks', () => {
+    expect(['/p/changes', '/p/changes/c/github/acme/app/3', '/a/art/p/changes'].map(pulseOf)).toEqual(['changes', 'changes', 'changes']);
+    expect(['/p/changes', '/p/changes/c/github/acme/app/3'].map(tasksPageKind)).toEqual(['also', 'also']);
+    expect(['/projects', '/projects/art/app'].map(pulseOf)).toEqual(['tasks,changes', 'tasks,changes']);
+    expect(['/p/tasks', '/p/tasks/task/t-1'].map(pulseOf)).toEqual(['tasks', 'tasks']);
+    expect(['/', '/inbox', '/p/changesx'].map(pulseOf)).toEqual(['', '', '']);
+  });
+
+  it('a thread\'s work panel reads again for a change it shows, by its ref', () => {
+    const shown: WorkItem[] = [{ title: 'y', ref: 'github:acme/app#3', status: 'Open', from: 'changes' }];
+    const records = new Map([['changes/change/github:acme:app:3', rec('github:acme:app:3', { ref: 'github:acme/app#3' })], ['changes/change/github:acme:app:4', rec('github:acme:app:4', { ref: 'github:acme/app#4' })]]);
+    expect(changesConcern(new Set(['changes/change/github:acme:app:3']), records, shown)).toBe(true);
+    expect(changesConcern(new Set(['changes/change/github:acme:app:4']), records, shown)).toBe(false);
   });
 });

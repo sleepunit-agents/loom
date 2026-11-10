@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { fetchView, type View } from './loom';
 import { refreshEvery, type Showing } from './refresh';
-import { tasksPageKind } from './tasks-pages';
+import { pulseOf, tasksPageKind } from './tasks-pages';
 import type { Note } from './toasts';
 
 /** Where a page's address is kept: what it is now, a new one after it (a link), or this one corrected in place (a
@@ -245,16 +245,16 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   // What's shown reads tasks: asked again when they move (tasks-live.ts watchPage). Held while any such page is shown,
   // not per address, so a sort or a filter keeps it.
   const csrf = (data as { chrome?: { csrf?: string } } | null)?.chrome?.csrf;
-  const tasky = !!tasksPageKind(url);
+  const pulse = pulseOf(url);
   useEffect(() => {
-    if (!csrf || !tasky) return;
+    if (!csrf || !pulse) return;
     let off: (() => void) | undefined, done = false;
     void import('./tasks-live').then((m) => {
       tasksPulse = m.tasksPulse;
-      if (!done) off = m.tasksPulse.watchPage(csrf, () => { if (tasksPageKind(showing.current)) void load(showing.current, false, true); });
+      if (!done) off = m.tasksPulse.watchPage(csrf, () => { if (tasksPageKind(showing.current)) void load(showing.current, false, true); }, pulse);
     }, () => { /* no chunk: asked as before */ });
     return () => { done = true; off?.(); };
-  }, [tasky, csrf, load]);
+  }, [pulse, csrf, load]);
 
   useEffect(() => {
     const f = () => void load(navNow.current.here(), false, true);

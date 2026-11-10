@@ -76,63 +76,83 @@ function wholeSet(spec: QuerySpec, onMove: () => void) {
   };
 }
 
-let sets: Array<ReturnType<typeof wholeSet>> = [];
-let held: Map<string, Rec> | null = null;
-const hearers = new Set<Moved>();
-
-function both(): Map<string, Rec> | null {
-  const [a, b] = sets.map((x) => x.current());
-  return a && b ? new Map([...a, ...b]) : null;
-}
-
-function publish(): void {
-  const now = both();
-  const was = held;
-  held = now;
-  if (!now) return;
-  // Just live: everything is news to what's shown (a page drawn before the set came may be older than it).
-  const keys = was ? movedKeys(was, now) : new Set(now.keys());
-  if (keys.size) for (const f of [...hearers]) f(keys, now);
-}
-
-/** Hear the tasks move (the keys that moved, and every record held), keeping the set live while heard. */
-export function watchTasks(csrf: string, f: Moved): () => void {
-  hearers.add(f);
-  if (hearers.size === 1) {
-    // The recent window starts when it's asked for: a tab open for days only holds a little more.
-    sets = [wholeSet(OPEN_SPEC, publish), wholeSet(recentSpec(), publish)];
-    for (const x of sets) x.start(csrf);
-  }
-  return () => {
-    hearers.delete(f);
-    if (!hearers.size) { for (const x of sets) x.stop(); sets = []; held = null; }
+/**
+ * A few whole sets held together while anyone listens: live only when every one is, and what moved across them. One
+ * for the tasks; one for the changes (sleepunit-agents/loom-changes, `changes/change`), so a household without the
+ * Changes piece still has its tasks live.
+ */
+function group(specs: () => QuerySpec[]) {
+  let sets: Array<ReturnType<typeof wholeSet>> = [];
+  let held: Map<string, Rec> | null = null;
+  const hearers = new Set<Moved>();
+  const all = (): Map<string, Rec> | null => {
+    const got = sets.map((x) => x.current());
+    return got.length && got.every((x) => x) ? new Map(got.flatMap((x) => [...x!])) : null;
+  };
+  const publish = () => {
+    const now = all();
+    const was = held;
+    held = now;
+    if (!now) return;
+    // Just live: everything is news to what's shown (a page drawn before the set came may be older than it).
+    const keys = was ? movedKeys(was, now) : new Set(now.keys());
+    if (keys.size) for (const f of [...hearers]) f(keys, now);
+  };
+  return {
+    /** Hear them move (the keys that moved, and every record held), keeping them live while heard. */
+    watch(csrf: string, f: Moved): () => void {
+      hearers.add(f);
+      if (hearers.size === 1) {
+        // A recent window starts when it's asked for: a tab open for days only holds a little more.
+        sets = specs().map((sp) => wholeSet(sp, publish));
+        for (const x of sets) x.start(csrf);
+      }
+      return () => {
+        hearers.delete(f);
+        if (!hearers.size) { for (const x of sets) x.stop(); sets = []; held = null; }
+      };
+    },
+    live: (): boolean => held !== null,
   };
 }
 
+const tasks = group(() => [OPEN_SPEC, recentSpec()]);
+/** Hear the tasks move (the keys that moved, and every record held), keeping the set live while heard. */
+export const watchTasks = (csrf: string, f: Moved): (() => void) => tasks.watch(csrf, f);
 /** Whether the tasks are live and whole now. */
-export const tasksLive = (): boolean => held !== null;
+export const tasksLive = (): boolean => tasks.live();
+
+const CHANGE_FIELDS = ['ref', 'title', 'state', 'draft', 'checks', 'review', 'mergeable', 'head', 'updated', 'closed'];
+export const OPEN_CHANGES: QuerySpec = { type: 'changes/change@^1', where: [['state', 'eq', 'open']], order: [['updated', 'desc']], limit: 500, fields: CHANGE_FIELDS };
+export const recentChanges = (now = Date.now()): QuerySpec => ({
+  type: 'changes/change@^1', where: [['updated', 'gte', new Date(now - RECENT_DAYS * DAY).toISOString()]], order: [['updated', 'desc']], limit: 500, fields: CHANGE_FIELDS,
+});
+const changes = group(() => [OPEN_CHANGES, recentChanges()]);
+/** Hear the changes move (Changes' own records: state, checks, review, head), keeping them live while heard. */
+export const watchChanges = (csrf: string, f: Moved): (() => void) => changes.watch(csrf, f);
+/** Whether the changes are live and whole now. */
+export const changesLive = (): boolean => changes.live();
 
 /** A quiet live page is drawn again this often all the same: what it says depends on the day too ("Done in the last 7
  * days", a time that was today), which no record's move would tell it. */
 export const REDRAW_MS = 10 * 60_000;
 
 /**
- * A page that reads tasks (page.ts): `ask` when they move, a moment later so a burst of moves is one ask; one heard while
- * the tab is hidden is asked for when it's shown again (a live page isn't asked on its own then); and every REDRAW_MS.
+ * A page that reads tasks or changes (page.ts; `which`, tasks-pages.ts pulseOf): `ask` when they move, a moment later so
+ * a burst of moves is one ask; one heard while the tab is hidden is asked for when it's shown again (a live page isn't
+ * asked on its own then); and every REDRAW_MS.
  */
-function watchPage(csrf: string, ask: () => void): () => void {
+function watchPage(csrf: string, ask: () => void, which: string): () => void {
   let t: ReturnType<typeof setTimeout> | undefined;
   let missed = false;
   const later = () => { if (document.hidden) missed = true; else ask(); };
   const shown = () => { if (missed && !document.hidden) { missed = false; ask(); } };
   document.addEventListener('visibilitychange', shown);
   const slow = setInterval(later, REDRAW_MS);
-  const off = watchTasks(csrf, () => {
-    clearTimeout(t);
-    t = setTimeout(later, 250);
-  });
-  return () => { clearTimeout(t); clearInterval(slow); document.removeEventListener('visibilitychange', shown); off(); };
+  const moved = () => { clearTimeout(t); t = setTimeout(later, 250); };
+  const offs = [...(which.includes('tasks') ? [watchTasks(csrf, moved)] : []), ...(which.includes('changes') ? [watchChanges(csrf, moved)] : [])];
+  return () => { clearTimeout(t); clearInterval(slow); document.removeEventListener('visibilitychange', shown); for (const off of offs) off(); };
 }
 
-/** For page.ts, which loads this chunk only when a page that reads tasks is shown (tasks-pages.ts). */
+/** For page.ts, which loads this chunk only when a page that reads tasks or changes is shown (tasks-pages.ts). */
 export const tasksPulse = { watchPage, live: tasksLive };
