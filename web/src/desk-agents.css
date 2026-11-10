@@ -97,6 +97,9 @@
 
 /* ---- the rail ---- */
 :root[data-look] .loom-arail{position:absolute;top:0;right:0;bottom:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+/* The agent you're with (t-2075): out of the list, on top, set apart from Needs you and the rest by a rule. */
+:root[data-look] .loom-arail__one,:root[data-look] .loom-arail__with{display:flex;flex-direction:column;flex:none;min-width:0;width:100%}
+:root[data-look] .loom-arail__with{position:relative;z-index:1;padding-bottom:10px;box-shadow:0 1px 0 0 var(--v-border)}
 :root[data-look] .loom-rneeds{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px 9px;flex:none;width:100%;padding:10px 12px;text-align:left;color:var(--v-text);
   background:color-mix(in srgb,var(--v-paper) 92%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 55%,var(--v-border))}
 :root[data-look] .loom-rneeds__lab{font-size:10.5px;letter-spacing:.14em;color:var(--v-accent-ink,var(--v-pink))}
