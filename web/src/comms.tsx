@@ -25,6 +25,7 @@ import { useFollow } from './comms-follow';
 import { refBits, RefText, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
+import { attentionNow, onAttention } from './attention';
 import { useOtherThreads, useThreads } from './threads-live';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -638,6 +639,12 @@ function Steps({ cards: all, owner }: { cards: Msg[]; owner?: string }) {
   );
 }
 
+/** What moves a thread's asks, from what needs you (attention.ts): its agent's items, whole but for whether they've been
+ * opened (src/comms-asks.ts isThreadAsk: a thread's asks are only ever its agent's); null while that set isn't live. */
+export function asksMark(a: { items: Array<{ key: string; agent?: string; unread?: boolean }> } | null, agent: string): string | null {
+  return a ? JSON.stringify(a.items.filter((i) => i.agent === agent).map(({ unread: _u, ...rest }) => rest).sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))) : null;
+}
+
 /** The thread's asks put where each was raised (comms.md, "Asks inline"): before the first message or run that came after it. */
 type Shown = { key: string; msg?: Msg; cards?: Msg[]; ask?: ThreadAsk };
 export function withAsks(groups: Shown[], asks: ThreadAsk[]): Shown[] {
@@ -770,19 +777,28 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     return () => { stop = true; es?.close(); };
   }, [thread.id, pull]);
 
-  // Anything loom says moved (its live stream, /events): an ask answered in the Inbox, an approval filed. The thread
-  // reads again, so a card answered elsewhere shows its answer, and a new one shows its buttons (comms.md, "Asks inline").
-  useEffect(() => onLive(() => { void pull(); }), [pull]);
+  // An ask answered in the Inbox, an approval filed: the thread reads again, so a card answered elsewhere shows its answer,
+  // and a new one shows its buttons (comms.md, "Asks inline"). Its asks are the Inbox's items, so once what needs you is
+  // live (attention.ts, t-2027) it reads again when one of its agent's items moves (comes, goes, is answered); until
+  // then, on anything loom says moved (its bare change).
+  useEffect(() => {
+    let was = asksMark(attentionNow(), thread.agent);
+    const offA = onAttention(() => { const now = asksMark(attentionNow(), thread.agent); if (now !== null && was !== null && now !== was) void pull(); was = now; });
+    const offL = onLive(() => { if (attentionNow() === null) void pull(); });
+    return () => { offA(); offL(); };
+  }, [thread.agent, pull]);
 
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
     // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
     // The desktop's agent cards hear it (desk-agents.tsx useAgentComms): what's unread there moves at once.
-    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }).then(() => dispatchEvent(new Event('loom-comms-read'))); void pull(); } };
+    // (The look for asks only while what needs you isn't live: once it is, its moves are what read again, above.)
+    const read = (look = true) => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }).then(() => dispatchEvent(new Event('loom-comms-read'))); if (look) void pull(); } };
+    const shown = () => read();
     read();
-    const t = setInterval(read, 30_000);
-    document.addEventListener('visibilitychange', read);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', read); };
+    const t = setInterval(() => read(attentionNow() === null), 30_000);
+    document.addEventListener('visibilitychange', shown);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', shown); };
   }, [thread.id, csrf, messages.length, pull]);
 
   // Follow the bottom only while the reader's there (comms-follow.ts); their own message always brings them down.

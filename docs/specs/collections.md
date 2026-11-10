@@ -739,8 +739,15 @@ along with the listeners. The adapter is the only code that imports the client l
   that the thread was in front (push reads that), so no list row moves and no listener pulls every thread for it.
 - **Known edges**: a view of more than 200 threads isn't whole, so it reads `GET /comms` once and isn't kept current
   (archived lists that long); two threads with the same newest time can sort differently from `GET /comms`.
+- **A thread's asks move with what needs you** (third slice): an open thread reads again (`/comms/<t>/since`, which
+  carries its asks) when one of its agent's items in the live attention set moves, not on loom's bare change, and its
+  30 s look for asks stops while that set is live (its read, which says it's in front, goes on). A thread's asks are
+  only ever its agent's (`comms-asks.ts` `isThreadAsk`), so another agent's ask never reads it again. In a real browser
+  (`comms-inline.integration.test.ts`): another agent's ask arriving read the thread 0 times (before: 3), and the
+  thread's own ask answered in the Inbox still showed its answer live. The cards themselves are still made by loom
+  (`threadAsks`: kept answers, who may Allow), not drawn from the records.
 - **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
-  refs and previews, the conversation page, and a thread's asks as a view of the attention set.
+  refs and previews, and the conversation page.
 
 ## As built: tasks, the first piece's collection (t-2029, first slice)
 
