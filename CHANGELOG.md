@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Ask a piece's own service for its manifest over a local socket when it has one (`<piece home>/run/ui.sock`, this
+  user's alone), instead of starting `ui --json`: the runtime's delivery service answers from memory in under a
+  millisecond, where each run was a node start that re-read its state (t-2114). No socket, another version's or a
+  failing one: `ui --json` as before.
 - Run each piece's manifest once for every window that sees the same answer, and less often while it doesn't
   move: the runtime's ran once per open agent window on every round and every word (t-2110). A manifest that runs
   past a page's 3 s wait shows its last good answer instead of dropping off the page, and its late answer is kept

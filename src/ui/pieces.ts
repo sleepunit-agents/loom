@@ -19,6 +19,7 @@
  */
 import { pieceOfPath } from '../cli/pieces-managed.js';
 import { serveCall } from './piece-server.js';
+import { socketManifest } from './piece-socket.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
@@ -110,6 +111,17 @@ type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
 const cache = new Map<string, CacheEntry>();
 let manifestGeneration = 0;
+/**
+ * When an action last ran on a piece (by path), or on every piece (''): a served manifest must be made since then
+ * (piece-socket.ts), so the look after an action never shows the manifest from before it. A piece's own word that it
+ * moved isn't one: a service says so after it made the answer that moved (the runtime's ui-socket.mjs).
+ */
+const movedAt = new Map<string, number>();
+const sinceFor = (path: string): number => {
+  const t = Math.max(movedAt.get(path) ?? 0, movedAt.get('') ?? 0);
+  // A clock stepped back: no answer could be made "since", so ask for none rather than refuse every one.
+  return t > Date.now() ? 0 : t;
+};
 /** The runs under way, by cache key: whoever asks while one runs shares it (unless a piece's word came since). */
 const running = new Map<string, { generation: number; result: Promise<ManifestResult> }>();
 /**
@@ -126,11 +138,14 @@ const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
  */
 export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
+  // Every piece at once (no word from one of them in particular): any served answer from before is suspect.
+  if (path === undefined) movedAt.set('', Date.now());
   for (const [k, e] of cache) if (path === undefined || k.startsWith(`${path}\0`)) e.expired = true;
 }
 
 export function clearPieceCache(path?: string): void {
   manifestGeneration++;
+  movedAt.set(path ?? '', Date.now());
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
   for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
@@ -344,6 +359,20 @@ function json(stdout: string): unknown {
 }
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
+  // From the piece's own service when it has one (piece-socket.ts, t-2114): no process, an answer from memory.
+  // Not for an agent owner's window: a piece that understands owners (owners: 2) may narrow its answer by
+  // LOOM_OWNER_SCOPE, which a socket never hears. Their windows run it the one-shot way, with the scope.
+  const fromSocket = env.LOOM_OWNER_SCOPE ? undefined : await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: sinceFor(path) });
+  let served: Manifest | undefined;
+  if (fromSocket?.ok) {
+    const parsed = json(fromSocket.stdout);
+    const m = parsed === undefined ? 'not JSON' : parseManifest(parsed);
+    // One answer for every viewer is all a socket can give (it hears nothing of the viewer): a manifest that says it
+    // reads the viewer's scope is never taken from one, nor a broken one. The one-shot way, with the scope in its env.
+    if (typeof m !== 'string' && m.scope !== true) served = m;
+  }
+  if (served) { servedPaths.add(path); return { piece, path, manifest: served }; }
+  servedPaths.delete(path);
   const r = await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
   if (!r.ok) return { piece, reason: r.reason };
   const parsed = json(r.stdout);
@@ -351,6 +380,14 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
   const m = parseManifest(parsed);
   return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
 }
+
+/**
+ * The pieces whose last manifest came from their service: an answer costs a few milliseconds, so it's asked again
+ * after SERVED_CACHE_MS rather than CACHE_MS, and every round (the service says itself when it moved, and its agents'
+ * idle observations last 30 s: t-2010).
+ */
+const servedPaths = new Set<string>();
+export const SERVED_CACHE_MS = 5_000;
 
 /** Where a piece's path leads, and when that file last changed: what makes its answer a new one. */
 function resolved(path: string): string {
@@ -436,7 +473,7 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const k = keyOf(path, env);
   const { key } = k;
   const hit = cache.get(key);
-  if (hit && !hit.expired && nowMs - hit.at < CACHE_MS) return hit.result;
+  if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return hit.result;
   const generation = manifestGeneration;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
     // Past its window, the last answer at once while a fresh one runs behind it. Said to have moved, the fresh one,
@@ -489,7 +526,7 @@ export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: Reado
     const { key } = k;
     const generation = manifestGeneration;
     const before = cache.get(key);
-    if (before && !before.expired && before.print !== undefined && Date.now() - before.at < roundWait(before)) {
+    if (before && !before.expired && before.print !== undefined && Date.now() - before.at < (servedPaths.has(p.path) ? SHARE_MS : roundWait(before))) {
       out.set(p.path, before.print);
       return;
     }
