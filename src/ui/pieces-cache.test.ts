@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CACHE_MS, PAGE_LIVE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage, refreshPieceManifests, expirePieceManifests } from './pieces.js';
@@ -37,6 +37,29 @@ const timer = setInterval(() => {
     await pending;
     const value = (await pieceManifests(env)).pieces.find(p => p.piece === 'gizmo')?.manifest.tile?.value;
     expect(value).toBe('new');
+  });
+
+  it('one piece\'s word that it moved asks it again, and no other (t-2065)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-only-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (const name of ['runtime', 'tasks']) {
+      writeFileSync(join(bin, `loom-${name}`), `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(join(root, 'asked'))}, ${JSON.stringify(name)} + '\\n');
+console.log(JSON.stringify({v:2,tile:{label:${JSON.stringify(name)},value:'x'}}));
+`);
+      chmodSync(join(bin, `loom-${name}`), 0o755);
+    }
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const asked = () => (existsSync(join(root, 'asked')) ? readFileSync(join(root, 'asked'), 'utf8').trim().split('\n') : []);
+    await pieceManifests(env);
+    expect(asked().sort()).toEqual(['runtime', 'tasks']);
+    expirePieceManifests(join(bin, 'loom-runtime'));
+    await refreshPieceManifests(env, new Set([join(bin, 'loom-runtime')]));
+    await pieceManifests(env);
+    expect(asked().sort()).toEqual(['runtime', 'runtime', 'tasks']);
   });
 
   it('answers anew as soon as a piece points at a new version', async () => {

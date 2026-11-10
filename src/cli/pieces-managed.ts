@@ -76,6 +76,11 @@ export interface LoomBlock extends Offers {
    */
   strangers?: string[];
   /**
+   * API paths the piece answers from a long-lived `<bin> api --serve` (src/ui/piece-server.ts, t-2065): one request
+   * per line, each with its own store grant. Only paths whose handling keeps nothing of one caller for the next.
+   */
+  api_serve?: string[];
+  /**
    * The piece's collections in loom's store and who may write each
    * (docs/specs/piece-storage.md). Fixed at install, so a running piece can't
    * widen who writes an owner's collection.
@@ -382,6 +387,15 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
       return 'loom.strangers is a list of at most 4 API path names (lowercase letters, digits and dashes)';
     }
     out.strangers = st as string[];
+  }
+  if (b.api_serve !== undefined) {
+    const sv = b.api_serve;
+    if (!Array.isArray(sv) || sv.length > 8 || !sv.every((x) => typeof x === 'string' && PIECE.test(x)) || new Set(sv).size !== sv.length) {
+      return 'loom.api_serve is a list of at most 8 API path names (lowercase letters, digits and dashes), each once';
+    }
+    // Never a path a caller with no token reaches: a long-lived server is for known callers' calls.
+    if (out.strangers?.some((x) => sv.includes(x))) return 'loom.api_serve can\'t name a path loom.strangers opens';
+    out.api_serve = sv as string[];
   }
   if (b.store !== undefined) {
     const d = parseStoreDecl(b.store);

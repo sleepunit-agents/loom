@@ -727,6 +727,19 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
+- **Served, where a piece says** (t-2065). A path its `loom` block lists in
+  `api_serve` (at most 8, fixed when it's installed) goes to a long-lived
+  `loom-<piece> api --serve` instead of a process per call: core writes one
+  request per line, `{"id", "grant", "request"}`, and the piece answers one
+  line per request, `{"id", "exit", "stdout"}`, where `stdout` is exactly what
+  `api --json` would print. One request at a time per server, at most two
+  servers per version and environment (both busy: the call runs the one-shot
+  way), the same limits as above. `grant` is that call's store grant (or
+  null): the server's own environment has none, and the piece applies it to
+  that request alone. A new install, a settings change, 60 s idle or 10
+  minutes up, and the server goes. List a path only if handling it keeps
+  nothing of one caller for the next (the runtime's `body-sync`, every 2 s
+  from each warm house).
 
 ### `run`: the piece's CLI, from elsewhere
 

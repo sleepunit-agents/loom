@@ -18,6 +18,7 @@
  * Install only pieces you'd trust with the daemon itself.
  */
 import { pieceOfPath } from '../cli/pieces-managed.js';
+import { serveCall } from './piece-server.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
@@ -90,10 +91,12 @@ let manifestGeneration = 0;
 /**
  * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
  * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
+ * `path`: that piece's alone, in every scope (t-2065).
  */
-export function expirePieceManifests(): void {
+export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
-  cache.clear();
+  if (path === undefined) { cache.clear(); return; }
+  for (const k of [...cache.keys()]) if (k.startsWith(`${path}\0`)) cache.delete(k);
 }
 
 export function clearPieceCache(path?: string): void {
@@ -227,10 +230,12 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       resolve(r);
     };
     const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
-    child.stdout?.on('data', (d: Buffer) => {
-      bytes += d.length;
+    // Decoded as a stream, so a character split across two chunks stays whole.
+    child.stdout?.setEncoding('utf-8');
+    child.stdout?.on('data', (d: string) => {
+      bytes += Buffer.byteLength(d);
       if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
-      out += d.toString('utf-8');
+      out += d;
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));
     if (opts.stdin !== undefined && child.stdin) {
@@ -335,8 +340,9 @@ function shownPieces(env: NodeJS.ProcessEnv): Array<{ name: string; path: string
  * this while an app is open). Returns each piece's answer as a fingerprint, so a caller can tell which changed;
  * a piece that changed has its kept pages dropped, so the next look at them is fresh.
  */
-export async function refreshPieceManifests(env: NodeJS.ProcessEnv): Promise<Map<string, string>> {
-  const installed = shownPieces(env);
+export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Promise<Map<string, string>> {
+  // `only`: just these pieces' paths (the one that said it moved, t-2065); the others keep their last answers.
+  const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
     const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
@@ -494,7 +500,17 @@ export async function pieceApi(
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
-  const r = await apiPool.run(() => run(path, ['api', '--json'], withGrant(env, path, request.caller), { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES }), gone);
+  const r = await apiPool.run(() => {
+    const env1 = withGrant(env, path, request.caller);
+    // A path the piece answers from its long-lived server (piece-server.ts, t-2065): the grant goes in the request.
+    const served = pieceOfPath(env, path)?.loom.api_serve;
+    if (Array.isArray(served) && served.includes(request.path)) {
+      const { LOOM_STORE_GRANT: grant, ...rest } = env1;
+      const answer = serveCall(path, resolved(path), pieceEnvFor(path, pieceEnv(rest)), grant, request, { timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
+      if (answer) return answer;
+    }
+    return run(path, ['api', '--json'], env1, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
+  }, gone);
   if (r === null) return { status: 503, body: { error: 'busy: too many piece API calls at once; try again shortly' } };
   if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
   const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;
