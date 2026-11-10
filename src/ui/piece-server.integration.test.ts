@@ -61,3 +61,13 @@ if (process.argv.includes('--serve')) {
     expect(r.body.envGrant).toBe('set');
   });
 });
+
+describe('api_serve in the loom block', () => {
+  it('is a short list of path names, never one a caller with no token reaches', async () => {
+    const { parseLoomBlock } = await import('../cli/pieces-managed.js');
+    expect(parseLoomBlock({ api_serve: ['body-sync'] })).toMatchObject({ api_serve: ['body-sync'] });
+    expect(typeof parseLoomBlock({ api_serve: 'body-sync' })).toBe('string');
+    expect(typeof parseLoomBlock({ api_serve: ['a', 'a'] })).toBe('string');
+    expect(parseLoomBlock({ strangers: ['join-request'], api_serve: ['join-request'] })).toMatch(/strangers/);
+  });
+});

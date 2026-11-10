@@ -393,6 +393,8 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
     if (!Array.isArray(sv) || sv.length > 8 || !sv.every((x) => typeof x === 'string' && PIECE.test(x)) || new Set(sv).size !== sv.length) {
       return 'loom.api_serve is a list of at most 8 API path names (lowercase letters, digits and dashes), each once';
     }
+    // Never a path a caller with no token reaches: a long-lived server is for known callers' calls.
+    if (out.strangers?.some((x) => sv.includes(x))) return 'loom.api_serve can\'t name a path loom.strangers opens';
     out.api_serve = sv as string[];
   }
   if (b.store !== undefined) {

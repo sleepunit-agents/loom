@@ -131,9 +131,10 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
     tickRunning = undefined;
     const again = tickAgain, round = roundAgain;
     tickAgain = false; roundAgain = false;
-    // A piece's word first; a regular round still due waits for it, never dropped (one of every piece covers both).
-    if (again) { if (again !== true) roundAgain = round; void tick(true, again === true ? undefined : again); }
-    else if (round) void tick();
+    // A regular round due goes first: it asks every piece, the one that moved too (its kept answer already went when
+    // it said so), so a stream of one piece's words can never put it off. Else that piece's word.
+    if (round && again !== true) void tick();
+    else if (again) void tick(true, again === true ? undefined : again);
   });
   return tickRunning;
 }

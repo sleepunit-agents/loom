@@ -91,8 +91,8 @@ let manifestGeneration = 0;
 /**
  * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
  * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
+ * `path`: that piece's alone, in every scope (t-2065).
  */
-/** Every kept manifest answer, or (`path`) that piece's alone in every scope, is asked again on its next look. */
 export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
   if (path === undefined) { cache.clear(); return; }
@@ -503,10 +503,11 @@ export async function pieceApi(
   const r = await apiPool.run(() => {
     const env1 = withGrant(env, path, request.caller);
     // A path the piece answers from its long-lived server (piece-server.ts, t-2065): the grant goes in the request.
-    if (pieceOfPath(env, path)?.loom.api_serve?.includes(request.path)) {
+    const served = pieceOfPath(env, path)?.loom.api_serve;
+    if (Array.isArray(served) && served.includes(request.path)) {
       const { LOOM_STORE_GRANT: grant, ...rest } = env1;
-      const served = serveCall(path, resolved(path), pieceEnvFor(path, pieceEnv(rest)), grant, request, { timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
-      if (served) return served;
+      const answer = serveCall(path, resolved(path), pieceEnvFor(path, pieceEnv(rest)), grant, request, { timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
+      if (answer) return answer;
     }
     return run(path, ['api', '--json'], env1, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
   }, gone);
