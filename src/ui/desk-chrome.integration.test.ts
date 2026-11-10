@@ -452,12 +452,12 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await menu(p).locator('[role="menuitem"]', { hasText: 'Minimize' }).click();
     await expect.poll(() => labels(p)).toEqual(['Inbox']);
     expect(new URL(p.url()).searchParams.get('m')).toBe('comms');
-    // an agent's window: Minimize and Close, nothing to shrink into (no widgets, 2026-11-07)
+    // an agent's window: Chat about this (an agent's page is an item, about.ts), Minimize and Close, nothing to shrink into (no widgets, 2026-11-07)
     await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual([]);
     await p.goto(`${base}/a/art?t=*art`);
     await expect.poll(() => labels(p)).toEqual(['art']);
     await p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar h2').click({ button: 'right' });
-    expect(await items(p)).toEqual(['Minimize', 'Close']);
+    expect(await items(p)).toEqual(['Chat about this', 'Minimize', 'Close']);
     await p.keyboard.press('Escape');
     await p.context().close();
   });
@@ -503,20 +503,20 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       const what = await p.evaluate(() => ({ text: document.querySelector('.loom-tile')?.textContent?.slice(0, 600), rows: [...document.querySelectorAll('.loom-tile button')].map((b) => `${b.getAttribute('data-row-menu') ?? '-'}:${b.textContent?.slice(0, 50)}`).slice(0, 20) }));
       throw new Error(`${e.message}\n${JSON.stringify(what)}`);
     });
-    // a reply typed and not sent: Open only (the sheet's Done sends it first), never Mark done
+    // a reply typed and not sent: Open (and Chat about this) only (the sheet's Done sends it first), never Mark done
     const key = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { key: string; text: string }[] })
       .items.find((i) => /swap the Sonarr disk/.test(i.text))!.key);
     await p.evaluate((k) => localStorage.setItem(`loom.draft.${k}`, 'On it tonight'), key);
     await p.reload(); await row.waitFor();
     await row.click({ button: 'right' });
     await menu(p).waitFor();
-    expect(await items(p)).toEqual(['Open']);
+    expect(await items(p)).toEqual(['Open', 'Chat about this']);
     await p.keyboard.press('Escape');
     await p.evaluate((k) => localStorage.removeItem(`loom.draft.${k}`), key);
     await p.reload(); await row.waitFor();
     await row.click({ button: 'right' });
     await menu(p).waitFor();
-    expect(await items(p)).toEqual(['Open', 'Mark done']);
+    expect(await items(p)).toEqual(['Open', 'Mark done', 'Chat about this']);
     // (another item first in the reader, so Open is seen to pick this one)
     await menu(p).locator('[role="menuitem"]', { hasText: 'Open' }).click();
     await expect.poll(() => row.getAttribute('aria-current')).toBe('true');
