@@ -61,10 +61,12 @@ describe.runIf(built && chrome)('Home, live', () => {
       await d.changed();
       await expect.poll(() => line(p).textContent()).toContain('Mark · Reading a file · a wake');
       if (w >= 640) await expect.poll(() => p.locator('.loom-bigcard[data-agent="mark"]').textContent()).toMatch(/working|Sorting the photo library/i);
-      // It ends: the ticker says so, still with nothing asked of Home's page.
-      d.report({});
+      // It ends and Mark says it's idle: the ticker says so (words only the new report has), still with nothing asked
+      // of Home's page.
+      const idleAt = Date.now();
+      d.report({ mark: { idle: { observedAt: new Date(idleAt).toISOString(), expiresAt: new Date(idleAt + 28_000).toISOString() } } });
       await d.changed();
-      await expect.poll(() => line(p).textContent()).toContain('Mark · Activity unavailable');
+      await expect.poll(() => line(p).textContent()).toContain('Mark · Idle');
       expect(asked).toEqual([]);
       expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(w);
       await p.context().close();

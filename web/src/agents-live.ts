@@ -7,7 +7,7 @@ import { liveSet } from './live-set';
 import { liveOnChange } from './page';
 import { attentionNow, type Attention } from './attention';
 import type { Card, DeskHomeData } from './desk-agents';
-import type { TickerActivity } from './loom';
+import { loomNow, type TickerActivity } from './loom';
 import type { QuerySpec, Rec, ViewState } from './collections/runtime';
 
 const SPEC: QuerySpec = { type: 'loom/agent-status@^1', order: [['agent', 'asc']], limit: 100 };
@@ -20,7 +20,7 @@ function ago(iso: string, now = Date.now()): string {
   return m < 1 ? 'just now' : `${m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`} ago`;
 }
 /** A card with its "Last seen" said as of now: loom doesn't move the record for the minutes passing (handler.ts). */
-export function freshCard<C extends Card>(c: C, now = Date.now()): C {
+export function freshCard<C extends Card>(c: C, now = loomNow()): C {
   if (!c.seen?.at || !c.readings?.some((x) => x.label === 'Last seen')) return c;
   return { ...c, readings: c.readings.map((x) => (x.label === 'Last seen' ? { ...x, value: ago(c.seen!.at, now) || x.value } : x)) };
 }
@@ -71,10 +71,11 @@ type ShellAgent = { id: string; working?: boolean; sub?: string; activity?: Tick
 /**
  * One of the shell's agents as its live card says it (src/ui/handler.ts chrome: workingOf, lastActive, tickerActivityOf):
  * at work by the card's state, "active 4m ago" from `seen.at` (the card's last step, within three days, as lastActive
- * reads it), its ticker's fresh activity (one past its expiry is gone, as the bar would say), and whether loom can say.
- * A record from before 1.2 (no ticker fields) keeps the page's ticker.
+ * reads it), and its ticker as the card says it. Whether that's still fresh is the ticker's to judge when it draws, on
+ * loom's clock (phone-bar.tsx tickerParts, loomNow): judged here it would be on this device's clock, and only once.
+ * A record from before 1.2 (no `activity`) keeps the page's ticker.
  */
-export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, now = Date.now()): A {
+export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, now = loomNow()): A {
   if (!c) return a;
   const { working: _w, sub: _s, ...rest } = a;
   const recent = !!c.seen?.at && now - Date.parse(c.seen.at) < 72 * 3_600_000;
@@ -82,8 +83,7 @@ export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, no
   // A 1.2 card always says `activity` (null: nothing fresh); an older one doesn't, and the page's ticker stands.
   if (!('activity' in c)) return out;
   delete out.activity; delete out.activityUnavailable;
-  const d = c.activity;
-  if (d && Date.parse(d.observedAt) <= now && Date.parse(d.expiresAt) > now) out.activity = d;
+  if (c.activity) out.activity = c.activity;
   if (c.activityUnavailable) out.activityUnavailable = true;
   return out;
 }
@@ -93,7 +93,7 @@ export function shellAgentOf<A extends ShellAgent>(a: A, c: Card | undefined, no
  * work (the system bar's, src/ui/handler.ts workingOf: the same rule as a card's state, agentStateOf). Unchanged while
  * it isn't live.
  */
-export function withAgentCards<V extends { view: string; chrome?: { shell?: { agents: ShellAgent[] } }; [k: string]: unknown }>(data: V | null, live: Card[] | null, now = Date.now()): V | null {
+export function withAgentCards<V extends { view: string; chrome?: { shell?: { agents: ShellAgent[] } }; [k: string]: unknown }>(data: V | null, live: Card[] | null, now = loomNow()): V | null {
   if (!data || !live) return data;
   let out: V = data;
   const shell = data.chrome?.shell;

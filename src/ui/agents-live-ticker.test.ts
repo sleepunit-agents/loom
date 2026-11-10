@@ -16,10 +16,13 @@ describe('shellAgentOf', () => {
       activity: { action: 'Reading a file', where: 'Comms', observedAt: at(-1), expiresAt: at(25) } }, now);
     expect(a).toEqual({ id: 'art', label: 'Art', sub: 'active 4m ago', activity: { action: 'Reading a file', where: 'Comms', observedAt: at(-1), expiresAt: at(25) } });
   });
-  it('drops a ticker past its expiry, says loom can\'t tell, and is quiet with no step in three days', () => {
-    const a = shellAgentOf(page, { id: 'art', label: 'Art', bg: '', fg: '', state: 'unavailable', activityUnavailable: true,
-      activity: { action: 'Working', observedAt: at(-40), expiresAt: at(-10) } }, now);
-    expect(a).toEqual({ id: 'art', label: 'Art', sub: 'quiet for 3 days', activityUnavailable: true });
+  it('passes the card\'s ticker on as it is (the ticker judges freshness on loom\'s clock), says loom can\'t tell, and is quiet with no step in three days', () => {
+    const late = { action: 'Working', observedAt: at(-40), expiresAt: at(-10) };
+    const a = shellAgentOf(page, { id: 'art', label: 'Art', bg: '', fg: '', state: 'unavailable', activityUnavailable: true, activity: late }, now);
+    expect(a).toEqual({ id: 'art', label: 'Art', sub: 'quiet for 3 days', activityUnavailable: true, activity: late });
+    // One observed just ahead of this device's clock is kept (a slow device's clock must not hide a working agent).
+    const ahead = { action: 'Working', observedAt: at(5), expiresAt: at(30) };
+    expect(shellAgentOf(page, { id: 'art', label: 'Art', bg: '', fg: '', state: 'working', activity: ahead }, now).activity).toEqual(ahead);
   });
   it('a 1.2 card with nothing to say clears the page\'s ticker; a last step over three days old is quiet', () => {
     const was = { ...page, activityUnavailable: true as const };
