@@ -21,6 +21,7 @@ import { knowledgeWrite } from './tools/knowledge-write.js';
 import { openProjectsStore } from './backends/projects.js';
 import { Notes } from './notes.js';
 import { stopCommsWatch } from './ui/comms-live.js';
+import { resolveNeeds, pieceCheckers } from './needs-resolve.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 
@@ -800,6 +801,9 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       expect(Date.now() - posted).toBeLessThan(400);
       expect(got).not.toMatch(/live one/);
       expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
+      // Readonly resolver opens can report unchanged memory WALs. They are no shared change,
+      // even for another member who owns the same agent. Keep the production timer enabled.
+      await resolveNeeds(h, pieceCheckers(process.env));
       expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
       ac.abort();
     });

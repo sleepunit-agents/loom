@@ -24,6 +24,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { dataChanges } from './live-files.js';
 import { basename, join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
@@ -220,12 +221,15 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   res.on('close', () => drop(c));
   if (!watcher) {
     try {
+      const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => {
         if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
-        else if (file && DATA.test(String(file))) tell(whose(String(file)));
+        else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
       });
+      // Reconcile the registration gap; queued callbacks then see the updated baseline.
+      for (const file of files.reconcile()) tell(whose(file));
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }
   ticking ??= setInterval(() => void tick(), WATCH_MS);
