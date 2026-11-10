@@ -25,7 +25,9 @@ const CardAsk = lazy(() => import('./inbox').then((m) => ({ default: m.CardAsk }
 // ---- what loom says about each agent -----------------------------------------------------------------------------
 
 /** One thing it has going; `href` is loom's link to it (a Comms thread, only for its member: handler.ts atWorkFor). */
-type Doing = { text: string; kind?: string; where?: string; since?: string; href?: string };
+type Doing = { text: string; kind?: string; where?: string; since?: string; href?: string;
+  /** The step it's on, from the runtime (fresh for 30 s at the producer): its plain label. */
+  activity?: { action: string; observedAt?: string } };
 type Job = Doing & { id: string; status: 'running' | 'waiting' | 'scheduled' | 'backlog'; at?: string };
 type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
@@ -327,6 +329,37 @@ export function BigCard({ a, flow }: { a: DeskAgent; flow?: boolean }) {
 }
 
 /** Both sizes expose the same complete list; waiting and backlog never imply a running body. */
+/** The most running jobs a rail card stacks before "+N more". */
+const RUNNING_MAX = 3;
+/** How long it has run: "4m", "2h". */
+const ran = (since: string | undefined, now = Date.now()): string => {
+  const t = since ? Date.parse(since) : NaN;
+  if (Number.isNaN(t)) return '';
+  const m = Math.max(0, Math.round((now - t) / 60_000));
+  return m < 1 ? 'just started' : m < 120 ? `${m}m` : `${Math.round(m / 60)}h`;
+};
+
+/**
+ * What an agent is doing now, one box per running job (t-2077; Jonathan, 2026-11-09: each running job is its own
+ * "Art is doing X" box, and the card is a list of those): what, where, how long, and the step it's on; a tap opens
+ * its thread (a job's opens to watch, t-2043). Only running work: waiting, scheduled and done are the jobs list's.
+ */
+function Running({ a }: { a: DeskAgent }) {
+  const running = a.jobs.filter((j) => j.status === 'running');
+  if (!running.length) return null;
+  const step = (j: Job) => a.work.find((d) => d.href && d.href === j.href)?.activity?.action;
+  return (
+    <ul className="loom-doing" aria-label={`What ${a.label} is doing`} style={{ '--c': a.color } as React.CSSProperties}>
+      {running.slice(0, RUNNING_MAX).map((j) => {
+        const inner = <><b className="loom-doing__who loom-data">{a.label.split(' ')[0]} is doing</b><span className="loom-doing__what">{j.text}</span>
+          <small className="loom-doing__meta loom-data">{[j.where, ran(j.since), step(j)].filter(Boolean).join(' · ')}</small></>;
+        return <li key={j.id}>{j.href ? <Go href={j.href} className="loom-doing__box">{inner}</Go> : <span className="loom-doing__box">{inner}</span>}</li>;
+      })}
+      {running.length > RUNNING_MAX && <li className="loom-doing__more loom-data">+{running.length - RUNNING_MAX} more</li>}
+    </ul>
+  );
+}
+
 function Jobs({ a, compact }: { a: DeskAgent; compact?: boolean }) {
   if (!a.jobs.length) return null;
   const list = <ul className="loom-jobs">{a.jobs.map((j) => <li key={j.id} data-job-status={j.status}>
@@ -369,11 +402,12 @@ export function RailCard({ a }: { a: DeskAgent }) {
         <span className="loom-rcard__face"><AgentAvatar a={a.mark} size={96} state={a.face} /></span>
         <span className="loom-rcard__who"><b>{a.label}</b><span className="loom-rcard__st loom-data"><span className="loom-dot" aria-hidden />{a.status.word}</span></span>
       </span>
-      <span className="loom-rcard__now" data-tone={a.now.tone}><i className="loom-data">NOW</i> {a.now.text}</span>
+      {/* Each running job is its own box (t-2077, under the button); the NOW line says what it's on only when none runs. */}
+      {!a.jobs.some((j) => j.status === 'running') && <span className="loom-rcard__now" data-tone={a.now.tone}><i className="loom-data">NOW</i> {a.now.text}</span>}
       {a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}
       {a.unread ? <span className="loom-rcard__ur"><b className="loom-data">{a.unread}</b><span>{a.first?.text ?? 'New in the thread'}</span></span>
         : <span className="loom-rcard__ur" data-none="">No new messages</span>}
-    </button><Jobs a={a} compact /></div>
+    </button><Running a={a} /><Jobs a={a} compact /></div>
   );
 }
 
