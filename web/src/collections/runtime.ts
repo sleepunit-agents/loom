@@ -99,6 +99,8 @@ interface Sub {
   linger?: ReturnType<typeof setTimeout>;
   /** Asked on this stream (a reconnect asks again). */
   stream?: string;
+  /** Answers in a row from an older scope (asked again a few times at most). */
+  stale?: number;
   state: ViewState;
 }
 
@@ -302,6 +304,9 @@ export class CollectionRuntime {
     for (const s of this.subs.values()) if (s.type === type) this.publish(s);
   }
 
+  /** Whether it was cleared (signed out): a new one is made for the next window. */
+  isCleared(): boolean { return this.cleared; }
+
   /** How many records the stores hold (tests, and the memory bound). */
   size(): number { let n = 0; for (const s of this.stores.values()) n += s.records.size; return n; }
   subscriptions(): number { return this.subs.size; }
@@ -321,7 +326,10 @@ export class CollectionRuntime {
     this.viewer = tag;
     const fresh = d.stream !== this.stream;
     this.stream = d.stream;
-    if (typeof d.scope === 'number' && d.scope > this.scope) this.scope = d.scope;
+    // A scope epoch is its stream's: a new stream starts its own (everything from before was dropped or is asked
+    // again); within one stream it only moves forward.
+    if (fresh) this.scope = typeof d.scope === 'number' ? d.scope : 0;
+    else if (typeof d.scope === 'number' && d.scope > this.scope) this.scope = d.scope;
     if (this.goneTimer) { clearInterval(this.goneTimer); this.goneTimer = undefined; }
     // A new stream (a reconnect, another listener) is a new snapshot: every subscription is asked again.
     if (fresh) for (const s of this.subs.values()) { s.at = null; s.held = []; s.next = null; if (s.status === 'live') s.status = 'stale'; this.ask(s); }
@@ -369,14 +377,20 @@ export class CollectionRuntime {
     if (!a || typeof a.error === 'string') {
       const e = (a?.error as string | undefined) ?? 'unavailable';
       // Refused, or not served any more: what it held isn't theirs to see (or isn't there); it goes.
-      if (e === 'denied' || e === 'unsupported-version') { const k = s.keys; s.keys = []; s.next = null; this.evict(s.type, k); }
+      if (e === 'denied' || e === 'unsupported-version') { const k = s.keys; s.keys = []; s.next = null; s.coverage = undefined; s.aggregates = undefined; this.evict(s.type, k); }
       // Kept, marked stale: what it held is still what was last known.
       s.status = e === 'denied' ? 'denied' : e === 'unavailable' ? (s.keys.length ? 'stale' : 'unavailable') : 'error';
       s.error = e === 'unavailable' || e === 'denied' ? undefined : `${e}${typeof a?.why === 'string' ? `: ${a.why}` : ''}`;
       this.publish(s);
       return;
     }
-    if (typeof a.scope === 'number' && a.scope < this.scope) { this.ask(s); return; }
+    // From an older scope: asked again, a few times at most (the next hello asks again anyway).
+    if (typeof a.scope === 'number' && a.scope < this.scope) {
+      s.stale = (s.stale ?? 0) + 1;
+      if (s.stale <= 3) this.ask(s); else { s.status = 'stale'; this.publish(s); }
+      return;
+    }
+    s.stale = 0;
     const rows = Array.isArray(a.rows) ? (a.rows as Rec[]) : [];
     const before = new Set(s.keys);
     this.write(s.type, rows);

@@ -81,8 +81,13 @@ function listen(h: { change: () => void; open: (on: boolean) => void }): () => v
  * then.
  */
 let collections: Promise<{ runtime: import('./collections/runtime').CollectionRuntime; stores: import('./collections/adapter').LibraryStores }> | undefined;
-export function collectionsRuntime(csrf: () => string): NonNullable<typeof collections> {
-  return collections ??= Promise.all([import('./collections/adapter'), import('./collections/transport')]).then(([a, t]) => a.makeRuntime(t.pageTransport(csrf)));
+export async function collectionsRuntime(csrf: () => string): NonNullable<typeof collections> {
+  // One that was cleared (signed out, revoked) is never handed out again; nor is a chunk that failed to load.
+  const made = collections ? await collections.catch(() => undefined) : undefined;
+  if (!made || made.runtime.isCleared()) {
+    collections = Promise.all([import('./collections/adapter'), import('./collections/transport')]).then(([a, t]) => a.makeRuntime(t.pageTransport(csrf)));
+  }
+  return collections!;
 }
 
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */

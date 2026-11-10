@@ -425,3 +425,19 @@ describe('a refused re-ask, and a stream that stays down', () => {
     vi.useRealTimers();
   });
 });
+
+describe('scope epochs are per stream', () => {
+  it('after a scope reset, the next stream starts its own epoch: answers at its scope are shown, not asked again forever', async () => {
+    const ids: string[] = [];
+    const f = fake((q) => { ids.push(q.id as string); return answerOf([row('t-1')], { scope: 1 }); });
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    f.emit('reset', { seq: 2, sub: ids[0], reason: 'scope', scope: 2 });
+    f.emit('hello', { stream: 'e-2', scope: 1, seq: 0 });
+    await settle();
+    expect(v.state().keys).toEqual(['tasks/task/t-1']);
+    expect(f.posts.length).toBeLessThanOrEqual(3);
+  });
+});
