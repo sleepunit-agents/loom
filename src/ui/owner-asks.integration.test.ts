@@ -20,6 +20,8 @@ import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { clearPieceCache, pieceManifests } from './pieces.js';
 import { applyOwnerApproval } from './handler.js';
+import { openView } from '../comms-asks.js';
+import type { InboxItem } from './render.js';
 import { closeAllBackends } from '../backends/index.js';
 
 const APPROVALS_BIN = `#!${process.execPath}
@@ -203,6 +205,32 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
     expect(ask.needs.why).toBe('May I tidy my wakes?');
     expect(ask.approval.actions.map((b: Data) => b.label)).toEqual(['Allow', 'Deny']);
   });
+
+  it('every conversation waiting on one approval gets its real actions, never conversational Yes/No', async () => {
+    const art = agentDir(h, 'art');
+    for (const place of ['wake:w-000004', 'wake:w-000005']) {
+      const conversation = recordTurn(art, 'art', { venue: 'wake', place, label: 'Audit', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:runtime').conversation;
+      writeDigest(art, { conversation, run: 'r1' }, { summary: 'asked', needs_owner: { ask: 'May I run the audit?',
+        if_yes: 'I run it.', if_no: 'I leave it.', waits_on: { approval: 'a-0000beef' } } });
+    }
+    const cookie = await login('jonathan');
+    const d = await inbox(cookie);
+    const asks = (d.items as InboxItem[]).filter(i => i.waitsOnApproval === 'a-0000beef');
+    expect(asks).toHaveLength(2);
+    for (const ask of asks) {
+      const v = openView(ask, true, true, 'approvals');
+      expect(v.yesNo).toBeUndefined();
+      expect(v.decide?.source.id).toBe('approvals');
+      expect(v.decide?.allow).toMatchObject({ action: 'allow', fields: { id: 'a-0000beef' } });
+      expect(v.decide?.deny).toMatchObject({ action: 'deny', fields: { id: 'a-0000beef' } });
+    }
+    expect(await press(cookie, d, 'allow', { id: 'a-0000beef' })).toMatchObject({ ok: true });
+    expect(state('a-0000beef')).toBe('used');
+    expect(acts()).toHaveLength(1);
+    // Another visible copy cannot apply it or start a second continuation.
+    await press(cookie, d, 'allow', { id: 'a-0000beef' });
+    expect(acts()).toHaveLength(1);
+  }, 20000);
 
   it('Allow on the scheduled jobs has the clock vouch for exactly them, as the owner', async () => {
     const cookie = await login('jonathan');
