@@ -67,6 +67,13 @@ export interface Offers {
    */
   grants?: string[];
   /**
+   * The grants authority's promise that its answer is a function of the ask and of this one
+   * collection of its own store alone (and of its installed version). Core then reuses an answer
+   * while that collection is unchanged, instead of running the authority again (src/grants.ts):
+   * any write to the collection is a new ask at once. Only with `grants`.
+   */
+  grants_store?: string;
+  /**
    * The argv core runs with a `deliver` body on stdin (src/delivery.ts). Only a piece whose
    * block says `"role": "runtime"` declares it, and only one installed piece may.
    */
@@ -249,6 +256,11 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
     const a = argvError(b.grants, bins, 'loom.grants');
     if (a) return a;
     out.grants = [...(b.grants as string[])];
+  }
+  if (b.grants_store !== undefined) {
+    if (!out.grants) return 'loom.grants_store is declared only with loom.grants';
+    if (typeof b.grants_store !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(b.grants_store)) return 'loom.grants_store names one of the piece\'s store collections';
+    out.grants_store = b.grants_store;
   }
   if (b.delivery !== undefined) {
     if (ctx.role !== 'runtime') return 'loom.delivery is declared only by the runtime (a loom block with "role": "runtime")';
