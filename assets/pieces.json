@@ -44,7 +44,7 @@
     {
       "name": "changes",
       "repo": "sleepunit-agents/loom-changes",
-      "commit": "fc387ecf0db2585c7817db43d5d06f0cc75527de",
+      "commit": "0b8d87fc31dac8437558bf23cec7ad4eab92b24f",
       "version": "0.2.0",
       "label": "Changes",
       "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."

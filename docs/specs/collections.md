@@ -760,6 +760,22 @@ along with the listeners. The adapter is the only code that imports the client l
   work panel (its 60 s poll), project feeds and counts, and Changes (PRs, checks, merge state), which needs its own
   provider in loom-changes.
 
+## As built: changes, Changes' own provider (t-2029)
+
+- **The changes role publishes `changes/change`** (sleepunit-agents/loom-changes `lib/loom_changes/collections.py`,
+  pinned here): `loom-changes collections query --json` answers every change in its snapshot as a record. Its id is the
+  change's own in the record grammar (`github:acme/app#3` is `github:acme:app:3`), and `ref` keeps the change's own form,
+  which is how a thread names it. Fields: `repo`, `number`, `title`, `state`, `draft`, `author`, `agent` (whose it is,
+  by the piece's own `CHANGES_AGENTS`), `mine`, `projects` (whose cards name its repo), `head`, `base`, `checks`,
+  `failing`, `review`, `mergeable`, `url`, `page`, `created`, `updated`, `closed`. Never its body or a credential.
+- **Who**: no `owners: 2`, as with its pages: household owners only, decided before paging; audience `{owners: true}`.
+- **No change log**: core bridges it with snapshots. Its sync service rereads the forges every `CHANGES_INTERVAL` (180 s
+  by default), and nothing in a record moves on a read that found nothing new (when its repo was last read isn't a
+  field), so a record moves only when its change does.
+- **Not read yet**: the Changes page, a project's page and a Comms thread's work panel still ask the piece. Moving them
+  is the next step (as the Tasks pages did: asked again when a change they show moves); a merge rule's verdict reads
+  the approvals piece and stays the page's (t-2031).
+
 ## As built: each agent's card (t-2028, first slice)
 
 - **One record type, `loom/agent-status`** (core's, `audience: "ask"`): one record per agent, its id the agent, which is
