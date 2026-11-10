@@ -598,6 +598,21 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
         expect(readFileSync(join(h.home, COMMS_DB)).includes(Buffer.from('Ran the tests'))).toBe(false);
       }
     });
+    it('keeps older steps behind a working bounded-history link', async () => {
+      const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'wake', place: 'watch-history', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:runtime').conversation;
+      for (let start = 0; start < 101; start += 50) {
+        const cards = Array.from({ length: Math.min(50, 101 - start) }, (_, i) => card(`history${start + i}`, { summary: `History step ${start + i}`, state: 'done' }));
+        expect((await api(tok.runtime, 'comms/activity', { conversation: cv, run: 'history', cards })).status).toBe(200);
+      }
+      const newest = (await page(tok.jonathan, 'GET', `/a/art/conversation/${cv}`)).body;
+      expect(JSON.stringify(newest)).toContain('History step 100');
+      expect(JSON.stringify(newest)).not.toContain('"History step 0"');
+      const watching = (newest.page as { sections: Array<{ id: string; blocks: Array<{ items?: Array<{ text: string; page?: string }> }> }> }).sections.find((s) => s.id === 'watching')!;
+      const link = watching.blocks.flatMap((b) => b.items ?? []).find((i) => i.text === 'Earlier steps')!.page!;
+      const earlier = (await page(tok.jonathan, 'GET', link.replace(/^loom:/, '/'))).body;
+      expect(JSON.stringify(earlier)).toContain('History step 0');
+      expect(JSON.stringify(earlier)).not.toContain('History step 100');
+    });
     it('never revives a deleted private thread as agent-wide conversation steps', async () => {
       const t = await open();
       recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
