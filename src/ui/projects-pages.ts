@@ -71,6 +71,23 @@ function waitingIn(sections: HubSection[]): { waiting: number; error?: string } 
 
 type Hub = (dir: string, slug: string, since?: string) => Promise<ProjectHubResult>;
 
+/**
+ * Who's looking (t-2084): `key` names them for the index's counts, and `sees` says whose conversation asks are theirs
+ * (a Comms thread's are its member's alone: handler.ts seesConversation). A hub's conversation keeps its row and summary
+ * (digests are its agent's owners', comms.md rule 2), but an ask that isn't the viewer's isn't waiting on them.
+ */
+export interface ProjectsViewer { key: string; sees: (cv: string) => boolean }
+
+function viewing(hub: Hub, v: ProjectsViewer | undefined): Hub {
+  if (!v) return hub;
+  return async (dir, slug, since) => {
+    const h = await hub(dir, slug, since);
+    if (!h.found || !('sections' in h)) return h;
+    return { ...h, sections: h.sections.map((s) => (s.key !== 'conversations' || !('items' in s) ? s : { ...s,
+      items: (s as unknown as { items: Array<{ id: string; needs_owner: string | null }> }).items.map((c) => (c.needs_owner && !v.sees(c.id) ? { ...c, needs_owner: null, needs_digest: null } : c)) } as HubSection)) };
+  };
+}
+
 const defaultHub = (env: NodeJS.ProcessEnv): Hub => (dir, slug, since) =>
   projectHubOf(dir, { slug, ...(since ? { since } : {}) }, { pieceSections: managedPieceSections(env) });
 
@@ -124,8 +141,8 @@ export function gistOf(sections: HubSection[], agent?: string): Gist {
   return { waitingItems, dated: dated.filter((d) => !Number.isNaN(Date.parse(d.when))), ...(changes ? { changes } : {}), people: [...people.values()] };
 }
 
-async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: number): Promise<Count> {
-  const key = `${o.dir}\0${p.slug}`;
+async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: number, viewer = ''): Promise<Count> {
+  const key = `${o.dir}\0${p.slug}\0${viewer}`;
   const hit = counts.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit;
   let result: Count;
@@ -208,9 +225,9 @@ function cardOf(o: ProjectsOwner, p: ProjectListEntry, summary: string | undefin
  * index in loom's blocks (one row per project), for an app too old to draw the cards; `cards` is what the Projects app
  * draws. Without projects there are no cards, and the page says what a project is.
  */
-export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number } = {}): Promise<{ page: Page; cards?: ProjectCards }> {
+export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer } = {}): Promise<{ page: Page; cards?: ProjectCards }> {
   const nowMs = opts.nowMs ?? Date.now();
-  const hub = opts.hub ?? defaultHub(opts.env ?? process.env);
+  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env), opts.viewer);
   const rows: Array<{ o: ProjectsOwner; p: ProjectListEntry; summary?: string }> = [];
   for (const o of owners) {
     try {
@@ -228,7 +245,7 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
   const quiet = rows.filter((r) => r.p.status !== 'active');
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'late'>((res) => { timer = setTimeout(() => res('late'), opts.waitMs ?? INDEX_WAIT_MS); timer.unref?.(); });
-  const counted = await Promise.all(live.map(async (r) => ({ ...r, c: await Promise.race([countOf(r.o, r.p, hub, nowMs), timeout]) })));
+  const counted = await Promise.all(live.map(async (r) => ({ ...r, c: await Promise.race([countOf(r.o, r.p, hub, nowMs, opts.viewer?.key), timeout]) })));
   clearTimeout(timer);
   const many = owners.filter((o) => o.agent).length > 1;
   const rank = (c: Count | 'late') => (c !== 'late' && c.waiting > 0 ? 0 : c === 'late' || c.error ? 1 : 2);
@@ -259,7 +276,7 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
 }
 
 /** The index as loom's blocks only (projectsApp's `page`). */
-export async function projectsIndex(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number } = {}): Promise<Page> {
+export async function projectsIndex(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer } = {}): Promise<Page> {
   return (await projectsApp(owners, opts)).page;
 }
 
@@ -321,9 +338,9 @@ function feedRow(piece: string, it: FeedGroup['items'][number], nowMs: number) {
 }
 
 /** A project's hub as a page; null when there's no such project. */
-export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub } = {}): Promise<Page | null> {
+export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; viewer?: ProjectsViewer } = {}): Promise<Page | null> {
   const nowMs = opts.nowMs ?? Date.now();
-  const hub = opts.hub ?? defaultHub(opts.env ?? process.env);
+  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env), opts.viewer);
   let h: ProjectHubResult;
   try {
     h = await hub(o.dir, slug);

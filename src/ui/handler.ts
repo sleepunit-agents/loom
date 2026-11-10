@@ -57,8 +57,8 @@ import { answeredNeeds, answerNeeds, ConversationError, getConversation as conve
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { commsRoute, pageRefused } from './comms-routes.js';
-import { recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
-import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
+import { OWNER_KINDS, recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
+import { pieceCheckers, pieceWithRole, resolveNeeds, type ApprovalState } from '../needs-resolve.js';
 import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
@@ -72,11 +72,11 @@ import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPeopleApp, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
-import { owns, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
+import { COMMS_VENUE, owns, threadMembers, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
-import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
+import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Ask, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
@@ -736,7 +736,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const hh = opts.household?.();
   const needs = (a: HomeAsk) => a.attention !== false;
   // Push: the watch's own `hears` lets only household owners hear an ask with no agent (the backup's).
-  if (hh) return absorbApprovals([...coreAsks(hh, { householdOwner: !opts.ownerScope }), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
+  if (hh) return absorbApprovals([...coreAsks(hh, 'everyone'), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
@@ -756,10 +756,43 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
     if (!m) return false;
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
-  return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
-    key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
-    open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined),
+  // An ask from a Comms thread is its member's alone (t-2084): only their devices hear it. A lead card asked from one
+  // (only a household owner may give it) goes to household owners as any household ask does: no agent, so `hears`
+  // admits only them. A thread the store can't place ('') is no one's.
+  // A household owners' ask (a lead card, a job with no thread, a departed member's thread's) has no agent, so `hears`
+  // admits household owners alone. One that's no one's ('no one') goes to a member that's no one.
+  return watch(storeFor(opts), async () => {
+    // Threads that can't be read: skip this minute (an ask announced to no one would be marked pushed, never to come).
+    if (hh) threadMembers(hh.home);
+    const whose = hh ? askOwners(hh) : () => undefined;
+    const asks = await yourCall(opts);
+    // A lead card a member's Needs you absorbed is still the household owners' to give: they hear of its own card, by
+    // the key their Inbox files it under (theirs doesn't absorb it), and its member hears of the Needs you.
+    // So is any card its member can't reach (a piece that doesn't understand agent owners): household owners answer it.
+    const leads = hh ? (await pieceManifests(opts.env)).pieces.flatMap((p) => p.manifest.asks.filter((x) => (x.lead || p.manifest.owners !== 2) && x.conversation && x.attention !== false)
+      .map((x) => ({ ...x, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece } as HomeAsk))) : [];
+    // Only one asked from a thread whose member can't give it: one of a household owner's thread is in his Needs you.
+    const absorbed = leads.filter((x) => !asks.some((a) => askKey(a) === askKey(x)) && (() => {
+      const o = whose(x.conversation!, x.agent);
+      return typeof o === 'object' && memberOf(hh!, o.member)?.agents !== '*';
+    })());
+    // One that's no one's for now (a job whose thread may still open) isn't announced, nor marked pushed: it's announced
+    // to whom it falls once it does.
+    const noOne = (a: HomeAsk) => { const cv = a.reply?.fields.conversation ?? a.conversation; return !!cv && whose(cv, a.agent) === 'no one'; };
+    return [...[...asks, ...absorbed].filter((a) => !noOne(a)).map((a) => {
+      const cv = a.reply?.fields.conversation ?? a.conversation;
+      const o = cv ? whose(cv, a.agent) : undefined;
+      const lead = a.lead === true && !a.reply;
+      // A piece's card its member can't reach (a piece that doesn't understand agent owners) is household owners' too.
+      const household = o === 'household' || (o !== undefined && lead) || (typeof o === 'object' && hh && !(() => { const m = memberOf(hh, o.member);
+        return m && owns(m, o.agent) && (!!a.reply || a.source.id === CORE.id || m.agents === '*' || ownersOk.has(a.source.id)); })());
+      return {
+        key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent && !household ? { agent: a.agent } : {}),
+        open: a.source.id === CORE.id || ownersOk.has(a.source.id),
+        ...(household || o === undefined ? {} : { member: o === 'no one' ? '' : o.member }),
+      };
+    }), ...(hh ? commsAnnouncements(hh) : [])];
+  }, subject, send, hears, () => (hh ? firstOwner(hh).person : undefined),
   // A device whose person left the household goes (t-1978); none is the first owner's, who always belongs.
   (member) => !hh || member === undefined || !!memberOf(hh, member));
 }
@@ -809,10 +842,139 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
   });
 }
 
-/** loom's own asks for every agent: memory proposals, then conversations that need the owner. */
-export function coreAsks(h: Household, o: { householdOwner?: boolean } = {}): HomeAsk[] {
+/** loom's own asks for every agent, as `who` may see them: memory proposals, then conversations that need the owner. */
+export function coreAsks(h: Household, who: Looker | 'everyone'): HomeAsk[] {
   // The backup's alert names its target and its errors: a household owner's only, never an agent owner's (ownerScope).
-  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h), ...(o.householdOwner ? backupAsks(h) : [])];
+  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h, who),
+    ...(who === 'everyone' || who.householdOwner ? backupAsks(h) : [])];
+}
+
+/** Who is looking at the asks (t-2084): the member, and whether they're a household owner (owners.md). */
+export interface Looker { person: string; householdOwner: boolean }
+
+/**
+ * The member a request is (opts.member: the auth resolves the env owner token to the first household owner). A request
+ * with a household and no member resolved (a token gone between its check and its member) is no one: it sees no thread's asks.
+ */
+export function lookerOf(opts: UiOptions, _h: Household): Looker {
+  return { person: opts.member?.person ?? '', householdOwner: !opts.ownerScope && opts.member?.agents === '*' };
+}
+
+/** Whose a conversation's asks are: a member's (`member`, of `agent`), household owners' only, no one's, or its agent's owners' (undefined). */
+type AskOwner = { member: string; agent: string } | 'household' | 'no one' | undefined;
+
+/** How long a spawned job may wait for the runtime to open its thread before its asks fall to household owners. */
+const SPAWN_GRACE_MS = 10 * 60_000;
+
+/**
+ * Whose each conversation's asks are (t-2084; docs/specs/comms.md, rule 2), read once a call:
+ * - a live Comms thread's (a spawned job's thread too): its member's;
+ * - a deleted thread's (its conversation is still in the agent's store): still its member's (comms_deleted);
+ * - a `loom` conversation with no thread, live or deleted: no one's (as Activity has it);
+ * - a spawned job with no thread: no one's while the runtime may still open one (SPAWN_GRACE_MS), then household
+ *   owners' (one it couldn't open), since loom can't tell whose it is;
+ * - any other: undefined, its agent's owners' as always.
+ * A thread store that can't be read makes every `loom` and `spawn` conversation no one's, and leaves the rest as they are.
+ */
+function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: string) => AskOwner {
+  let t: ReturnType<typeof threadMembers> | undefined;
+  try { t = threadMembers(h.home); } catch { t = undefined; }
+  const seen = new Map<string, AskOwner>();
+  return (cv, agent) => {
+    const k = `${agent ?? ''}\0${cv}`;
+    if (seen.has(k)) return seen.get(k);
+    const th = t?.live.get(cv) ?? t?.deleted.get(cv);
+    // A thread is an ask's only when it's its own agent's: a conversation is a body's claim, trusted within its agent
+    // (comms.ts threadOfAgentConversation), so one naming another agent's thread is no thread's (its agent's owners').
+    let o: AskOwner = th && (!agent || th.agent === agent) ? th : undefined;
+    if (!th) {
+      // Its own agent's store (any agent's for one that names none).
+      let c: ReturnType<typeof conversationOf> | undefined;
+      try { for (const a of agent ? (h.agents.includes(agent) ? [agent] : []) : h.agents) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
+      if (c?.venue === COMMS_VENUE) o = t?.deleted.get(c.place) ?? 'no one';
+      else if (c?.venue === 'spawn') o = (() => { try { return t && agent ? t.deletedSpawn(agent, cv) : undefined; } catch { return 'no one' as const; } })() ?? (!t || nowMs - (Date.parse(c.started) || 0) < SPAWN_GRACE_MS ? 'no one' : 'household');
+    }
+    seen.set(k, o);
+    return o;
+  };
+}
+
+/**
+ * Whether `who` sees a conversation's asks (t-2084; docs/specs/comms.md, rule 2): a Comms thread's are its member's
+ * alone, household owners included, unless its member no longer owns its agent (left, or lost it): then they're household
+ * owners', as the household's last resort, so an ask is never no one's for good. Any other conversation's are its agent's
+ * owners', as they always were (see askOwners). 'everyone' is the core viewer (yourCall: the push watch gives each device
+ * only its member's, pushWatch).
+ */
+export function seesConversation(h: Household, who: Looker | 'everyone', reaches: (m: Member) => boolean = () => true): (cv: string, agent?: string) => boolean {
+  if (who === 'everyone') return () => true;
+  const of = askOwners(h);
+  return (cv, agent) => {
+    const o = of(cv, agent);
+    if (o === undefined) return true;
+    if (o === 'no one') return false;
+    if (o === 'household') return who.householdOwner;
+    if (o.member === who.person) return true;
+    // Household owners' when its member can't answer it: they left, lost the agent, or can't reach where it's answered
+    // (`reaches`: a piece that doesn't understand agent owners, which an agent owner never sees: forOwner).
+    const m = memberOf(h, o.member);
+    return who.householdOwner && (!m || !owns(m, o.agent) || !reaches(m));
+  };
+}
+
+/** Whether a member reaches a piece's asks at all: a household owner every piece's, an agent owner only one that
+ * understands agent owners (owners: 2; forOwner). */
+const reachesPiece = (p: PieceInfo | undefined) => (m: Member) => m.agents === '*' || p?.manifest.owners === 2;
+
+/** Whether an item (an ask, a notice, an answered one) names a conversation `who` may not see. Lead cards are kept for
+ * household owners: only they may give one, wherever it was asked from. */
+function hiddenFrom(sees: (cv: string, agent?: string) => boolean, who: Looker) {
+  return (a: { conversation?: string; agent?: string; lead?: true }) => !!a.conversation && !sees(a.conversation, a.agent) && !(a.lead === true && who.householdOwner);
+}
+
+/**
+ * The pieces' items `who` may see (t-2084): an ask asked from a Comms thread (an approval naming its conversation), and
+ * a notice or an answered one naming it, are the thread's member's; a household owner sees a lead card from it too (a
+ * grant, a vouch, a reset: only they may give one), as the one who answers it. Everything else is as forOwner left it.
+ */
+export function asksFor(pieces: PieceInfo[], h: Household | undefined, who: Looker | undefined): PieceInfo[] {
+  const named = (p: PieceInfo) => [...p.manifest.asks, ...(p.manifest.notices ?? []), ...(p.manifest.answered ?? [])].some((a) => a.conversation);
+  if (!h || !who || !pieces.some(named)) return pieces;
+  return pieces.map((p) => {
+    if (!named(p)) return p;
+    const hidden = hiddenFrom(seesConversation(h, who, reachesPiece(p)), who);
+    const keep = <T extends { conversation?: string; agent?: string; lead?: true }>(xs: T[] | undefined) => xs?.filter((x) => !hidden(x));
+    return { ...p, manifest: { ...p.manifest, asks: keep(p.manifest.asks)!, notices: keep(p.manifest.notices), answered: keep(p.manifest.answered) } };
+  });
+}
+
+/** The approval kinds only a household owner answers (the approvals piece's OWNER_ANSWERED): its lead cards' kinds. */
+const HOUSEHOLD_KINDS: ReadonlySet<string> = new Set([...OWNER_KINDS, 'host']);
+
+/**
+ * Whether a piece action answers an ask `who` may not see (t-2084). Hiding a card isn't the protection, so:
+ * - any piece: an action whose button (the action and every field it posts) is on a card they can't see, and on none
+ *   they can, is refused;
+ * - the approvals piece's actions on an approval (Allow, Deny, Allow every time, Always: any naming one) fail closed: allowed when the approval is on a card they see,
+ *   else only when the piece's own record says where it was asked (`conversation`, null for nowhere) and that's theirs
+ *   to answer. The piece lists only so many cards at a time, so an id on none of them is read from it; one it can't
+ *   read, or a piece too old to say where it was asked, is refused. One it has no record of goes on (it refuses it).
+ */
+async function actOnHidden(pieces: PieceInfo[], piece: string, action: string, fields: Record<string, string>, h: Household, who: Looker, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const names = (a: Ask) => (a.actions ?? []).some((b) => b.action === action && Object.entries(b.fields ?? {}).every(([k, v]) => fields[k] === v));
+  const all = pieces.find((p) => p.piece === piece)?.manifest.asks ?? [];
+  const seen = asksFor(pieces.filter((p) => p.piece === piece), h, who)[0]?.manifest.asks ?? [];
+  if (seen.some(names)) return false;
+  if (all.some(names)) return true;
+  const id = fields.id ?? '';
+  // Any of its actions that names an approval (Allow, Deny, Allow every time, Always, and any it adds later).
+  if (pieceWithRole(env, 'approvals')?.name !== piece || !/^a-[0-9a-f]{4,32}$/.test(id)) return false;
+  let st: ApprovalState | null | undefined;
+  try { st = (await pieceCheckers(env).approvals([id]))?.[id]; } catch { st = undefined; }
+  if (st === null) return false;
+  if (!st || !('conversation' in st)) return true;
+  if (!st.conversation) return false;
+  return !seesConversation(h, who, reachesPiece(pieces.find((p) => p.piece === piece)))(st.conversation, st.agent) && !(who.householdOwner && !!st.kind && HOUSEHOLD_KINDS.has(st.kind));
 }
 
 /**
@@ -830,10 +992,11 @@ export function backupAsks(h: Household, nowMs = Date.now()): HomeAsk[] {
  * Needs you (docs/specs/conversations.md): a conversation whose newest digest has `needs_owner`
  * is an ask from core, linking to the conversation, until a later digest in it has none.
  */
-export function conversationAsks(h: Household): HomeAsk[] {
+export function conversationAsks(h: Household, who: Looker | 'everyone'): HomeAsk[] {
+  const sees = seesConversation(h, who);
   return h.agents.flatMap((a) => {
     let open: ReturnType<typeof openNeeds>;
-    try { open = openNeeds(agentDir(h, a)); } catch { return []; }
+    try { open = openNeeds(agentDir(h, a)).filter((n) => sees(n.conversation.id, a)); } catch { return []; }
     const name = agentName(agentDir(h, a));
     // An alert you can act on (t-1778): its sheet has the whole of it, its links, a box to answer the agent in, Done
     // and Dismiss, all posted to the agent's own actions (/a/<agent>/act/loom: needsAct).
@@ -865,11 +1028,12 @@ export function conversationAsks(h: Household): HomeAsk[] {
 const ANSWERED: Partial<Record<NeedsVerdict, string>> = { replied: 'You replied', yes: 'You said yes', no: 'You said no', done: 'Done' };
 
 /** The Needs you the owner answered done or replied to in the last week: the Inbox's history of them. */
-function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
+function answeredAsks(h: Household, who: Looker, nowMs = Date.now()): InboxItem[] {
   const since = new Date(nowMs - 7 * 86_400_000).toISOString();
+  const sees = seesConversation(h, who);
   return h.agents.flatMap((a) => {
     let done: ReturnType<typeof answeredNeeds>;
-    try { done = answeredNeeds(agentDir(h, a), since); } catch { return []; }
+    try { done = answeredNeeds(agentDir(h, a), since).filter((n) => sees(n.conversation.id, a)); } catch { return []; }
     const name = agentName(agentDir(h, a));
     return done.map(({ conversation: c, digest: d, answer }): InboxItem => {
       const source = agentSource(a);
@@ -895,12 +1059,13 @@ const NEEDS_REPLY_MAX = 40_000;
  * their own message (deliverAsOwner), and then the ask is answered; `needs-answer` does the same with their Yes or No
  * (`answer`), in words made from the ask's own if_yes or if_no line; `needs-done` and `needs-dismiss` answer it.
  */
-async function needsAct(opts: UiOptions, hh: Household, agent: string, action: string, fields: Record<string, string>, person: string): Promise<ActResult> {
+async function needsAct(opts: UiOptions, hh: Household, agent: string, action: string, fields: Record<string, string>, person: string, who: Looker): Promise<ActResult> {
   const dir = agentDir(hh, agent);
   const cv = fields.conversation ?? '';
   const name = agentName(dir);
   const c = isConversationId(cv) ? conversationOf(dir, cv) : undefined;
-  if (!c) return { ok: false, message: 'That conversation isn\'t one of this agent\'s.' };
+  // A Comms thread's ask is its member's alone (t-2084): anyone else is told what they'd be told of no such conversation.
+  if (!c || !seesConversation(hh, who)(c.id, agent)) return { ok: false, message: 'That conversation isn\'t one of this agent\'s.' };
   const page = `loom:conversation/${c.id}`;
   const answer = (verdict: NeedsVerdict) => answerNeeds(dir, { conversation: c.id, digest: fields.digest ?? '', verdict, by: person });
   try {
@@ -936,9 +1101,9 @@ async function needsAct(opts: UiOptions, hh: Household, agent: string, action: s
   }
 }
 
-/** How many of an agent's conversations need the owner. */
-function needsCount(h: Household, agent: string): number {
-  try { return openNeeds(agentDir(h, agent)).length; } catch { return 0; }
+/** How many of an agent's conversations need the owner, of those `who` sees. */
+function needsCount(h: Household, agent: string, who: Looker): number {
+  return conversationAsks({ ...h, agents: [agent] }, who).length;
 }
 
 /**
@@ -1003,8 +1168,8 @@ export function foldTaskAsks(asks: HomeAsk[], tasksSource: string): HomeAsk[] {
 }
 
 /** How many approvals cards a Needs you absorbed (of one agent's, or all): the counts that add asks up take them off once. */
-function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, agent?: string): number {
-  const all = [...conversationAsks(agent ? { ...h, agents: [agent] } : h), ...pieceAsks(pieces, env)];
+function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, who: Looker, agent?: string): number {
+  const all = [...conversationAsks(agent ? { ...h, agents: [agent] } : h, who), ...pieceAsks(asksFor(pieces, h, who), env)];
   // What the counts lose: the counted asks before less those after, so a quiet task card a counted ask folded into
   // (and was lifted by, t-2098) still counts once, as its Inbox row does.
   const counted = (xs: HomeAsk[]) => xs.filter((x) => x.attention !== false).length;
@@ -1057,7 +1222,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
 /** The open Inbox item `match` finds, as the member answering sees it now (their Inbox's own), before an answer takes it
  * out: what its Comms thread keeps (comms-asks.ts recordAnswer). Never fails an answer: none on any trouble. */
 function askBefore(hh: Household, pieces: PieceInfo[], opts: UiOptions, match: (it: InboxItem) => boolean): InboxItem | undefined {
-  try { return inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((it) => it.box !== 'done' && match(it)); } catch { return undefined; }
+  try { return inboxItems(hh, pieces, opts.env, [], lookerOf(opts, hh)).find((it) => it.box !== 'done' && match(it)); } catch { return undefined; }
 }
 
 /** The approvals the household owner alone answers (the approvals piece's lead cards: a grant, a vouch, a reset). */
@@ -1069,8 +1234,11 @@ export function leadIds(pieces: PieceInfo[], env: NodeJS.ProcessEnv): Set<string
 
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
  * what the owner's own actions said (their toasts, as FYI), newest first. */
-function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = [], householdOwner = false): InboxItem[] {
-  const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
+function inboxItems(h: Household, pieces0: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[], who: Looker): InboxItem[] {
+  // Whatever the caller filtered, the asks are only those this member may see (t-2084).
+  const pieces = asksFor(pieces0, h, who);
+  const householdOwner = who.householdOwner;
+  const asks = absorbApprovals([...coreAsks(h, who), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), box: inboxBox({ ...a, kind: askKind(a), attention: a.attention !== false }), attention: a.attention !== false, unread: false,
@@ -1089,7 +1257,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
           text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
       ];
     }),
-    ...answeredAsks(h),
+    ...answeredAsks(h, who),
     // The backup back to good (src/backup.ts): an FYI, the household owner's.
     ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, box: 'done' as const, attention: false, unread: false,
       text: f.text, meta: f.meta, at: f.at, source: CORE, sourceLabel: 'Backup', page: `loom:a/${h.default}/setup` } satisfies InboxItem] : []; })(),
@@ -1152,7 +1320,7 @@ async function memberInbox(base: UiOptions, full: Household, m: Member): Promise
   const pieces = forOwner((await pieceManifests(env)).pieces, own);
   const reader = m.person === firstOwner(full).person ? undefined : m.person;
   const store = storeFor(base);
-  const items = inboxItems(hh, pieces, env, store.doneItems(reader), !own);
+  const items = inboxItems(hh, pieces, env, store.doneItems(reader), { person: m.person, householdOwner: !own });
   const opened = store.openedAt(reader);
   for (const it of items) {
     it.unread = it.attention && !opened.has(it.key);
@@ -1314,7 +1482,8 @@ async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer
 function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
   const needle = q.toLowerCase();
   const hh = opts.household?.();
-  const asks = absorbApprovals([...(hh ? coreAsks(hh, { householdOwner: !opts.ownerScope }) : []), ...pieceAsks(pieces, opts.env)], opts.env);
+  const who = hh ? lookerOf(opts, hh) : undefined;
+  const asks = absorbApprovals([...(hh && who ? coreAsks(hh, who) : []), ...pieceAsks(asksFor(pieces, hh, who), opts.env)], opts.env);
   const found: Found = {
     do: asks.filter((a) => `${a.text} ${a.label ?? ''} ${a.sourceLabel ?? ''}`.toLowerCase().includes(needle))
       .slice(0, 5).map((a) => ({ label: a.text, href: a.page !== undefined ? pageHref(a.page, a.source) : '/' })),
@@ -1473,7 +1642,11 @@ export function tickerActivityOf(pieces: PieceInfo[], agent: string, now = Date.
   return { activity: { ...d.activity, where, ...(d.href ? { href: d.href } : {}) } };
 }
 
-function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
+function chrome(req: IncomingMessage, opts: UiOptions, pieces0: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
+  // The counts are of the asks this member sees (t-2084), whatever the caller passed.
+  const hh0 = opts.household?.();
+  const who = hh0 ? lookerOf(opts, hh0) : undefined;
+  const pieces = asksFor(pieces0, hh0, who);
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -1493,7 +1666,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
-    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0) - absorbedCount(h, pieces, opts.env)
+    const me = lookerOf(opts, h);
+    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a, me), 0) - absorbedCount(h, pieces, opts.env, me)
       + (opts.ownerScope ? 0 : backupAsks(h).length);
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
@@ -1521,7 +1695,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         ...iconsView(h),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
-          asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
+          asks: pendingProposals(h, a) + needsCount(h, a, me) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, me, a),
           sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a), ...tickerActivityOf(pieces, a), ...(!pieces.some(p => p.piece === 'runtime') || ['unavailable', 'broken'].includes(agentStateOf(pieces, a)) ? { activityUnavailable: true } : {}) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
@@ -1855,13 +2029,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     };
     const commsChrome = async (): Promise<Chrome & { prefs?: unknown }> => {
       const { pieces: all, skipped } = await pieceManifests(scopedEnv);
-      const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full, who.member), skipped.map((x) => x.piece), 'comms', csrf);
+      const ch = chrome(req, opts, asksFor(atWorkFor(forOwner(all, opts.ownerScope), full, who.member), full, lookerOf(opts, full)), skipped.map((x) => x.piece), 'comms', csrf);
       return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
     };
     // The pieces this member may hear from, read once a request (a thread's read asks for them more than once).
     let piecesOnce: Promise<PieceInfo[]> | undefined;
     let inboxOnce: ReturnType<NonNullable<Parameters<typeof commsRoute>[3]['inbox']>> | undefined;
-    const commsPieces = () => (piecesOnce ??= pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)));
+    const commsPieces = () => (piecesOnce ??= pieceManifests(scopedEnv).then((x) => asksFor(forOwner(x.pieces, opts.ownerScope), full, lookerOf(opts, full))));
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
       agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
@@ -1872,7 +2046,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const seen = opts.household?.();
         const ps = await commsPieces();
         const appr = pieceWithRole(opts.env, 'approvals')?.name;
-        return { items: seen ? inboxItems(seen, ps, opts.env, [], !opts.ownerScope) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+        return { items: seen ? inboxItems(seen, ps, opts.env, [], lookerOf(opts, seen)) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
           ...(appr ? { approvals: pieceSource(appr).id } : {}) };
       })()) });
     return;
@@ -2085,7 +2259,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = agentPieceSource(agentAct[1], info.piece);
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
-      result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // A card asked from another member's Comms thread is refused as one that isn't there (t-2084): hiding it isn't the protection.
+      result = hh && await actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh), opts.env) ? { ok: false, message: 'That ask isn\'t open any more.' }
+        : await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       // The approvals piece answered from an agent's pages (should it ever have a tab there): its grant applied the same.
       if (result.ok && hh && action === 'allow' && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
         result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
@@ -2098,7 +2274,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const seen = await pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)).catch(() => [] as PieceInfo[]);
       const before = askBefore(hh!, seen, opts, (it) => it.agent === agentAct[1] && !!it.reply && it.reply.fields.digest === fields.digest && it.reply.fields.conversation === fields.conversation);
       result = ['needs-reply', 'needs-answer', 'needs-done', 'needs-dismiss'].includes(action)
-        ? await needsAct(opts, hh!, agentAct[1], action, fields, person) : { ok: false, message: 'No such action.' };
+        ? await needsAct(opts, hh!, agentAct[1], action, fields, person, lookerOf(opts, hh!)) : { ok: false, message: 'No such action.' };
       quiet = result.ok;
       const verdict = verdictOf(action, fields);
       const appr = pieceWithRole(opts.env, 'approvals')?.name;
@@ -2196,7 +2372,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const pieceVerdict = action === 'allow' ? 'allowed' : action === 'deny' ? 'denied' : undefined;
       const before = hh && pieceVerdict && fields.id
         ? askBefore(hh, pieces, opts, (it) => [...(it.source.id === src ? it.actions ?? [] : []), ...(it.approval?.source.id === src ? it.approval.actions : [])].some((b) => b.action === action && b.fields?.id === fields.id)) : undefined;
-      result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // A card asked from another member's Comms thread is refused as one that isn't there (t-2084): hiding it isn't the protection.
+      result = hh && await actOnHidden(pieces, info.piece, action, fields, hh, lookerOf(opts, hh), opts.env) ? { ok: false, message: 'That ask isn\'t open any more.' }
+        : await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       // The piece's answer is what counts (its own record): its thread keeps it after, whatever comes of the grant below.
       const answered = result.ok && !!pieceVerdict;
       if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
@@ -2251,7 +2429,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/pieces.json') {
     const m0 = await pieceManifests(scopedEnv);
-    const m = { ...m0, pieces: atWorkFor(forOwner(m0.pieces, opts.ownerScope), opts.household?.(), who?.member) };
+    const hj = opts.household?.();
+    const m = { ...m0, pieces: asksFor(atWorkFor(forOwner(m0.pieces, opts.ownerScope), hj, who?.member), hj, hj ? lookerOf(opts, hj) : undefined) };
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
       pieces: m.pieces.map((p) => ({ piece: p.piece, manifest: p.manifest })),
@@ -2281,7 +2460,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const flash = takeFlash(url.searchParams.get('_flash'));
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
   // Each agent's card and window, and the bar's agents at work, as this viewer may see them (atWorkFor).
-  const pieces = atWorkFor(forOwner(allPieces, opts.ownerScope), full, who?.member);
+  const pieces = asksFor(atWorkFor(forOwner(allPieces, opts.ownerScope), full, who?.member), full, full ? lookerOf(opts, full) : undefined);
   const skippedNames = skipped.map((s) => s.piece);
   const view = (kind: string, data: Record<string, unknown>, status = 200) => {
     if (!asJson) return app(status);
@@ -2422,7 +2601,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
-      const waiting = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).filter((it) => it.attention);
+      const waiting = inboxItems(hh, pieces, opts.env, [], lookerOf(opts, hh)).filter((it) => it.attention);
       // Unread as the Inbox says it: Home's banner is the first one's row there.
       { const opened = storeFor(opts).openedKeys(readerFor(opts, who)); for (const w of waiting.slice(0, HOME_STACK)) w.unread = !opened.has(w.key); }
       const cards = agentCards(hh, pieces, agents, nowMs);
@@ -2450,7 +2629,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const person = who?.member?.person ?? firstOwner(hh).person;
       const named = householdPersonName(hh, person) ?? (person === firstOwner(hh).person && hh.owner ? hh.owner : person);
       const ownerLabel = named.split(/[\s-]+/)[0].replace(/^./, (x) => x.toUpperCase());
-      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github });
+      const sees = seesConversation(hh, lookerOf(opts, hh));
+      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github, seesAsk: (cv, a) => sees(cv, a) });
       { const ctx = { ...ctxOf(at), agents: agentsOf(hh)! }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
         return view('activity', { activity, ctx, chrome: ch }); }
     }
@@ -2463,7 +2643,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const key = query.k ?? '', approval = query.a ?? '';
       if (!/^[0-9a-f]{16}$/.test(key) && !/^a-[0-9a-f]{4,32}$/.test(approval)) return sendJson(res, 400, { error: 'bad item' });
       const names = (it: InboxItem) => [...(it.actions ?? []), ...(it.approval?.actions ?? [])].some((b) => b.fields?.id === approval);
-      const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => (key ? x.key === key : names(x)) && x.box !== 'done');
+      const it = inboxItems(hh, pieces, opts.env, [], lookerOf(opts, hh)).find((x) => (key ? x.key === key : names(x)) && x.box !== 'done');
       // Open: still there and not history, whether it's counted in Needs you or only filed (attention: false).
       return sendJson(res, 200, { open: !!it }, { 'cache-control': 'no-store' });
     }
@@ -2471,7 +2651,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const nowMs = Date.now();
       const store = storeFor(opts);
       const reader = readerFor(opts, who);
-      const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
+      const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), lookerOf(opts, hh));
       const folder: InboxFolder = folderOf(query.f);
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it, but a GET never writes (collections.md, "Read state"): the app posts
@@ -2526,11 +2706,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/projects' || pathname.startsWith('/projects/')) {
       const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
       // The index's cards ride beside its page (web/src/projects.tsx draws them; docs/specs/projects.md, "The index").
-      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
+      // An ask in someone else's Comms thread isn't waiting on this viewer (t-2084): their own counts and hub rows.
+      const me = lookerOf(opts, hh);
+      const sees = seesConversation(hh, me);
+      const viewer = { key: me.person, sees: (cv: string) => sees(cv) };
+      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env, viewer }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
       const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
       const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
       const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
-      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env }) : null;
+      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env, viewer }) : null;
       return send200(page ?? notFound, 'projects', ctxOf(pathname.slice(1)));
     }
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
@@ -2543,7 +2727,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const cv = /^\/conversation\/(cv-[0-9a-f]{12})$/.exec(pathname);
     if (cv) {
       const owner = hh.agents.find((x) => existsSync(agentDir(hh, x)) && conversationOf(agentDir(hh, x), cv[1]));
-      const page = owner ? await conversationPage(agentDir(hh, owner), owner, cv[1], { env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) }) : null;
+      const page = owner ? await conversationPage(agentDir(hh, owner), owner, cv[1], { asks: seesConversation(hh, lookerOf(opts, hh))(cv[1], owner), env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) }) : null;
       return send200(page ?? notFound, owner ? `a/${owner}` : '', ctxOf(`conversation/${cv[1]}`), owner ? { ...agentsOf(hh)![owner], tabs: agentTabs(owner, 'conversation', pieces) } : undefined);
     }
     if (pathname === '/new-agent') return send200(newAgentPage(hh), '', ctxOf('new-agent'));
@@ -2574,9 +2758,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           label: agents[agent].label,
           agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
             id: agent, today: t.items.length,
-            waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
+            waiting: pendingProposals(hh, agent) + needsCount(hh, agent, lookerOf(opts, hh)) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, lookerOf(opts, hh), agent),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts() },
-          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env, { tasks: false }),
+          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }, lookerOf(opts, hh)), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env, { tasks: false }),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...(() => { const lastWake = tapeRows(agentDir(hh, agent), 24 * 7, nowMs).find((r) => r.where.split(':')[0] === 'wake');
               return scoped.filter((p) => p.manifest.tile).map((p) => agentTile(p, agent, lastWake, nowMs)); })()],
@@ -2603,7 +2787,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       }
       if (rest === 'setup') return send200(agentSetup(hh, agent, { ownerTokens: !opts.ownerScope }), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
       const acv = /^conversation\/(cv-[0-9a-f]{12})$/.exec(rest);
-      if (acv) return send200((await conversationPage(dir, agent, acv[1], { env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) })) ?? notFound, `a/${agent}`, ctxOf(rest, src), head('conversation'));
+      if (acv) return send200((await conversationPage(dir, agent, acv[1], { asks: seesConversation(hh, lookerOf(opts, hh))(acv[1], agent), env: opts.env, home: hh.home, days: hh.commsDays, before: /^\d{1,12}$/.test(query.before ?? '') ? Number(query.before) : undefined, page: pathname.slice(1) })) ?? notFound, `a/${agent}`, ctxOf(rest, src), head('conversation'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
       return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);
     }

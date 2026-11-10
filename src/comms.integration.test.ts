@@ -1054,22 +1054,23 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     });
 
     it('another member\'s answer never puts words into a thread that hadn\'t shown the ask; it answers one it had', async () => {
-      // Sam's thread with art: the household owner sees its asks in his own Inbox and may answer them there.
+      // Sam's thread with art: of its asks, the household owner sees in his own Inbox, and may answer there, only those
+      // only he may give (lead cards); the rest are Sam's alone (t-2084).
       const t = await open(tok.sam, 'art', 'hi from sam');
-      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000051', t.conversation), permission('a-00000052', t.conversation)]));
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{ ...permission('a-00000051', t.conversation), lead: true }, { ...permission('a-00000052', t.conversation), lead: true }]));
       rmSync(join(h.home, 'approvals-state.json'), { force: true });
       clearPieceCache();
       try {
         const rows = () => { const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true }); try { return (db.prepare('SELECT ref FROM comms_asks WHERE thread = ? ORDER BY ref').all(t.id) as Array<{ ref: string }>).map((r) => r.ref); } finally { db.close(); } };
         // a-00000051, answered by Jonathan before Sam's thread ever showed it: nothing kept in Sam's thread.
-        expect((await act(tok.jonathan, '/act/approvals', { _action: 'allow', id: 'a-00000051' })).body).toMatchObject({ ok: true });
+        expect((await act(tok.jonathan, '/act/approvals', { _action: 'deny', id: 'a-00000051' })).body).toMatchObject({ ok: true });
         clearPieceCache();
         expect(rows()).toEqual([]);
         // a-00000052, shown in Sam's thread, then denied by Jonathan: Sam's thread says so, by Jonathan.
         expect((await asksOf(t, tok.sam)).map((a) => [a.ref, a.state])).toEqual([['approval:a-00000052', 'open']]);
         expect((await act(tok.jonathan, '/act/approvals', { _action: 'deny', id: 'a-00000052' })).body).toMatchObject({ ok: true });
         clearPieceCache();
-        writeFileSync(join(h.home, 'approvals-state.json'), JSON.stringify({ 'a-00000051': { state: 'allowed' }, 'a-00000052': { state: 'denied' } }));
+        writeFileSync(join(h.home, 'approvals-state.json'), JSON.stringify({ 'a-00000051': { state: 'denied' }, 'a-00000052': { state: 'denied' } }));
         const v = await asksOf(t, tok.sam);
         expect(v.map((a) => [a.ref, a.state, a.answer?.verdict, a.answer?.by])).toEqual([['approval:a-00000052', 'answered', 'denied', 'jonathan']]);
         expect(rows()).toEqual(['approval:a-00000052']);

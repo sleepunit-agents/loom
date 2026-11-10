@@ -22,7 +22,10 @@ import { sameAskWords } from './ui/ask-words.js';
 export interface ApprovalState { state: string; agent?: string; kind?: string;
   /** An owner-applied one's target only (a `grant`'s `<piece>:<agent>[:<paths>]`, t-1970; a `vouch-wake`'s or a
    * `principal-reset`'s, t-1975; a `box-write-off`'s, t-2057): what the owner's Allow does, for the piece that applies it. */
-  target?: string }
+  target?: string;
+  /** The conversation it was asked from, or null for none (t-2084: one of a Comms thread's is its member's to answer).
+   * Absent from a piece too old to say. */
+  conversation?: string | null }
 
 /** How core learns whether what an ask waits on is resolved. Undefined: couldn't tell (the piece is absent, or failed). */
 export interface WaitCheckers {
