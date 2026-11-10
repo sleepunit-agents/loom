@@ -25,6 +25,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { sqliteMustYield } from '../sqlite.js';
+import { FileLockBusy } from '../file-lock.js';
 import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, type Household } from '../household.js';
 
 /**
@@ -289,6 +291,7 @@ export class SessionStore {
       } catch {
         // A holder that died leaves its lock; one this old is gone.
         try { if (Date.now() - statSync(this.lockFile).mtimeMs > LOCK_STALE_MS) rmSync(this.lockFile, { force: true }); } catch { /* raced */ }
+        if (sqliteMustYield()) throw new FileLockBusy();
         if (Date.now() >= deadline) throw new Error('ui sessions are locked');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
