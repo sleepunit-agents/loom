@@ -354,11 +354,15 @@ These are core changes this doc depends on, each small:
      started. Each has a name, a description and a JSON
      schema, plus the argv that runs it with the arguments on stdin. Core calls it as the session's agent. The
      runtime offers `relay` and `house`. A name another piece or core already uses is refused at install.
-   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 2 s to
+   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 10 s to
      answer `{allow: true}` or `{allow: false, reason}`.
      - **Fail closed:** when the authority times out, errors, or is uninstalled while a call is in flight, the call is
        refused with `503` and the reason. Owner calls never ask it.
      - **Fallback:** a household with no authority installed uses each piece's own list, as section 6 says.
+     - **Reuse:** an authority that declares `grants_store` (the collection of its own store its answer rests on) is
+       asked with `basis: true` and names whose store and collection it read, the document it decided on and its sha256; core keeps the answer only for
+       exactly that state of the collection, read from the store itself, and any write to it is a new ask at once
+       (docs/extensions.md, `grants_store`).
 3. **A `runtime` role:** the token role conversations.md defines.
 
 ## What moves where

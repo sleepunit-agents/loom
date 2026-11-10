@@ -163,8 +163,32 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
           ? `(household of ${found.household.agents.join(', ')}; tokens in ${found.household.home}/tokens.json)\n`
           : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
     );
-    // Hold open until the process is signalled.
-    await new Promise<void>(() => {});
+    // The stable listener only sends traffic after this worker is ready.
+    if (process.connected && process.env.LOOM_WORKER_SOCKET) {
+      process.on('message', (message) => {
+        if (!message || typeof message !== 'object' || !('type' in message)) return;
+        if (message.type === 'loom-retire') handle.setBackgroundActive(false);
+        if (message.type === 'loom-activate') handle.setBackgroundActive(true);
+      });
+      process.send?.({ type: 'loom-ready' }, () => undefined);
+    }
+    // A drained worker must close piece process groups and watchers before
+    // exiting; the stable listener no longer restarts their whole systemd unit.
+    await new Promise<void>((resolve) => {
+      if (!process.connected || !process.env.LOOM_WORKER_SOCKET) return;
+      let closing = false;
+      const shutdown = () => {
+        if (closing) return;
+        closing = true;
+        void handle.close().then(resolve, (error: unknown) => {
+          io.stderr(`loom: worker cleanup failed: ${(error as Error).message}\n`);
+          resolve();
+        });
+      };
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+      process.on('disconnect', shutdown);
+    });
     return 0;
   }
 

@@ -49,7 +49,7 @@ process.stdin.on('end', () => {
     // The grants ask (src/grants.ts): $LOOM_HOME/grants-mode is allow, deny or slow.
     fs.appendFileSync(home + '/grants-calls.jsonl', input + '\\n');
     const g = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : 'allow';
-    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 11000);
     return console.log(JSON.stringify(g === 'deny' ? { allow: false, reason: 'clock may not act for art' } : { allow: true }));
   }
   fs.appendFileSync(home + '/runtime-calls.jsonl', JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(input) }) + '\\n');
@@ -611,6 +611,6 @@ describe('POST /api/loom/deliver', () => {
       const before = asked().length;
       expect((await post(tok.runtime, relay('g-2'))).status).toBe(200);
       expect(asked()).toHaveLength(before);
-    });
+    }, 20_000);
   });
 });

@@ -12,7 +12,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { buzz, HapticLabel, useHaptics } from './haptic';
-import type { Shell } from './loom';
+import { loomNow, type Shell } from './loom';
 import { placeWords } from './system-bar';
 import { motionQuery, reducedMotion } from './access';
 
@@ -31,13 +31,17 @@ export type TickPart = { text: string; tone?: string; href?: string };
 /** What the ticker says, from what the shell already has: how many agents, what each is up to, and each place's
  * tile (trouble first: Tasks, Boxes, Bridges and the rest say what they have there). Words, never colours alone. Each
  * opens its app: the agents Home, an agent its window, a place its own page. */
-export function tickerParts(shell: Shell): TickPart[] {
+export function tickerParts(shell: Shell, now = loomNow(), offline = false): TickPart[] {
   const n = shell.agents.length;
   const places = shell.pieces.filter((p) => p.stat && !isTime(p.stat))
     .map((p, i) => ({ p, i })).sort((a, b) => (TONE_FIRST[a.p.tone ?? ''] ?? 2) - (TONE_FIRST[b.p.tone ?? ''] ?? 2) || a.i - b.i);
   return [
     { text: `${n} agent${n === 1 ? '' : 's'}`, href: '/' },
-    ...shell.agents.map((a) => ({ text: a.sub ? `${a.label} ${a.sub}` : a.label, href: `/a/${a.id}` })),
+    ...shell.agents.map((a) => {
+      const d = a.activity;
+      const fresh = !offline && !a.activityUnavailable && d && Date.parse(d.observedAt) <= now && Date.parse(d.expiresAt) > now;
+      return { text: `${a.label} · ${fresh ? `${d.action}${d.where ? ` · ${d.where}` : ''}` : 'Activity unavailable'}`, href: fresh && d.href ? d.href : `/a/${a.id}` };
+    }),
     ...places.map(({ p }) => ({ text: placeWords(p.label, p.stat!), tone: p.tone === 'bad' || p.tone === 'warn' ? p.tone : undefined, href: p.href })),
   ];
 }
@@ -153,6 +157,8 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
    * (system-bar.tsx SysClock, SysIcons). A phone's own bar has neither: the phone shows its own. */
   clock?: React.ReactNode; status?: React.ReactNode;
 }) {
+  const [tickNow, setTickNow] = useState(loomNow);
+  useEffect(() => { const id = window.setInterval(() => setTickNow(loomNow()), 1000); return () => window.clearInterval(id); }, []);
   const asks = shell.asks;
   // A desktop's one line: its two sides as wide as each other, so the ticker stands in the middle of the screen
   // (docs/specs/agent-desk.md, "The ticker"); a phone's, the name, the ticker and LOOM//OS in a row.
@@ -172,7 +178,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
         <PageName title={title} info={info} where={where} />
       </div>
       </Side>
-      <Ticker live={!offline} parts={tickerParts(shell)} go={go} />
+      <Ticker live={!offline} parts={tickerParts(shell, tickNow, offline || !navigator.onLine)} go={go} />
       <Side {...(one ? { className: 'loom-pbar__side loom-pbar__side--r' } : {})}>
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
       {status && <span className="loom-pbar__sep loom-pbar__sep--status" aria-hidden>·</span>}

@@ -25,7 +25,49 @@ import { agentDir, createToken, loadHousehold, type Household } from './househol
 import { managedPieces, parseLoomBlock } from './cli/pieces-managed.js';
 import { offerConflicts } from './offers.js';
 import { clearPieceCache } from './ui/pieces.js';
-import { parseGrantAnswer } from './grants.js';
+import { clearGrantAnswers, parseGrantAnswer } from './grants.js';
+import { PieceStore } from './stores.js';
+import { createRequire } from 'node:module';
+
+// An authority that answers from its own store (it declares grants_store), as the runtime does: the
+// collection `grants`, key `household`, {agent: [piece/path, ...]}; asked with basis: true, it says
+// what it read. grants-mode: fail; write (it empties the grants while it's asked, then says yes);
+// elsewhere (it reads another store, as a runtime pointed at another piece's would); nobasis.
+const SQLITE = createRequire(import.meta.url).resolve('better-sqlite3');
+const STORE_AUTHORITY_BIN = `#!${process.execPath}
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const Database = require(${JSON.stringify(SQLITE)});
+const home = process.env.LOOM_HOME;
+let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
+  const ask = JSON.parse(s);
+  fs.appendFileSync(home + '/asked', JSON.stringify({ agent: ask.agent, piece: ask.piece, path: ask.path }) + '\\n');
+  const mode = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : '';
+  if (mode === 'fail') process.exit(1);
+  const read = mode === 'elsewhere' ? 'other' : 'storeauth';
+  const file = home + '/commons/stores/' + read + '.db';
+  let text = null;
+  if (fs.existsSync(file)) {
+    const db = new Database(file, { readonly: true });
+    const row = db.prepare("SELECT doc FROM docs WHERE collection = 'grants' AND key = 'household'").get();
+    db.close();
+    text = row ? row.doc : null;
+  }
+  const basis = ask.basis === true && mode !== 'nobasis' ? { basis: { piece: read, collection: mode === 'othercoll' ? 'policy' : 'grants', key: 'household', sha256: text === null ? null : crypto.createHash('sha256').update(text).digest('hex') } } : {};
+  if (mode === 'write') {
+    const db = new Database(file);
+    db.prepare("UPDATE docs SET doc = '{}', rev = rev + 1 WHERE collection = 'grants' AND key = 'household'").run();
+    db.prepare("INSERT INTO revisions (collection, key, doc, rev, op, at, by) VALUES ('grants', 'household', '{}', 99, 'put', 'x', 'test')").run();
+    db.close();
+    return console.log(JSON.stringify({ allow: true, ...basis }));
+  }
+  const g = text === null ? null : JSON.parse(text);
+  if (g === null) return console.log(JSON.stringify({ allow: true, ...basis }));
+  const mine = g[ask.agent] || [];
+  const ok = mine.includes(ask.piece + '/*') || mine.includes(ask.piece + '/' + ask.path);
+  console.log(JSON.stringify(ok ? { allow: true, ...basis } : { allow: false, reason: ask.agent + ' has no grant for ' + ask.piece + ' (' + ask.path + ')', ...basis }));
+});
+`;
 
 const THING_BIN = `#!${process.execPath}
 const fs = require('node:fs');
@@ -41,11 +83,12 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
 const AUTHORITY_BIN = `#!${process.execPath}
 const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
-let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
+let s = ''; process.stdin.on('data', (d) => s += d).on('end', async () => {
   const ask = JSON.parse(s);
   fs.appendFileSync(home + '/asked', s + '\\n');
   const mode = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : '';
-  if (mode === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+  if (mode === 'slow') return setTimeout(() => console.log('{"allow":true}'), 11000);
+  if (mode === 'loaded') await new Promise(resolve => setTimeout(resolve, 2300));
   if (mode === 'fail') process.exit(1);
   if (mode === 'bad') return console.log('{"allow":"yes"}');
   if (mode === 'remove') { fs.rmSync(home + '/pieces/authority', { recursive: true, force: true }); return console.log('{"allow":true}'); }
@@ -154,6 +197,15 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
       expect(ran()).toHaveLength(2);
     });
 
+    it('waits for cold authority startup under load and still enforces its refusal', async () => {
+      mode('loaded');
+      grants({ art: ['thing/x'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      grants({});
+      expect((await call('/api/thing/x', tok.art)).status).toBe(403);
+      expect(ran()).toHaveLength(1);
+    }, 15_000);
+
     it('fails closed: a slow authority, one that errors, or answers off-contract is a 503 with the reason; the piece never runs', async () => {
       mode('slow');
       const slow = await call('/api/thing/x', tok.art);
@@ -169,7 +221,7 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
       // ...and owner calls still work while it's down.
       mode('slow');
       expect((await call('/api/thing/x', tok.owner)).status).toBe(200);
-    });
+    }, 15_000);
 
     it('an authority removed while it was asked: 503, even though it said yes', async () => {
       mode('remove');
@@ -181,6 +233,143 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
 
     it('a piece that isn\'t there is still a 404, asked or not', async () => {
       expect((await call('/api/nothing/x', tok.art)).status).toBe(404);
+    });
+  });
+
+  describe('an authority that answers from its own store (grants_store): answers reused, never stale (t-2065)', () => {
+    const decl = { grants: { writers: 'owner' as const } };
+    const install = (extra: Record<string, unknown> = {}) =>
+      piece(h.home, 'storeauth', { grants: ['loom-storeauth', 'ask'], grants_store: 'grants', store: decl, ...extra }, STORE_AUTHORITY_BIN);
+    const setGrants = (doc: Record<string, string[]>) => {
+      const st = new PieceStore(h.home, 'storeauth');
+      try { st.put('grants', 'household', doc, { piece: 'storeauth', owner: true, who: 'jonathan', exp: Number.MAX_SAFE_INTEGER }, decl); } finally { st.close(); }
+    };
+    beforeEach(() => {
+      rmSync(join(h.home, 'pieces', 'authority'), { recursive: true, force: true });
+      rmSync(join(h.home, 'pieces', 'bin', 'loom-authority'), { force: true });
+      rmSync(join(h.home, 'commons', 'stores'), { recursive: true, force: true });
+      install();
+      clearGrantAnswers();
+    });
+    afterAll(() => {
+      rmSync(join(h.home, 'pieces', 'storeauth'), { recursive: true, force: true });
+      rmSync(join(h.home, 'pieces', 'bin', 'loom-storeauth'), { force: true });
+    });
+
+    it('the same ask is answered once while the grants are unchanged: allowed and refused alike', async () => {
+      setGrants({ art: ['thing/*'] });
+      for (let i = 0; i < 3; i++) expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      for (let i = 0; i < 3; i++) expect(await call('/api/thing/x', tok.mark)).toEqual({ status: 403, body: { error: 'forbidden: mark has no grant for thing (x)' } });
+      expect(asked()).toEqual([{ agent: 'art', piece: 'thing', path: 'x' }, { agent: 'mark', piece: 'thing', path: 'x' }]);
+      expect(ran()).toHaveLength(3);
+    });
+
+    it('a grant taken away refuses the very next call, and one given allows it: no wait, no stale answer', async () => {
+      setGrants({ art: ['thing/*'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(403);
+      setGrants({ mark: ['thing/*'] });
+      expect(await call('/api/thing/x', tok.art)).toEqual({ status: 403, body: { error: 'forbidden: art has no grant for thing (x)' } });
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(200);
+      // Written back exactly as it was: still a new state (revisions only grow), asked again.
+      setGrants({ art: ['thing/*'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(403);
+      expect(asked()).toHaveLength(6);
+    });
+
+    it('the first grants ever written (no store before: every agent allowed) are in force at once', async () => {
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(200);
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(200);
+      expect(asked()).toHaveLength(1);
+      setGrants({ art: ['thing/*'] });
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(403);
+    });
+
+    it('an answer given while the grants changed under it is used once and never kept', async () => {
+      setGrants({ art: ['thing/*'] });
+      mode('write');
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      rmSync(join(h.home, 'grants-mode'));
+      // The authority emptied the grants while it said yes: the next call asks, and is refused.
+      expect((await call('/api/thing/x', tok.art)).status).toBe(403);
+      expect(asked()).toHaveLength(2);
+    });
+
+    it('a failure is never kept: the authority down is a 503 each time, and back up it is asked', async () => {
+      setGrants({ art: ['thing/*'] });
+      mode('fail');
+      expect((await call('/api/thing/x', tok.art)).status).toBe(503);
+      expect((await call('/api/thing/x', tok.art)).status).toBe(503);
+      rmSync(join(h.home, 'grants-mode'));
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect(asked()).toHaveLength(3);
+      expect(ran()).toHaveLength(1);
+    });
+
+    it('a new version of the authority is asked again; one that declares no grants_store is asked every time', async () => {
+      setGrants({ art: ['thing/*'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      install({ grants: ['loom-storeauth', 'ask', '--v2'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect(asked()).toHaveLength(2);
+      piece(h.home, 'storeauth', { grants: ['loom-storeauth', 'ask'], store: decl }, STORE_AUTHORITY_BIN);
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect(asked()).toHaveLength(4);
+    });
+
+    it('an authority that read another store than its own: its answer is used, never kept, even when the two agree', async () => {
+      const putOther = (doc: Record<string, string[]>) => {
+        const other = new PieceStore(h.home, 'other');
+        try { other.put('grants', 'household', doc, { piece: 'other', owner: true, exp: Number.MAX_SAFE_INTEGER }, decl); } finally { other.close(); }
+      };
+      setGrants({ art: ['thing/*'] });
+      putOther({ art: ['thing/*'] });
+      mode('elsewhere');
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      // A write core can't see (the other store): the next call asks, and is refused at once.
+      putOther({ mark: ['thing/*'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(403);
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(200);
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(200);
+      expect(asked()).toHaveLength(4);
+      // Back on its own store, mark's answer is its own grants', not the other store's kept one.
+      rmSync(join(h.home, 'grants-mode'));
+      expect((await call('/api/thing/x', tok.mark)).status).toBe(403);
+    });
+
+    it('an authority that says it read another collection than grants_store: never kept', async () => {
+      setGrants({ art: ['thing/*'] });
+      mode('othercoll');
+      for (let i = 0; i < 2; i++) expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect(asked()).toHaveLength(2);
+    });
+
+    it('an authority that says no basis is asked every time', async () => {
+      setGrants({ art: ['thing/*'] });
+      mode('nobasis');
+      for (let i = 0; i < 3; i++) expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      expect(asked()).toHaveLength(3);
+    });
+
+    it('grants_store is declared only with grants, and names a collection the piece keeps revisions of', () => {
+      expect(parseLoomBlock({ grants_store: 'grants' }, 'p', ['loom-p'])).toMatch(/only with loom.grants/);
+      expect(parseLoomBlock({ grants: ['loom-p', 'ask'], grants_store: 'Bad Name', store: decl }, 'p', ['loom-p'])).toMatch(/names one of/);
+      expect(parseLoomBlock({ grants: ['loom-p', 'ask'], grants_store: 'constructor', store: decl }, 'p', ['loom-p'])).toMatch(/declares in loom.store/);
+      expect(parseLoomBlock({ grants: ['loom-p', 'ask'], grants_store: 'grants', store: { grants: { writers: 'piece', history: false } } }, 'p', ['loom-p'])).toMatch(/keeps its revisions/);
+      expect(parseLoomBlock({ grants: ['loom-p', 'ask'], grants_store: 'grants', store: decl }, 'p', ['loom-p'])).toMatchObject({ grants_store: 'grants' });
+    });
+
+    it('an answer\'s basis is checked: {key, sha256}, and only when asked for', () => {
+      const basis = { piece: 'runtime', collection: 'grants', key: 'household', sha256: 'a'.repeat(64) };
+      expect(parseGrantAnswer({ allow: true, basis }, true)).toEqual({ allow: true, basis });
+      expect(parseGrantAnswer({ allow: true, basis: { piece: 'runtime', collection: 'grants', key: 'household', sha256: null } }, true)).toEqual({ allow: true, basis: { piece: 'runtime', collection: 'grants', key: 'household', sha256: null } });
+      expect(parseGrantAnswer({ allow: true, basis: { piece: 'runtime', key: 'household', sha256: null } }, true)).toMatch(/basis is/);
+      expect(parseGrantAnswer({ allow: true, basis: { key: 'household', sha256: null } }, true)).toMatch(/basis is/);
+      expect(parseGrantAnswer({ allow: true, basis })).toMatch(/unknown key/);
+      expect(parseGrantAnswer({ allow: true, basis: { piece: 'runtime', collection: 'grants', key: 'household', sha256: 'x' } }, true)).toMatch(/basis is/);
+      expect(parseGrantAnswer({ allow: true, basis: { piece: 'runtime', collection: 'grants', key: '../x', sha256: null } }, true)).toMatch(/basis is/);
     });
   });
 

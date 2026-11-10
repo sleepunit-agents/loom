@@ -76,6 +76,11 @@ export interface LoomBlock extends Offers {
    */
   strangers?: string[];
   /**
+   * API paths the piece answers from a long-lived `<bin> api --serve` (src/ui/piece-server.ts, t-2065): one request
+   * per line, each with its own store grant. Only paths whose handling keeps nothing of one caller for the next.
+   */
+  api_serve?: string[];
+  /**
    * The piece's collections in loom's store and who may write each
    * (docs/specs/piece-storage.md). Fixed at install, so a running piece can't
    * widen who writes an owner's collection.
@@ -337,7 +342,7 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
     out.description = b.description;
   }
   const settings = b.settings ?? [];
-  if (!Array.isArray(settings) || settings.length > 20) return 'loom.settings is not a list of at most 20';
+  if (!Array.isArray(settings) || settings.length > 32) return 'loom.settings is not a list of at most 32';
   for (const s of settings as Record<string, unknown>[]) {
     const name = s?.name;
     if (typeof name !== 'string' || !SETTING.test(name) || (name.startsWith('LOOM_') && !(own && name.startsWith(own))) || RESERVED_SETTINGS.has(name)) {
@@ -383,6 +388,15 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
     }
     out.strangers = st as string[];
   }
+  if (b.api_serve !== undefined) {
+    const sv = b.api_serve;
+    if (!Array.isArray(sv) || sv.length > 8 || !sv.every((x) => typeof x === 'string' && PIECE.test(x)) || new Set(sv).size !== sv.length) {
+      return 'loom.api_serve is a list of at most 8 API path names (lowercase letters, digits and dashes), each once';
+    }
+    // Never a path a caller with no token reaches: a long-lived server is for known callers' calls.
+    if (out.strangers?.some((x) => sv.includes(x))) return 'loom.api_serve can\'t name a path loom.strangers opens';
+    out.api_serve = sv as string[];
+  }
   if (b.store !== undefined) {
     const d = parseStoreDecl(b.store);
     if (typeof d === 'string') return d;
@@ -390,6 +404,10 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
   }
   const offers = parseOffers(b, { bins, role: out.role });
   if (typeof offers === 'string') return offers;
+  if (offers.grants_store !== undefined) {
+    const c = out.store && Object.hasOwn(out.store, offers.grants_store) ? out.store[offers.grants_store] : undefined;
+    if (!c || c.history === false) return `loom.grants_store names a collection the piece declares in loom.store, one that keeps its revisions: not ${offers.grants_store}`;
+  }
   return { ...out, ...offers };
 }
 
