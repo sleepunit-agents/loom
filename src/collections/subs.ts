@@ -89,6 +89,8 @@ interface Sub {
   sent: Map<string, string>;
   /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
   retry?: boolean;
+  /** A refused core message payload read was reported; recovery must be said even if rows are unchanged. */
+  unavailable?: boolean;
   /** When it was last asked again (reaskSoon): the next waits out AGG_GAP_MS from then, never from the change. */
   askedAt?: number;
 }
@@ -106,7 +108,7 @@ interface Stream { port: StreamPort; viewer: Viewer; vid: string; scope: number;
  * Asking a provider again for a subscription, as its viewer, through serve.ts's checks: for a count it can't keep
  * itself, or a type whose audience the provider decides per viewer. Undefined when the provider didn't answer.
  */
-export type Reask = (viewer: Viewer, p: Provider, q: Query) => Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: Aggs } | undefined>;
+export type Reask = (viewer: Viewer, p: Provider, q: Query) => Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: Aggs } | { error: 'unavailable' } | undefined>;
 
 interface HomeState {
   household: () => Household;
@@ -537,6 +539,16 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something), and
     // it's asked again on the next pass.
     if (!got) { sub.retry = true; return; }
+    if ('error' in got) {
+      sub.retry = true;
+      if (!sub.unavailable) s.port.frame('rows', { sub: sub.id, scope: s.scope, status: 'unavailable' });
+      sub.unavailable = true;
+      return;
+    }
+    if (sub.unavailable) {
+      sub.unavailable = false;
+      s.port.frame('rows', { sub: sub.id, scope: s.scope, status: 'live' });
+    }
     // Only what differs from what this subscription was sent.
     const now = new Set<string>();
     got.admitted.forEach((r, i) => {

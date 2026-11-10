@@ -424,6 +424,8 @@ export class CollectionRuntime {
   }
 
   private apply(s: Sub, d: Record<string, unknown>): void {
+    if (d.status === 'unavailable') s.status = s.keys.length ? 'stale' : 'unavailable';
+    else if (d.status === 'live') { s.status = 'live'; s.error = undefined; }
     const ups = Array.isArray(d.upserts) ? (d.upserts as Rec[]) : [];
     const leaves = Array.isArray(d.leaves) ? (d.leaves as string[]) : [];
     const deletes = Array.isArray(d.deletes) ? (d.deletes as string[]) : [];

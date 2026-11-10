@@ -53,6 +53,26 @@ describe('the shared collection runtime', () => {
     c.close();
   });
 
+  it('marks a refused message subscription stale and accepts recovery without changing or dropping its words', async () => {
+    let id = '';
+    const f = fake((q) => { id = q.id as string; return answerOf([row('t-1', { message: { text: 'previous words' } })]); });
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'loom/message@1' }, () => {});
+    await settle();
+    f.emit('rows', { seq: 1, sub: id, scope: 1, status: 'unavailable' });
+    expect(v.state().status).toBe('stale');
+    expect(v.state().keys).toEqual(['tasks/task/t-1']);
+    expect(rt.records('loom/message@1').get('tasks/task/t-1')?.message).toEqual({ text: 'previous words' });
+    // An older recovery cannot hide the current refusal.
+    f.emit('rows', { seq: 0, sub: id, scope: 1, status: 'live' });
+    expect(v.state().status).toBe('stale');
+    f.emit('rows', { seq: 2, sub: id, scope: 1, status: 'live' });
+    expect(v.state().status).toBe('live');
+    expect(f.posts).toHaveLength(1);
+    rt.clear();
+  });
+
   it('waits for the stream\'s hello before asking, and asks on it', async () => {
     const f = fake(() => answerOf([row('t-1')]));
     const rt = new CollectionRuntime(f.t);

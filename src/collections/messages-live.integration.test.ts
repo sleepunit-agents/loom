@@ -170,6 +170,35 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     expect((await ask('jonathan', { where: [['thread', 'eq', t.id]] })).rows[0].message.text).toBe('never put these words in a collection log');
   });
 
+  it('reports a refused live payload read once and recovers even when the words are unchanged', async () => {
+    const t = thread('jonathan', 'art', 'words before the key disappeared');
+    const stream = await openEvents(base, tok.jonathan); streams.push(stream);
+    const a = await ask('jonathan', { where: [['thread', 'eq', t.id]], subscribe: true, stream: stream.hello.stream });
+    expect(a.error).toBeUndefined();
+    const { pullNow, deliverNow } = await import('./subs.js');
+    await pullNow(h.home, 'loom/message'); await deliverNow(h.home);
+    await new Promise((r) => setTimeout(r, 1700));
+    renameSync(join(h.home, 'comms.key'), join(h.home, 'comms.key.saved'));
+    try {
+      // Move metadata to trigger a bounded re-read while the key is missing.
+      const db = new BetterSqlite3(join(h.home, 'comms.db'));
+      db.prepare('UPDATE comms_messages SET delivered = 1 WHERE thread = ?').run(t.id); db.close();
+      comms.bump(h.home);
+      expect(await until(() => stream.frames.some((f) => f.event === 'rows' && f.data.sub === 'q' && f.data.status === 'unavailable'))).toBe(true);
+      await new Promise((r) => setTimeout(r, 2200));
+      expect(stream.frames.filter((f) => f.event === 'rows' && f.data.status === 'unavailable')).toHaveLength(1);
+      expect(stream.frames.filter((f) => f.event === 'rows').every((f) => !Object.hasOwn(f.data, 'leaves'))).toBe(true);
+    } finally {
+      // Restore the original row before the key: successful retry has exactly the original projection.
+      const db = new BetterSqlite3(join(h.home, 'comms.db'));
+      db.prepare('UPDATE comms_messages SET delivered = NULL WHERE thread = ?').run(t.id); db.close();
+      renameSync(join(h.home, 'comms.key.saved'), join(h.home, 'comms.key'));
+    }
+    expect(await until(() => stream.frames.some((f) => f.event === 'rows' && f.data.status === 'live'))).toBe(true);
+    expect(stream.frames.filter((f) => f.event === 'rows' && f.data.upserts)).toHaveLength(0);
+    stream.stop();
+  }, 20_000);
+
   it('delivers a changed page including retention and removes a deleted thread, with no words kept in the index', async () => {
     const t = thread('jonathan', 'art', 'live initial');
     const stream = await openEvents(base, tok.jonathan); streams.push(stream);
