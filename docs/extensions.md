@@ -333,6 +333,15 @@ loom-<piece> ui page --json           # stdin {"path": "...", "query": {...}, "c
 loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "fields": {...}, "caller": {...}} → a result
 ```
 
+A managed piece with a long-running service may answer the manifest from it instead: it listens on a Unix socket
+at `$LOOM_PIECE_HOME/run/ui.sock`, the directory and the socket this user's alone (no group or other bits), and
+answers each line `{"id": n, "op": "manifest"}` with one line `{"id": n, "ok": true, "version": "<realpath of the
+file it runs>", "stdout": "<what ui --json prints>"}`, in order. loom asks it first and runs `ui --json` when there's
+no socket, it isn't this user's alone, `version` isn't what the piece's bin resolves to now, or it fails. Only the
+manifest goes over it, with nothing about the viewer: it must be one answer for everyone, as a manifest that reads no
+scope is. A served manifest is asked again every few seconds, so a service keeps its answer ready rather than computing
+it per request (src/ui/piece-socket.ts; the runtime's src/ui-socket.mjs).
+
 In a household, `caller` says who is looking or acting:
 `{"kind": "owner", "who": "jonathan-barket", "agents": "*"}`, the member and
 what they own ([specs/owners.md](specs/owners.md)). A piece records `who` as

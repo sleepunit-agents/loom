@@ -19,6 +19,7 @@
  */
 import { pieceOfPath } from '../cli/pieces-managed.js';
 import { serveCall } from './piece-server.js';
+import { socketManifest } from './piece-socket.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
@@ -344,13 +345,25 @@ function json(stdout: string): unknown {
 }
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
-  const r = await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
+  // From the piece's own service when it has one (piece-socket.ts, t-2114): no process, an answer from memory.
+  const served = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES });
+  const r = served ?? await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
   if (!r.ok) return { piece, reason: r.reason };
   const parsed = json(r.stdout);
   if (parsed === undefined) return { piece, reason: 'invalid: not JSON' };
   const m = parseManifest(parsed);
-  return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
+  if (typeof m === 'string') return { piece, reason: `invalid: ${m}` };
+  if (served) servedPaths.add(path); else servedPaths.delete(path);
+  return { piece, path, manifest: m };
 }
+
+/**
+ * The pieces whose last manifest came from their service: an answer costs a few milliseconds, so it's asked again
+ * after SERVED_CACHE_MS rather than CACHE_MS, and every round (the service says itself when it moved, and its agents'
+ * idle observations last 30 s: t-2010).
+ */
+const servedPaths = new Set<string>();
+export const SERVED_CACHE_MS = 5_000;
 
 /** Where a piece's path leads, and when that file last changed: what makes its answer a new one. */
 function resolved(path: string): string {
@@ -436,7 +449,7 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const k = keyOf(path, env);
   const { key } = k;
   const hit = cache.get(key);
-  if (hit && !hit.expired && nowMs - hit.at < CACHE_MS) return hit.result;
+  if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return hit.result;
   const generation = manifestGeneration;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
     // Past its window, the last answer at once while a fresh one runs behind it. Said to have moved, the fresh one,
@@ -489,7 +502,7 @@ export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: Reado
     const { key } = k;
     const generation = manifestGeneration;
     const before = cache.get(key);
-    if (before && !before.expired && before.print !== undefined && Date.now() - before.at < roundWait(before)) {
+    if (before && !before.expired && before.print !== undefined && Date.now() - before.at < (servedPaths.has(p.path) ? SHARE_MS : roundWait(before))) {
       out.set(p.path, before.print);
       return;
     }
