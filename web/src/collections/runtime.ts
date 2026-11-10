@@ -143,7 +143,7 @@ export class CollectionRuntime {
       t.on('rows', (d) => this.frame(d)),
       t.on('reset', (d) => this.reset(d)),
       // A stream that gave up for good (signed out, revoked: its reconnect was refused) clears everything.
-      t.on('error', (d) => (d.closed ? this.clear() : this.markAll('stale'))),
+      t.on('error', (d) => { this.markAll('stale'); if (d.closed) void this.confirmGone(); }),
     );
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     (this.sweeper as { unref?: () => void }).unref?.();
@@ -183,6 +183,17 @@ export class CollectionRuntime {
         if (!s.listeners.size) s.linger = setTimeout(() => this.closeSub(s), LINGER_MS);
       },
     };
+  }
+
+  /**
+   * The stream gave up for good, which a proxy's outage does too: ask once whether the session is still there, and clear
+   * only if it isn't (signed out, revoked).
+   */
+  private async confirmGone(): Promise<void> {
+    try {
+      const r = await this.t.post({ close: { stream: this.stream ?? 'e-none', ids: [] } });
+      if (r.status === 401 || r.status === 403) this.clear();
+    } catch { /* unreachable: what's shown stays, stale */ }
   }
 
   /** Every record goes, and every view is asked again (from the next hello): another viewer, a new scope. */
@@ -292,8 +303,10 @@ export class CollectionRuntime {
   private hello(d: Record<string, unknown>): void {
     if (typeof d.stream !== 'string') return;
     // Someone else now (a sign-in as another person in this browser): nothing of the last viewer's survives.
-    if (typeof d.viewer === 'string' && this.viewer !== null && d.viewer !== this.viewer) this.dropAll();
-    if (typeof d.viewer === 'string') this.viewer = d.viewer;
+    // No tag at all (someone the page has no member for) after one counts as someone else too.
+    const tag = typeof d.viewer === 'string' ? d.viewer : '';
+    if (this.viewer !== null && tag !== this.viewer) this.dropAll();
+    this.viewer = tag;
     const fresh = d.stream !== this.stream;
     this.stream = d.stream;
     if (typeof d.scope === 'number') this.scope = d.scope;
@@ -315,8 +328,10 @@ export class CollectionRuntime {
   private async flush(): Promise<void> {
     this.flushing = false;
     while (this.queue.length) {
+      // No stream now (a scope reset closed it): the next hello asks every view again.
+      if (!this.stream) { this.queue = []; return; }
       const batch = this.queue.splice(0, MAX_BATCH);
-      const stream = this.stream!;
+      const stream = this.stream;
       const scope = this.scope;
       const queries = batch.map((s) => ({ id: s.id, ...s.spec, subscribe: true, stream, ...((s as Sub & { after?: string | null }).after ? { after: (s as Sub & { after?: string | null }).after } : {}) }));
       const ac = new AbortController();

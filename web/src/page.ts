@@ -57,12 +57,15 @@ export type Load = (to: string, push: boolean, quiet?: boolean) => Promise<void>
 const hearers = new Set<{ change: () => void; open: (on: boolean) => void }>();
 let stream: EventSource | null = null;
 let streamOpen = false;
+let lastHello: Record<string, unknown> | null = null;
 function listen(h: { change: () => void; open: (on: boolean) => void }): () => void {
   hearers.add(h);
   if (!stream && 'EventSource' in window) {
     const es = stream = new EventSource('/events');
     es.onopen = () => { streamOpen = true; for (const x of hearers) x.open(true); };
-    es.onerror = () => { streamOpen = false; for (const x of hearers) x.open(false); };
+    es.onerror = () => { streamOpen = false; lastHello = null; for (const x of hearers) x.open(false); };
+    // Who the stream is (the shared collections' hello), kept for a listener that comes later.
+    es.addEventListener('hello', (e) => { try { lastHello = JSON.parse((e as MessageEvent).data as string); } catch { /* not a frame */ } });
     es.addEventListener('change', () => { for (const x of hearers) x.change(); });
   }
   h.open(streamOpen);
@@ -79,10 +82,9 @@ export const onLive = (change: () => void): (() => void) => listen({ change, ope
  * Hear one of the stream's own events (the shared collections' `hello`, `rows`, `reset`: src/collections/transport.ts),
  * keeping the one stream open while anyone listens. `open` and `error` are the stream's own state.
  */
-let lastHello: Record<string, unknown> | null = null;
 export function onStreamEvent(event: string, f: (data: Record<string, unknown>) => void): () => void {
   let off: (() => void) | undefined;
-  const handler = (e: Event) => { try { const d = JSON.parse((e as MessageEvent).data as string); if (event === 'hello') lastHello = d; f(d); } catch { /* not a frame */ } };
+  const handler = (e: Event) => { try { f(JSON.parse((e as MessageEvent).data as string)); } catch { /* not a frame */ } };
   const stop = listen({ change: () => {}, open: (on) => {
     if (event === 'open' && on) f({});
     // closed: the stream gave up for good (signed out, revoked), not a reconnect.

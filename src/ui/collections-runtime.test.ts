@@ -322,6 +322,16 @@ describe('commands: one operation, its receipt, and an honest preview', () => {
 });
 
 describe('whose records: another viewer, revocation, a closed stream', () => {
+  it('a hello with no viewer tag after one with a tag counts as someone else', async () => {
+    const f = fake(() => answerOf([row('t-1')]));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0, viewer: 'va' });
+    rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    f.emit('hello', { stream: 'e-2', scope: 1, seq: 0 });
+    expect(rt.size()).toBe(0);
+  });
+
   it('a hello for another viewer drops everything the last one held before anything is asked', async () => {
     const f = fake(() => answerOf([row('t-1', { secret: 'a' })]));
     const rt = new CollectionRuntime(f.t);
@@ -342,7 +352,14 @@ describe('whose records: another viewer, revocation, a closed stream', () => {
     await settle();
     f.emit('error', { closed: false });
     expect(v.state()).toMatchObject({ status: 'stale', keys: ['tasks/task/t-1'] });
+    // Gave up for good, but the session is still there (a proxy's outage): kept, stale.
     f.emit('error', { closed: true });
+    await settle();
+    expect(rt.size()).toBe(1);
+    // Gave up because the session is gone: cleared.
+    f.setStatus(401);
+    f.emit('error', { closed: true });
+    await settle();
     expect(rt.size()).toBe(0);
     expect(v.state().status).toBe('denied');
   });
