@@ -15,7 +15,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn } from '../backends/conversations.js';
-import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery } from '../comms.js';
+import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery, setTitle, threadFor } from '../comms.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from './pieces.js';
 import { stopCommsWatch } from './comms-live.js';
@@ -101,6 +101,30 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     return { ctx, page, errors };
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+
+  it('keeps its list live: a thread renamed elsewhere moves in the open list, and /comms isn\'t asked again (t-2027)', async () => {
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      // The list's set is live once its rows come from it: give the stream its first answer.
+      await page.waitForResponse((r) => r.url().endsWith('/collections/query'), { timeout: 10_000 }).catch(() => undefined);
+      await page.waitForTimeout(300);
+      const asked: string[] = [];
+      page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/comms' && r.method() === 'GET') asked.push(u.search); });
+      setTitle(h, threadFor(h, h.members[0], thread.id), 'Renamed elsewhere', 'agent');
+      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      await page.waitForTimeout(500);
+      expect(asked).toEqual([]);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      // Later tests expect the thread untitled.
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('UPDATE comms_threads SET title = NULL, titled_by = NULL WHERE id = ?').run(thread.id);
+      db.close();
+    }
+  });
 
   it('keeps jobs in Background work and attributes the job brief to Art', async () => {
     const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'background-ui', label: 'Internal diagnostic',

@@ -118,6 +118,8 @@ interface HomeState {
   passing: Promise<void> | undefined;
   again: boolean;
   offBump?: () => void;
+  /** comms.tick: a thread moved by another process (a reply the runtime posted to another listener, a CLI). */
+  commsWatcher?: FSWatcher;
 }
 
 const homes = new Map<string, HomeState>();
@@ -165,6 +167,14 @@ function ensureRunning(h: HomeState): void {
   h.poll.unref?.();
   // Core's own threads move through comms.ts: their domain is pulled when they do.
   h.offBump ??= onBump(() => h.puller.soon('loom/thread'));
+  // And through the tick file every thread write leaves (comms.ts bump), so another process's write arrives at once,
+  // not on the next 15 s pull.
+  if (!h.commsWatcher) {
+    try {
+      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick') h.puller.soon('loom/thread'); });
+      h.commsWatcher.unref?.();
+    } catch { /* the poll still runs */ }
+  }
 }
 
 function stopIfIdle(h: HomeState): void {
@@ -173,6 +183,7 @@ function stopIfIdle(h: HomeState): void {
   h.watcher?.close(); h.watcher = undefined;
   clearInterval(h.poll); h.poll = undefined;
   h.offBump?.(); h.offBump = undefined;
+  h.commsWatcher?.close(); h.commsWatcher = undefined;
   homes.delete(h.household().home);
 }
 
