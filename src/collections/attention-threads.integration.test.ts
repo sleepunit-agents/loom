@@ -43,7 +43,7 @@ process.stdin.on('end', () => {
   const mine = Object.entries(s).filter(([, x]) => !process.env.LOOM_OWNER_SCOPE || process.env.LOOM_OWNER_SCOPE.split(',').includes(x.agent));
   const cv = (x) => (x.conversation ? { conversation: x.conversation } : {});
   if (a[0] === 'ui' && a.length === 1) {
-    return console.log(JSON.stringify({ v: 2, owners: 2, tab: { label: 'Approvals', kind: 'setting' },
+    return console.log(JSON.stringify({ v: 2, ...(fs.existsSync(process.env.LOOM_HOME + '/no-owners') ? {} : { owners: 2 }), tab: { label: 'Approvals', kind: 'setting' },
       asks: mine.filter(([, x]) => !x.state && !x.unlisted).map(([id, x]) => ({ text: x.text, kind: 'permission', agent: x.agent, page: '', at: x.at, ...(x.lead ? { lead: true } : {}), ...cv(x),
         actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })),
       answered: mine.filter(([, x]) => x.state).map(([, x]) => ({ text: x.text, outcome: x.state, at: x.at, agent: x.agent, ...cv(x) })) }));
@@ -230,6 +230,23 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     expect(pjText).toMatch(/Give Art the relay piece/);
     expect(pjText).not.toMatch(/merge the comm screen/);
     expect((await get('jonathan', '/')).chrome.shell.asks).toBe(2);
+  }, 30_000);
+
+  it('a card from Sam\'s thread on a piece Sam can\'t reach (no agent owners) is the household owner\'s, never no one\'s', async () => {
+    writeFileSync(join(h.home, 'no-owners'), '');
+    const t = thread('sam');
+    cards({ 'a-00000031': { agent: 'art', text: 'OK to merge the comm screen PR?', at: '2026-11-10T10:00:00Z', conversation: t.conversation },
+      'a-00000032': { agent: 'art', text: 'Off the cards?', at: '2026-11-10T10:00:00Z', conversation: t.conversation, unlisted: true } });
+    expect(texts((await get('jonathan', '/inbox')).items)).toContain('OK to merge the comm screen PR?');
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000031' })).ok).toBe(true);
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000032' })).ok).toBe(true);
+  }, 30_000);
+
+  it('the conversation page says "needs you" only to whom the ask is for', async () => {
+    const t = thread('sam');
+    needs(t.conversation, 'Sam: OK to ship the comm screen?');
+    expect(JSON.stringify(await get('sam', `/a/art/conversation/${t.conversation}`))).toMatch(/needs you/);
+    expect(JSON.stringify(await get('jonathan', `/a/art/conversation/${t.conversation}`))).not.toMatch(/needs you|"asked"/);
   }, 30_000);
 
   it('Jonathan can\'t answer Sam\'s thread\'s ask, even naming it exactly', async () => {

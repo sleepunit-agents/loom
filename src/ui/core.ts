@@ -505,7 +505,9 @@ export async function coreAct(contextDir: string, action: string, fields: Record
  * One conversation as a page: its render (the venue's own when its piece offers one and answers,
  * else core's generic render), drawn group by group. Null when the agent has no such conversation.
  */
-export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string; before?: number; page?: string; home?: string; days?: number } = {}): Promise<Page | null> {
+export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string; before?: number; page?: string; home?: string; days?: number;
+  /** False: its asks aren't the viewer's (another member's Comms thread, t-2084), so no digest says it needs you or asked. */
+  asks?: boolean } = {}): Promise<Page | null> {
   const view = await conversationView(contextDir, agent, id, opts.env ?? process.env);
   if (!view) return null;
   const tz = opts.timeZone ?? uiTimeZone();
@@ -518,7 +520,7 @@ export async function conversationPage(contextDir: string, agent: string, id: st
       items: g.items.map((it) => ({
         text: it.title,
         ...(() => { const meta = [when(it.when), ...(it.who ?? []), it.ref].filter(Boolean).join(' · '); return meta ? { meta } : {}; })(),
-        ...(it.status ? { badge: it.status } : {}),
+        ...(it.status && !(opts.asks === false && (it.status === 'needs you' || it.status === 'asked')) ? { badge: it.status } : {}),
         ...(it.person?.[0] ? { person: it.person[0] } : {}),
       })),
     }],
