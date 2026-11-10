@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **draft, for the owner's review** (t-2020, epic t-2019). Nothing here is built. A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Nothing here is built yet. A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -802,16 +802,18 @@ The conformance suite (t-2026) runs against core's provider and every installed 
 - **No secrets**: a scan of every type's declared field names and every fixture record's values finds nothing
   shaped like a credential.
 
-## Open questions for the owner
+## Owner decisions
+
+The owner accepted the contract as written (2026-11-09), so each question's leaning is now the decision.
 
 1. **One stream or two?** This keeps today's single `/events` stream and adds `hello`, `rows`, `reset` and `page`
    frames to it. The alternative is a second stream just for collections. One stream means fewer connections (six
-   a session is the cap) and one story for gaps. Leaning one.
+   a session is the cap) and one story for gaps. Decided: one.
 2. **A memory proposal: one item per agent, or one per proposal?** The Inbox shows one item per agent with
-   proposals; the per-agent badge and Today count each proposal. One record type can't be both. Leaning one record
+   proposals; the per-agent badge and Today count each proposal. One record type can't be both. Decided: one record
    per proposal, with the Inbox grouping them per agent, so every count agrees.
 3. **Comms unread: threads or messages?** The dock counts unread threads and the agent card counts unread messages.
-   Both can come from the same read-state records, but they'll still show different numbers side by side. Leaning
+   Both can come from the same read-state records, but they'll still show different numbers side by side. Decided:
    threads everywhere, with the message count shown only inside a thread.
 4. **Third-party widgets**: should loom allow piece widgets that aren't first-party before the sandboxed frame
-   exists? Leaning no (code isolation, above).
+   exists? Decided: no (code isolation, above).
