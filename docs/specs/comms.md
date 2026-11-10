@@ -340,7 +340,8 @@ So the activity cards need a new capture:
     left to the house.
   - This is a bounded live snapshot, not a lossless event stream: the house reports its newest 100 cards within
     256 KB per body and 900 KB shared by the report. Large diffs or a burst between syncs can omit older unseen
-    cards permanently. Acknowledged lossless delivery is separate work; the newest work takes priority here.
+    cards permanently. Session/helper tail windows and helper sampling also bound discovery (runtime docs/step-cards.md).
+    Within those windows, newest work takes priority. Acknowledged lossless delivery is separate work.
   - Core keeps `detail`, `body`, `result` and `items` sealed like the label (an age blob in `step`, swept with it), and
     `exit`, `limit`, `parent` and the step's times (`t0` its start, `t1` its end, else when core saw it end) plain.
   - The post may carry `alive: {at, tokens?}`, the body's last sign of life (when its record last moved, its output
