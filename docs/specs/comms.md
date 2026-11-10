@@ -304,7 +304,7 @@ So the activity cards need a new capture:
     | Tool | Label |
     |---|---|
     | a shell command | its `description` when the harness gives one (Claude Code's Bash tool does), else its short form: the program and its subcommand and a few plain words (`Ran gh pr checks 603`, `Ran npm test`), a file reader as `Read delivery.mjs (lines 120–180)`, a search as `Searched for "x" in src`, a fetch as `Fetched from api.github.com`, a script as `Ran a python3 snippet`; up to three commands of a chain, never a pipe's later stages, and "Ran a command" when none says anything (`cd`, `echo`) |
-    | a file read or edit | the verb and the path relative to the repo, and the line range a read names |
+    | a file read or edit | the verb and the file’s base name (directories are withheld), and the line range a read names |
     | a search | `Searched for "<pattern>"` and where, the pattern cut at 60 characters |
     | a web fetch | `Read a page on <host>` |
     | a message to another agent | `Messaged <who>: "<its first line>"` |
