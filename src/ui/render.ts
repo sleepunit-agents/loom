@@ -131,6 +131,8 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
   approval?: ApprovalView;
   /** The approval id it waits on (core's own; not sent). */
   waitsOnApproval?: string;
+  /** The task id it waits on (core's own; not sent): folded into that task's own ask card, when there is one (t-2098). */
+  waitsOnTask?: string;
   /** A memory an agent proposed (core's own): the Inbox files it under Memory reviews. */
   memory?: boolean }
 

@@ -1,3 +1,4 @@
+import { sameAskWords } from './ask-words.js';
 import { agentJobs } from './agent-jobs.js';
 /**
  * loom's web UI on the HTTP daemon (full scope only).
@@ -850,6 +851,7 @@ export function conversationAsks(h: Household): HomeAsk[] {
         ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),
         ...(n ? { needs: { ...(plain && n.why ? { why: n.why } : {}), ...(n.if_yes ? { if_yes: n.if_yes } : {}), ...(n.if_no ? { if_no: n.if_no } : {}), answers: answersOf(n), refs: n.refs, details: where } } : {}),
         ...(n?.waits_on && 'approval' in n.waits_on ? { waitsOnApproval: n.waits_on.approval } : {}),
+        ...(n?.waits_on && 'task' in n.waits_on && n.waits_on.task ? { waitsOnTask: n.waits_on.task } : {}),
         // Asked on another agent's relay (t-1970): it's that agent's request, passed on, so the Inbox says "Mark asks, via Art".
         ...(c.venue === 'relay' && c.place !== a && h.agents.includes(c.place) ? { relayedFrom: c.place } : {}),
         reply: { action: 'needs-reply', label: `Reply to ${name}`, fields },
@@ -945,7 +947,12 @@ function needsCount(h: Household, agent: string): number {
  * Only the agent's own approval: an ask can't take another agent's card under its words. Allow and Deny still post
  * to the approvals piece, as the card's would.
  */
-export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAsk[] {
+export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv, { tasks: foldTasks = true }: { tasks?: boolean } = {}): HomeAsk[] {
+  // An agent's own views (its Today and its count) don't fold tasks: the tasks piece's card names no agent (t-2098).
+  if (foldTasks && asks.some((a) => a.waitsOnTask)) {
+    const tasks = pieceWithRole(env, 'tasks')?.name;
+    if (tasks) asks = foldTaskAsks(asks, pieceSource(tasks).id);
+  }
   if (!asks.some((a) => a.waitsOnApproval)) return asks;
   const piece = pieceWithRole(env, 'approvals')?.name;
   if (!piece) return asks;
@@ -968,10 +975,40 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
   return out.filter((a) => !taken.has(a));
 }
 
+/**
+ * One card, not two (t-2098): a Needs you that waits on a task the owner is already asked the same thing on (the tasks
+ * piece's own card for it, `task/<id>`, in the same words) is that card. The task's card stays, with its page, where
+ * his answer lands on the task; it keeps the ask's call on his attention (a quiet To do card never hides a counted
+ * ask). The conversation's ask clears itself once he answers it there (needs-resolve, taskAnswered) or the task closes.
+ * Only an ask is dropped, never put under another card's words: one in other words, or waiting on a task with no card
+ * of its own (not his to answer), stays as it was.
+ */
+export function foldTaskAsks(asks: HomeAsk[], tasksSource: string): HomeAsk[] {
+  const cards = new Map<string, HomeAsk>();
+  for (const x of asks) {
+    const m = x.source.id === tasksSource && typeof x.page === 'string' ? /^task\/(t-[0-9a-z.-]{1,40})$/.exec(x.page) : null;
+    if (m && x.text.trim()) cards.set(m[1], x);
+  }
+  if (!cards.size) return asks;
+  const folded = (a: HomeAsk) => {
+    const card = a.waitsOnTask && a.source.id !== tasksSource ? cards.get(a.waitsOnTask) : undefined;
+    return card && sameAskWords(card.text, a.text) ? card : undefined;
+  };
+  const loud = new Set(asks.flatMap((a) => { const c = folded(a); return c && a.attention !== false ? [c] : []; }));
+  return asks.filter((a) => !folded(a)).map((x) => {
+    if (!loud.has(x) || x.attention !== false) return x;
+    const { attention: _quiet, ...rest } = x;
+    return rest;
+  });
+}
+
 /** How many approvals cards a Needs you absorbed (of one agent's, or all): the counts that add asks up take them off once. */
 function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, agent?: string): number {
   const all = [...conversationAsks(agent ? { ...h, agents: [agent] } : h), ...pieceAsks(pieces, env)];
-  return all.length - absorbApprovals(all, env).length;
+  // What the counts lose: the counted asks before less those after, so a quiet task card a counted ask folded into
+  // (and was lifted by, t-2098) still counts once, as its Inbox row does.
+  const counted = (xs: HomeAsk[]) => xs.filter((x) => x.attention !== false).length;
+  return counted(all) - counted(absorbApprovals(all, env, { tasks: !agent }));
 }
 
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
@@ -2533,7 +2570,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             id: agent, today: t.items.length,
             waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts() },
-          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
+          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env, { tasks: false }),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...(() => { const lastWake = tapeRows(agentDir(hh, agent), 24 * 7, nowMs).find((r) => r.where.split(':')[0] === 'wake');
               return scoped.filter((p) => p.manifest.tile).map((p) => agentTile(p, agent, lastWake, nowMs)); })()],
