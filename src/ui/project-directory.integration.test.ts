@@ -100,6 +100,7 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       await expect.poll(() => reads).toBeGreaterThan(0);
       await card.getByText('Cached page copy', { exact: true }).waitFor();
+      await card.getByText('Changed project', { exact: true }).waitFor();
       await card.getByText(/Couldn't count what's waiting/).waitFor();
       await page.unroute('**/projects');
       forgetProjectCounts();
