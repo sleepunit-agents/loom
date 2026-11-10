@@ -1,0 +1,82 @@
+/**
+ * Chat about this (t-2034, t-2035; docs/specs/comms.md, "Chat about this"): a Comms thread started from a loom item, with
+ * what it's about already attached, sent to the agent that fits it.
+ *
+ * What's attached is a pointer, never a copy: the item's ref (t-12, a-…, owner/repo#N, a page of loom's), the label the
+ * member saw on it and when they saw it. It goes into the first message as one plain line the member sees before
+ * sending, so the agent reads it as the member's words: data, not an instruction, and not an approval. The agent looks
+ * the item up itself, with its own access, and gets its current state: nothing the member can see but the agent can't
+ * is carried across, and no secret or log is copied. A member could have typed the same line, so attaching grants
+ * nothing.
+ *
+ * Who it goes to (routeFor): the item's own agent when the member owns it; for an item with no agent of its own, the
+ * household's default agent when they own it, else their only agent. Otherwise (an item's agent they can't ask, or no
+ * default), nobody is picked and the member chooses. Whoever is picked, the sheet says
+ * who before anything is sent, and the member can change it. An agent the member doesn't own is never picked or offered.
+ */
+import { refShape } from './comms-refs.js';
+import { CommsError, owns } from './comms.js';
+import type { Household, Member } from './household.js';
+
+export const ABOUT_LABEL_MAX = 120;
+/** A piece's own record when it has no ref of loom's: `<piece>:<its id>` (`runtime:job/run-ab12`, `health:loom-http-local.service`). */
+const PIECE_ITEM = /^[a-z][a-z0-9-]{0,39}:[A-Za-z0-9._@/#:-]{1,160}$/;
+/** A loom page, path without the leading slash: letters, digits and - _ . / ~ only, no `..`, no query. */
+const PAGE = /^[A-Za-z0-9][A-Za-z0-9._~/-]{0,199}$/;
+const LINE = /^[^\x00-\x1f\x7f\u2028\u2029]+$/;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/;
+
+/** What a chat is about: at least a label, and a ref or a page to find it by. */
+export interface About { ref?: string; label: string; page?: string; seen: string }
+
+const fail = (m: string): never => { throw new CommsError(m, 400); };
+
+/** An `about` as a request sent it, checked: refused whole on anything off, never trimmed into something else. */
+export function parseAbout(raw: unknown, now: Date = new Date()): About {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('bad-input: about is an object');
+  const o = raw as Record<string, unknown>;
+  const extra = Object.keys(o).filter((k) => !['ref', 'label', 'page', 'seen'].includes(k));
+  if (extra.length) return fail(`bad-input: about has unknown keys: ${extra.join(', ')}`);
+  const label = typeof o.label === 'string' ? o.label.replace(/\s+/g, ' ').trim() : '';
+  if (!label || label.length > ABOUT_LABEL_MAX || !LINE.test(label)) return fail(`bad-input: about.label is 1-${ABOUT_LABEL_MAX} printable characters`);
+  const ref = o.ref === undefined ? undefined : typeof o.ref === 'string' && (refShape(o.ref) || PIECE_ITEM.test(o.ref)) ? o.ref : fail('bad-input: about.ref is a loom ref (t-12, a-…, github:owner/repo#N, …) or <piece>:<id>');
+  const page = o.page === undefined ? undefined : typeof o.page === 'string' && PAGE.test(o.page) && !o.page.split('/').includes('..') ? o.page : fail('bad-input: about.page is a loom path');
+  if (!ref && !page) return fail('bad-input: about needs a ref or a page');
+  // When the member saw it: theirs, unless it's off or in the future, then now.
+  const at = typeof o.seen === 'string' && ISO.test(o.seen) ? Date.parse(o.seen) : NaN;
+  const seen = new Date(Number.isFinite(at) && at <= now.getTime() ? at : now.getTime()).toISOString();
+  return { ...(ref ? { ref } : {}), label, ...(page ? { page } : {}), seen };
+}
+
+/** The line the first message carries: what it's about, how to find it, and when the member saw it. */
+export function aboutLine(a: About): string {
+  const where = [a.ref ? (a.ref.startsWith('github:') ? a.ref.slice(7) : a.ref) : null, a.page ? `/${a.page}` : null].filter(Boolean).join(' · ');
+  return `About: “${a.label}” (${where}), as I saw it at ${a.seen.slice(0, 16).replace('T', ' ')} UTC. Look it up for where it is now.`;
+}
+
+/** The first message: the member's own words, then the line. */
+export function withAbout(text: string, a: About): string {
+  return `${text.trimEnd()}\n\n${aboutLine(a)}`;
+}
+
+export type RouteWhy = 'item' | 'default' | 'only' | 'choose';
+export interface Route {
+  /** The agents this member may start a thread with, in the household's order. */
+  agents: string[];
+  /** Who it goes to unless the member changes it; null when they choose. */
+  pick: string | null;
+  why: RouteWhy;
+  /** The item named an agent this member can't start a thread with (not theirs, or gone): said, never silently swapped. */
+  passed?: string;
+}
+
+/** Who a chat about an item goes to (t-2035), for this member. `item` is the agent the item names, if any. */
+export function routeFor(h: Household, member: Member, item?: string): Route {
+  const agents = h.agents.filter((a) => owns(member, a));
+  if (item && agents.includes(item)) return { agents, pick: item, why: 'item' };
+  // The item's own agent isn't one they can ask: they choose, rather than it quietly going to someone else.
+  if (item) return { agents, pick: null, why: 'choose', passed: item };
+  if (agents.includes(h.default)) return { agents, pick: h.default, why: 'default' };
+  if (agents.length === 1) return { agents, pick: agents[0], why: 'only' };
+  return { agents, pick: null, why: 'choose' };
+}

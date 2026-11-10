@@ -1296,3 +1296,55 @@ or reply notifications. The direct link and all owner checks still work.
 A real owner follow-up promotes it into their normal threads. Background work
 can also show archived jobs. Inbox asks are independent and remain visible.
 A job brief attributed to the agent renders as the agent's words, never as You.
+
+### Watching a job (t-2043)
+
+A runtime-spawned job's thread is also how its owner watches it. The runtime
+sends the job body's step cards (the same redacted labels a Comms thread gets)
+to the job's thread once core has given it one. On the desktop, a job thread its
+member hasn't written in opens read-only: a **Watching** bar instead of the
+composer and no Stop. Looking never touches the run, and closing the window
+leaves it running. **Join in** brings the composer and Stop back for that
+thread. The thread read carries `job: {joined}` for this. Any thread opens at its
+newest page (`PAGE`, 100), and **Earlier messages** reads `/before/<seq>` a page
+at a time. A job without a thread (a wake, a bridge's chat) still links to its
+conversation's page, which has no live steps.
+
+### Chat about this (t-2034, t-2035)
+
+Any loom item can start a private thread with what it's about attached.
+
+- **Where.** A row says what it is with `data-about` (web/src/about.ts): the
+  desktop's right-click on it offers **Chat about this**, beside whatever the
+  row's own menu offers. A window's title-bar menu offers it for the page it
+  shows. On a phone, the page name's sheet offers it. An Inbox item's reader
+  has a button for it. Today, Inbox items and agent cards' job rows carry
+  `data-about`, and every page can be chatted about from its window or name.
+- **What's attached.** A pointer: the item's ref (`t-N`, `a-…`,
+  `github:owner/repo#N`, `knowledge:…`, or a piece's own `<piece>:<id>`), its
+  page, the label the member saw and when they saw it. `POST /comms/new` takes
+  it as `about` (src/comms-about.ts parseAbout, refused whole on anything off)
+  and adds one line after the member's words: `About: “<label>” (<ref> ·
+  /<page>), as I saw it at <time> UTC. Look it up for where it is now.` The
+  member sees that line in their message, and the agent reads it as the
+  member's words: data, never an instruction or an approval. The agent looks the
+  item up with its own access, so its current state is read fresh. Nothing the
+  member can see but the agent can't is carried across. No secret, log or
+  snapshot is copied. Chatting about an item doesn't answer, acknowledge or
+  repair it. The same about and words with the same client id are the same
+  thread (openThread's repeat), never a second.
+- **Who it goes to** (`GET /comms/route?agent=<the item's agent>`, routeFor):
+  1. The item's own agent, when the member owns it (`why: item`).
+  2. An item that names an agent the member can't ask (not theirs, or gone):
+     nobody is picked. The sheet says whose it is and the member chooses. It
+     never quietly goes to someone else (`why: choose, passed`).
+  3. An item with no agent of its own: the household's default agent, when the
+     member owns it (`default`).
+  4. Otherwise, the member's only agent (`only`).
+  5. Otherwise, nobody: the member chooses (`choose`).
+
+  The sheet names the recipient and why before anything is sent, and
+  **Change** offers exactly the member's own agents. Nothing is configured
+  durably: there is no per-member default beyond the household's, and an agent
+  never changes it. Being offered or picked grants no access to anything. A
+  refused or failed send keeps the member's words in the sheet and says why.

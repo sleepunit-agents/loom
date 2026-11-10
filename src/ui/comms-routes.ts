@@ -4,7 +4,9 @@
  * 403, and their own deleted thread a 404. Writes take the session's form token, as every page action does.
  *
  *   GET  /comms                         the member's threads (?archived=1 for the archived ones)
- *   POST /comms/new                     {agent, project?, id, text}: a thread and its first message
+ *   POST /comms/new                     {agent, project?, id, text, about?}: a thread and its first message; `about`
+ *                                       (comms-about.ts) adds what it's about to that message, as one line
+ *   GET  /comms/route?agent=<a>          who a chat about an item goes to for this member (comms-about.ts routeFor)
  *   GET  /comms/agents                  each agent the member owns: their last thread, unread replies, the first one's line
  *   GET  /comms/<thread>                the thread and its newest messages
  *   GET  /comms/<thread>/since/<seq>    the messages after seq
@@ -35,6 +37,7 @@ import { openThreadStream } from './comms-live.js';
 import { pieceApi, type PieceInfo } from './pieces.js';
 import { threadAsks, conversationOfItem, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
 import { refShape, resolveRefs, REFS_MAX } from '../comms-refs.js';
+import { parseAbout, routeFor, withAbout } from '../comms-about.js';
 
 export interface CommsContext {
   household: Household;
@@ -235,6 +238,12 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       send(200, { agents: await agentsComms(h, c.env, m) });
       return true;
     }
+    if (pathname === '/comms/route') {
+      if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
+      if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
+      const item = new URL(req.url ?? '/', 'http://x').searchParams.get('agent') ?? undefined;
+      return send(200, routeFor(h, m, item && /^[a-z][a-z0-9-]{0,39}$/.test(item) ? item : undefined)), true;
+    }
     if (pathname === '/comms/new') {
       if (req.method !== 'POST') return send(405, { error: 'method not allowed' }), true;
       const body = await readBody(req);
@@ -243,6 +252,13 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const why = c.guard(req, body);
       if (why) return send(403, { error: why }), true;
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
+      // Chat about this (t-2034): what it's about goes in the first message, so the same about and words are the same
+      // thread again (openThread's repeat), never a second one.
+      if (body.about !== undefined) {
+        if (typeof body.text !== 'string') return send(400, { error: 'bad-input: text is the first message' }), true;
+        body.text = withAbout(body.text, parseAbout(body.about));
+        delete body.about;
+      }
       const o = openThread(h, c.env, m, body);
       if (o.created) {
         deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
