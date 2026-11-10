@@ -298,7 +298,9 @@ export class Puller {
     const t = setTimeout(() => {
       this.timers.delete(domain);
       this.after.delete(domain);
-      this.now(domain).then(resolve, () => resolve(undefined));
+      // A pull already under way may have read before what this one was asked for: this one runs after it, never joins it.
+      const on = this.running.get(domain);
+      (on ? on.catch(() => undefined).then(() => this.now(domain)) : this.now(domain)).then(resolve, () => resolve(undefined));
     }, wait);
     t.unref?.();
     this.timers.set(domain, t);

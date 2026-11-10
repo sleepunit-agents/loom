@@ -168,6 +168,8 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
       if (only && !before) continue;
       seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
+      // A piece's manifest moving is a piece's asks moving: the hooks hear it (the attention records, t-2025).
+      if (moved) hooks();
       // Piece pages stay piece-rendered: a `page` frame says which piece's pages moved (collections.md), beside the bare
       // change that t-2032 retires.
       if (before) for (const [path, print] of now) if (before.get(path) !== print) {

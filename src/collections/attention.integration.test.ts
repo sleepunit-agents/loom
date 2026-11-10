@@ -156,6 +156,20 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
   const shape = (xs: Data[]) => xs.map((x) => ({ key: String(x.key).replace(/^loom\/attention\//, ''), box: x.box, kind: x.kind, attention: x.attention, unread: x.unread, text: x.text, agent: x.agent }))
     .sort((a, b) => (a.key < b.key ? -1 : 1));
 
+  // First in the file: live.ts keeps one file watcher a process, on the first household that opened a stream, and a
+  // test process makes a household a test (loom serves one).
+  it('a piece\'s own new ask (its manifest moving, said by pieces.tick) reaches a live window', async () => {
+    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
+    await page('jonathan');
+    await ask('jonathan', { subscribe: true, stream: jon.hello.stream });
+    await new Promise((r) => setTimeout(r, 2_000));
+    const t0 = Date.now();
+    writeFileSync(join(h.home, 'approvals.json'), JSON.stringify({ ...CARDS, 'a-00000009': { state: 'pending', agent: 'art', text: 'Let Art book the van?', at: new Date().toISOString() } }));
+    writeFileSync(join(h.home, 'pieces.tick'), String(Date.now()));
+    expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.text === 'Let Art book the van?')), 10_000)).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(4_000);
+  }, 30_000);
+
   it('answers unavailable, never "nothing", before loom has been asked for a page', async () => {
     // The machine route doesn't go through the page's handler, so nothing has registered the Inbox's code yet.
     const api = async () => ((await (await fetch(`${base}/api/loom/collections/query`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.jonathan}` },
@@ -199,6 +213,20 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
     nudge(h.home, 'loom/attention');
     expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.text === 'OK to restart the backup now?')))).toBe(true);
     expect(Date.now() - t0).toBeLessThan(3_000);
+  }, 30_000);
+
+  it('however many subscriptions a viewer holds, a change costs them a build or two, not one each', async () => {
+    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
+    await page('jonathan');
+    for (let i = 0; i < 12; i++) await ask('jonathan', { id: `q${i}`, subscribe: true, stream: jon.hello.stream, limit: 100 + i });
+    await new Promise((r) => setTimeout(r, 3_000));
+    const before = attentionBuilds(h.home);
+    const key = (await ask('jonathan', {})).rows[0].key.split('/')[2];
+    const r = await fetch(`${base}/inbox/read`, { method: 'POST', headers: { authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' }, body: `i=${key}` });
+    expect(r.status).toBe(200);
+    await new Promise((r2) => setTimeout(r2, 4_000));
+    // The query just above (1), the snapshot (1, every member inside it), and Jonathan's re-asks (at most 2), not 12.
+    expect(attentionBuilds(h.home) - before).toBeLessThanOrEqual(5);
   }, 30_000);
 
   it('an agent owner never gets another agent\'s item', async () => {

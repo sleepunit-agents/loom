@@ -1122,10 +1122,29 @@ export function attentionRecord(it: InboxItem, audience: Record<string, unknown>
   } as MemRecord;
 }
 
-async function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
+/**
+ * One build per viewer at a time, and at most one queued after it: however many subscriptions a viewer holds (six
+ * streams of 64), the re-asks a change sets off cost that viewer one build, or two, never one each. A re-ask never joins
+ * a build already under way (it may have read before the change it was asked for): it shares the one queued after it.
+ */
+const slots = new Map<string, { cur: Promise<MemRecord[]>; next?: Promise<MemRecord[]> }>();
+
+function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
   const full = base.household?.();
-  if (!full || viewer.kind === 'agent') return [];
-  try { return await buildAttention(base, full, viewer); } finally { builds.set(full.home, (builds.get(full.home) ?? 0) + 1); }
+  if (!full || viewer.kind === 'agent') return Promise.resolve([]);
+  const k = `${full.home}\0${viewerId(viewer)}`;
+  const run = (): Promise<MemRecord[]> => {
+    const p: Promise<MemRecord[]> = buildAttention(base, full, viewer).finally(() => {
+      builds.set(full.home, (builds.get(full.home) ?? 0) + 1);
+      const s = slots.get(k);
+      if (s?.cur === p && !s.next) slots.delete(k);
+    });
+    return p;
+  };
+  const s = slots.get(k);
+  if (!s) { const cur = run(); slots.set(k, { cur }); return cur; }
+  s.next ??= s.cur.catch(() => undefined).then(() => { const cur = run(); slots.set(k, { cur }); return cur; });
+  return s.next;
 }
 
 async function buildAttention(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
@@ -1143,16 +1162,22 @@ async function buildAttention(base: UiOptions, full: Household, viewer: Viewer):
   const all = new Map<string, MemRecord>();
   const whose = new Map<string, string[]>();
   const reads = new Map<string, number>();
+  // Each member's own copy, as a digest: two members' copies of one item can differ (their pieces, absorbed approvals),
+  // so one that moves in a copy other than the first moves the record too, and its member is asked again.
+  const copies = new Map<string, ReturnType<typeof createHash>>();
   for (const m of full.members) {
     const { items, reader } = await memberInbox(base, full, m);
     const opened = store.openedKeys(reader);
     for (const it of items) {
       if (opened.has(it.key)) reads.set(it.key, (reads.get(it.key) ?? 0) + 1);
       whose.set(it.key, [...(whose.get(it.key) ?? []), m.person]);
-      if (!all.has(it.key)) all.set(it.key, attentionRecord(it, {}, false));
+      const rec = attentionRecord(it, {}, false);
+      if (!copies.has(it.key)) copies.set(it.key, createHash('sha256'));
+      copies.get(it.key)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
+      if (!all.has(it.key)) all.set(it.key, rec);
     }
   }
-  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0 }));
+  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */

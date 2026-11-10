@@ -660,7 +660,8 @@ along with the listeners. The adapter is the only code that imports the client l
 - **The core viewer's snapshot** (the bridge) is every member's items once each, its audience exactly the members
   whose Inbox has it (`members: [...]`: a member's own outcome is theirs alone), with no one's read state and an
   owner-class `reads` (how many members opened it), so a read moves the record and the member's subscriptions are
-  asked again. What moves it: every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read` (a pull
+  asked again; and an owner-class `copies`, a digest of every member's own copy, so a change to any member's copy
+  moves it too. What moves it: a piece's manifest moving (`live.ts` `tick`), every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read` (a pull
   soon, never awaited, so a loop of reads costs one pull per 1.5 s), and everything that says loom's bare "something
   changed" (`live.ts` `onChanged`), plus the 15 s pull.
 - **The snapshot's records are for noticing change, not for showing.** Each body is the first member's copy of the
@@ -669,6 +670,10 @@ along with the listeners. The adapter is the only code that imports the client l
   and then asks again as that person, through the per-viewer source.
 - **After an action**, `loom/attention` is pulled soon (coalesced, never awaited); the acting piece's own domains
   are still pulled before the answer.
+- **Builds are bounded per viewer**: one build of a viewer's records at a time and at most one queued after it, shared
+  by every re-ask (`handler.ts` `attentionFor`), so a viewer's subscriptions (up to six streams of 64) cost one or two
+  builds a change, never one each; a re-ask never joins a build that may have read before its change. A coalesced
+  pull likewise runs after a pull under way rather than joining it (`pull.ts` `soon`).
 - **Before any page has been asked for** (loom just started), nothing has registered the Inbox's code, and the type
   answers `unavailable`, never an empty set that would read as "nothing needs you".
 - **A re-ask is leading-edge**: at once when the subscription wasn't asked in the last 1.5 s, else when the gap is up

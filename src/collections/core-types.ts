@@ -103,6 +103,8 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       // How many members have opened it: what the core viewer's snapshot holds instead of anyone's own read state, so
       // a read moves the record and every subscription is asked again. Household owners' only, and never asked for.
       reads: { class: 'owner' },
+      // A digest of every member's own copy of it (the snapshot's alone, as `reads`): a copy that moves moves the record.
+      copies: { class: 'owner' },
     },
     default_fields: ['agent', 'kind', 'box', 'attention', 'unread', 'seen', 'sort', 'at', 'text', 'meta', 'outcome', 'source', 'sourceLabel', 'page', 'label', 'href',
       'actions', 'reply', 'needs', 'approval', 'waitsOnApproval', 'fine', 'relayedFrom', 'conversation'],
