@@ -31,7 +31,7 @@ import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch
 import { domainOfType, domainsOf, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
-import { providers, type Provider } from './serve.js';
+import { isOutOfContract as outOfContract, providers, type Provider } from './serve.js';
 
 export const MAX_SUBS = 64;
 export const MAX_WINDOW = 1000;
@@ -74,17 +74,23 @@ interface Sub {
   boundary: unknown[] | null;
   partial: boolean;
   /** Who counts: core (a complete subscription), the provider (asked again; household owners only), or nobody. */
-  aggMode: 'core' | 'provider' | 'none';
+  aggMode: 'core' | 'none';
   aggs?: Aggs;
   /** A provider count being asked again: the frame waits for it, so rows and counts arrive together. */
   waiting?: boolean;
   frame: Frame;
   /** Asking its provider again, as it was asked (serve.ts): its own, never another request's. */
   reask: Reask;
+  /** An `ask` type's rows as last sent, so a re-ask sends only what differs. */
+  sent: Map<string, string>;
 }
 
-interface Frame { upserts: Map<string, Record<string, unknown>>; leaves: Set<string>; deletes: Set<string>; moved: boolean }
-const emptyFrame = (): Frame => ({ upserts: new Map(), leaves: new Set(), deletes: new Set(), moved: false });
+/**
+ * A subscription's next frame. Only what changed for it is in it: a change in its domain that changed nothing it holds
+ * or would show sends nothing at all, so no frame's timing says that something hidden moved.
+ */
+interface Frame { upserts: Map<string, Record<string, unknown>>; leaves: Set<string>; deletes: Set<string> }
+const emptyFrame = (): Frame => ({ upserts: new Map(), leaves: new Set(), deletes: new Set() });
 
 interface Stream { port: StreamPort; viewer: Viewer; vid: string; scope: number; subs: Map<string, Sub> }
 
@@ -118,8 +124,10 @@ function cmpKeys(a: unknown[], b: unknown[], q: Query): number {
   return 0;
 }
 
-function homeOf(household: () => Household, env: () => NodeJS.ProcessEnv): HomeState {
+function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): HomeState {
   const home = household().home;
+  // Pulls and snapshots are core's, for every viewer: never in the scope a page's env carries for its member.
+  const env = () => { const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...rest } = env0(); return rest; };
   let h = homes.get(home);
   if (h) return h;
   const state: HomeState = {
@@ -165,6 +173,8 @@ function stopIfIdle(h: HomeState): void {
 export function openStream(household: () => Household, env: () => NodeJS.ProcessEnv, port: StreamPort, viewer: Viewer): void {
   const h = homeOf(household, env);
   h.streams.set(port.id, { port, viewer, vid: viewerId(viewer), scope: 1, subs: new Map() });
+  // Every open stream is checked each pass, subscriptions or not: a session that ends closes its streams.
+  ensureRunning(h);
 }
 
 /** A stream closed: its subscriptions go with it. */
@@ -250,6 +260,9 @@ export async function attach(household: () => Household, env: () => NodeJS.Proce
   };
   // The same id with `after` extends the subscription's window: its keys join, its boundary moves on.
   if (existing && q.after !== null) {
+    // The same subscription, read further: the same type and shape, in the same history.
+    if (existing.type !== q.type || existing.provider !== p.name || JSON.stringify([existing.query.where, existing.query.order]) !== JSON.stringify([q.where, q.order])) return { error: 'bad-query', why: 'a later page names its own subscription\'s id and query' };
+    if (existing.epoch !== row.epoch) { reset(s, existing, 'epoch'); return { error: 'unavailable' }; }
     for (const r of admitted) { existing.delivered.set(`${p.name}/${q.type}/${id(r)}`, orderKey(r, id(r), q)); existing.byVals.set(`${p.name}/${q.type}/${id(r)}`, byOf(r)); }
     existing.boundary = answer.next === null ? null : last ? orderKey(last, id(last), q) : existing.boundary;
     trim(existing);
@@ -265,8 +278,8 @@ export async function attach(household: () => Household, env: () => NodeJS.Proce
     boundary: answer.next === null ? null : last ? orderKey(last, id(last), q) : null,
     partial: !answer.complete,
     aggMode: !q.aggregates.length ? 'none' : answer.complete && (!anyBy || q.aggregates.every((a) => !decl.aggregates?.[a]?.by || decl.aggregates[a].by!.every((f) => classesVisible(viewer, decl, f))))
-      ? 'core' : answer.aggregates && isHouseholdOwner(viewer) ? 'provider' : 'none',
-    aggs: answer.aggregates, frame: emptyFrame(), reask,
+      ? 'core' : 'none',
+    aggs: answer.aggregates, frame: emptyFrame(), reask, sent: new Map(),
   };
   if (sub.aggMode === 'core') sub.aggs = coreAggs(sub);
   s.subs.set(q.id, sub);
@@ -296,7 +309,7 @@ function coreAggs(sub: Sub): Aggs {
 function trim(sub: Sub): void {
   if (sub.delivered.size <= MAX_WINDOW) return;
   const sorted = [...sub.delivered].sort((a, b) => cmpKeys(a[1], b[1], sub.query));
-  for (const [key] of sorted.slice(MAX_WINDOW)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.frame.upserts.delete(key); sub.frame.leaves.add(key); sub.frame.moved = true; }
+  for (const [key] of sorted.slice(MAX_WINDOW)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.frame.upserts.delete(key); sub.frame.leaves.add(key); }
   sub.boundary = sorted[MAX_WINDOW - 1][1];
   sub.partial = true;
   if (sub.aggMode === 'core') sub.aggMode = 'none', sub.aggs = undefined;
@@ -318,7 +331,6 @@ function apply(sub: Sub, viewer: Viewer, r: LogRow, now: number): void {
   const prefix = `${sub.provider}/${sub.type}/`;
   if (!r.key.startsWith(prefix)) return;
   const id = r.key.slice(prefix.length);
-  sub.frame.moved = true;
   if (r.op === 'delete') {
     if (sub.delivered.has(r.key)) { sub.delivered.delete(r.key); sub.byVals.delete(r.key); sub.frame.upserts.delete(r.key); sub.frame.leaves.delete(r.key); sub.frame.deletes.add(r.key); }
     return;
@@ -346,12 +358,12 @@ function apply(sub: Sub, viewer: Viewer, r: LogRow, now: number): void {
 
 function reset(s: Stream, sub: Sub, reason: 'gap' | 'scope' | 'provider-gone' | 'epoch' | 'version'): void {
   s.subs.delete(sub.id);
-  s.port.frame('reset', { sub: sub.id, reason });
+  s.port.frame('reset', { sub: sub.id, reason, scope: s.scope });
 }
 
 function send(s: Stream, sub: Sub): void {
   const f = sub.frame;
-  if (!f.upserts.size && !f.leaves.size && !f.deletes.size && !(f.moved && sub.aggMode !== 'none')) { sub.frame = emptyFrame(); return; }
+  if (!f.upserts.size && !f.leaves.size && !f.deletes.size) return;
   if (sub.aggMode === 'core') sub.aggs = coreAggs(sub);
   s.port.frame('rows', {
     sub: sub.id, scope: s.scope,
@@ -400,11 +412,14 @@ async function passOnce(h: HomeState): Promise<void> {
       // filters, audience mode) is the one the query was checked against. Only members' sessions subscribe, so there's
       // no grant to ask again.
       if (!providerAdmits(v, p.owners2)) { reset(s, sub, 'scope'); continue; }
+      // A provider taken out of contract answers no one, live data included.
+      if (outOfContract(p)) { reset(s, sub, 'provider-gone'); continue; }
       if (JSON.stringify(p.types[sub.type]) !== JSON.stringify(sub.decl)) { reset(s, sub, 'version'); continue; }
       const row = withLog(home, (db) => domainRow(db, sub.domain));
       if (!row || row.epoch !== sub.epoch) { reset(s, sub, 'epoch'); continue; }
       if (withLog(home, (db) => prunedThrough(db, sub.domain)) > sub.cursor) { reset(s, sub, 'gap'); continue; }
       const ask = sub.decl.audience === 'ask';
+      let domainMoved = false;
       let gone = false;
       for (let reads = 0; reads < 16 && !gone; reads++) {
         const rows = withLog(home, (db) => rowsAfter(db, sub.cursor));
@@ -414,14 +429,13 @@ async function passOnce(h: HomeState): Promise<void> {
           if (r.domain !== sub.domain) continue;
           if (r.epoch !== sub.epoch) { reset(s, sub, 'epoch'); gone = true; break; }
           // A type whose audience the provider decides per viewer is never routed by audience: it's asked again.
-          if (ask) sub.frame.moved = true;
-          else apply(sub, v, r, now);
+          if (ask) { if (r.key.startsWith(`${sub.provider}/${sub.type}/`)) domainMoved = true; } else apply(sub, v, r, now);
         }
       }
       if (gone || !s.subs.has(sub.id)) continue;
       trim(sub);
-      if ((ask || sub.aggMode === 'provider') && sub.frame.moved) {
-        if (!sub.waiting) reaskSoon(sub.reask, s, sub, v, p);
+      if (ask && domainMoved) {
+        if (!sub.waiting) reaskSoon(sub.reask, s, sub, p);
         continue;
       }
       send(s, sub);
@@ -440,26 +454,30 @@ async function passOnce(h: HomeState): Promise<void> {
  * upserted, what was delivered and isn't leaves. A provider that doesn't answer leaves counts off (never a stale number
  * presented as current) and an `ask` subscription reset.
  */
-function reaskSoon(reask: Reask, s: Stream, sub: Sub, v: Viewer, p: Provider): void {
+function reaskSoon(reask: Reask, s: Stream, sub: Sub, p: Provider): void {
   sub.waiting = true;
+  // The viewer as they are now, before asking and again before sending: a change to their authority meanwhile is the
+  // next pass's reset, never rows asked or sent as who they were.
+  const still = (): Viewer | undefined => { const v = s.port.viewer(); return v && viewerId(v) === s.vid ? v : undefined; };
   void (async () => {
     await new Promise((r) => setTimeout(r, AGG_GAP_MS));
-    const got = await reask(v, p, sub.query).catch(() => undefined);
+    const v = still();
+    const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
-    if (s.subs.get(sub.id) !== sub) return;
-    if (sub.decl.audience === 'ask') {
-      if (!got) { reset(s, sub, 'gap'); return; }
-      const now = new Set<string>();
-      got.admitted.forEach((r, i) => {
-        const key = `${sub.provider}/${sub.type}/${r.id as string}`;
-        now.add(key);
-        sub.delivered.set(key, orderKey(r, r.id as string, sub.query));
-        sub.frame.upserts.set(key, got.rows[i]);
-      });
-      for (const key of [...sub.delivered.keys()]) if (!now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.frame.leaves.add(key); }
-    }
-    if (sub.aggMode === 'provider') { if (got?.aggregates) sub.aggs = got.aggregates; else { sub.aggMode = 'none'; sub.aggs = undefined; } }
-    sub.frame.moved = true;
+    if (s.subs.get(sub.id) !== sub || !v || !still()) return;
+    if (!got) { reset(s, sub, 'gap'); return; }
+    // Only what differs from what this subscription was sent.
+    const now = new Set<string>();
+    got.admitted.forEach((r, i) => {
+      const key = `${sub.provider}/${sub.type}/${r.id as string}`;
+      now.add(key);
+      const text = JSON.stringify(got.rows[i]);
+      if (sub.sent.get(key) === text) return;
+      sub.sent.set(key, text);
+      sub.delivered.set(key, orderKey(r, r.id as string, sub.query));
+      sub.frame.upserts.set(key, got.rows[i]);
+    });
+    for (const key of [...sub.delivered.keys()]) if (!now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.leaves.add(key); }
     send(s, sub);
   })();
 }

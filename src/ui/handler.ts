@@ -34,7 +34,7 @@ import { agentJobs } from './agent-jobs.js';
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
-import { changed, openStream, type Sees } from './live.js';
+import { changed, closeSession, openStream, type Sees } from './live.js';
 import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -1503,7 +1503,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
-    if (c && /^[0-9a-f]{64}$/.test(c)) storeFor(opts).delete(c);
+    if (c && /^[0-9a-f]{64}$/.test(c)) { storeFor(opts).delete(c); closeSession(`session:${c}`); }
     // And the copies of pages this browser kept for offline (https only; the sign-in page's /app.js also asks the worker).
     return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, 'clear-site-data': '"cache", "storage"' });
   }
@@ -1519,6 +1519,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // The app's live stream (src/ui/live.ts): "something changed", and nothing else.
   if (pathname === '/events') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    // The stream check is /act's (collections.md): a page on another port of this host can't open streams in a
+    // member's name.
+    if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     const hh = opts.household?.();
     const home = hh?.home ?? opts.contextDir;
     // Whose a changed file is: under an agent's folder, that agent's; anything else, the household's.

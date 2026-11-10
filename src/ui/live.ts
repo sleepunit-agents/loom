@@ -214,6 +214,11 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   void tick();
 }
 
+/** Close every stream of a session (sign-out: collections.md, "Sign-out or revocation closes the session's streams"). */
+export function closeSession(session: string): void {
+  for (const c of [...clients]) if (c.session === session) { try { c.res.end(); } catch { /* gone */ } drop(c); }
+}
+
 /** How many apps are listening (for tests). */
 export const listening = () => clients.size;
 

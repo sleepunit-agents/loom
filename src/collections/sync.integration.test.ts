@@ -80,7 +80,7 @@ function piece(home: string, name: string, raw: Record<string, unknown>, body: s
   if (typeof loom === 'string') throw new Error(`${name}: ${loom}`);
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
-  writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
+  writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'sleepunit-agents/taskstore', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
     bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
   const bin = join(dir, 'current', 'cli');
   writeFileSync(bin, body);
@@ -245,6 +245,29 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     // loren never held t-1 (art's): no frame names it.
     await deliverNow(h.home);
     expect(JSON.stringify(loren.ev.frames)).not.toContain('t-1');
+  });
+
+  it('a change to a record the viewer can\'t see sends their subscription nothing at all, not even a count', async () => {
+    const loren = await live(tok.loren, { aggregates: ['count'] });
+    expect(loren.answer).toMatchObject({ aggregates: { count: { n: 1, exact: true } } });
+    commit([{ op: 'upsert', id: 't-1', record: { agent: 'art', title: 'art one, again', status: 'open' }, audience: { ownersOf: ['art'] } }]);
+    commit([{ op: 'upsert', id: 't-7', record: { agent: 'art', title: 'art seven', status: 'open' }, audience: { ownersOf: ['art'] } }]);
+    await sync();
+    await new Promise((r) => setTimeout(r, 300));
+    await deliverNow(h.home);
+    expect(rowsFrames(loren.ev)).toEqual([]);
+  });
+
+  it('a stream is opened only from loom\'s own page', async () => {
+    const r = await fetch(`${base}/events`, { headers: { authorization: `Bearer ${tok.jonathan}`, accept: 'text/event-stream', origin: 'http://evil.example', 'sec-fetch-site': 'same-site' } });
+    expect(r.status).toBe(403);
+    await r.body?.cancel();
+  });
+
+  it('a later page names its own subscription\'s query', async () => {
+    const { ev } = await live(tok.jonathan, { limit: 1 });
+    const { answers } = await ask(tok.jonathan, [{ id: 'q', type: 'tasks/task@^1', subscribe: true, stream: ev.hello.stream, limit: 1, where: [['status', 'eq', 'open']], after: 'x' }]);
+    expect(answers[0]).toMatchObject({ error: 'bad-query' });
   });
 
   it('an audience that narrows is a leave for the viewer it dropped, and only for them', async () => {

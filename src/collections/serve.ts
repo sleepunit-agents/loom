@@ -93,6 +93,8 @@ export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
  */
 const outOfContract = new Set<string>();
 export const clearOutOfContract = (): void => outOfContract.clear();
+/** Whether a provider is out of contract now (subs.ts resets its live subscriptions). */
+export const isOutOfContract = (p: Provider): boolean => p.install !== undefined && outOfContract.has(p.install);
 
 const pools = new Map<string, Pool>();
 const poolOf = (provider: string): Pool => {
