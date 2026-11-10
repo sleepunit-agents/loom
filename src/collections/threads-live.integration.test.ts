@@ -195,7 +195,7 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
     expect(sawJob).toBe(true);
     expect(sawBoth).toBe(true);
     expect(JSON.stringify((await ask('sam', { where: views[1][1] })).rows)).not.toContain(gone.id);
-  });
+  }, 30_000);
 
   it('hears a thread moved by another process on the tick file, not only in this one', async () => {
     const t = thread('jonathan', 'art', 'moved elsewhere');

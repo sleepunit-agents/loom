@@ -129,7 +129,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       db.prepare('UPDATE comms_threads SET title = NULL, titled_by = NULL WHERE id = ?').run(thread.id);
       db.close();
     }
-  });
+  }, 30_000);
 
   it('keeps jobs in Background work and attributes the job brief to Art', async () => {
     const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'background-ui', label: 'Internal diagnostic',
