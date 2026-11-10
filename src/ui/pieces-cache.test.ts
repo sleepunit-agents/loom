@@ -41,7 +41,7 @@ process.exit(2);
     } finally { vi.useRealTimers(); }
   });
 
-  it('an in-flight live refresh cannot restore an observation invalidated by the producer', async () => {
+  it.each(['producer', 'records'])('an in-flight refresh cannot restore an observation invalidated by %s', async (hint) => {
     const root = mkdtempSync(join(tmpdir(), 'loom-refresh-race-'));
     dirs.push(root);
     const bin = join(root, 'bin');
@@ -62,7 +62,8 @@ const timer = setInterval(() => {
     const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
     const pending = refreshPieceManifests(env);
     await expect.poll(() => existsSync(join(root, 'started'))).toBe(true);
-    expirePieceManifests();
+    if (hint === 'records') forgetPiecePages(join(bin, 'loom-gizmo'));
+    else expirePieceManifests();
     writeFileSync(join(root, 'value'), 'new');
     writeFileSync(join(root, 'release'), 'yes');
     await pending;
@@ -138,8 +139,8 @@ console.log(JSON.stringify({v:2,tile:{label:${JSON.stringify(name)},value:'x'}})
     expect(await value('gabe')).toBe('gabe');
   });
 
-  it('the round asks a piece that keeps answering the same less often, and at once again when its records move', async () => {
-    const { bin, env, ran } = piecesIn({ tasks: '"tab":{"label":"Tasks"}' });
+  it('process-backed manifests run once per freshness window, and at once again when records move', async () => {
+    const { bin, env, ran } = piecesIn({ tasks: '"tab":{"label":"Clock"},"scope":true' });
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const runs = () => ran().length;
@@ -147,18 +148,18 @@ console.log(JSON.stringify({v:2,tile:{label:${JSON.stringify(name)},value:'x'}})
       await refreshPieceManifests(env);                            // the same moment: the one run is shared
       expect(runs()).toBe(1);
       const round = async () => { vi.setSystemTime(Date.now() + ROUND_MS); await refreshPieceManifests(env); return runs(); };
-      expect(await round()).toBe(2);                               // moved since its first look? asked
-      expect(await round()).toBe(2);                               // the same once: it waits a round
+      expect(await round()).toBe(1);
+      expect(await round()).toBe(1);
+      expect(await round()).toBe(1);
+      expect(await round()).toBe(2);                               // one full freshness window
+      expect(await round()).toBe(2);
+      expect(await round()).toBe(2);
+      expect(await round()).toBe(2);
+      forgetPiecePages(join(bin, 'loom-tasks'));                    // its records moved: the next round asks it
       expect(await round()).toBe(3);
-      expect(await round()).toBe(3);                               // the same twice: up to a minute
-      expect(await round()).toBe(3);
-      expect(await round()).toBe(3);
-      expect(await round()).toBe(4);
-      forgetPiecePages(join(bin, 'loom-tasks'));                  // its records moved: the next round asks it
-      expect(await round()).toBe(5);
-      expirePieceManifests(join(bin, 'loom-tasks'));              // its word: asked whatever the wait
+      expirePieceManifests(join(bin, 'loom-tasks'));                // its word: asked whatever the wait
       await refreshPieceManifests(env);
-      expect(runs()).toBe(6);
+      expect(runs()).toBe(4);
     } finally { vi.useRealTimers(); }
   });
 
