@@ -10,11 +10,13 @@ describe('task chips read shared records after admission', () => {
     ['tasks/task/t-2', { key: 'tasks/task/t-2', title: 'Never admitted', status }],
   ]);
 
-  it('updates title and state, clears old tone and keeps the admitted destination', () => {
-    expect(taskCardsOf(cards, records('in_progress')).get('t-1')).toEqual({ kind: 'task', title: 'New', status: 'In progress', page: card.page });
-    expect(taskCardsOf(cards, records('closed')).get('t-1')).toEqual({ ...card, title: 'New', status: 'Closed', tone: 'ok' });
-    expect(taskCardsOf(cards, records('open', true)).get('t-1')?.status).toBe('Blocked');
+  it('updates title while preserving the feed status, tone and admitted destination', () => {
+    expect(taskCardsOf(cards, records('in_progress')).get('t-1')).toEqual({ ...card, title: 'New' });
     expect(card.title).toBe('Old');
+    for (const status of ['Waiting on you', 'Waiting on Jonathan', 'Done', 'Cancelled']) {
+      const source: RefCard = { ...card, status, tone: status.startsWith('Waiting') ? 'warn' : 'ok' };
+      expect(taskCardsOf(new Map([['t-1', source]]), records('closed')).get('t-1')).toEqual({ ...source, title: 'New' });
+    }
   });
 
   it('never admits a refused or unknown ref from collection records alone', () => {
@@ -25,7 +27,8 @@ describe('task chips read shared records after admission', () => {
 
   it('leaves missing historical records and malformed records alone', () => {
     expect(taskCardsOf(cards, new Map())).toBe(cards);
-    expect(taskCardsOf(cards, records('unexpected'))).toBe(cards);
+    const malformed = new Map([['tasks/task/t-1', { key: 'tasks/task/t-1', title: null }]]);
+    expect(taskCardsOf(cards, malformed)).toBe(cards);
     const other = new Map<string, RefCard | null>([['t-1', { ...card, kind: 'note' }]]);
     expect(taskCardsOf(other, records('closed'))).toBe(other);
     const otherPiece = new Map<string, RefCard | null>([['t-1', { ...card, page: 'p/other/task/t-1' }]]);

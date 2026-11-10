@@ -794,9 +794,9 @@ along with the listeners. The adapter is the only code that imports the client l
 - **A thread's work panel** asks `/comms/<t>/work` again when a task it shows, or one made in its conversation, moves,
   or a change it shows does (`changes/change`, by its `ref`), not every 60 s; it keeps the 60 s read only while the
   tasks aren't live, or it shows a change and the changes aren't.
-- **Admitted task chips** (`task-ref-cards.ts`, t-2027) join those same records by task id: their title, stored status
-  (Open, In progress, Closed), blocker state and tone change even while the popover is open, without another refs
-  read or piece call. The member-scoped refs resolver still decides admission and navigation; null never becomes a
+- **Admitted task chips** (`task-ref-cards.ts`, t-2027) join those same records by task id: their title changes even while the popover is open, without another refs read or piece call.
+  Status words and tones stay the feed's: generic task records lack its configured owner for viewer-specific waiting
+  labels, so live status joins remain to migrate. The member-scoped refs resolver still decides admission and navigation; null never becomes a
   chip from a collection row alone. Only the canonical Tasks destination joins `tasks/task`. A missing historical
   row leaves the resolver's card alone. A stale or cleared set drops the derived copy; a late chip consumer requests
   the warm snapshot explicitly, without causing other consumers to re-read their pages.

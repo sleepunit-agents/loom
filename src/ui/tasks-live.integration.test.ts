@@ -252,11 +252,11 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
       // Isolate admission from presentation: t-2 is admitted, t-3 is refused even though its record is readable.
       await page.route(`**/comms/${thread.id}/refs?*`, async (route) => {
         refs++;
-        await route.fulfill({ json: { refs: { 't-2': { kind: 'task', title: 'Original task title', status: 'Open', page: 'p/tasks/task/t-2' }, 't-3': null } } });
+        await route.fulfill({ json: { refs: { 't-2': { kind: 'task', title: 'Original task title', status: 'Waiting on you', tone: 'warn', page: 'p/tasks/task/t-2' }, 't-3': null } } });
       });
       try {
         await page.goto(`${base}/comms/${thread.id}`);
-        const chip = page.getByRole('button', { name: 'Task t-2: Original task title, Open', exact: true });
+        const chip = page.getByRole('button', { name: 'Task t-2: Original task title, Waiting on you', exact: true });
         await chip.click();
         await page.getByRole('dialog', { name: 'Task: Original task title' }).waitFor();
         const before = refs;
@@ -265,7 +265,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
         const start = Date.now();
         await pullNow(h.home, 'tasks/task');
         await page.getByRole('dialog', { name: 'Task: Renamed while the chip is open' }).waitFor({ timeout: 8000 });
-        await page.getByRole('button', { name: 'Task t-2: Renamed while the chip is open, Closed', exact: true }).waitFor();
+        await page.getByRole('button', { name: 'Task t-2: Renamed while the chip is open, Waiting on you', exact: true }).waitFor();
         expect(await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).getAttribute('href')).toBe('/p/tasks/task/t-2');
         expect(refs).toBe(before);
         expect(await page.getByRole('button', { name: /^Task t-3:/ }).count()).toBe(0);
