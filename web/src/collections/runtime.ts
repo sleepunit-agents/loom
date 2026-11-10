@@ -129,6 +129,8 @@ export class CollectionRuntime {
   private bySpec = new Map<string, string>();
   private stream: string | null = null;
   private scope = 0;
+  /** Whose records these are (the hello's opaque tag): another's means everything goes first. */
+  private viewer: string | null = null;
   private queue: Sub[] = [];
   private flushing = false;
   private offs: Array<() => void> = [];
@@ -140,7 +142,8 @@ export class CollectionRuntime {
       t.on('hello', (d) => this.hello(d)),
       t.on('rows', (d) => this.frame(d)),
       t.on('reset', (d) => this.reset(d)),
-      t.on('error', () => this.markAll('stale')),
+      // A stream that gave up for good (signed out, revoked: its reconnect was refused) clears everything.
+      t.on('error', (d) => (d.closed ? this.clear() : this.markAll('stale'))),
     );
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     (this.sweeper as { unref?: () => void }).unref?.();
@@ -182,11 +185,18 @@ export class CollectionRuntime {
     };
   }
 
+  /** Every record goes, and every view is asked again (from the next hello): another viewer, a new scope. */
+  private dropAll(): void {
+    for (const [type, store] of this.stores) { store.records.clear(); this.hook?.drop(type); }
+    this.stores.clear();
+    for (const s of this.subs.values()) { s.inflight?.abort(); s.keys = []; s.at = null; s.held = []; s.next = null; s.coverage = undefined; s.aggregates = undefined; s.status = 'loading'; this.publish(s); }
+  }
+
   /** Sign-out, a revoked session: every record and subscription goes, and nothing more is asked. */
   clear(): void {
     this.cleared = true;
     for (const s of this.subs.values()) { s.inflight?.abort(); clearTimeout(s.linger); }
-    for (const type of this.stores.keys()) this.hook?.drop(type);
+    for (const [type, store] of this.stores) { store.records.clear(); this.hook?.drop(type); }
     this.stores.clear();
     const all = [...this.subs.values()];
     this.subs.clear(); this.bySpec.clear(); this.queue = [];
@@ -258,7 +268,8 @@ export class CollectionRuntime {
   private pendingOps = new Set<string>();
 
   private settle(op: string, r: Receipt, undo?: () => void): Receipt {
-    if (r.state !== 'done' && undo) undo();
+    // Cleared meanwhile (signed out): nothing is put back.
+    if (r.state !== 'done' && undo && !this.cleared) undo();
     void op;
     return r;
   }
@@ -280,11 +291,14 @@ export class CollectionRuntime {
 
   private hello(d: Record<string, unknown>): void {
     if (typeof d.stream !== 'string') return;
+    // Someone else now (a sign-in as another person in this browser): nothing of the last viewer's survives.
+    if (typeof d.viewer === 'string' && this.viewer !== null && d.viewer !== this.viewer) this.dropAll();
+    if (typeof d.viewer === 'string') this.viewer = d.viewer;
     const fresh = d.stream !== this.stream;
     this.stream = d.stream;
     if (typeof d.scope === 'number') this.scope = d.scope;
     // A new stream (a reconnect, another listener) is a new snapshot: every subscription is asked again.
-    if (fresh) for (const s of this.subs.values()) { s.at = null; s.held = []; if (s.status === 'live') s.status = 'stale'; this.ask(s); }
+    if (fresh) for (const s of this.subs.values()) { s.at = null; s.held = []; s.next = null; if (s.status === 'live') s.status = 'stale'; this.ask(s); }
   }
 
   private ask(s: Sub, after: string | null = null): void {
@@ -356,7 +370,7 @@ export class CollectionRuntime {
   }
 
   private frame(d: Record<string, unknown>): void {
-    if (typeof d.scope === 'number' && d.scope < this.scope) return;
+    if (typeof d.scope !== 'number' || d.scope < this.scope) return;
     const s = this.subs.get(d.sub as string);
     if (!s) return;
     if (s.at === null) { s.held.push(d); return; }
@@ -389,13 +403,15 @@ export class CollectionRuntime {
     if (!s) return;
     // The scope moved (the viewer's authority changed): everything from before it goes, not just this view's.
     if (d.reason === 'scope') {
-      // The stream's new scope epoch, as the server says it.
+      // The stream's new scope epoch, as the server says it; it closes this stream, so the views are asked again on the
+      // next one's hello, never on this one.
       if (typeof d.scope === 'number' && d.scope > this.scope) this.scope = d.scope;
-      for (const x of this.subs.values()) { const k = x.keys; x.keys = []; this.evict(x.type, k); x.status = 'loading'; x.at = null; x.held = []; this.publish(x); this.ask(x); }
+      this.dropAll();
+      this.stream = null;
       return;
     }
     const k = s.keys;
-    s.keys = []; s.at = null; s.held = [];
+    s.keys = []; s.at = null; s.held = []; s.next = null;
     if (d.reason === 'provider-gone' || d.reason === 'epoch' || d.reason === 'version') {
       // That domain's records are another history now: dropped wherever they are.
       const store = this.stores.get(s.type);

@@ -79,15 +79,19 @@ export const onLive = (change: () => void): (() => void) => listen({ change, ope
  * Hear one of the stream's own events (the shared collections' `hello`, `rows`, `reset`: src/collections/transport.ts),
  * keeping the one stream open while anyone listens. `open` and `error` are the stream's own state.
  */
+let lastHello: Record<string, unknown> | null = null;
 export function onStreamEvent(event: string, f: (data: Record<string, unknown>) => void): () => void {
   let off: (() => void) | undefined;
-  const handler = (e: Event) => { try { f(JSON.parse((e as MessageEvent).data as string)); } catch { /* not a frame */ } };
+  const handler = (e: Event) => { try { const d = JSON.parse((e as MessageEvent).data as string); if (event === 'hello') lastHello = d; f(d); } catch { /* not a frame */ } };
   const stop = listen({ change: () => {}, open: (on) => {
     if (event === 'open' && on) f({});
-    if (event === 'error' && !on) f({});
+    // closed: the stream gave up for good (signed out, revoked), not a reconnect.
+    if (event === 'error' && !on) f({ closed: stream?.readyState === 2 });
     if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
   } });
   if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
+  // A listener that comes after the stream said hello (the first window to use collections) hears it now.
+  if (event === 'hello' && lastHello && stream?.readyState === 1) f(lastHello);
   return () => { off?.(); stop(); };
 }
 

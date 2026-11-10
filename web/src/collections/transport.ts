@@ -21,6 +21,8 @@ export function pageTransport(csrf: () => string): Transport {
  * operation id the runtime gives it.
  */
 export function actCommand(act: string, fields: Record<string, string>, csrf: () => string): (op: string) => Promise<{ status: number; json: unknown }> {
+  // Only loom's own action paths: the page's token never goes anywhere else.
+  if (!act.startsWith('/') || act.startsWith('//')) throw new Error('an action is one of loom\'s own paths');
   return async (op) => {
     const r = await fetch(act, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, credentials: 'same-origin',
       body: new URLSearchParams({ ...fields, _csrf: csrf(), _op: op }).toString() });

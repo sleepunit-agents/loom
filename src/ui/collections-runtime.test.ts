@@ -168,6 +168,8 @@ describe('the shared collection runtime', () => {
     await settle();
     expect(a.state().keys).toEqual([]);
     scope = 2;
+    // The server closes that stream: the views are asked again on the next one's hello.
+    f.emit('hello', { stream: 'e-2', scope: 2, seq: 0 });
     await vi.waitFor(async () => { await settle(); expect(a.state().keys).toEqual(['tasks/task/t-1']); });
   });
 
@@ -316,5 +318,61 @@ describe('commands: one operation, its receipt, and an honest preview', () => {
     const r = await rt.command(async () => { sent++; throw new Error('gone'); }, {}, now);
     expect(r.state).toBe('unknown');
     expect(sent).toBe(4);
+  });
+});
+
+describe('whose records: another viewer, revocation, a closed stream', () => {
+  it('a hello for another viewer drops everything the last one held before anything is asked', async () => {
+    const f = fake(() => answerOf([row('t-1', { secret: 'a' })]));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0, viewer: 'va' });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    expect(rt.size()).toBe(1);
+    f.emit('hello', { stream: 'e-2', scope: 1, seq: 0, viewer: 'vb' });
+    expect(rt.size()).toBe(0);
+    expect(v.state().keys).toEqual([]);
+  });
+
+  it('a stream that gave up for good (revoked) clears every record; a passing error only marks them stale', async () => {
+    const f = fake(() => answerOf([row('t-1')]));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    f.emit('error', { closed: false });
+    expect(v.state()).toMatchObject({ status: 'stale', keys: ['tasks/task/t-1'] });
+    f.emit('error', { closed: true });
+    expect(rt.size()).toBe(0);
+    expect(v.state().status).toBe('denied');
+  });
+
+  it('a scope reset drops everything and waits for the next stream\'s hello to ask again', async () => {
+    const ids: string[] = [];
+    const f = fake((q) => { ids.push(q.id as string); return answerOf([row('t-1')], { scope: 2 }); });
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    const posts = f.posts.length;
+    f.emit('reset', { seq: 2, sub: ids[0], reason: 'scope', scope: 2 });
+    await settle();
+    expect(f.posts.length).toBe(posts);
+    expect(rt.size()).toBe(0);
+    f.emit('hello', { stream: 'e-2', scope: 2, seq: 0 });
+    await settle();
+    expect(v.state().keys).toEqual(['tasks/task/t-1']);
+  });
+
+  it('a command\'s undo never puts a record back after sign-out', async () => {
+    const f = fake(() => answerOf([row('t-1', { status: 'open' })]));
+    const stores = new LibraryStores();
+    const rt = new CollectionRuntime(f.t, stores);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    await rt.command(async () => ({ status: 401, json: null }), { kind: 'other', optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'closed' } } }, () => Promise.resolve());
+    expect(rt.size()).toBe(0);
+    expect(stores.held('tasks/task@^1')).toBe(0);
   });
 });

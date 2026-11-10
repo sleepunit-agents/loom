@@ -190,7 +190,7 @@ function tickPaths(home: string): Set<string> | undefined {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; onClose: () => void } | undefined }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
@@ -199,7 +199,7 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
   const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
   if (held) c.onClose = held.onClose;
-  res.write(`event: hello\ndata: ${JSON.stringify({ stream: c.id, scope: held?.scope ?? 0, seq: 0 })}\n\n`);
+  res.write(`event: hello\ndata: ${JSON.stringify({ stream: c.id, scope: held?.scope ?? 0, seq: 0, ...(held ? { viewer: held.viewer } : {}) })}\n\n`);
   whose = opts.place;
   clients.add(c);
   res.on('close', () => drop(c));

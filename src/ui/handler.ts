@@ -80,7 +80,7 @@ import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
-import { memberViewer, type Viewer } from '../collections/viewer.js';
+import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
 import { closeStream as subsClose, openStream as subsOpen, pullAfterAction } from '../collections/subs.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
@@ -1557,7 +1557,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const v = householdNow && full ? viewerNow() : null;
         if (!v) return undefined;
         subsOpen(() => householdNow!(), () => opts.env, { ...port, viewer: viewerNow }, v);
-        return { scope: 1, onClose: () => subsClose(home, port.id) };
+        // Who it's for, as an opaque tag: a window that hears a different one drops everything it held first.
+        return { scope: 1, viewer: createHmac('sha256', storeFor(opts).key).update(`loom-viewer\0${viewerId(v)}`).digest('base64url').slice(0, 22), onClose: () => subsClose(home, port.id) };
       } });
   }
 
