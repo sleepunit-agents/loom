@@ -471,7 +471,9 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
 1. **Turn writes.**
    - A `runtime` turn creates or extends agent · venue · place, and answers `{conversation, seq}`.
    - Two places are two conversations.
-   - An agent token may write only venue `session`, for itself.
+   - An agent token may write only venue `session`, for itself. From a house its place is in that house's own
+     namespace (`house:h-7 <place>`, a service's `service:<name>@h-9 <place>`), so a house never writes into another's
+     session; a token in no house never writes a place in a house's namespace (t-2133).
    - Any other role is refused.
    - A runtime turn with a `key` already used in the last 24 hours answers the first `{conversation, seq}` and writes
      nothing; the same key on a different turn is a `409`; an agent token's `key` is a `403`.
