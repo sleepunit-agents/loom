@@ -167,9 +167,9 @@ export interface Ask { text: string; meta?: string; page?: string; label?: strin
    * answer: a Comms thread offers its Allow to nobody else (comms.md, "Asks inline"; core also reads the approval's kind). */
   lead?: true }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
-export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
+export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string; /** The conversation it's about (cv-): one of a Comms thread's is its member's alone (t-2084). */ conversation?: string }
 /** One the owner already answered (or that expired): the Inbox's history. */
-export interface Answered { text: string; outcome: string; at: string; kind?: AskKind; agent?: string; page?: string }
+export interface Answered { text: string; outcome: string; at: string; kind?: AskKind; agent?: string; page?: string; /** The conversation it was asked from (cv-): one of a Comms thread's is its member's alone (t-2084). */ conversation?: string }
 /** How an agent is, as one piece sees it. Loom combines the pieces' states, worst first: broken, unavailable, working, available. */
 export type AgentState = 'working' | 'available' | 'unavailable' | 'broken';
 export const AGENT_STATES: ReadonlySet<string> = new Set(['working', 'available', 'unavailable', 'broken']);
@@ -1035,14 +1035,14 @@ export function parseManifest(value: unknown): Manifest | string {
       m.notices = arr(top.notices, 'notices', LIMITS.notices).map((x) => {
         const n = obj(x, 'notice');
         return { text: str(n.text, 'notice.text'), meta: optStr(n.meta, 'notice.meta'), page: page(n.page, 'notice.page'),
-          at: when(n.at, 'notice.at') ?? fail('notice.at is required'), agent: agentId(n.agent, 'notice.agent') };
+          at: when(n.at, 'notice.at') ?? fail('notice.at is required'), agent: agentId(n.agent, 'notice.agent'), ...(typeof n.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(n.conversation) ? { conversation: n.conversation } : {}) };
       });
     }
     if (top.answered !== undefined) {
       m.answered = arr(top.answered, 'answered', LIMITS.answered).map((x) => {
         const a = obj(x, 'answered');
         return { text: str(a.text, 'answered.text'), outcome: str(a.outcome, 'answered.outcome'), at: when(a.at, 'answered.at') ?? fail('answered.at is required'),
-          ...(a.kind !== undefined ? { kind: askKind(a.kind, 'answered.kind') } : {}), agent: agentId(a.agent, 'answered.agent'), page: page(a.page, 'answered.page') };
+          ...(a.kind !== undefined ? { kind: askKind(a.kind, 'answered.kind') } : {}), agent: agentId(a.agent, 'answered.agent'), page: page(a.page, 'answered.page'), ...(typeof a.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}) };
       });
     }
     if (top.agents !== undefined) {

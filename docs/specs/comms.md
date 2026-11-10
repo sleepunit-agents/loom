@@ -62,11 +62,16 @@ _Avoid_: log, trace, transcript
 2. **A thread is its opener's.** With several owners on one agent (owners.md), each owner sees only the threads they
    opened. A thread's words are never shown to another member, household owner included. The conversation record
    (its metadata and digests) is still visible to the agent's owners, as for any venue (conversations.md, "Reading").
-   Its asks are its member's too (t-2084): a Needs you of its conversation, and an approval asked from it, are in
-   their Inbox, Home, badges, live attention records and devices' pushes alone, and only they can answer a Needs you
-   of it (`needs-*` refuses anyone else as it refuses a conversation that isn't the agent's). One exception: a card
-   only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset) also goes to
-   household owners, as the ones who answer it. A thread the store can't place is no one's.
+   Its asks are its member's too (t-2084): a Needs you of its conversation, an approval asked from it, and either's
+   history are in their Inbox, Home, badges, live attention records, Projects counts and devices' pushes alone, and
+   only they can answer them: `needs-*`, and a piece's Allow or Deny on a card they alone see, are refused to anyone
+   else as an ask that isn't there. Exceptions, so an ask is never no one's for good:
+   - a card only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset, a host step,
+     a write-off) also goes to household owners, as the ones who answer it;
+   - a thread whose member no longer owns its agent (left the household, or lost the agent): household owners';
+   - a spawned job the runtime couldn't open a thread for: household owners' (loom can't tell whose it is).
+   A deleted thread's asks stay its member's (`comms_deleted`); a `loom` conversation with no thread, live or deleted,
+   or a thread store that can't be read, is no one's.
 3. **The server enforces both, on every route in "Routes" below.** Each request resolves the signed-in member's
    `agents` from `members` (owners.md), never from what the caller sends. Then:
    - a thread route answers `403` unless the member owns the thread's agent **and** is the thread's `member`;

@@ -1498,6 +1498,18 @@ export function threadOfAgentConversation(home: string, agent: string, conversat
   return t && t.agent === agent && (conversationId(agent, COMMS_VENUE, t.id) === conversation || getConversation(join(home, 'agents', agent), conversation)?.venue === 'spawn') ? t : undefined;
 }
 
+/**
+ * Whose each thread is, in one read (t-2084: a thread's asks are its member's): every live thread by its conversation,
+ * and every deleted one by its id (its place), each with its member and agent.
+ */
+export function threadMembers(home: string): { live: Map<string, { member: string; agent: string }>; deleted: Map<string, { member: string; agent: string }> } {
+  if (!existsSync(join(home, 'household.db'))) return { live: new Map(), deleted: new Map() };
+  return withThreadsAt(home, (db) => ({
+    live: new Map((db.prepare('SELECT conversation, member, agent FROM comms_threads').all() as Array<{ conversation: string; member: string; agent: string }>).map((r) => [r.conversation, { member: r.member, agent: r.agent }])),
+    deleted: new Map((db.prepare('SELECT id, member, agent FROM comms_deleted').all() as Array<{ id: string; member: string; agent: string }>).map((r) => [r.id, { member: r.member, agent: r.agent }])),
+  }));
+}
+
 /** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */
 export function filedThreads(home: string, agent: string, slug: string): string[] {
   if (!existsSync(join(home, 'household.db'))) return [];

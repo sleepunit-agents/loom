@@ -20,10 +20,12 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { createConversationTables, openNeeds, recordTurn, writeDigest } from '../backends/conversations.js';
-import { openThread } from '../comms.js';
+import { openProjectsStore } from '../backends/projects.js';
+import { adapterCall, deleteThread, openThread, threadFor } from '../comms.js';
 import { clearPieceCache } from '../ui/pieces.js';
 import { closeAllBackends } from '../backends/index.js';
 import { pushWatch } from '../ui/handler.js';
+import { forgetProjectCounts } from '../ui/projects-pages.js';
 import { nudge } from './pull.js';
 import { sessionStore } from '../ui/sessions.js';
 
@@ -33,14 +35,29 @@ const APPROVALS_BIN = `#!${process.execPath}
 const fs = require('node:fs');
 const f = process.env.LOOM_HOME + '/approvals.json';
 const read = () => { try { return JSON.parse(fs.readFileSync(f, 'utf-8')); } catch { return {}; } };
-const a = process.argv.slice(2).filter((x) => x !== '--json');
-const s = read();
-if (a[0] === 'ui' && a.length === 1) {
-  console.log(JSON.stringify({ v: 2, owners: 2, tab: { label: 'Approvals', kind: 'setting' }, asks: Object.entries(s)
-    .filter(([, x]) => !process.env.LOOM_OWNER_SCOPE || process.env.LOOM_OWNER_SCOPE.split(',').includes(x.agent))
-    .map(([id, x]) => ({ text: x.text, kind: 'permission', agent: x.agent, page: '', at: x.at, ...(x.lead ? { lead: true } : {}), ...(x.conversation ? { conversation: x.conversation } : {}),
-      actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })) }));
-} else process.exit(2);
+let input = '';
+process.stdin.on('data', (d) => { input += d; });
+process.stdin.on('end', () => {
+  const a = process.argv.slice(2).filter((x) => x !== '--json');
+  const s = read();
+  const mine = Object.entries(s).filter(([, x]) => !process.env.LOOM_OWNER_SCOPE || process.env.LOOM_OWNER_SCOPE.split(',').includes(x.agent));
+  const cv = (x) => (x.conversation ? { conversation: x.conversation } : {});
+  if (a[0] === 'ui' && a.length === 1) {
+    return console.log(JSON.stringify({ v: 2, owners: 2, tab: { label: 'Approvals', kind: 'setting' },
+      asks: mine.filter(([, x]) => !x.state).map(([id, x]) => ({ text: x.text, kind: 'permission', agent: x.agent, page: '', at: x.at, ...(x.lead ? { lead: true } : {}), ...cv(x),
+        actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })),
+      answered: mine.filter(([, x]) => x.state).map(([, x]) => ({ text: x.text, outcome: x.state, at: x.at, agent: x.agent, ...cv(x) })) }));
+  }
+  if (a[0] === 'ui' && a[1] === 'act') {
+    const req = JSON.parse(input);
+    const x = s[req.fields.id];
+    if (!x || x.state) return console.log(JSON.stringify({ ok: false, message: 'not pending' }));
+    x.state = req.action === 'allow' ? 'Allowed' : 'Denied';
+    fs.writeFileSync(f, JSON.stringify(s));
+    return console.log(JSON.stringify({ ok: true, message: 'Allowed.' }));
+  }
+  process.exit(2);
+});
 `;
 
 function piece(home: string, name: string, raw: Record<string, unknown>, src: string): void {
@@ -254,5 +271,111 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     expect(to('jon')).toBe(2);
     const tags = (who: string) => new Set(sent.filter((x) => x.to.endsWith(who)).map((x) => x.tag));
     expect([...tags('sam')].filter((t) => tags('jon').has(t))).toHaveLength(1);
+  }, 30_000);
+
+  const act = async (who: string, path: string, fields: Record<string, string>) => {
+    const csrf = (await get(who, '/inbox')).ctx.csrf;
+    const r = await fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${tok[who]}`, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: csrf, _path: 'loom:inbox', ...fields }).toString() });
+    return (await r.json()) as { ok: boolean; message: string };
+  };
+
+  it('Jonathan can\'t Allow an approval asked from Sam\'s thread, even naming its id; a lead card from it he can; Sam can his own', async () => {
+    const t = thread('sam');
+    cards({
+      'a-00000001': { agent: 'art', text: 'OK to merge the comm screen PR?', at: '2026-11-10T10:00:00Z', conversation: t.conversation },
+      'a-00000002': { agent: 'art', text: 'Give Art the relay piece?', at: '2026-11-10T10:01:00Z', conversation: t.conversation, lead: true },
+    });
+    for (const path of ['/act/approvals']) {
+      const r = await act('jonathan', path, { _action: 'allow', id: 'a-00000001' });
+      expect(r.ok, path).toBe(false);
+      expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))['a-00000001'].state).toBeUndefined();
+    }
+    const lead = await act('jonathan', '/act/approvals', { _action: 'allow', id: 'a-00000002' });
+    expect(lead.message).not.toBe('That ask isn\'t open any more.');
+    expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))['a-00000002'].state).toBe('Allowed');
+    expect((await act('sam', '/act/approvals', { _action: 'deny', id: 'a-00000001' })).ok).toBe(true);
+    // Once answered, its history (the piece's answered entry, naming the thread's conversation) is Sam's alone too.
+    clearPieceCache();
+    const done = (who: string) => get(who, '/inbox?f=done').then((p) => texts(p.items));
+    expect(await done('sam')).toContain('OK to merge the comm screen PR?');
+    expect(await done('jonathan')).not.toContain('OK to merge the comm screen PR?');
+  }, 30_000);
+
+  it('a deleted thread\'s ask stays its member\'s; a loom conversation with no thread is no one\'s', async () => {
+    const t = thread('sam');
+    needs(t.conversation, 'Sam: OK to ship the comm screen?');
+    deleteThread(h, threadFor(h, member('sam'), t.id));
+    expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Sam: OK to ship the comm screen?');
+    expect(texts((await get('sam', '/inbox')).items)).toContain('Sam: OK to ship the comm screen?');
+    const stray = recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: 'th:zzzzzzzzzz', label: 'x', at: new Date().toISOString(), from: { kind: 'person', slug: 'sam' }, kind: 'message' } as never, 'runtime:runtime').conversation;
+    needs(stray, 'Stray: OK to do the stray thing?');
+    for (const who of ['sam', 'jonathan']) expect(texts((await get(who, '/inbox')).items), who).not.toContain('Stray: OK to do the stray thing?');
+  }, 30_000);
+
+  it('a spawned job\'s ask follows its thread\'s member; one with no thread is the household owners\'', async () => {
+    const parent = thread('sam');
+    const job = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-1', label: 'job', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime').conversation;
+    needs(job, 'Job: OK to restart the build?');
+    // Before the runtime opened its thread: household owners' only.
+    expect(texts((await get('sam', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
+    expect(texts((await get('jonathan', '/inbox')).items)).toContain('Job: OK to restart the build?');
+    adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' });
+    expect(texts((await get('sam', '/inbox')).items)).toContain('Job: OK to restart the build?');
+    expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
+  }, 30_000);
+
+  it('a thread whose member no longer owns its agent: its ask goes to household owners, never lost', async () => {
+    needs(thread('sam').conversation, 'Sam: OK to ship the comm screen?');
+    expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Sam: OK to ship the comm screen?');
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art',
+      members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['mark'] }] }));
+    h = loadHousehold(h.home)!;
+    clearPieceCache();
+    expect(texts((await get('jonathan', '/inbox')).items)).toContain('Sam: OK to ship the comm screen?');
+  }, 30_000);
+
+  it('the Projects hub and index count only the viewer\'s own thread asks', async () => {
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art',
+      members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: '*' }] }));
+    h = loadHousehold(h.home)!;
+    { const ps = openProjectsStore(agentDir(h, 'art'))!; try { ps.write({ slug: 'pond', name: 'pond', summary: 'Ship the pond.' } as never); } finally { ps.close(); } }
+    const t = thread('sam');
+    writeDigest(agentDir(h, 'art'), { conversation: t.conversation, run: 'r-p' }, { summary: 'Asked.', projects: ['pond'], needs_owner: { ask: 'Sam: OK to ship the pond?' } } as never);
+    forgetProjectCounts();
+    const hub = async (who: string) => JSON.stringify(await get(who, '/projects/pond'));
+    expect(await hub('sam')).toMatch(/Sam: OK to ship the pond\?/);
+    expect(await hub('jonathan')).not.toMatch(/OK to ship the pond/);
+    const ix = async (who: string) => JSON.stringify(await get(who, '/projects'));
+    expect(await ix('sam')).toMatch(/1 waiting on you/);
+    expect(await ix('jonathan')).not.toMatch(/waiting on you|OK to ship the pond/);
+  }, 30_000);
+
+  it('a lead card absorbed by a member\'s Needs you is still pushed to household owners', async () => {
+    const store = sessionStore(h.home);
+    const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'));
+    store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('sam'), undefined, 'sam');
+    const sent: Array<{ to: string; tag: string; url: string }> = [];
+    const minute = async () => {
+      const f = join(h.home, 'ui-sessions.json');
+      try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+      const send = async (s2: { endpoint: string }, payload: string) => { const p = JSON.parse(payload); sent.push({ to: s2.endpoint, tag: p.tag, url: p.url }); return {} as never; };
+      return pushWatch({ contextDir: agentDir(h, 'art'), auth: { enabled: true, check: () => null, live: () => false }, env: process.env, household: () => h } as never, send as never);
+    };
+    await minute();
+    const t = thread('sam');
+    cards({ 'a-00000002': { agent: 'art', text: 'Give Art the relay piece?', at: new Date().toISOString(), conversation: t.conversation, lead: true } });
+    writeDigest(agentDir(h, 'art'), { conversation: t.conversation, run: 'r-l' }, { summary: 'Asked.', needs_owner: { ask: 'Sam: can Art have the relay piece?', waits_on: { approval: 'a-00000002' } } } as never);
+    await minute();
+    const jonKeys = new Set(((await get('jonathan', '/inbox')).items as Data[]).map((i) => `/inbox?i=${i.key}`));
+    const samKeys = new Set(((await get('sam', '/inbox')).items as Data[]).map((i) => `/inbox?i=${i.key}`));
+    const jon = sent.filter((x) => x.to.endsWith('jon'));
+    const sam = sent.filter((x) => x.to.endsWith('sam'));
+    expect(jon).toHaveLength(1);
+    expect(sam).toHaveLength(1);
+    // Each opens an item that's in that member's own Inbox.
+    expect(jonKeys.has(jon[0].url)).toBe(true);
+    expect(samKeys.has(sam[0].url)).toBe(true);
   }, 30_000);
 });
