@@ -10,14 +10,21 @@ vi.mock('../../web/src/page', () => ({ collectionsRuntime: async () => ({ runtim
 import { ProjectDirectory } from '../../web/src/project-directory';
 import { watchProjects, projectsLive, PROJECTS_SPEC } from '../../web/src/tasks-live';
 it('shares a paged directory, drops partial/stale snapshots, publishes empty membership and recovers after reconnect', async () => {
+  fixture.keys = Array.from({ length: 500 }, (_, i) => `loom/project/art:p${i}`);
+  fixture.records = new Map(fixture.keys.map((key) => [key, { key }]));
   const first = vi.fn(); const off = watchProjects('csrf', first);
   await vi.waitFor(() => expect(fixture.next).toHaveBeenCalledTimes(1));
   expect(first).not.toHaveBeenCalled();
   expect(projectsLive()).toBe(false);
-  fixture.keys.push('loom/project/art:q'); fixture.records.set('loom/project/art:q', { key: 'loom/project/art:q' }); fixture.changed();
+  fixture.keys = Array.from({ length: 900 }, (_, i) => `loom/project/art:p${i}`);
+  fixture.records = new Map(fixture.keys.map((key) => [key, { key }])); fixture.changed();
   expect(fixture.next).toHaveBeenCalledTimes(2);
   expect(first).not.toHaveBeenCalled();
+  fixture.keys = Array.from({ length: 999 }, (_, i) => `loom/project/art:p${i}`);
+  fixture.records = new Map(fixture.keys.map((key) => [key, { key }]));
   fixture.more = false; fixture.changed();
+  expect(projectsLive()).toBe(true);
+  expect(first.mock.calls.at(-1)?.[1].size).toBe(999);
   expect(first).toHaveBeenLastCalledWith(new Set(fixture.keys), fixture.records);
   const second = vi.fn(); const off2 = watchProjects('csrf', second);
   expect(second).toHaveBeenLastCalledWith(new Set(fixture.keys), fixture.records);
