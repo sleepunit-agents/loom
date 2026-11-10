@@ -10,7 +10,8 @@ import './work-steps.css';
 import { RefText } from './comms-refs';
 import { ansiRuns, isPlan, isText, pastLimit, spanOf, stepOf, stepsUnder, took, wordsOf, workTree, type WorkCard, type WorkNode } from './steps';
 
-const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'file_change']);
+/** The tools whose card may hold a diff: core's BODY_TOOLS (src/comms.ts) but its words. */
+const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write']);
 const SHELL_TOOLS = new Set(['Bash', 'command_execution']);
 
 /** Shown text with its colours as styled runs: text only, never markup. */

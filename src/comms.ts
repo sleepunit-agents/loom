@@ -1398,7 +1398,7 @@ function stepOfCard(o: Record<string, unknown>, i: number): { words: StepWords |
   if (o.detail !== undefined) { if (typeof o.detail !== 'string' || o.detail.length > MAX_DETAIL || o.detail.includes('\x1b') || !SHOWN_TEXT.test(o.detail)) bad('detail', `is text of at most ${MAX_DETAIL}`); words.detail = o.detail as string; }
   // A body is kept only for a diff or the body's words (BODY_TOOLS); a command's output never (t-2109; on demand,
   // unstored, is t-2112), nor what a tool read: on any other card it's dropped.
-  if (o.body !== undefined) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); if (BODY_TOOLS.has(String(o.tool))) words.body = o.body as string; }
+  if (o.body !== undefined && BODY_TOOLS.has(String(o.tool))) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); words.body = o.body as string; }
   if (o.result !== undefined) { if (typeof o.result !== 'string' || o.result.length > MAX_SUMMARY || !STEP_LINE.test(o.result)) bad('result', 'is one printable line'); words.result = o.result as string; }
   if (o.items !== undefined) {
     if (!Array.isArray(o.items) || o.items.length > 20) bad('items', 'is a list of at most 20');
@@ -1490,7 +1490,10 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       // runtime reads it whole each time), so its words replace those kept, and a part it no longer says is gone.
       if (prior.kept) {
         const blob = encrypt(h.home, env, c.summary);
-        const words = c.words ? encrypt(h.home, env, JSON.stringify(c.words)) : null;
+        // A card keeps the tool it was first kept with: whether it may hold a body is that tool's, not the post's.
+        const { body: _b, ...rest } = c.words ?? {};
+        const said = c.words && !BODY_TOOLS.has(String(was.tool)) ? rest : c.words;
+        const words = said && Object.keys(said).length ? encrypt(h.home, env, JSON.stringify(said)) : null;
         withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = ?, step = ? WHERE thread = ? AND seq = ?').run(blob, words, r.id, prior.seq));
       }
       updated++;
@@ -1510,7 +1513,7 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   // A sign of life moves only forward, and never to one from the future (a clock ahead would hold it for good).
   const takeAlive = !!alive && alive.at <= now.getTime() + 60_000 && alive.at > (r.alive_at ?? 0);
   withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { ...(working ? { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null } : {}),
-    ...(takeAlive ? { alive_at: alive.at, ...(alive.tokens !== undefined ? { alive_tokens: alive.tokens } : {}) } : {}) }, now));
+    ...(takeAlive ? { alive_at: alive.at, alive_tokens: alive.tokens ?? null } : {}) }, now));
   return { ok: true, added, updated };
 }
 

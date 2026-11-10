@@ -234,12 +234,19 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // A body is kept only for a diff or the body's words: what a read or a search found never.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'r1', tool: 'Read', summary: 'Read a.ts', state: 'done', detail: 'a.ts', body: 'FILE-CONTENTS-NEVER-KEPT' }] }).added).toBe(1);
     expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'r1')!.card?.step).toEqual({ detail: 'a.ts' });
+    // A card keeps its first tool: a later post naming another can't get a shell step's output kept.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 's1', tool: 'Bash', summary: 'Ran a command', state: 'running', detail: 'cat x' }] }).added).toBe(1);
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 's1', tool: 'Edit', summary: 'Ran a command', state: 'done', detail: 'cat x', body: 'SHELL-OUTPUT-NEVER-KEPT' }] }).updated).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 's1')!.card).toMatchObject({ tool: 'Bash', step: { detail: 'cat x' } });
+    expect(JSON.stringify((await messagesOf(h, process.env, tt)).find((m) => m.id === 's1'))).not.toContain('SHELL-OUTPUT');
     // A post of a card is the card whole: its words replace those kept.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts' }] }).updated).toBe(1);
     expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts' });
     for (const bad of [{ summary: 'a\u0085b' }, { detail: 'x'.repeat(4001) }, { body: 'x'.repeat(32_001) }, { result: 'x'.repeat(121) }, { items: Array.from({ length: 21 }, () => ({ text: 'a', state: 'todo' })) }, { items: [{ text: 'x'.repeat(101), state: 'todo' }] }, { body: 'nel\u0085line' }, { body: 'csi\u009b2J' }, { result: 'x\u0085y' }, { body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { detail: 'rm \u202eb' }, { result: 'z\u200bw' }, { end: '2026-19-45T99:99:99Z' }, { other: 1 }]) {
-      expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...bad }] })).toThrow(/bad-input/);
+      // A body is checked where it may be kept (an edit's diff); on a shell step it's dropped unread.
+      expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...('body' in bad ? { tool: 'Edit' } : {}), ...bad }] })).toThrow(/bad-input/);
     }
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p6', body: 'bell\x07' }] }).added).toBe(1);
     // Nothing a command printed or a file held is kept, read back opened (the store holds words only sealed).
     const opened = JSON.stringify(await messagesOf(h, process.env, tt));
     for (const never of ['OUTPUT-NEVER-KEPT', 'FILE-CONTENTS-NEVER-KEPT']) expect(opened.includes(never)).toBe(false);
