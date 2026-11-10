@@ -890,6 +890,7 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_STALL_MS` | `500` | `loom serve --http` logs any event-loop stall this long: the requests in flight, the background jobs that held it, GC time. `0` turns it off |
 | `LOOM_URL` | *(unset)* | Run the CLI's store verbs against this loom-http (its MCP URL) instead of a local stack |
 | `LOOM_TOKEN_FILE` | *(unset)* | File holding the bearer token for `LOOM_URL` (never passed in argv) |
 | `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |
