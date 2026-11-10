@@ -164,7 +164,14 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
           : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
     );
     // The stable listener only sends traffic after this worker is ready.
-    if (process.connected && process.env.LOOM_WORKER_SOCKET) process.send?.({ type: 'loom-ready' });
+    if (process.connected && process.env.LOOM_WORKER_SOCKET) {
+      process.on('message', (message) => {
+        if (!message || typeof message !== 'object' || !('type' in message)) return;
+        if (message.type === 'loom-retire') handle.setBackgroundActive(false);
+        if (message.type === 'loom-activate') handle.setBackgroundActive(true);
+      });
+      process.send?.({ type: 'loom-ready' }, () => undefined);
+    }
     // Hold open until the process is signalled.
     await new Promise<void>(() => {});
     return 0;

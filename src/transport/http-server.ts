@@ -152,6 +152,7 @@ export interface HttpServeHandle {
   /** The actually-bound port (resolves a 0 request to the OS-assigned port). */
   port: number;
   host: string;
+  setBackgroundActive(active: boolean): void;
   close(): Promise<void>;
 }
 
@@ -246,6 +247,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
+  let backgroundActive = !workerSocket;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -378,12 +380,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
   // start and daily. Neither ever stops the daemon.
   const foldAll = () => {
+    if (!backgroundActive) return;
     const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
     for (const d of dirs) {
       try { foldConversations(d); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
     }
   };
-  if (household) syncVenuesQuietly(process.env);
+  if (household && backgroundActive) syncVenuesQuietly(process.env);
   foldAll();
   const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
   foldTimer.unref();
@@ -391,7 +394,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
   // measures on the scorecards. Neither ever stops the daemon.
   const sweepAll = () => {
-    if (!live) return;
+    if (!backgroundActive || !live) return;
     const h = live();
     try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
     for (const day of recentDays()) {
@@ -403,13 +406,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   sweepTimer.unref();
   // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
   // listener watches for thread moves, so a member's own shared stream hears of their threads.
-  const commsTimer = live && !opts.createServer ? setInterval(() => { try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
+  const commsTimer = live && !opts.createServer ? setInterval(() => { if (!backgroundActive) return; try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
   commsTimer?.unref();
   if (live && !opts.createServer) {
-    try { sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
+    try { if (backgroundActive) sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     watchComms(live().home);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
-    void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
+    if (backgroundActive) void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
   }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
@@ -473,7 +476,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
         sessions.set(sid, { transport, identity });
-        if (workerSocket) process.send?.({ type: 'loom-session-open', id: sid });
+        if (workerSocket && process.connected) process.send?.({ type: 'loom-session-open', id: sid }, () => undefined);
       },
     });
 
@@ -504,7 +507,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       clearInterval(heartbeat);
       if (transport.sessionId) {
         sessions.delete(transport.sessionId);
-        if (workerSocket) process.send?.({ type: 'loom-session-close', id: transport.sessionId });
+        if (workerSocket && process.connected) process.send?.({ type: 'loom-session-close', id: transport.sessionId }, () => undefined);
       }
     };
     await server.connect(transport);
@@ -935,6 +938,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
+    if (!backgroundActive) return;
     void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
   }, WATCH_S * 1000);
@@ -942,7 +946,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
-    if (!live) return;
+    if (!backgroundActive || !live) return;
     void resolveNeeds(live(), pieceCheckers(process.env))
       .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`));
   };
@@ -953,7 +957,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
-  const backupTick = () => { try { if (live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTick = () => { try { if (backgroundActive && live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
   const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
   const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
@@ -1145,6 +1149,18 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   return {
     port,
     host: opts.host,
+    setBackgroundActive(active) {
+      const was = backgroundActive;
+      backgroundActive = active;
+      if (active && !was) {
+        if (household) syncVenuesQuietly(process.env);
+        foldAll(); sweepAll();
+        if (live && !opts.createServer) {
+          try { sweepComms(live()); } catch { /* next timer retries */ }
+          void backfillRefs(live(), process.env).catch(() => undefined);
+        }
+      }
+    },
     async close() {
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
