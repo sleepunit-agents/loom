@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "46d3b75cdb89acb14d4aa94f61c41d7b07e72f96",
+      "commit": "0eac5b07e0bd9ac4bec34476eec2fa22e25e1d0d",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "f2c36a52637ff5aceb4aece4f4a4c1983be815eb",
+      "commit": "8ef73b2d26903254605cf004b22bda0700b392ee",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
