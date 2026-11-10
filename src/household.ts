@@ -18,6 +18,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync
 import { homedir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import { basename, dirname, join, resolve } from 'node:path';
+import { pidLock, type FileLock } from './lock-gate.js';
 
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 const HOUSEHOLD_FILE = 'household.json';
@@ -359,6 +360,11 @@ function clearDead(lock: string, holder: number, mine: string): boolean {
   } finally {
     try { if (readFileSync(breaker, 'utf-8') === mine) rmSync(breaker, { force: true }); } catch { /* already gone */ }
   }
+}
+
+/** household.json's lock, for a request to wait out before it takes it (lock-gate.ts). */
+export function householdLock(home: string): FileLock {
+  return pidLock(join(home, LOCK_FILE));
 }
 
 function withLock<T>(home: string, f: () => T): T {

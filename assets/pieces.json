@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "dcc1545fed2b3613a1da6eb605c47da35c4093d8",
+      "commit": "07eaac4684a6b49b102ff7ac8a9a1997e273cbfd",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "2b7f9760ee22e912e8b93800a79a7aedcd625e76",
+      "commit": "3736e1c72bee3cbd3e65c65768996476bc5c4a7a",
       "version": "0.7.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
@@ -52,7 +52,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "71c0680ca90fbea407d1a4eb5e5827d16fe23a24",
+      "commit": "5e362d05389015cf48b5d69bf5f4f00a0b8f1631",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."

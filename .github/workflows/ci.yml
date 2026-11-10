@@ -39,11 +39,22 @@ jobs:
 
   test:
     name: build + test
-    runs-on: ubuntu-latest
+    # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
+    # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
+    # people with write access can start, or a pull request from a branch in this repository that a person
+    # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
+    # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, and its run
+    # is still this repository's, so neither this nor the runner group is the lock: the runners' own
+    # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
+    # contributor's run needs.
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        node-version: ${{ github.event_name == 'merge_group' && fromJSON('["24.x"]') || fromJSON('["22.x", "24.x"]') }}
+        # A pull request tests the Node that runs loom (24); the queue and main also test 22. Only
+        # "CI results" is a required check, so the queue doesn't wait on a matrix name a PR never ran.
+        node-version: ${{ github.event_name == 'pull_request' && fromJSON('["24.x"]') || fromJSON('["22.x", "24.x"]') }}
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
@@ -63,38 +74,19 @@ jobs:
 
       # The household bundle (src/bundle.ts) encrypts with age; its tests run the real thing.
       - name: Install age
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+        run: command -v age >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq age)
+
+      # The browser suites (src/ui/*.integration.test.ts) skip themselves when no Chrome is found, so a
+      # runner without one would pass them silently. The list is theirs.
+      - name: Chrome for the browser suites
+        run: |
+          for c in "$LOOM_TEST_CHROME" /usr/bin/google-chrome /usr/bin/chromium /usr/bin/chromium-browser; do
+            [ -n "$c" ] && [ -x "$c" ] && { echo "Chrome: $c"; exit 0; }
+          done
+          echo "::error::No Chrome on runner $RUNNER_NAME: the browser suites would skip"; exit 1
 
       - name: Build
         run: npm run build
-
-      # Exercise runtime packaging on PRs and in the queue too. Deploy accepts
-      # only a successful main-push run with the exact merged commit.
-      - name: Package deploy build
-        if: matrix.node-version == '24.x' && matrix.shard == 1
-        run: |
-          printf '%s\n' "$GITHUB_SHA" > deploy-commit
-          printf 'loom-worker-v1\n' > deploy-protocol
-          # Install production dependencies in CI, including native modules.
-          # No npm build/install runs on loom's machine.
-          mkdir deploy-runtime
-          cp package.json package-lock.json deploy-runtime/
-          (cd deploy-runtime && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --omit=dev --ignore-scripts && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm rebuild better-sqlite3 onnxruntime-node)
-          mv deploy-runtime/node_modules node_modules-runtime
-          mv node_modules node_modules-dev
-          mv node_modules-runtime node_modules
-          tar -czf loom-build.tar.gz dist assets package.json package-lock.json deploy-commit deploy-protocol node_modules
-          mv node_modules deploy-runtime/node_modules
-          mv node_modules-dev node_modules
-      - name: Keep deploy build
-        if: matrix.node-version == '24.x' && matrix.shard == 1
-        uses: actions/upload-artifact@v7
-        with:
-          name: loom-build-${{ github.sha }}
-          overwrite: true
-          path: loom-build.tar.gz
-          retention-days: 14
-          if-no-files-found: error
 
       # The embedding runtime is vendored, so nothing upstream will catch a
       # regression in it. embedding-runtime.parity.test.ts runs the real ONNX
@@ -120,11 +112,68 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # The deploy build is made on GitHub's ubuntu-latest whatever runner the tests had, so the native
+  # modules loom's machine runs are built where they always were.
+  package:
+    name: deploy build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Exercise runtime packaging on PRs and in the queue too. Deploy accepts
+      # only a successful main-push run with the exact merged commit.
+      - name: Package deploy build
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > deploy-commit
+          printf 'loom-worker-v1\n' > deploy-protocol
+          # Install production dependencies in CI, including native modules.
+          # No npm build/install runs on loom's machine.
+          mkdir deploy-runtime
+          cp package.json package-lock.json deploy-runtime/
+          (cd deploy-runtime && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --omit=dev --ignore-scripts && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm rebuild better-sqlite3 onnxruntime-node)
+          mv deploy-runtime/node_modules node_modules-runtime
+          mv node_modules node_modules-dev
+          mv node_modules-runtime node_modules
+          tar -czf loom-build.tar.gz dist assets package.json package-lock.json deploy-commit deploy-protocol node_modules
+          mv node_modules deploy-runtime/node_modules
+          mv node_modules-dev node_modules
+      - name: Keep deploy build
+        uses: actions/upload-artifact@v7
+        with:
+          name: loom-build-${{ github.sha }}
+          overwrite: true
+          path: loom-build.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
   results:
     name: CI results
     if: always()
-    needs: [test]
-    runs-on: ubuntu-latest
+    needs: [test, package]
+    # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
+    # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
+    # people with write access can start, or a pull request from a branch in this repository that a person
+    # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
+    # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, and its run
+    # is still this repository's, so neither this nor the runner group is the lock: the runners' own
+    # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
+    # contributor's run needs.
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -160,8 +209,9 @@ jobs:
           name: ci-merged-${{ github.run_attempt }}
           path: merged/
           retention-days: 14
-      - name: Require every shard to pass
+      - name: Require every shard and the deploy build to pass
         if: always()
         env:
           RESULT: ${{ needs.test.result }}
-        run: test "$RESULT" = success
+          PACKAGE: ${{ needs.package.result }}
+        run: test "$RESULT" = success && test "$PACKAGE" = success

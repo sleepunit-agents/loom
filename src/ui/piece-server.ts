@@ -1,5 +1,6 @@
 /**
- * A piece's API from a long-lived process, for the paths it declares (`api_serve` in its loom block, t-2065).
+ * A piece's API or declared collection query from a long-lived process, for the paths it declares (`api_serve` in its loom block, t-2065).
+ * Collection callers supply their declared query argv plus --serve; API callers use api --serve.
  * `<bin> api --json` is one process per call; a warm house's body host calls the runtime's `body-sync` every 2 s, so
  * each house was a node start every 2 s on loom's machine. For a declared path, core keeps `<bin> api --serve` running
  * and writes it one request per line, `{id, grant, request}`; it answers one line per request, `{id, exit, stdout}`,
@@ -67,9 +68,9 @@ function armIdle(s: Server): void {
   s.idle.unref?.();
 }
 
-function startServer(key: string, path: string, env: NodeJS.ProcessEnv): Server {
+function startServer(key: string, path: string, env: NodeJS.ProcessEnv, args: readonly string[]): Server {
   // Its own process group, as a one-shot's: killed, it takes whatever it started with it.
-  const child = spawn(path, ['api', '--serve'], { env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+  const child = spawn(path, args, { env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   const s: Server = { key, child, started: Date.now(), busy: false, dead: false, buf: '', bytes: 0 };
   child.on('error', () => killServer(s));
   child.on('exit', () => killServer(s));
@@ -115,10 +116,12 @@ function startServer(key: string, path: string, env: NodeJS.ProcessEnv): Server 
  * store grant. undefined when every server for its key is busy: the caller runs the call the one-shot way.
  */
 export function serveCall(path: string, resolved: string, env: NodeJS.ProcessEnv, grant: string | undefined, request: unknown,
-  opts: { timeoutMs: number; maxBytes: number }): Promise<Served> | undefined {
-  const key = serverKey(path, resolved, env);
+  opts: { timeoutMs: number; maxBytes: number; argv?: readonly string[] }): Promise<Served> | undefined {
+  const args = opts.argv ?? ['api', '--serve'];
+  const prefix = `${path}\0${JSON.stringify(args)}\0`;
+  const key = prefix + serverKey(path, resolved, env);
   // Servers of this path for a version or an env that's no longer the current one: gone once idle.
-  for (const [k, list] of servers) if (k !== key && k.startsWith(`${path}\0`)) for (const s of [...list]) if (!s.busy) killServer(s, false);
+  for (const [k, list] of servers) if (k !== key && k.startsWith(prefix)) for (const s of [...list]) if (!s.busy) killServer(s, false);
   const at = failed.get(key);
   if (at !== undefined && Date.now() - at < FAIL_MS) return undefined;
   if (at !== undefined) failed.delete(key);
@@ -128,7 +131,7 @@ export function serveCall(path: string, resolved: string, env: NodeJS.ProcessEnv
   let s = list.find((x) => !x.busy && !x.dead && Date.now() - x.started < LIFETIME_MS);
   if (!s) {
     if (list.filter((x) => !x.dead).length >= SERVERS_PER_KEY) return undefined;
-    s = startServer(key, path, env);
+    s = startServer(key, path, env, args);
     if (s.dead) return undefined;
     list.push(s);
     servers.set(key, list);

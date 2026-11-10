@@ -213,9 +213,14 @@ export function writeAudit(h: Household, role: Role, raw: unknown, env: NodeJS.P
   const seq = body.seq as number;
   const agent = ownerOf(h, role, conversation);
   const turn: TurnRecord | undefined = agent ? turnRecord(agentDir(h, agent), conversation, seq) : undefined;
-  // The same answer for "no such conversation" and "no such turn": write the turn first.
-  if (!agent || !turn) fail(`no turn ${seq} in conversation ${conversation}: write the turn first, then its audit entry`, 404);
-  if (turn!.writer !== roleString(role)) fail('only the turn\'s writer writes its audit entry', 403);
+  // The same answer for "no such conversation", "no such turn" and, to an agent token, "a turn someone else wrote"
+  // (t-2135): a house learns nothing of which turns exist in conversations that aren't its own.
+  const notFound = () => fail(`no turn ${seq} in conversation ${conversation}: write the turn first, then its audit entry`, 404);
+  if (!agent || !turn) notFound();
+  if (turn!.writer !== roleString(role)) {
+    if (role.kind === 'agent') notFound();
+    fail('only the turn\'s writer writes its audit entry', 403);
+  }
   const atMs = Date.parse(turn!.at);
   if (atMs > now.getTime() + FUTURE_SLACK_MS) fail('that turn is in the future: its entry would outlive the 7-day sweep', 409);
   if (atMs < now.getTime() - AUDIT_DAYS * DAY_MS) fail(`that turn is older than ${AUDIT_DAYS} days: the audit log no longer keeps it`, 409);

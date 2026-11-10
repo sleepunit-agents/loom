@@ -27,6 +27,10 @@ import {
 } from '../comms.js';
 import { getConversation } from '../backends/conversations.js';
 import { agentDir } from '../household.js';
+import { join } from 'node:path';
+import { resolveSqliteDbPath } from '../config.js';
+import { HOUSEHOLD_DB } from '../household-store.js';
+import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { deliverAsOwner } from '../delivery.js';
 import type { Household, Member } from '../household.js';
 import type { Chrome } from './render.js';
@@ -123,6 +127,7 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
   // The same delivery every time, Send again too (its id, its time and its label from its first try): core and the
   // runtime answer a repeat with the first answer, so a message whose first try got through after all (its answer
   // lost) never reaches a body twice.
+  await waitForLocks({ read: [join(c.household.home, HOUSEHOLD_DB), resolveSqliteDbPath(agentDir(c.household, t.agent))] });
   const facts = deliveryFacts(c.household, t, seq);
   const backing = getConversation(agentDir(c.household, t.agent), t.conversation);
   const spawned = backing?.venue === 'spawn';
@@ -130,6 +135,8 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
     id: `comms:${t.id}:${id}`, agent: t.agent, venue: spawned ? backing.venue : COMMS_VENUE, place: spawned ? backing.place : t.id, label: facts.label, person: t.member, text, at: facts.at,
   });
   const b = r.body as { body?: string; reason?: string; error?: string };
+  // What came of it lands on the thread: once household.db is free, waited out off the event loop (lock-gate.ts).
+  await waitForLocks({ write: [join(c.household.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
   if (r.status === 200) {
     recordDelivery(c.household, t, seq, deliveredOutcome(b));
     return { delivered: true, body: b.body };

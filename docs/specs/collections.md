@@ -771,9 +771,18 @@ along with the listeners. The adapter is the only code that imports the client l
   `description` (heavy). taskstore stays the authority; core keeps no copy beyond its log and index.
 - **Who**: no `owners: 2`, as with its pages, so household owners only. Its audience is `{owners: true}`, and the
   provider answers no rows to any other viewer, deciding before it pages.
-- **No change log yet**: core bridges it, with a snapshot as the core viewer on each pull (measured on the real
-  store: 2,126 tasks, five pages of 500, about 0.7 s). Past 10,000 tasks a snapshot is partial and deletes nothing, so
-  a `changes` verb is owed before then.
+- **Transactional source log** (part 11): `loom-tasks collections changes --json` answers revisions committed in
+  the same SQLite write as task state, with random transaction identities and restore-cursor proof. It includes
+  dependent records whose blocker/parent/ready state changed, and deletes. Pages hold at most 1,000 changes and
+  3 MiB of serialized UTF-8 changes (below core's 4 MiB offer limit), ending on transaction boundaries when possible.
+  Core advances a separate paging cursor while holding a partial transaction and commits it whole; a transaction
+  larger than its round budget finishes before yielding. Durable epoch/revision/transaction comparisons under the
+  write lock fence a suspended listener even after a successor's lease expires. Heavy descriptions and comment text
+  never enter the source log. `updated` remains newest activity, independent of source revision. Existing stores
+  start at a new random origin, with a snapshot for initial state; subsequent pulls no longer scan every task.
+  Initial cursor and snapshot index seed commit together after the snapshot succeeds, so lost initialization can
+  retry unchanged records, and an old snapshot cannot resurrect a successor’s deleted row.
+  History is retained without pruning in this slice. A single change larger than the byte budget is unavailable.
 - **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
   store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.
 - **The queues are a filter** (tasks/task 1.1): `ready` (the `taskstore ready` rule: open, not an epic, no open blocker),
@@ -1134,3 +1143,41 @@ bridge, index or log. Subscriptions retain only hashes of sent rows for comparis
 cursors on non-live requests. This provider is the foundation; Comms' existing routes remain its client until their
 message-page consumer migration lands. Full snapshot cost still grows with retained message identities; an incremental
 metadata journal is a future optimization, without changing this contract.
+
+### Persistent query transport
+
+A provider may declare `loom.collections.query_serve: true`. Core then runs the
+installed `query` argv with `--serve` appended and keeps the process available
+for further batches. The one-shot query remains the fallback when the bounded
+server pool is busy or cooling down after a failed server.
+
+The transport is the piece API server's framing: one line
+`{"id": n, "grant": "<per-call store grant or null>", "request": <query batch>}`
+and one reply line `{"id": n, "exit": 0, "stdout": "<query's JSON lines>"}`.
+A nonzero exit fails that call. Each batch carries its own viewer, queries,
+cursors and time; there is no answer reuse. The store grant is carried only
+in the request, never inherited by the process or retained for later calls.
+Providers must not retain viewer-specific authorization state between calls.
+
+Core still checks the installed declaration, grants and query before dispatch,
+and parses/admit-checks every returned row using the ordinary query path.
+The persistent answer is bounded to 4 MB of encoded stdout; larger batches
+fail unavailable. Server framing overhead is bounded separately. Requests
+retain the collection pool and 15-second deadline. At most two servers run
+per command, binary version and environment; a version or settings change
+retires old idle servers. Idle servers end after one minute and are recycled
+after ten minutes. API and query commands never share a process.
+
+### As built: the project directory (t-2029)
+
+`loom/project@^1` publishes the same live project directory as `project_list`: slug, name, status, links,
+activity, updated/synthesis times and stale/unverified/memory counts. Identity includes the owning agent
+(`<agent>:<slug>`), so two agents' projects with the same slug never replace each other. Archived projects
+leave the directory; restoring one brings back the same identity. The provider restricts the agent set to
+household owners and core before filtering, paging and totals; agent owners and agent tokens get no rows,
+matching the Projects app. Each row also carries `owners: true` for core's independent audience check. It reads core stores directly and
+runs no piece commands. Counts depending on the clock use the batch's observation time.
+
+This is directory coverage only. Project waiting counts, piece feeds, cards and hub consumers have not
+moved to it yet. Their piece-owned membership and status rules must remain authoritative; do not derive
+them by copying those rules into core or by adding per-request piece commands.

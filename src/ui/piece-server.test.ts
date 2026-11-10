@@ -41,6 +41,19 @@ describe('piece API servers (t-2065)', () => {
     expect(pieceServerCount(p)).toBe(1);
   });
 
+  it('API and collection commands keep separate processes and grants', async () => {
+    const p = bin();
+    const env = { PATH: process.env.PATH };
+    const api = body(await serveCall(p, 'v1', env, 'api-grant', { path: 'api' }, opts));
+    const query = body(await serveCall(p, 'v1', env, 'query-grant', { path: 'query' }, { ...opts, argv: ['collections', 'query', '--serve'] }));
+    expect(query.pid).not.toBe(api.pid);
+    expect(query.grant).toBe('query-grant');
+    const api2 = body(await serveCall(p, 'v1', env, undefined, { path: 'api' }, opts));
+    expect(api2.pid).toBe(api.pid);
+    expect(api2.grant).toBeNull();
+    expect(pieceServerCount(p)).toBe(2);
+  });
+
   it('a non-zero exit is the call\'s, as a one-shot\'s, and the server stays', async () => {
     const p = bin();
     const r = await serveCall(p, 'v1', { PATH: process.env.PATH }, undefined, { path: 'fail' }, opts);

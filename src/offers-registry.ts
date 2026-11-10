@@ -118,7 +118,12 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   const dir = managedBinDir(env);
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
   const limits = { ...OFFER_LIMITS[opts.kind ?? 'sections'], ...opts.limits };
+  // Only the installed query declaration opts in; changes/search never inherit query's transport.
+  const declared = rec.loom.collections;
+  const serve = opts.kind === 'collections' && declared?.query_serve === true && !opts.args?.length
+    && JSON.stringify(argv) === JSON.stringify(declared.query);
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
+    serve: serve ? [...rest, '--serve'] : undefined,
     stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller, onLine: opts.onLine,
   });
   if (!r.ok) {

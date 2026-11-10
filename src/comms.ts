@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { Decrypter } from 'age-encryption';
 import { findProgram } from './programs.js';
+import { isSqliteBusy } from './lock-gate.js';
 import { agentDir, loadHousehold, type Household, type Member } from './household.js';
 import { withHouseholdDb } from './household-store.js';
 import { dropRefs, noteRefs } from './comms-work.js';
@@ -1296,7 +1297,8 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
           return { ok: true, state: !clock.rollback && expiresAt !== undefined && clock.now >= expiresAt ? 'not-accepted' : 'unresolved' };
         }).immediate());
       } catch (error) {
-        if ((error as { code?: string }).code === 'SQLITE_BUSY') return { ok: true, state: 'unresolved' };
+        // Any busy code, a WAL recovery's too: the runtime asks again.
+        if (isSqliteBusy(error)) return { ok: true, state: 'unresolved' };
         throw error;
       }
     }
