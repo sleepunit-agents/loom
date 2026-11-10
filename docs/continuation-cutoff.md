@@ -1,5 +1,8 @@
 # Staged continuation cutoff enforcement
 
+> **Shipped state (2026-11-10, t-2004):** issuance is on, with the runtime service's `LOOM_RUNTIME_CONTINUATION_DAYS` (1-13, default 7); finished records are collected 7 days after their deadline; reviewed by three rounds plus a fresh independent read. Statements below that issuance is held or nothing is collected are dated checkpoints, superseded. Current behaviour: loom-box `docs/continuation-outbox.md`, "Lifetime policy and collection".
+
+
 Companion to draft loom-box#148 and loom-clock#24, tracked by t-2004. This
 is core enforcement only. No production issuance policy, collector, installation,
 or end-to-end cutoff guarantee is enabled by this change.
