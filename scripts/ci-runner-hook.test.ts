@@ -20,11 +20,12 @@ function run(event: string, payload: unknown, opts: { repo?: string; queue?: unk
   chmodSync(join(dir, 'curl'), 0o755);
   if (opts.token === false) rmSync(join(dir, 'token'), { force: true });
   else writeFileSync(join(dir, 'token'), 'not-a-token');
-  return spawnSync('bash', [HOOK], {
+  // The hook takes curl from /usr/bin only; a copy of it takes the stand-in.
+  writeFileSync(join(dir, 'hook.sh'), readFileSync(HOOK, 'utf8').replace(/^CURL=.*$/m, `CURL=${join(dir, 'curl')}`));
+  return spawnSync('bash', [join(dir, 'hook.sh')], {
     encoding: 'utf8',
     env: {
       PATH: process.env.PATH,
-      LOOM_RUNNER_HOOK_CURL: join(dir, 'curl'),
       GITHUB_REPOSITORY: opts.repo ?? 'sleepunit-agents/loom',
       GITHUB_EVENT_NAME: event,
       GITHUB_EVENT_PATH: join(dir, 'event.json'),
@@ -41,7 +42,7 @@ const group = (base = 'refs/heads/main', head_sha = SHA) => ({ merge_group: { ba
 // Queue entries in order; the last one's head commit is SHA unless said otherwise.
 const queue = (entries: Array<{ number: number; isCrossRepository: boolean }>, totalCount = entries.length, last = SHA) => ({
   data: { repository: { mergeQueue: { entries: { totalCount, nodes: entries.map((pullRequest, i) => ({
-    headCommit: { oid: i === entries.length - 1 ? last : String(i).repeat(40) }, pullRequest,
+    position: i + 1, headCommit: { oid: i === entries.length - 1 ? last : String(i).repeat(40) }, pullRequest,
   })) } } } },
 });
 
@@ -87,6 +88,25 @@ describe('ci-runner-hook.sh', () => {
     expect(run('merge_group', group(), { queue: behind }).status).toBe(0);
   });
 
+  it("refuses a group whose commit it shares with a fork's pull request merged alongside", () => {
+    const shared = queue([{ number: 1, isCrossRepository: false }, { number: 2, isCrossRepository: true }]);
+    shared.data.repository.mergeQueue.entries.nodes[0].headCommit.oid = SHA;
+    expect(run('merge_group', group(), { queue: shared }).status).not.toBe(0);
+  });
+
+  it('judges by queue position, not by the order the answer lists entries in', () => {
+    const shuffled = queue([{ number: 2, isCrossRepository: false }, { number: 1, isCrossRepository: true }]);
+    const [ours, fork] = shuffled.data.repository.mergeQueue.entries.nodes;
+    Object.assign(ours, { position: 2, headCommit: { oid: SHA } });
+    Object.assign(fork, { position: 1, headCommit: { oid: 'd'.repeat(40) } });
+    expect(run('merge_group', group(), { queue: shuffled }).status).not.toBe(0);
+  });
+
+  it('takes curl only from /usr/bin', () => {
+    expect(readFileSync(HOOK, 'utf8')).toMatch(/^CURL=\/usr\/bin\/curl$/m);
+    expect(readFileSync(HOOK, 'utf8')).toMatch(/^PATH=\/usr\/bin:\/bin$/m);
+  });
+
   it('sends the token on stdin, not in arguments', () => {
     expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }]) }).status).toBe(0);
     expect(readFileSync(join(dir, 'stdin'), 'utf8')).toContain('not-a-token');
@@ -106,6 +126,9 @@ describe('ci-runner-hook.sh', () => {
     expect(run('merge_group', group(), { queue: queue([{ number: 1, isCrossRepository: false }], 101) }).status).not.toBe(0);
     expect(run('merge_group', group(), { queue: queue([]), token: false }).status).not.toBe(0);
     expect(run('merge_group', group(), { queue: { data: { repository: { mergeQueue: { entries: { totalCount: 0, nodes: null } } } } } }).status).not.toBe(0);
+    const noCount = queue([{ number: 1, isCrossRepository: false }]) as { data: { repository: { mergeQueue: { entries: { totalCount?: number } } } } };
+    delete noCount.data.repository.mergeQueue.entries.totalCount;
+    expect(run('merge_group', group(), { queue: noCount }).status).not.toBe(0);
     const nullPr = queue([{ number: 1, isCrossRepository: false }]);
     (nullPr.data.repository.mergeQueue.entries.nodes[0] as { pullRequest: unknown }).pullRequest = null;
     expect(run('merge_group', group(), { queue: nullPr }).status).not.toBe(0);

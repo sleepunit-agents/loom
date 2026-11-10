@@ -15,10 +15,11 @@
 # The merge queue is only in GitHub's GraphQL API, which needs a token: LOOM_RUNNER_QUEUE_TOKEN_FILE names a
 # file holding a read-only token (it needs no permissions beyond reading this public repository).
 set -euo pipefail
-# Tools from the system, never from a PATH a job could have touched. The test points curl at a stand-in.
+# Tools from the system, never from a PATH or environment a job could have touched. (The test runs a copy
+# with CURL rewritten to a stand-in.)
 PATH=/usr/bin:/bin
 JQ=/usr/bin/jq
-CURL=${LOOM_RUNNER_HOOK_CURL:-/usr/bin/curl}
+CURL=/usr/bin/curl
 
 REPO=sleepunit-agents/loom
 refuse() { echo "::error::loom runner refuses this job: $*"; exit 1; }
@@ -38,7 +39,8 @@ case "${GITHUB_EVENT_NAME:-}" in
     exit 0 ;;
   merge_group)
     # Only main has a merge queue. A group holds the code of its own entry and every entry ahead of it, so
-    # those must all be this repository's; entries behind it are not in it. The group must still be queued
+    # those must all be this repository's; entries behind it are not in it. Entries merged together share a
+    # head commit, so the group's place is the furthest-back entry with its commit, by queue position. The group must still be queued
     # (its head commit is an entry's): one built with a fork's pull request that has since left the queue
     # is refused too. A fork's pull request can't merge through the queue while our runners are on.
     base=$("$JQ" -r '.merge_group.base_ref // ""' "$event")
@@ -47,17 +49,19 @@ case "${GITHUB_EVENT_NAME:-}" in
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse "a merge-queue group with no head commit"
     token_file=${LOOM_RUNNER_QUEUE_TOKEN_FILE:-}
     [ -n "$token_file" ] && [ -r "$token_file" ] || refuse "no token to read the merge queue"
-    query='{"query":"{ repository(owner: \"sleepunit-agents\", name: \"loom\") { mergeQueue(branch: \"main\") { entries(first: 100) { totalCount nodes { headCommit { oid } pullRequest { number isCrossRepository } } } } } }"}'
+    query='{"query":"{ repository(owner: \"sleepunit-agents\", name: \"loom\") { mergeQueue(branch: \"main\") { entries(first: 100) { totalCount nodes { position headCommit { oid } pullRequest { number isCrossRepository } } } } } }"}'
     # The token goes to curl on stdin, not in its arguments, where any process could read it.
     answer=$(printf 'header = "Authorization: bearer %s"\n' "$(< "$token_file")" \
       | "$CURL" -fsS --max-time 20 -K - -H 'Content-Type: application/json' -d "$query" https://api.github.com/graphql) \
       || refuse "could not read the merge queue"
     verdict=$("$JQ" -r --arg sha "$sha" '
       .data.repository.mergeQueue.entries as $e
-      | if ($e | type) != "object" or ($e.nodes | type) != "array" or $e.totalCount > ($e.nodes | length) then "unreadable"
-        else ([$e.nodes | to_entries[] | select(.value.headCommit.oid == $sha) | .key] | first) as $at
+      | if ($e | type) != "object" or ($e.nodes | type) != "array" or ($e.totalCount | type) != "number"
+          or $e.totalCount > ($e.nodes | length) then "unreadable"
+        else ([$e.nodes[] | select(.headCommit.oid == $sha) | .position | numbers] | max) as $at
         | if $at == null then "gone"
-          else ([$e.nodes[0:$at + 1][] | select(.pullRequest.isCrossRepository != false) | .pullRequest.number // "?"] | join(" "))
+          else ([$e.nodes[] | select((.position | type) != "number" or .position <= $at)
+                 | select(.pullRequest.isCrossRepository != false) | .pullRequest.number // "?"] | join(" "))
           end
         end' <<<"$answer") || refuse "could not read the merge queue"
     [ "$verdict" != unreadable ] || refuse "could not read the whole merge queue"
