@@ -187,6 +187,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       };
       process.on('SIGTERM', shutdown);
       process.on('SIGINT', shutdown);
+      process.on('disconnect', shutdown);
     });
     return 0;
   }
