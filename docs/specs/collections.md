@@ -148,7 +148,8 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
 
 - **`query`**: an argv run through the manifest's runner. It gets **one viewer**, the current time, and up to 32
   queries for that viewer on stdin, so a window opening ten views costs one subprocess per provider, not ten. A
-  batch never mixes viewers.
+  batch never mixes viewers. **Its answer says what it read at**: `{rev, txn}` for each domain it read, taken in the
+  same read transaction as the rows, so rows and revision are one consistent read.
 - **`changes`**: an argv that gets each domain's last revision and answers the whole records committed after it,
   in commit order, each **as of its own revision** (the next section).
 - **`search`**: optional. It gets one viewer, the field classes that viewer may see, and a query text, and answers
@@ -248,7 +249,10 @@ The answer, per query:
   recount a number. So a provider's `aggregates` and `coverage.total` go **to household owners only**, unless the
   type declares `scoped_counts: true`, which it may do only once its conformance run passes the per-viewer count
   fixtures (an agent owner's count excludes other agents' records; a member's excludes others' threads). Without
-  it, other viewers get `total` absent and no aggregates, and the window says "20" rather than a number it can't
+  it, other viewers get `total` absent and no aggregates from the provider. **Where a subscription's coverage is
+  complete, core counts the keys it has delivered to it itself** (they've all passed core's checks), so an agent
+  owner's badge still counts their own ([owners.md](owners.md): "Badges count your own"). The attention types are
+  small and complete, so t-2025 relies on this; a count over a partial list says "20" rather than a number it can't
   trust.
 - **`at`** is the point on the window's stream this answer is consistent with: frames after it apply on top of it.
 - **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `too-big`, `denied` (the viewer
@@ -273,7 +277,8 @@ A record is visible to a viewer when **every one** of these holds:
 2. **The audience admits them** (below). Core checks this on every row of every answer and every change, whatever the
    provider said: a provider that ignores who's asking leaks no rows.
 3. **The agent rule admits them.** For an owner of some agents, core admits only records whose `agent` field names
-   one of their agents; a record with no agent, or a type with no `agent` field, is household owners' only. This is
+   one of their agents. A record with no agent, or of a type with no `agent` field, is household owners' only, except
+   through a `members` term that names that member: their own read markers, prefs and session list are theirs. This is
    today's `forOwner` filter (handler.ts), kept in core, and it applies on top of every audience term, `members`
    included: a member who stops owning an agent stops seeing its threads at once, without waiting for any provider.
 4. **The piece allows agent owners at all**: a provider without `owners: 2` answers household owners only.
@@ -392,7 +397,9 @@ A provider never pushes records to core. Core **pulls** them with the provider's
   the domain's open subscriptions' queries **as the core viewer** (batched, at most once per 1.5 s, the existing
   `GAP_MS`), diffs the whole answers, and logs the differences under an epoch and sequence of its own; each
   subscriber then gets them through the usual checks. A diff is never computed from one viewer's trimmed answer, so
-  one viewer losing access can't become a delete for everyone. When the provider gains a log, its first real answer
+  one viewer losing access can't become a delete for everyone. **A row missing from a re-run is a delete only if
+  that answer was complete, or a lookup by key confirms the record is gone**; otherwise it just fell off a limited
+  page, and that one subscription gets a leave. When the provider gains a log, its first real answer
   starts a new epoch, and the domain resets once.
 - **When core pulls**: whenever it's nudged, and every 15 s for every domain that has an open subscription. Nudges
   coalesce: at most one pull per domain per `GAP_MS`, however many arrive. One listener at a time holds a domain's
@@ -406,8 +413,8 @@ A provider never pushes records to core. Core **pulls** them with the provider's
 - **Today's 15 s manifest round stays**, per scope, for every piece whose pages or manifest fields are still read
   (it is what sends `page` frames, below), and shrinks as each piece's fields move.
 - **Expiry**: a record with a natural end (an ask that expires, a reading's `observedAt` plus its lifetime) carries
-  `expires`, which core keeps in its index. When it passes, core logs a delete **at the head of its own sequence
-  for the domain**, and only if the record is still at the revision that carried that `expires`; a renewal (a later
+  `expires`, which core keeps in its index. When it passes, core logs a delete as a row of its own (next in its row
+  sequence), and only if the record is still at the revision that carried that `expires`; a renewal (a later
   change with a new `expires`) wins because it's newer. Providers get the current time with every `query`, and must
   not answer expired rows or count them; core drops any that slip through, and clients hide rows past `expires`
   themselves in case a frame is late.
@@ -418,9 +425,11 @@ A provider never pushes records to core. Core **pulls** them with the provider's
 ### Core's change log and index
 
 - loom runs several HTTP listeners (LAN, tailnet, localhost) over one `$LOOM_HOME`. So the log is **a table in
-  `household.db`**: domain, epoch, revision, transaction, key, audience, agent, the record's kept fields, time. It is
-  unique on `(domain, epoch, rev)` and written insert-or-ignore, so a pull that overlaps another writes nothing
-  twice. Whichever listener pulls writes it once; every listener learns of new rows from a tick file and reads them.
+  `household.db`**: a row sequence core assigns, domain, epoch, revision, transaction, key, audience, agent, the
+  record's kept fields, time. Rows are ordered by core's row sequence. A provider's rows are unique on
+  `(domain, epoch, rev)` and written insert-or-ignore, so a pull that overlaps another writes nothing twice; core's
+  own rows (expiry deletes, bridge diffs) have no provider revision and are keyed by the row sequence alone, so they
+  never collide with a provider's. Whichever listener pulls writes it once; every listener learns of new rows from a tick file and reads them.
 - It keeps each domain's last 1000 changes or 10 minutes, whichever is more, and never more than 5000. A window
   further behind gets `reset: gap`.
 - **Beside the log, core keeps an index of current state per key**, not pruned: revision, audience, agent,
@@ -462,8 +471,10 @@ data: { "seq": 1210, "piece": "clock" }
 - **The stream check is `/act`'s**: same origin (`Sec-Fetch-Site` or `Origin`) and the session, so a page on another
   port of the same host can't open streams in a member's name. A stream holds at most 64 subscriptions. Core
   refuses a query naming a stream that isn't its own session's.
-- **Handover without a gap**: before answering a subscribing query, core pulls the domain until its log has caught
-  up with the snapshot's revision, so the answer and the log agree. The answer's `at` is the stream `seq` it is
+- **Handover without a gap**: the provider's answer says the `{rev, txn}` it read at. Before answering, core pulls
+  the domain until its log has reached that `rev`, and checks that its log has that `txn` there; a mismatch means the
+  store's history changed, and core resets the domain (new epoch) and asks again rather than stamp new history with
+  an old epoch. Only then are the answer and the log known to agree. The answer's `at` is the stream `seq` it is
   consistent with; core sends that subscription's later changes as frames after `at`. The answer and the stream are
   separate HTTP exchanges, so a frame can arrive first: **the client holds frames for a subscription it has asked
   for until that answer arrives**, then applies those with `seq` above `at`. When a later page extends a
@@ -549,7 +560,10 @@ Search results aren't a filter over one collection: each search is its own resul
 - **Core asks each provider's `search` verb** as that viewer (core can't index a piece's store), with the field
   classes the viewer may see, plus its own, and merges by score. A provider without `search` isn't searched.
 - **Search matches only fields declared `search: true` of a class the viewer may see**, so a hit can't reveal a
-  hidden field ("never on a hidden field" applies to search as to `where`). Snippets come only from those fields,
+  hidden field ("never on a hidden field" applies to search as to `where`). Core can't re-check *why* a provider
+  matched, so this rests on the provider: like counts, a provider's search answers go to household owners only
+  unless the type declares `scoped_search: true`, which it may do only once its conformance run passes the
+  hidden-field search fixtures. Snippets come only from those fields,
   and each hit is checked against its target's audience and the agent rule like any row. Launcher suggestions work
   the same way.
 
@@ -741,8 +755,12 @@ The conformance suite (t-2026) runs against core's provider and every installed 
   with no agent never reaches an agent owner; a provider without `owners: 2` answers only household owners; a
   member's Comms thread never reaches another owner of the same agent, and stops reaching its member the moment
   they stop owning its agent; `audience` is never sent to anyone but household owners.
-- **Counts**: without `scoped_counts`, no viewer but a household owner gets a total or an aggregate; with it, an
-  agent owner's counts exclude other agents' records, and a member's exclude others' threads.
+- **Counts**: without `scoped_counts`, no viewer but a household owner gets a provider's total or aggregate; with it,
+  an agent owner's counts exclude other agents' records, and a member's exclude others' threads; over a complete
+  subscription, an agent owner's badge counts exactly their own.
+- **Search**: without `scoped_search`, no viewer but a household owner gets a provider's search results; with it, a
+  match only in a field the viewer can't see returns nothing.
+- **Own records**: an owner of some agents reads their own read markers, prefs and sessions, and no one else's.
 - **No leaks by key or number**: a viewer outside a record's audience never receives its key, including when its
   audience narrows or core has no index row for it; no answer or frame carries a provider revision, an epoch or a
   transaction id.
@@ -757,7 +775,9 @@ The conformance suite (t-2026) runs against core's provider and every installed 
   change, and answers the same for a domain that doesn't exist; a store restored to an earlier copy and then
   written past core's cursor is caught on the next pull (its `txn` at the cursor differs), and every subscription in
   the domain resets; no two changes share a `txn`; two listeners pulling at once mint one epoch.
-- **Handover**: a change committed between the query and its answer is delivered exactly once; a frame that arrives
+- **Handover**: a provider's rows and the `{rev, txn}` it answers come from one consistent read; an answer read from
+  a restored store's new history resets the domain instead of being stamped with the old epoch; a change committed
+  between the query and its answer is delivered exactly once; a frame that arrives
   before its answer is held, then applied; a row deleted between page 1 and page 2 of one subscription never stays
   as a ghost.
 - **Windows and membership**: a record that leaves a filter, or moves past the boundary, gets a leave for that
@@ -769,7 +789,9 @@ The conformance suite (t-2026) runs against core's provider and every installed 
   gets a new epoch and every subscription in its domains resets.
 - **Expiry**: an expired record leaves lists and aggregates together, with no provider run; a renewal after the
   expiry delete is logged brings it back.
-- **Invalidate bridge**: one viewer losing access to a record in an invalidated domain never removes it for another.
+- **Invalidate bridge**: one viewer losing access to a record in an invalidated domain never removes it for another;
+  a record pushed off a limited page is a leave for that subscription, not a delete.
+- **Expiry rows**: an expiry delete and a provider's next change never collide in the log.
 - **Comms words**: no message text is found in the change log, the index or any held change, and none survives in
   memory past the request that read it.
 - **Provider failure**: one provider timing out leaves other queries in the batch answered, and its own views marked
