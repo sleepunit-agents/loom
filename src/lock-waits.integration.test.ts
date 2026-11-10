@@ -218,6 +218,19 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     }, 30_000);
   }
 
+  it('a continuation\'s reconciliation under a held household.db still finds its receipt', async () => {
+    const t = await open();
+    const q = { op: 'post', agent: 'art', place: t.id, text: 'kept before the lock', expiresAt: Date.now() + 60_000, ref: `continuation-${'d'.repeat(64)}` };
+    const first = await api('comms/adapter', q);
+    expect(first.status).toBe(200);
+    const { id } = await first.json() as { id: string };
+    const held = await hold(join(h.home, HOUSEHOLD_DB), 'exclusive');
+    try {
+      const r = await api('comms/adapter', { ...q, op: 'reconcile' });
+      expect(await r.json()).toMatchObject({ ok: true, state: 'delivered', id });
+    } finally { await held.release(); }
+  }, 20_000);
+
   it('never makes a stranger wait for a lock: refused at once, so it can\'t crowd the line', async () => {
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {

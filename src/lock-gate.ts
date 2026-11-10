@@ -7,19 +7,19 @@
  * written) and each lock file is free, and only then runs its synchronous code, which keeps its own timeouts for the
  * rare race. So contention costs the request time, never the worker, and never fails it: making contended calls fail
  * at once (#776, #783) broke Comms on its first deploy, as WAL recovery answered busy too. A spent budget fails
- * nothing either: the caller goes on to its old synchronous wait.
+ * nothing either: a request goes on to its old synchronous wait (the Comms live tick, to its next poll).
  *
  * Waiters for the same locks queue in one line, first come first served. While the line has waiters, one probe
  * every few ms looks; while the locks are free, it lets them through one at a time, each one's synchronous section
  * done (and other requests answered) before the next. So a gap of a few ms between another process's holds drains
  * the line, where waiters polling on their own each missed it and then all went at once when their budgets ran out.
  *
- * Each database is probed with no busy wait: a read for readers, BEGIN IMMEDIATE then ROLLBACK for writers, on a
- * connection that lives only while its line has waiters. Never one kept beyond that: a file deleted and made again
- * (Comms' erase, a test's fresh store) can reuse its inode, and SQLite's per-process lock table would join the kept
- * connection to the new file (disk I/O errors on the next real write).
+ * Each database is probed with no busy wait, on a connection opened for that one look and closed at once: a read for
+ * readers, BEGIN IMMEDIATE then ROLLBACK for writers. Never one kept: a file deleted and made again (Comms' erase, a
+ * test's fresh store) can reuse its inode, and SQLite's per-process lock table would join a kept connection to the
+ * new file (disk I/O errors on the next real write), or its close remove the new file's WAL.
  */
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { setImmediate as nextTurn, setTimeout as sleep } from 'node:timers/promises';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 
@@ -47,49 +47,31 @@ export interface LockWait {
   budgetMs?: number;
 }
 
-/** Probe connections by path, each with the file it opened. */
-type Probes = Map<string, { db: Database; dev: number; ino: number }>;
-
-function drop(probes: Probes, path: string): void {
-  const p = probes.get(path);
-  probes.delete(path);
-  try { p?.db.close(); } catch { /* already closed */ }
-}
-
-function dropAll(probes: Probes): void {
-  for (const path of [...probes.keys()]) drop(probes, path);
-}
-
 /** Whether `path` can be read (or written) right now. Anything but busy is the real code's to meet and report. */
-function free(probes: Probes, path: string, write: boolean): boolean {
-  let st;
-  try { st = statSync(path); } catch { drop(probes, path); return true; }
-  let p = probes.get(path);
-  if (p && (p.dev !== st.dev || p.ino !== st.ino)) { drop(probes, path); p = undefined; }
+function free(path: string, write: boolean): boolean {
+  if (!existsSync(path)) return true;
+  let db: Database | undefined;
   try {
-    if (!p) {
-      p = { db: new BetterSqlite3(path, { fileMustExist: true, timeout: 0 }), dev: st.dev, ino: st.ino };
-      probes.set(path, p);
-    }
+    db = new BetterSqlite3(path, { fileMustExist: true, timeout: 0 });
     if (write) {
-      p.db.exec('BEGIN IMMEDIATE');
-      p.db.exec('ROLLBACK');
+      db.exec('BEGIN IMMEDIATE');
+      db.exec('ROLLBACK');
     } else {
-      p.db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+      db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
     }
     return true;
   } catch (error) {
-    try { if (p?.db.inTransaction) p.db.exec('ROLLBACK'); } catch { /* nothing begun */ }
-    if (isSqliteBusy(error)) return false;
-    drop(probes, path);
-    return true;
+    try { if (db?.inTransaction) db.exec('ROLLBACK'); } catch { /* nothing begun */ }
+    return !isSqliteBusy(error);
+  } finally {
+    try { db?.close(); } catch { /* already closed */ }
   }
 }
 
-function allFree(probes: Probes, w: LockWait): boolean {
+function allFree(w: LockWait): boolean {
   return (w.files ?? []).every((f) => !f.held())
-    && (w.write ?? []).every((path) => free(probes, path, true))
-    && (w.read ?? []).every((path) => free(probes, path, false));
+    && (w.write ?? []).every((path) => free(path, true))
+    && (w.read ?? []).every((path) => free(path, false));
 }
 
 interface Waiter { deadline: number; go: (free: boolean) => void }
@@ -102,10 +84,9 @@ const lineKey = (w: LockWait): string => JSON.stringify([
 
 /** One line's probe: lets its waiters through while the locks are free, and each whose budget ran out, one at a time. */
 async function pump(key: string, line: Line): Promise<void> {
-  const probes: Probes = new Map();
   try {
     while (line.waiters.length) {
-      if (allFree(probes, line.w)) line.waiters.shift()!.go(true);
+      if (allFree(line.w)) line.waiters.shift()!.go(true);
       else {
         const late = line.waiters.findIndex((x) => performance.now() >= x.deadline);
         if (late < 0) { await sleep(PROBE_EVERY_MS); continue; }
@@ -115,7 +96,6 @@ async function pump(key: string, line: Line): Promise<void> {
       await nextTurn();
     }
   } finally {
-    dropAll(probes);
     lines.delete(key);
   }
 }
@@ -126,10 +106,7 @@ async function pump(key: string, line: Line): Promise<void> {
  */
 export function waitForLocks(w: LockWait): Promise<boolean> {
   const key = lineKey(w);
-  if (!lines.has(key)) {
-    const probes: Probes = new Map();
-    try { if (allFree(probes, w)) return Promise.resolve(true); } finally { dropAll(probes); }
-  }
+  if (!lines.has(key) && allFree(w)) return Promise.resolve(true);
   return new Promise((go) => {
     const deadline = performance.now() + (w.budgetMs ?? READ_WAIT_MS);
     const line = lines.get(key);

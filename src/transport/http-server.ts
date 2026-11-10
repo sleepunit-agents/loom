@@ -82,7 +82,7 @@ import { PersonMergeError } from '../backends/people-merge.js';
 import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
-import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, householdLock, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { join } from 'node:path';
 import { resolveSqliteDbPath } from '../config.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
@@ -866,12 +866,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         : subpath === 'conversations/house' ? [householdDb(h)]
         : subpath === 'comms/adapter' || subpath === 'comms/activity' ? commsDbs(h)
         : [];
-      // A continuation's reconciliation answers a store it can't take as unresolved (comms.ts): the runtime asks again.
-      const b = body as { op?: unknown; ref?: unknown };
-      const reconcile = subpath === 'comms/adapter' && b.op === 'reconcile' && agent !== undefined
-        && typeof b.ref === 'string' && /^continuation-[0-9a-f]{64}$/.test(b.ref);
-      if (reconcile && !await waitForLocks({ write })) return sendJson(res, 200, { ok: true, state: 'unresolved' });
-      if (write.length) await waitForLocks({ write, budgetMs: WRITE_WAIT_MS });
+      // A reconciliation only reads household.db and writes comms.db, and answers a store it can't take as unresolved
+      // itself (comms.ts): it waits the read budget, then asks as before.
+      if (subpath === 'comms/adapter' && (body as { op?: unknown }).op === 'reconcile') await waitForLocks({ read: [householdDb(h)], write: [join(h.home, COMMS_DB)] });
+      else if (write.length) await waitForLocks({ write, budgetMs: WRITE_WAIT_MS });
     }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
     if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
@@ -1133,11 +1131,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
 
       // A tool call or CLI verb, once its caller is known, reads its agent's memories first: a recovery or an
-      // exclusive lock there is waited out here (lock-gate.ts), and household.json's lock, which a change takes. Not
-      // its writes: a read must not queue behind every writer. The page waits in its own handler (ui/handler.ts).
+      // exclusive lock there is waited out here (lock-gate.ts). Not its writes: a read must not queue behind every
+      // writer. The page waits in its own handler (ui/handler.ts).
       if (req.method === 'POST') {
         const h = household ? live!() : undefined;
-        await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])], files: h ? [householdLock(h.home)] : [] });
+        await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])] });
       }
 
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
