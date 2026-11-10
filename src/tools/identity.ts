@@ -108,6 +108,8 @@ export async function loadIdentity(
   people?: readonly string[],
   /** Override the default context path — used in unit tests only. */
   _defaultPathForTest?: string,
+  /** Whose digests the tape carries (TapeOptions.onlyConversation): a house's, only the conversation it holds (t-2118). */
+  onlyConversation?: string | null,
 ): Promise<string> {
   const parts: string[] = [];
   const effectiveClient = client ?? process.env.LOOM_CLIENT;
@@ -164,7 +166,7 @@ export async function loadIdentity(
   // after preferences so a fresh body knows what the last body did before it
   // reads anything ranked. Best-effort: no store / no episodes → no block.
   try {
-    const tape = tapeForContext(contextDir);
+    const tape = tapeForContext(contextDir, { onlyConversation });
     if (tape) {
       parts.push(
         '# Last 24h across bodies\n\n' +

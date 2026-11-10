@@ -59,7 +59,7 @@ export interface CliRequest {
   /** The body for verbs that read one (remember, update). */
   stdin?: string;
   /** Harness hints only; the server owns everything else in its env. */
-  env?: { LOOM_CLIENT?: string; LOOM_MODEL?: string };
+  env?: { LOOM_CLIENT?: string; LOOM_MODEL?: string; LOOM_HOUSE_HELD?: string };
 }
 
 /** POST /cli 200 response body. */
