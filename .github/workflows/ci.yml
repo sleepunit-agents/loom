@@ -44,9 +44,10 @@ jobs:
     # people with write access can start, or a pull request from a branch in this repository that a person
     # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
     # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
-    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, so this is
-    # not the lock: the runner group admits only this repository, and the runners' job-started hook
-    # refuses a fork's pull request, and any queue group while a fork's pull request is in the queue.
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, and its run
+    # is still this repository's, so neither this nor the runner group is the lock: the runners' own
+    # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
+    # contributor's run needs.
     runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
@@ -168,9 +169,10 @@ jobs:
     # people with write access can start, or a pull request from a branch in this repository that a person
     # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
     # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
-    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, so this is
-    # not the lock: the runner group admits only this repository, and the runners' job-started hook
-    # refuses a fork's pull request, and any queue group while a fork's pull request is in the queue.
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, and its run
+    # is still this repository's, so neither this nor the runner group is the lock: the runners' own
+    # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
+    # contributor's run needs.
     runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7

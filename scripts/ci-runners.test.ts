@@ -15,8 +15,9 @@ export const TRUSTED_RUNS_ON =
 // GitHub's own images by name: a self-hosted runner can carry any label, even ubuntu-lab.
 const HOSTED = /^(ubuntu-(latest|2\d\.04)(-arm)?|windows-(latest|20\d\d)|macos-(latest|\d+))$/;
 // Triggers a workflow with TRUSTED_RUNS_ON may have: each is started by someone with write access, or
-// (pull_request) carries the head repository that the expression checks.
-const TRUSTED_TRIGGERS = new Set(['push', 'pull_request', 'merge_group', 'workflow_dispatch']);
+// (pull_request) carries the head repository that the expression checks. The same three the runners'
+// hook (ci-runner-hook.sh) lets through.
+const TRUSTED_TRIGGERS = new Set(['push', 'pull_request', 'merge_group']);
 
 function triggers(text: string): string[] {
   const inline = text.match(/^on:[ \t]*([^\s#].*)$/m);
