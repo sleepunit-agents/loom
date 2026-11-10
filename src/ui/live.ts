@@ -22,8 +22,9 @@
  * household file) goes to household owners. And the pieces are asked one round at a time, at most every
  * TICK_MIN_MS however many apps open, with at most STREAMS_PER_SESSION streams per signed-in browser.
  */
+import { randomBytes } from 'node:crypto';
 import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
 
@@ -39,7 +40,11 @@ export const PIECES_TICK = 'pieces.tick';
 
 /** What an app's owner may see: every agent (`*`, a household owner), or theirs. */
 export type Sees = '*' | readonly string[];
-interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string }
+/**
+ * `id` is the stream's name (its `hello`, docs/specs/collections.md: queries name it to subscribe on it); `seq` counts
+ * the frames this stream was sent and nothing else; `behind` counts writes the socket hasn't drained.
+ */
+interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void }
 const clients = new Set<Client>();
 let watcher: FSWatcher | undefined;
 let ticking: NodeJS.Timeout | undefined;
@@ -80,11 +85,35 @@ function nudge(c: Client): void {
 }
 
 function send(c: Client, text: string): void {
-  try { c.res.write(text); } catch { drop(c); }
+  try {
+    if (!c.res.write(text)) {
+      if (!c.behind) c.res.once('drain', () => { c.behind = 0; });
+      c.behind++;
+    }
+  } catch { drop(c); }
+}
+
+/** A numbered frame on a stream (collections.md, "Core to window"): its seq is the stream's next. */
+function frame(c: Client, event: string, data: Record<string, unknown>): number {
+  c.seq++;
+  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`);
+  return c.seq;
+}
+
+/** What the collections runtime holds of a stream (src/collections/subs.ts, StreamPort). */
+export interface StreamHandle {
+  id: string;
+  session: string;
+  frame: (event: string, data: Record<string, unknown>) => number;
+  seq: () => number;
+  behind: () => number;
+  close: () => void;
 }
 
 function drop(c: Client): void {
+  if (!clients.has(c)) return;
   clients.delete(c);
+  c.onClose?.();
   clearTimeout(pending.get(c)); pending.delete(c);
   if (clients.size) return;
   watcher?.close(); watcher = undefined;
@@ -126,6 +155,12 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
       if (only && !before) continue;
       seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
+      // Piece pages stay piece-rendered: a `page` frame says which piece's pages moved (collections.md), beside the bare
+      // change that t-2032 retires.
+      if (before) for (const [path, print] of now) if (before.get(path) !== print) {
+        const piece = basename(path).replace(/^loom-/, '');
+        for (const c of clients) if (scopeOf(c.env) === scope) frame(c, 'page', { piece });
+      }
     }
   })().finally(() => {
     tickRunning = undefined;
@@ -153,12 +188,16 @@ function tickPaths(home: string): Set<string> | undefined {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; onClose: () => void } | undefined }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}) };
+  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
+  // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
+  const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
+  if (held) c.onClose = held.onClose;
+  res.write(`event: hello\ndata: ${JSON.stringify({ stream: c.id, scope: held?.scope ?? 0, seq: 0 })}\n\n`);
   whose = opts.place;
   clients.add(c);
   res.on('close', () => drop(c));

@@ -80,7 +80,8 @@ import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
-import { memberViewer } from '../collections/viewer.js';
+import { memberViewer, type Viewer } from '../collections/viewer.js';
+import { closeStream as subsClose, openStream as subsOpen } from '../collections/subs.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -368,7 +369,7 @@ function readCookie(req: IncomingMessage, name: string): string | undefined {
 
 /** Who's asking: a browser session (with its cookie, for the anti-forgery token), a script with the bearer, or nobody. */
 /** A signed-in request, and the member it is (docs/specs/owners.md): from its session's token, or the bearer's. */
-type Who = { kind: 'session'; cookie: string; member?: Member } | { kind: 'bearer'; member?: Member } | null;
+type Who = { kind: 'session'; cookie: string; member?: Member } | { kind: 'bearer'; member?: Member; digest: Buffer } | null;
 
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   if (!opts.auth.enabled) return null;
@@ -380,7 +381,7 @@ function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   const header = req.headers['authorization'];
   const presented = header?.replace(/^Bearer\s+/i, '').trim();
   const d = presented ? opts.auth.check(presented) : null;
-  if (d) return { kind: 'bearer', member: opts.auth.member?.(d) };
+  if (d) return { kind: 'bearer', member: opts.auth.member?.(d), digest: d };
   return null;
 }
 
@@ -1474,6 +1475,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const who = whoIs(req, opts);
+  // The household as it is, whoever's asking: a live stream reads it again for as long as it's open.
+  const householdNow = opts.household;
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
@@ -1526,7 +1529,32 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
       return a ? [a] : '*';
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}) });
+    // Who this stream is, read again before every frame (collections.md, "The viewer is checked on every frame"): the
+    // session (or the bearer) still live, and the member's agents as the household says now.
+    const auth = opts.auth;
+    const sessionOpts = opts;
+    const viewerNow = (): Viewer | null => {
+      const h = householdNow?.();
+      if (!h) return null;
+      let m: Member | undefined;
+      if (who.kind === 'session') {
+        if (!validSession(who.cookie, sessionOpts)) return null;
+        const sess = storeFor(sessionOpts).get(who.cookie);
+        m = sess ? auth.member?.(sess.secret) : undefined;
+      } else {
+        if (!auth.live(who.digest)) return null;
+        m = auth.member?.(who.digest);
+      }
+      const now = m ? memberOf(h, m.person) : undefined;
+      return now ? memberViewer(h, now) : null;
+    };
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}),
+      opened: (port) => {
+        const v = householdNow && full ? viewerNow() : null;
+        if (!v) return undefined;
+        subsOpen(() => householdNow!(), () => opts.env, { ...port, viewer: viewerNow }, v);
+        return { scope: 1, onClose: () => subsClose(home, port.id) };
+      } });
   }
 
   // Shared collections (docs/specs/collections.md, "Asking: queries"): a batch of bounded queries, answered for this
@@ -1538,7 +1566,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, COLLECTIONS_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
-    const r = await answerBatch({ env: opts.env, household: full }, memberViewer(full, who.member), body);
+    const r = await answerBatch({ env: opts.env, household: full, live: () => householdNow!(), page: { session: streamOwner(req, who) } }, memberViewer(full, who.member), body);
     return sendJson(res, r.status, r.body);
   }
 
