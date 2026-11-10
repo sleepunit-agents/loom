@@ -7,14 +7,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, agentsComms, firstLine, FIRST_LINE_MAX, markRead, openThread, postActivity, setArchived, threadFor, threadsOf, type AgentComms } from './comms.js';
+import { adapterCall, agentThreadRead, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadState, threadsOf, type AgentComms } from './comms.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 import { closeAllBackends } from './backends/index.js';
 
@@ -168,6 +168,106 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     expect(mark.unread).toBe(1);
     expect(mark.first).toEqual({ thread: t.id, text: 'the one reply' });
     markRead(h, threadFor(h, member('jonathan'), t.id), 99);
+  });
+
+  it('a spell of work starts only with a running step: finished steps or a sign of life alone after a turn ends never bring the working line back (t-2109)', async () => {
+    const t = thread('jonathan', 'mark', 'working check');
+    const tt = () => threadFor(h, member('jonathan'), t.id);
+    expect(stateOf(tt()).working).toBe(false);
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: new Date().toISOString() } });
+    expect(stateOf(tt()).working).toBe(false);
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [{ id: 'w-t', tool: 'text', summary: 'Done.', state: 'done', body: 'Done.' }] });
+    expect(stateOf(tt()).working).toBe(false);
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [{ id: 'w-1', tool: 'Bash', summary: 'Ran a command', state: 'running' }] });
+    expect(stateOf(tt()).working).toBe(true);
+    // A sign of life moves only forward.
+    const later = new Date().toISOString();
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: later } });
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: new Date(Date.parse(later) - 5000).toISOString() } });
+    expect(stateOf(tt()).alive_at).toBe(later);
+    // An open thread's stream hears a sign of life alone: the state it watches moves with it.
+    const before = threadState(h.home, t.id);
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-w', cards: [], alive: { at: new Date(Date.parse(later) + 30_000).toISOString(), tokens: 9000 } });
+    expect(threadState(h.home, t.id)).not.toBe(before);
+  });
+
+  it('keeps a step\'s further parts sealed with its label, its times and exit plain, and its body\'s sign of life on the thread (t-2109)', async () => {
+    const t = thread('jonathan', 'mark', 'parts check');
+    const card = { id: 'p1', at: '2026-11-10T10:00:00.000Z', tool: 'Bash', summary: 'Ran the tests', state: 'running', detail: 'npm test -- comms', limit: 120, parent: 'h:0123456789abcdef' };
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [card], alive: { at: new Date(Date.now() - 10 * 60_000).toISOString(), tokens: 4100 } }).added).toBe(1);
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, state: 'failed', result: 'exit 1: 3 passed, 1 failed', body: 'OUTPUT-NEVER-KEPT', exit: 1, end: '2026-11-10T10:00:09.000Z' }] }).updated).toBe(1);
+    // A step first heard of as done, with no end of its own, ended when core saw it end (not when it started).
+    const t0 = new Date(Date.now() - 5000).toISOString();
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'q1', at: t0, tool: 'Bash', summary: 'Ran ls', state: 'done' }] });
+    const q1 = (await messagesOf(h, process.env, threadFor(h, member('jonathan'), t.id))).find((m) => m.id === 'q1')!;
+    expect(Date.parse(String(q1.card?.t1)) - Date.parse(t0)).toBeGreaterThanOrEqual(4000);
+    // A diff from a file with CRLF line ends is taken.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd0', tool: 'Edit', summary: 'Edited b.ts', state: 'done', detail: 'b.ts', body: '+a\r\n+b' }] }).added).toBe(1);
+    // An edit's diff is kept, sealed, with its colours.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts', body: '\x1b[32m+ok\x1b[0m' }] }).added).toBe(1);
+    const tt = threadFor(h, member('jonathan'), t.id);
+    const step = (await messagesOf(h, process.env, tt)).find((m) => m.kind === 'card' && m.id === 'p1')!;
+    expect(step.card).toMatchObject({ tool: 'Bash', state: 'failed', exit: 1, limit: 120, parent: 'h:0123456789abcdef', t0: '2026-11-10T10:00:00.000Z', t1: '2026-11-10T10:00:09.000Z',
+      step: { detail: 'npm test -- comms', result: 'exit 1: 3 passed, 1 failed' } });
+    // A shell step's output is never kept (t-2109), in its words or anywhere in the store.
+    expect((step.card?.step as Record<string, unknown>).body).toBeUndefined();
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts', body: '\x1b[32m+ok\x1b[0m' });
+    // Its words are sealed: never plain in the store.
+    const raw = new BetterSqlite3(join(h.home, 'comms.db'), { readonly: true });
+    const row = raw.prepare("SELECT card_json, step FROM comms_messages WHERE id = 'p1'").get() as { card_json: string; step: Buffer };
+    raw.close();
+    expect(row.card_json).not.toContain('npm test');
+    expect(row.step.toString('latin1')).not.toContain('npm test');
+    // A sign of life from before this spell of work isn't this run's.
+    expect(stateOf(tt)).toMatchObject({ working: true });
+    expect(stateOf(tt).alive_at).toBeUndefined();
+    // A sign of life from the future isn't taken as this run's either.
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: new Date(Date.now() + 3_600_000).toISOString() } });
+    expect(stateOf(threadFor(h, member('jonathan'), t.id)).alive_at).toBeUndefined();
+    const fresh = new Date(Date.now() + 1000).toISOString();
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: fresh, tokens: 4100 } });
+    expect(stateOf(threadFor(h, member('jonathan'), t.id))).toMatchObject({ working: true, alive_at: fresh, tokens: 4100 });
+    // A sign of life alone is taken; a bad part refuses the post whole.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: '2026-11-10T10:00:30.000Z' } })).toMatchObject({ ok: true, added: 0 });
+    // Refused whole: a good card before a bad one isn't kept either.
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p3' }, { ...card, id: 'p4', exit: 1.5 }] })).toThrow(/bad-input/);
+    expect((await messagesOf(h, process.env, tt)).some((m) => m.id === 'p3')).toBe(false);
+    // An older core's wording, pinned here so the runtime's fallback (loom-box delivery.mjs OLD_CORE) can trust it.
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p5', bogus: 1 }] })).toThrow(/^bad-input: card 0 has unknown keys: bogus$/);
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [] })).toThrow(/^bad-input: cards is a list of 1-50$/);
+    // A body is kept only for a diff or the body's words: what a read or a search found never.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'r1', tool: 'Read', summary: 'Read a.ts', state: 'done', detail: 'a.ts', body: 'FILE-CONTENTS-NEVER-KEPT' }] }).added).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'r1')!.card?.step).toEqual({ detail: 'a.ts' });
+    // A card keeps its first tool: a later post naming another can't get a shell step's output kept.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 's1', tool: 'Bash', summary: 'Ran a command', state: 'running', detail: 'cat x' }] }).added).toBe(1);
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 's1', tool: 'Edit', summary: 'Ran a command', state: 'done', detail: 'cat x', body: 'SHELL-OUTPUT-NEVER-KEPT' }] }).updated).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 's1')!.card).toMatchObject({ tool: 'Bash', step: { detail: 'cat x' } });
+    expect(JSON.stringify((await messagesOf(h, process.env, tt)).find((m) => m.id === 's1'))).not.toContain('SHELL-OUTPUT');
+    // A post of a card is the card whole: its words replace those kept.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts' }] }).updated).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts' });
+    for (const bad of [{ summary: 'a\u0085b' }, { detail: 'x'.repeat(4001) }, { body: 'x'.repeat(32_001) }, { result: 'x'.repeat(121) }, { items: Array.from({ length: 21 }, () => ({ text: 'a', state: 'todo' })) }, { items: [{ text: 'x'.repeat(101), state: 'todo' }] }, { body: 'nel\u0085line' }, { body: 'csi\u009b2J' }, { result: 'x\u0085y' }, { body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { detail: 'rm \u202eb' }, { result: 'z\u200bw' }, { end: '2026-19-45T99:99:99Z' }, { other: 1 }]) {
+      // A body is checked where it may be kept (an edit's diff); on a shell step it's dropped unread.
+      expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...('body' in bad ? { tool: 'Edit' } : {}), ...bad }] })).toThrow(/bad-input/);
+    }
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p6', body: 'bell\x07' }] }).added).toBe(1);
+    // Nothing a command printed or a file held is kept, read back opened (the store holds words only sealed).
+    const opened = JSON.stringify(await messagesOf(h, process.env, tt));
+    for (const never of ['OUTPUT-NEVER-KEPT', 'FILE-CONTENTS-NEVER-KEPT']) expect(opened.includes(never)).toBe(false);
+    // An agent reading its own thread past the words' time, before the sweep has run: no label and no words.
+    { const db = new BetterSqlite3(join(h.home, 'comms.db')); db.prepare("UPDATE comms_messages SET at = '2026-01-01T00:00:00.000Z' WHERE thread = ? AND id = 'd0'").run(tt.id); db.close(); }
+    const asAgent = (await agentThreadRead(h.home, process.env, 'mark', { thread: tt.id })).messages.find((m) => m.id === 'd0')!;
+    expect(asAgent.text).toBeNull();
+    expect(asAgent.card?.step).toBeUndefined();
+    // Swept with its label: the sealed words go from the row itself.
+    sweepComms({ ...h, commsDays: 0 }, new Date(Date.now() + 60_000));
+    const gone = (await messagesOf(h, process.env, tt)).find((m) => m.id === 'p1')!;
+    expect(gone.text).toBeNull();
+    expect(gone.card?.step).toBeUndefined();
+    const swept = new BetterSqlite3(join(h.home, 'comms.db'), { readonly: true });
+    expect(swept.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE step IS NOT NULL").get()).toEqual({ n: 0 });
+    swept.close();
+    markRead(h, tt, 99);
   });
 
   it('refuses no member at all, whatever the route does', async () => {

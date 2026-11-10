@@ -209,6 +209,103 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     }
   }, 120_000);
 
+  it('shows a watched job\'s work the Claude app\'s way: the plan, its words, folded rows that open to the command, its result and a diff, a helper\'s steps nested, and a working line that says quiet (t-2109)', async () => {
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'watch-work', label: 'Fix the flaky deploy test',
+      at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'Find why the deploy test is flaky and fix it' }) as { id: string };
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+    const run = 'run-0123456789ac';
+    const post = (cards: Array<Record<string, unknown>>, alive?: Record<string, unknown>) => postActivity(h, process.env, { conversation: cv.conversation, run, cards, ...(alive ? { alive } : {}) });
+    post([{ id: 'p', at: ago(300), tool: 'TodoWrite', summary: 'Plan (1/3): Fixing the race', state: 'done', items: [{ text: 'Reproduce the flake', state: 'done' }, { text: 'Fixing the race', state: 'now' }, { text: 'Run the deploy tests', state: 'todo' }] }]);
+    post([{ id: 'w1', at: ago(290), tool: 'text', summary: 'The test reads the lock before deploy-loom writes it.', state: 'done', body: 'The test reads the lock before deploy-loom writes it.\nI\'ll wait on the lock file instead of sleeping. <b id="injected">not bold</b>' }]);
+    post([{ id: 'b1', at: ago(280), end: ago(268), tool: 'Bash', summary: 'Ran the deploy tests', state: 'failed', exit: 1, detail: 'npm test -- deploy', result: 'exit 1: 11 passed, 1 failed',
+      body: '\x1b[32m✔ builds\x1b[0m\n\x1b[31m✖ waits for the lock\x1b[0m\n  AssertionError: lock missing\nℹ pass 11\nℹ fail 1' }]);
+    post([{ id: 'e1', at: ago(200), end: ago(199), tool: 'Edit', summary: 'Edited deploy.test.mjs', state: 'done', detail: 'deploy.test.mjs', result: '2 additions, 1 removal',
+      body: '@@ -40,3 +40,4 @@\n   const lock = join(dir, "deploy.lock");\n-  await sleep(500);\n\x1b[32m+  await waitFor(lock);\x1b[0m\n+  // the lock, not a guess' }]);
+    post([{ id: 'a1', at: ago(190), end: ago(150), tool: 'Agent', summary: 'Started a helper: Check other sleeps', state: 'done', result: '2 tool uses' },
+      { id: 'a1:g', at: ago(185), end: ago(184), tool: 'Grep', summary: 'Searched for "sleep(" in test', state: 'done', parent: 'a1', detail: '"sleep(" in test', result: 'Found 3 files' },
+      { id: 'a1:r', at: ago(180), end: ago(179), tool: 'Read', summary: 'Read deploy-follow.test.mjs', state: 'done', parent: 'a1', detail: 'deploy-follow.test.mjs', result: 'Read 88 lines' }]);
+    post([{ id: 'b2', at: ago(150), tool: 'Bash', summary: 'Run the deploy tests again', state: 'running', detail: 'npm test -- deploy', limit: 600 }], { at: ago(150), tokens: 41_200 });
+    // It's been at work since the first of these, five minutes ago.
+    { const db = new BetterSqlite3(join(h.home, 'household.db')); db.prepare('UPDATE comms_threads SET working_since = ? WHERE id = ?').run(ago(300), job.id); db.close(); }
+    try {
+      for (const look of ['neon', 'lowlight', 'daylight']) for (const phone of [false, true]) {
+        const ctx = await browser.newContext(phone
+          ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, serviceWorkers: 'block' }
+          : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+        await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+        await ctx.addInitScript((l) => { try { localStorage.setItem('loom-look', l); } catch { /* private */ } }, look);
+        const page = await ctx.newPage();
+        const errors: string[] = [];
+        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('pageerror', (e) => errors.push(e.message));
+        const shot = async (what: string) => { if (process.env.LOOM_WATCH_SHOTS) await page.waitForTimeout(phone ? 1500 : 4000), await page.screenshot({ path: join(process.env.LOOM_WATCH_SHOTS, `work-${what}-${look}-${phone ? 390 : 1440}.png`) }); };
+        try {
+          await page.goto(`${base}/comms/${job.id.slice(3)}`);
+          await page.locator('.comms-watch').waitFor();
+          await page.locator('.comms-steps').first().waitFor();
+          await shot('folded');
+          // The plan on top, as a checklist.
+          const plan = page.locator('.work-plan li');
+          await plan.first().waitFor();
+          expect(await plan.count()).toBe(3);
+          expect(await page.locator('.work-plan li[data-state="now"]').textContent()).toContain('Fixing the race');
+          // Its own words, as prose.
+          expect(await page.locator('.work-text').first().textContent()).toContain('wait on the lock file');
+          // Its words are text, never markup.
+          expect(await page.locator('#injected').count()).toBe(0);
+          expect(await page.locator('.work-text').first().textContent()).toContain('<b id="injected">not bold</b>');
+          // Rows, folded: a name, a time and how it went; a helper's steps not shown until opened.
+          const failed = page.locator('.work-row[data-state="error"]').first();
+          expect(await failed.locator('.work-row__name').textContent()).toBe('Ran the deploy tests');
+          expect(await failed.locator('.work-row__time').textContent()).toBe('12s');
+          expect(await failed.locator('.work-row__exit').textContent()).toBe('exit 1');
+          expect(await page.locator('.work-term').count()).toBe(0);
+          const helper = page.locator('.work-row').filter({ hasText: 'Started a helper' }).first();
+          expect(await helper.locator('.work-row__count').textContent()).toBe('2 steps');
+          expect(await helper.locator('.work-row__time').textContent()).toBe('40s');
+          // Opened: the prompt and the command, the output in colour, the result line.
+          await failed.locator('.work-row__toggle').click();
+          const term = failed.locator('.work-term');
+          await term.waitFor();
+          expect(await term.locator('.work-term__prompt').textContent()).toBe('$ npm test -- deploy\n');
+          // Its output is never kept (t-2109; on demand is t-2112): the command, its exit code and its counts.
+          expect(await term.textContent()).not.toContain('waits for the lock');
+          expect(await failed.locator('.work-row__result').textContent()).toBe('exit 1: 11 passed, 1 failed');
+          // The diff in green and red; the helper's steps nested under it.
+          const edit = page.locator('.work-row').filter({ hasText: 'Edited deploy.test.mjs' }).first();
+          await edit.locator('.work-row__toggle').click();
+          expect(await edit.locator('.work-diff[data-d="add"]').count()).toBe(2);
+          expect(await edit.locator('.work-diff[data-d="rm"]').count()).toBe(1);
+          expect(await edit.locator('.work-term').textContent()).not.toContain('\x1b');
+          await helper.locator('.work-row__toggle').first().click();
+          expect(await helper.locator('.work-rows .work-row').count()).toBe(2);
+          // The working line: quiet for over two minutes, and says so itself, with the step it's on.
+          const live = page.locator('.comms-live');
+          expect(await live.getAttribute('data-alive')).toBe('quiet');
+          expect(await live.textContent()).toMatch(/Quiet for \dm \d+s — Art.* is still running · on Run the deploy tests again for \dm/);
+          expect(await noSideways(page)).toBe(true);
+          await failed.scrollIntoViewIfNeeded();
+          await shot('open');
+          expect(errors).toEqual([]);
+        } finally { await ctx.close(); }
+      }
+      // A sign of life, and it's working again, with its tokens.
+      post([], { at: new Date().toISOString(), tokens: 41_900 });
+      const { ctx, page } = await open(false);
+      try {
+        await page.goto(`${base}/comms/${job.id.slice(3)}`);
+        const live = page.locator('.comms-live[data-alive="working"]');
+        await live.waitFor();
+        expect(await live.textContent()).toContain('↓ 42k tokens');
+      } finally { await ctx.close(); }
+    } finally {
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(job.id);
+      db.close();
+    }
+  }, 180_000);
+
   it('opens a long thread at its newest page and loads earlier ones on demand (t-2043)', async () => {
     const long = openThread(h, process.env, h.members[0], { agent: 'art', id: 'aaaaaaaaaaaalong', text: 'The first words' }).thread;
     for (let i = 1; i <= 120; i++) expect(adapterCall(h, process.env, { op: 'post', place: long.id, agent: 'art', text: `Reply ${i}`, ref: `long-${i}` })).toMatchObject({ ok: true });
@@ -533,7 +630,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     }, 30_000);
   }
 
-  it('a run\'s steps open to a now: line with the plan\'s item, and like steps in a row fold into one line that opens (t-1944)', async () => {
+  it('a run\'s steps fold to one line that opens to the plan and a row for each step (t-1944, t-2109)', async () => {
     const o = openThread(h, process.env, h.members[0], { agent: 'mark', id: 'stepsstepsstepsz', text: 'What are you on?' });
     recordDelivery(h, o.thread, o.seq, { delivered: true, body: 'started' });
     const at = new Date().toISOString();
@@ -554,16 +651,18 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       // The plan isn't a step.
       expect(await line.textContent()).toMatch(/6 steps · Messaged art: "Can you review loom#612\?"/);
       await line.click();
-      expect(await page.locator('.comms-steps__now').textContent()).toBe('now: Messaged art: "Can you review loom#612?"Plan (1/3): Run the approvals tests');
-      const group = page.locator('.comms-steps__group');
-      expect(await group.count()).toBe(1);
-      expect(await group.locator('summary').textContent()).toBe('Ran 3 commands · Ran npm test');
-      expect(await group.locator('li').first().isVisible()).toBe(false);
-      await group.locator('summary').click();
-      expect(await group.locator('li').count()).toBe(3);
-      expect(await group.locator('li').first().isVisible()).toBe(true);
-      // The failure stays its own line, with why.
-      expect(await page.locator('.comms-steps li[data-state="error"]').textContent()).toContain('exit 1: 3 tests failed');
+      // Opened (t-2109, the Claude app's rows): the plan on top, each step a row with its name and how it went.
+      expect(await page.locator('.work-plan').textContent()).toBe('Plan (1/3): Run the approvals tests');
+      const rows = page.locator('.work-row');
+      expect(await rows.count()).toBe(6);
+      expect(await rows.locator('.work-row__name').allTextContents()).toEqual(['Read delivery.mjs (lines 120–180)', 'Ran git status', 'Ran npm ci', 'Ran npm test', 'Ran npm test — exit 1: 3 tests failed', 'Messaged art: "Can you review loom#612?"']);
+      // The failure says why; the one still running says so.
+      expect(await page.locator('.work-row[data-state="error"] .work-row__name').textContent()).toContain('exit 1: 3 tests failed');
+      expect(await page.locator('.work-row[data-state="current"]').count()).toBe(1);
+      // A label's chips are buttons of their own, never inside the row's: a row with nothing to open still lets one work.
+      expect(await page.locator('button.work-row__head').count()).toBe(0);
+      expect(await page.locator('.work-row__head').count()).toBe(6);
+      expect(await page.locator('.work-row button button').count()).toBe(0);
       expect(await noSideways(page)).toBe(true);
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }

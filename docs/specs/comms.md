@@ -304,7 +304,7 @@ So the activity cards need a new capture:
     | Tool | Label |
     |---|---|
     | a shell command | its `description` when the harness gives one (Claude Code's Bash tool does), else its short form: the program and its subcommand and a few plain words (`Ran gh pr checks 603`, `Ran npm test`), a file reader as `Read delivery.mjs (lines 120–180)`, a search as `Searched for "x" in src`, a fetch as `Fetched from api.github.com`, a script as `Ran a python3 snippet`; up to three commands of a chain, never a pipe's later stages, and "Ran a command" when none says anything (`cd`, `echo`) |
-    | a file read or edit | the verb and the path relative to the repo, and the line range a read names |
+    | a file read or edit | the verb and the file’s base name (directories are withheld), and the line range a read names |
     | a search | `Searched for "<pattern>"` and where, the pattern cut at 60 characters |
     | a web fetch | `Read a page on <host>` |
     | a message to another agent | `Messaged <who>: "<its first line>"` |
@@ -321,19 +321,45 @@ So the activity cards need a new capture:
     token-like runs. Its tests are loom-box `test/redact.test.mjs`.
   - A card's `summary` is stored like a message's words: an age blob in `text`, swept with them. Only `tool` and
     `state` are plain.
+- **The Watching view's parts (t-2109; Jonathan, 2026-11-10: his work shown, other people's words kept out).** A card
+  may also carry `detail` (the step's whole command, or a file's shown name, a search's pattern: redacted, at most
+  4000), `result` (one line of fixed phrases: `Read 120 lines`, `3 additions, 1 removal`, `exit 1: 11 passed, 1
+  failed`), `body` (an edit's diff of a file that isn't private, each line redacted, colour codes kept, at most 32000;
+  or a `text` card's words), `exit`, `limit` (the step's own timeout, seconds), `end` (when it finished), `parent` (the
+  helper step it ran under) and, on a plan, `items` (`{text, state: done|now|todo}`, at most 20). A card of tool
+  `text` is the body's own words between steps; the runtime sends it, and any card's `detail`, `body` or `items`, only
+  for a conversation that works for the owner alone (its principal now). **A shell step's output is never kept or
+  sent**: core drops a `body` on one. Showing it on demand, unstored, is t-2112.
+  - **Whose word is trusted (coordinator, 2026-11-10).** A job running in a house reports its own cards; a step's
+    command line (`detail`) and the body's own words (a `text` card's `body`) pass the runtime's gate on their shape
+    alone, so a house could put any text there. That's trusted only where the conversation is the owner's alone
+    (principalOf: the owner, no person, nothing unknown), where the body could already post the same text in its own
+    thread as a message: it adds no capability. Where anyone else is in the conversation, the runtime on loom's machine
+    sends each card's fixed label only (made where the card was made and checked against fixed shapes, else "Did a
+    step"), with no `detail`, `body` or `items`: that line protects other people, and it's drawn on loom's side, never
+    left to the house.
+  - This is a bounded live snapshot, not a lossless event stream: the house reports its newest 100 cards within
+    256 KB per body and 900 KB shared by the report. Large diffs or a burst between syncs can omit older unseen
+    cards permanently. Session/helper tail windows and helper sampling also bound discovery (runtime docs/step-cards.md).
+    Within those windows, newest work takes priority. Acknowledged lossless delivery is separate work.
+  - Core keeps `detail`, `body`, `result` and `items` sealed like the label (an age blob in `step`, swept with it), and
+    `exit`, `limit`, `parent` and the step's times (`t0` its start, `t1` its end, else when core saw it end) plain.
+  - The post may carry `alive: {at, tokens?}`, the body's last sign of life (when its record last moved, its output
+    tokens so far), with or without cards. The thread's state carries it (`alive_at`, `tokens`) while it works, and the
+    app says working (something in the last 2 minutes), quiet (nothing for 2 minutes, its body still up) or stuck
+    (nothing for 12, or a step past its own limit).
 - **How it travels.** In a house, the body host adds new cards to its `body-sync` report (every 2 s). For a local
   body, the runtime tails the files itself. Either way, it posts them to core: `POST /api/loom/comms/activity
-  {conversation, run, cards: [1–50]}` (role `runtime`).
+  {conversation, run, cards: [1–50], alive?}` (role `runtime`; no cards at all only beside `alive`).
   - Core accepts them only for a `loom` conversation whose thread is live (not archived or deleted). Otherwise it
     answers `409`.
   - A post of more than 50 cards, or with any card breaking the shape above (a non-printable character in `summary`
     included), is refused whole (`400`).
   - A card whose `id` the thread already has updates that card's `state` and its label (sealed again, unless its words
     were already swept). It doesn't add a second one.
-- **Only `tool_use` entries and tool items become cards.** A Claude `text` or `thinking` entry, a Codex
-  `agent_message` or `reasoning` item, and every result are skipped whole.
-- **The agent's own text between tools** isn't shown. In a venue body, that text is the body thinking aloud, and
-  nobody was ever meant to read it: the reply is what it sends.
+- **Tool steps, and the body's own words.** A Claude `tool_use` entry or a Codex tool item makes a step card; a Claude
+  `text` entry makes a `text` card (t-2109), shown only where the conversation works for the owner alone (above).
+  Thinking, a Codex `reasoning` item, and every tool result's own text are never sent.
 
 ### 4. Streaming: what "the reply streaming in" means here
 
@@ -663,10 +689,18 @@ A real chat, with a terminal's flavour:
 - **The member's messages** are right-aligned and plain, with no avatar.
 - **Each message** has a mono timestamp line, `14:02 · art`.
 - **The composer** is a mono prompt line, `> `, in the agent's accent.
-- **Activity cards** sit between messages, grouped by `run` and collapsed by default to one line per run: "▸ N steps"
-  and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to a `now:` line (the step it's on, and
-  the plan's item when there's a plan), then its labels, each with its state; three or more like steps in a row that
-  finished well fold into one line that opens ("Ran 6 commands · Ran npm test"). A plan card isn't counted as a step.
+- **Activity cards** sit between messages, grouped by `run` and collapsed to one line per run: "▸ N steps" and the
+  newest card's summary ("▸ 6 steps · Ran the tests"); a watched job's run starts open. Opened (t-2109, the Claude
+  app's way): the plan on top as a checklist; the body's own words as prose; each step a folded row with its name, how
+  long it took (its own start and end, else when core saw it end) and how it went (exit code on a failure, "N steps"
+  on a helper), opening to its command after a `$ ` prompt or its target, its result line, an edit's diff in green and
+  red, and a helper's steps nested under it. Colour codes show as colours, never as characters. A plan card isn't a
+  step. Before t-2109 the open group was a `now:` line and labels, like steps folded into one line; that's gone.
+- **Working, quiet or stuck** (t-2109): the working line says so itself, from the body's last sign of life (its
+  `alive_at`, a step starting or ending, and the start of this spell of work; a time ahead of now counts as now):
+  working with something in the last 2 minutes (and its tokens, `↓ 4.1k tokens`, when it says them); "Quiet for 5m —
+  Art is still running · on <step> for 6m" after 2 minutes of nothing; "… — it may be stuck" after 12, or as soon as
+  any running step is past its own time limit plus a 30-second grace (the runtime's poll is a few seconds behind).
 - **The working line** is one mono line under the newest message (t-1918): `Art E Fish is working · Ran the tests ·
   0:42`, the step it's on now (the newest running card since your message, else the newest) and the time since
   `status: working` began; while your message is with it and nothing's back yet, `Art E Fish is thinking…`. It shows

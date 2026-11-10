@@ -318,7 +318,8 @@ async function openEntry(c: Ctx, env: NodeJS.ProcessEnv, id: string, shown: Acti
     let steps: ActivityOpen['steps'];
     if (thread && d?.run) {
       try {
-        steps = (await messagesOf(c.h, env, thread)).filter((x) => x.kind === 'card' && x.run === d!.run && x.text)
+        // Its steps, not the body's own words between them (`text` cards, t-2109).
+        steps = (await messagesOf(c.h, env, thread)).filter((x) => x.kind === 'card' && x.run === d!.run && x.text && String(x.card?.tool ?? '') !== 'text')
           .map((x) => ({ label: x.text!, state: String(x.card?.state ?? ''), tool: String(x.card?.tool ?? '') }));
       } catch { steps = undefined; }
     }

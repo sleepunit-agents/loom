@@ -815,8 +815,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const runOf = (header: string | undefined): string =>
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
-  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
-  const bodyCap = (subpath: string) => subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' || subpath === 'comms/activity' ? 64 * 1024 : 4 * 1024;
+  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. Activity carries
+   * steps' words (t-2109: a command, a diff, the body's own words, each card's bounded): 1 MB, the runtime posting at
+   * most half that a time. */
+  const bodyCap = (subpath: string) => subpath === 'comms/activity' ? 1024 * 1024 : subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
@@ -851,6 +853,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const cap = bodyCap(subpath);
+    // A declared length over the cap is refused before reading (as deliverApi does), so the caller gets the 413, not a
+    // reset (t-2109: the runtime reads a 413 as a post too large and sends it smaller).
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > cap) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     const raw = await collectBody(req, cap);
     if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     let body: unknown = {};

@@ -97,7 +97,7 @@
 .comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
 .comms-earlier { border: 1px dashed var(--comms-line); border-radius: 10px; padding: 10px 12px; color: var(--v-text-2); font-size: 13px; }
 .comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }
-.comms-steps { align-self: flex-start; font-size: 12.5px; color: var(--v-text-2); max-width: 100%; }
+.comms-steps { align-self: flex-start; font-size: 12.5px; color: var(--v-text-2); max-width: 100%; min-width: 0; }
 .comms-steps__line { text-align: left; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--comms-line); min-height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .comms-resend button { font-size: 12px; color: var(--v-danger, #f55); padding: 4px 0; min-height: 36px; }
 
