@@ -51,7 +51,7 @@ type BlockShape =
   // `avatar` (initials in a plain circle). A list where some rows say who, or that says `who`, draws the rest as nobody's yet.
   // A row with `more` opens in place to those label and value pairs (a task's goal, why and done-when); its `page` or
   // `href` is then a link inside what opened, named `more.open` ("Open task"), rather than where a tap goes.
-  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button; more?: RowMore } & Target> }
+  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; ref?: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button; more?: RowMore } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -82,7 +82,7 @@ type BlockShape =
  * sheet with a few fields; `sheet` opens a sheet of detail (blocks); `page`/`href` goes there; `act` is a button.
  */
 export interface PanelRow extends Target {
-  label: string; value?: string; detail?: string; tone?: Tone; agent?: string;
+  label: string; ref?: string; value?: string; detail?: string; tone?: Tone; agent?: string;
   toggle?: { action: string; on: boolean; fields?: Record<string, string> };
   choice?: { action: string; name: string; value: string; options: Array<{ value: string; label: string }>; fields?: Record<string, string> };
   edit?: { action: string; title?: string; submit?: string; note?: string; fields: Field[]; hidden?: Record<string, string> };
@@ -668,7 +668,7 @@ function blockShape(v: unknown, depth: number): BlockShape {
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
-            text: long(o.text, 'list.text'), meta: optLong(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
+            text: long(o.text, 'list.text'), ref: optStr(o.ref, 'list.ref'), meta: optLong(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
             tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...(o.person !== undefined ? { person: personSlug(o.person, 'list.person') } : {}),
             avatar: avatarOf(o.avatar), ...target(o, 'list item'),
             ...(o.act !== undefined ? { act: button(o.act) } : {}),
@@ -821,7 +821,7 @@ function fraction(v: unknown, what: string): number {
 
 function panelRow(x: unknown, depth: number): PanelRow {
   const o = obj(x, 'panel row');
-  const row: PanelRow = { label: str(o.label, 'panel.label'), ...target(o, 'panel row') };
+  const row: PanelRow = { label: str(o.label, 'panel.label'), ref: optStr(o.ref, 'panel.ref'), ...target(o, 'panel row') };
   const value = optStr(o.value, 'panel.value'); if (value !== undefined) row.value = value;
   const detail = optStr(o.detail, 'panel.detail'); if (detail !== undefined) row.detail = detail;
   const t = tone(o.tone); if (t) row.tone = t;

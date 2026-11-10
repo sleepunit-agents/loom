@@ -1,3 +1,4 @@
+import { aboutAttr } from './about';
 import { BlockView, useEnv } from './blocks';
 import { Split } from './split';
 import type { Page } from './loom';
@@ -33,7 +34,7 @@ export function ChangesView({ page, unscoped }: { page: Page; unscoped?: string 
     listTitle={c.groups.find((g) => g.id === group)?.label} listMeta={shown.length}
     listTop={<div className="loom-changes__notices">{unscoped && <p>This piece shows the whole household, not only {unscoped}.</p>}
       {page.sections.flatMap((s) => s.blocks).map((b, i) => <BlockView key={i} b={b} />)}</div>}
-    list={shown.length ? shown.map((r) => <button type="button" key={r.id} data-split-row="" aria-current={r.id === c.selected ? 'true' : undefined}
+    list={shown.length ? shown.map((r) => <button {...aboutAttr({ ref: `github:${r.repo}#${r.number}`, page: `${ctx.source.base.replace(/^\//, "").replace(/\/$/, "")}/${r.id}`, label: r.title })} type="button" key={r.id} data-split-row="" aria-current={r.id === c.selected ? 'true' : undefined}
       className="loom-changes__row" onClick={() => navigate({}, r.id)}>
       <span className="loom-split__title">{r.title}</span><span className="loom-changes__meta">{r.repo}#{r.number}</span>
       <span className="loom-changes__meta">{r.author} · {r.ago}</span><span className="loom-changes__status">{r.status}</span>
