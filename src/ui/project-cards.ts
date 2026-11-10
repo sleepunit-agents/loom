@@ -26,5 +26,7 @@ export interface ProjectCardView {
   repos: string[];
   people: CardPerson[];
   activity: string;
+  /** Directory revision whose card selectors these page-owned feeds were computed for. */
+  directoryUpdated?: string;
 }
 export interface ProjectCards { active: ProjectCardView[]; quiet: ProjectCardView[]; waiting: number }

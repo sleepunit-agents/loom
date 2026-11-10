@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { projectDirectory, ProjectDirectory } from '../../web/src/project-directory';
+import { projectDirectory } from '../../web/src/project-directory';
 import type { ProjectCards, ProjectCardView } from './project-cards';
 import type { Rec } from '../../web/src/collections/runtime';
 const card = (agent: string, status = 'active'): ProjectCardView => ({ agent, slug: 'same', name: `${agent} before`, status,
-  page: `projects/${agent}/same`, activity: '2026-11-09T12:00:00Z', repos: ['old/repo'], people: [{ name: agent, person: 'someone' }], what: 'A real summary', lately: [{ text: 'Recent task', ago: '1h', status: 'Open' }], spark: { days: [1, 2], label: '3 things' },
+  directoryUpdated: '2026-11-09T12:00:00Z', page: `projects/${agent}/same`, activity: '2026-11-09T12:00:00Z', repos: ['old/repo'], people: [{ name: agent, person: 'someone' }], what: 'A real summary', lately: [{ text: 'Recent task', ago: '1h', status: 'Open' }], spark: { days: [1, 2], label: '3 things' },
   ...(status === 'active' ? { waiting: { count: 2, items: ['Please decide'] }, changes: { open: 1, failing: 1, running: 0, line: '1 open · 1 failing' } } : {}) });
 const cards: ProjectCards = { active: [card('art')], quiet: [card('mark', 'paused')], waiting: 2 };
 const rec = (agent: string, status = 'active'): Rec => ({ key: `loom/project/${agent}:same`, agent, slug: 'same', name: `${agent} after`, status,
-  activity: '2026-11-10T12:00:00Z', links: { repos: ['github:new/repo'] } });
+  updated: '2026-11-09T12:00:00Z', activity: '2026-11-10T12:00:00Z', links: { repos: ['github:new/repo'] } });
 const rows = (...rs: Rec[]) => new Map(rs.map((r) => [r.key, r]));
 describe('Projects cards join the whole live directory', () => {
   it('renames and changes repos/activity independently for identical slugs, preserving source-owned active feed details', () => {
@@ -29,17 +29,17 @@ describe('Projects cards join the whole live directory', () => {
     expect(projectDirectory(cards, rows(rec('new'))).active.map((c) => c.agent)).toEqual(['new']);
     expect(projectDirectory(cards, rows())).toEqual({ active: [], quiet: [], waiting: 0 });
   });
-  it('does not resurrect old feeds after active to quiet to active, even across stale/reconnect, until a fresh page arrives', () => {
-    const directory = new ProjectDirectory(cards);
-    expect(directory.read(rows(rec('art'))).active[0].waiting).toEqual(cards.active[0].waiting);
-    directory.read(rows(rec('art', 'paused')));
-    expect(directory.read(null)).toBe(cards);
-    const active = directory.read(rows(rec('art'))).active[0];
-    expect(active.waiting).toHaveProperty('unknown');
-    expect(active.lately).toEqual([]); expect(active.changes).toBeUndefined(); expect(active.spark).toBeUndefined();
-    const archived = new ProjectDirectory(cards); archived.read(rows());
-    expect(archived.read(rows(rec('art'))).active[0].waiting).toHaveProperty('unknown');
-    expect(new ProjectDirectory(cards).read(rows(rec('art'))).active[0].waiting).toEqual(cards.active[0].waiting);
+  it('every window refuses old page feeds after a card revision, even when it missed an intervening quiet/archive state', () => {
+    const changed = rows({ ...rec('art'), updated: '2026-11-10T12:00:00Z' });
+    for (const page of [cards, structuredClone(cards)]) {
+      const active = projectDirectory(page, changed).active[0];
+      expect(active.waiting).toHaveProperty('unknown');
+      expect(active.lately).toEqual([]); expect(active.changes).toBeUndefined(); expect(active.spark).toBeUndefined();
+    }
+    const fresh = structuredClone(cards); fresh.active[0].directoryUpdated = '2026-11-10T12:00:00Z';
+    expect(projectDirectory(fresh, changed).active[0].waiting).toEqual(cards.active[0].waiting);
+    const legacy = structuredClone(cards); delete legacy.active[0].directoryUpdated;
+    expect(projectDirectory(legacy, rows(rec('art'))).active[0].waiting).toHaveProperty('unknown');
   });
   it('keeps the page while the directory is loading, partial, stale or refused', () => {
     expect(projectDirectory(cards, null)).toBe(cards);

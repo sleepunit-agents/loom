@@ -57,6 +57,7 @@ function wholeSet(spec: QuerySpec, onMove: () => void) {
     if (!handle || !rt) return;
     if (rt.isCleared()) { handle = null; onMove(); return; }
     const st = handle.state();
+    if (st.status !== 'live') paged = -1;
     // Its next page as soon as the last one is in: once per page (a frame meanwhile publishes too).
     if (st.status === 'live' && st.more && st.keys.length !== paged) { paged = st.keys.length; handle.more(); }
     else if (!st.more) paged = -1;
@@ -145,7 +146,7 @@ export const changesLive = (): boolean => changes.live();
 
 /** The Projects directory, including paused/done cards. Only a whole live set can replace page membership. */
 export const PROJECTS_SPEC: QuerySpec = { type: 'loom/project@^1', order: [['activity', 'desc']], limit: 500,
-  fields: ['agent', 'slug', 'name', 'status', 'links', 'activity'] };
+  fields: ['agent', 'slug', 'name', 'status', 'links', 'activity', 'updated'] };
 const projects = group(() => [PROJECTS_SPEC]);
 export const watchProjects = (csrf: string, f: Moved): (() => void) => projects.watch(csrf, f, true);
 export const projectsLive = (): boolean => projects.live();

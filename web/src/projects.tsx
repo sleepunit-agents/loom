@@ -7,7 +7,7 @@
 import './projects.css';
 import { useEffect, useState } from 'react';
 import { watchProjects, projectsLive } from './tasks-live';
-import { ProjectDirectory } from './project-directory';
+import { projectDirectory } from './project-directory';
 import { NO_PROJECTS } from '../../src/ui/project-cards';
 import { Link, Who, useEnv } from './blocks';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -108,8 +108,7 @@ export function ProjectsView({ cards: pageCards }: { cards: ProjectCards }) {
   useEffect(() => {
     setLive(null);
     if (!ctx.csrf) return;
-    const directory = new ProjectDirectory(pageCards);
-    return watchProjects(ctx.csrf, (_keys, rows) => setLive({ page: pageCards, cards: directory.read(projectsLive() ? rows : null) }));
+    return watchProjects(ctx.csrf, (_keys, rows) => setLive({ page: pageCards, cards: projectDirectory(pageCards, projectsLive() ? rows : null) }));
   }, [ctx.csrf, pageCards]);
   const cards = live?.page === pageCards ? live.cards : pageCards;
   const n = cards.active.length;

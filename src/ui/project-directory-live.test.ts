@@ -7,7 +7,7 @@ vi.mock('../../web/src/page', () => ({ collectionsRuntime: async () => ({ runtim
   view: (spec: unknown, changed: () => void) => { fixture.specs.push(spec); fixture.changed = changed;
     return { state: () => ({ keys: fixture.keys, status: fixture.status, more: fixture.more, withheld: [] }), close: fixture.close, more: fixture.next }; },
 } }) }));
-import { ProjectDirectory } from '../../web/src/project-directory';
+import { projectDirectory } from '../../web/src/project-directory';
 import { watchProjects, projectsLive, PROJECTS_SPEC } from '../../web/src/tasks-live';
 it('shares a paged directory, drops partial/stale snapshots, publishes empty membership and recovers after reconnect', async () => {
   fixture.keys = Array.from({ length: 500 }, (_, i) => `loom/project/art:p${i}`);
@@ -16,9 +16,12 @@ it('shares a paged directory, drops partial/stale snapshots, publishes empty mem
   await vi.waitFor(() => expect(fixture.next).toHaveBeenCalledTimes(1));
   expect(first).not.toHaveBeenCalled();
   expect(projectsLive()).toBe(false);
+  fixture.status = 'stale'; fixture.changed();
+  fixture.status = 'live'; fixture.changed();
+  expect(fixture.next).toHaveBeenCalledTimes(2);
   fixture.keys = Array.from({ length: 900 }, (_, i) => `loom/project/art:p${i}`);
   fixture.records = new Map(fixture.keys.map((key) => [key, { key }])); fixture.changed();
-  expect(fixture.next).toHaveBeenCalledTimes(2);
+  expect(fixture.next).toHaveBeenCalledTimes(3);
   expect(first).not.toHaveBeenCalled();
   fixture.keys = Array.from({ length: 999 }, (_, i) => `loom/project/art:p${i}`);
   fixture.records = new Map(fixture.keys.map((key) => [key, { key }]));
@@ -30,9 +33,8 @@ it('shares a paged directory, drops partial/stale snapshots, publishes empty mem
   expect(second).toHaveBeenLastCalledWith(new Set(fixture.keys), fixture.records);
   expect(fixture.specs).toEqual([PROJECTS_SPEC]);
   const page = { active: [], quiet: [], waiting: 0 };
-  const directory = new ProjectDirectory(page);
   const consumer = vi.fn();
-  const offConsumer = watchProjects('csrf', (_keys, rows) => consumer(directory.read(projectsLive() ? rows : null)));
+  const offConsumer = watchProjects('csrf', (_keys, rows) => consumer(projectDirectory(page, projectsLive() ? rows : null)));
   fixture.status = 'denied'; fixture.changed();
   expect(consumer).toHaveBeenLastCalledWith(page);
   expect(consumer.mock.calls.at(-1)?.[0]).toBe(page);

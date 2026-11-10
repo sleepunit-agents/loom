@@ -38,7 +38,7 @@ interface Gist {
   changes?: { open: number; failing: number; running: number };
   people: CardPerson[];
 }
-interface Count { at: number; waiting: number; error?: string; gist?: Gist }
+interface Count { at: number; waiting: number; error?: string; gist?: Gist; directoryUpdated?: string }
 
 /** The sparkline's window: the index's `since`, a day a point. */
 export const SPARK_DAYS = 7;
@@ -153,6 +153,7 @@ async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: n
   } catch (e) {
     result = { at: nowMs, waiting: 0, error: (e as Error).message ?? 'failed' };
   }
+  result.directoryUpdated = p.updated;
   counts.set(key, result);
   return result;
 }
@@ -195,7 +196,8 @@ function cardOf(o: ProjectsOwner, p: ProjectListEntry, summary: string | undefin
     lately: (gist?.dated ?? []).filter((d) => !d.waiting).slice(0, 3).map((d) => ({ text: d.text.slice(0, 200), ago: age(d.when, nowMs), ...(d.status ? { status: d.status } : {}) })),
     repos: (p.links.repos ?? []).map(repoChip),
     people: (gist?.people ?? (o.agent ? [{ name: o.agent, agent: o.agent }] : [])).slice(0, 12),
-    activity: p.activity,
+    // Cached feeds can predate this directory read. Their stamp must stay theirs, not the new card's.
+    activity: p.activity, directoryUpdated: c && c !== 'late' ? c.directoryUpdated : p.updated,
   };
   if (c !== undefined) {
     card.waiting = c === 'late' ? { unknown: "Couldn't count what's waiting: its sections are slow to answer." }
