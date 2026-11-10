@@ -1,6 +1,6 @@
 import { aboutAttr } from './about';
 import { BlockView, useEnv } from './blocks';
-import { Split } from './split';
+import { Split, Row, Empty } from './kit';
 import type { Page } from './loom';
 import './changes.css';
 
@@ -34,11 +34,9 @@ export function ChangesView({ page, unscoped }: { page: Page; unscoped?: string 
     listTitle={c.groups.find((g) => g.id === group)?.label} listMeta={shown.length}
     listTop={<div className="loom-changes__notices">{unscoped && <p>This piece shows the whole household, not only {unscoped}.</p>}
       {page.sections.flatMap((s) => s.blocks).map((b, i) => <BlockView key={i} b={b} />)}</div>}
-    list={shown.length ? shown.map((r) => <button {...aboutAttr({ ref: `github:${r.repo}#${r.number}`, page: `${ctx.source.base.replace(/^\//, "").replace(/\/$/, "")}/${r.id}`, label: r.title })} type="button" key={r.id} data-split-row="" aria-current={r.id === c.selected ? 'true' : undefined}
-      className="loom-changes__row" onClick={() => navigate({}, r.id)}>
-      <span className="loom-split__title">{r.title}</span><span className="loom-changes__meta">{r.repo}#{r.number}</span>
-      <span className="loom-changes__meta">{r.author} · {r.ago}</span><span className="loom-changes__status">{r.status}</span>
-    </button>) : <p className="loom-split__empty">No changes in this group.</p>}
+    list={shown.length ? shown.map((r) => <Row {...aboutAttr({ ref: `github:${r.repo}#${r.number}`, page: `${ctx.source.base.replace(/^\//, "").replace(/\/$/, "")}/${r.id}`, label: r.title })} key={r.id}
+      selected={r.id === c.selected} layout="stack" onClick={() => navigate({}, r.id)} title={r.title}
+      meta={<>{r.repo}#{r.number}<br />{r.author} · {r.ago}</>} status={r.status} />) : <Empty title="No changes in this group." />}
     reader={c.reader ? <article className="loom-changes__read"><p className="loom-changes__meta">{c.reader.title}</p><h2 className="loom-split__head">{c.reader.intro}</h2>
       {c.reader.sections.map((s) => <section key={s.id}>{s.title && <h3>{s.title}</h3>}{s.blocks.map((b, i) => <BlockView key={i} b={b} />)}</section>)}
     </article> : null} open={!!c.selected} onBack={() => navigate({}, '')} backLabel="Changes" blank="Pick a change to read it" />;

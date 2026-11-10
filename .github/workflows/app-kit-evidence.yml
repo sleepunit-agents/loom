@@ -1,0 +1,61 @@
+name: App kit evidence
+on:
+  pull_request:
+    paths:
+      - 'web/src/kit/**'
+      - 'web/src/inbox*'
+      - 'web/src/changes*'
+      - '.github/workflows/app-kit-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: app-kit-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    # Browser work runs in CI, never on loom's machine.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [before, after]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Keep the same screenshot fixtures
+        run: |
+          mkdir -p "$RUNNER_TEMP/kit-fixtures"
+          cp src/ui/inbox-app.integration.test.ts src/ui/changes-app.integration.test.ts "$RUNNER_TEMP/kit-fixtures/"
+      - name: Check out the before version
+        if: matrix.version == 'before'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "$BASE"
+          git checkout --detach "$BASE"
+      - name: Install and build
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Capture the two apps only
+        run: |
+          cp "$RUNNER_TEMP/kit-fixtures/"*.ts src/ui/
+          mkdir -p artifacts/app-kit
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_SHOTS="$PWD/artifacts/app-kit"
+          export LOOM_TEST_SHOTS="$LOOM_SHOTS"
+          nice -n 19 npx vitest run src/ui/inbox-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
+          nice -n 19 npx vitest run src/ui/changes-app.integration.test.ts --testNamePattern='1440|390' --maxWorkers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: app-kit-${{ matrix.version }}-${{ github.event.pull_request.head.sha }}
+          path: artifacts/app-kit/
+          if-no-files-found: error

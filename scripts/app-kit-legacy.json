@@ -1,0 +1,119 @@
+{
+  "account.css": [
+    "loom-acct__head",
+    "loom-acct__row",
+    "loom-acct__row-meta",
+    "loom-acct__row-title",
+    "loom-acct__rows"
+  ],
+  "activity.css": [
+    "loom-act__day-head",
+    "loom-act__row",
+    "loom-act__strip-head"
+  ],
+  "agent-window.css": [
+    "loom-aghead__none"
+  ],
+  "comms-work.css": [
+    "comms-work__empty",
+    "comms-work__head",
+    "comms-work__row",
+    "comms-work__rows"
+  ],
+  "comms.css": [
+    "comms-ask__row",
+    "comms-empty",
+    "comms-list__head",
+    "comms-people__head",
+    "comms-refcard__none",
+    "comms-row",
+    "comms-row__avatar",
+    "comms-row__btn",
+    "comms-row__dot",
+    "comms-row__face",
+    "comms-row__letter",
+    "comms-row__main",
+    "comms-row__pin",
+    "comms-row__sub",
+    "comms-row__time",
+    "comms-row__title",
+    "comms-thread__head"
+  ],
+  "desk-agents.css": [
+    "loom-adesk__none",
+    "loom-bigcard__empty",
+    "loom-split__head"
+  ],
+  "filters.css": [
+    "loom-chip-row"
+  ],
+  "index.css": [
+    "loom-find-row",
+    "loom-head-action",
+    "loom-head-more"
+  ],
+  "knowledge.css": [
+    "loom-kn__row"
+  ],
+  "launcher.css": [
+    "loom-launcher__head",
+    "loom-launcher__none"
+  ],
+  "looks/looks.css": [
+    "loom-find-row"
+  ],
+  "people.css": [
+    "loom-people__row"
+  ],
+  "projects.css": [
+    "pj-head",
+    "pj-wait-none"
+  ],
+  "row-more.css": [
+    "loom-row-more"
+  ],
+  "styles/cojeev/activity-feed.css": [
+    "v-activity-feed__card-head",
+    "v-activity-feed__header"
+  ],
+  "styles/cojeev/agent-chat.css": [
+    "v-agent-chat__header",
+    "v-agent-chat__header-actions"
+  ],
+  "styles/cojeev/alert-dialog.css": [
+    "v-dialog__head"
+  ],
+  "styles/cojeev/avatar.css": [
+    "v-identity-example__row"
+  ],
+  "styles/cojeev/bubble.css": [
+    "v-chat__row"
+  ],
+  "styles/cojeev/card.css": [
+    "v-card__project-head"
+  ],
+  "styles/cojeev/chart.css": [
+    "v-chart-empty",
+    "v-chart-frame__header",
+    "v-chart-tooltip__empty",
+    "v-chart-tooltip__row"
+  ],
+  "styles/cojeev/control-appearance.css": [
+    "v-form-example__label-row"
+  ],
+  "styles/cojeev/dialog.css": [
+    "v-dialog__head"
+  ],
+  "styles/cojeev/drawer.css": [
+    "v-dialog__head"
+  ],
+  "styles/cojeev/empty.css": [
+    "v-empty"
+  ],
+  "styles/cojeev/shape.css": [
+    "v-shape-explorer__catalog-head"
+  ],
+  "tiling/surface.css": [
+    "loom-panel-rows"
+  ]
+}

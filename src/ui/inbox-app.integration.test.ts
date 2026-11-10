@@ -89,6 +89,41 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
   /** Screenshots for a PR's evidence, when LOOM_SHOTS names a directory. */
   const shot = async (p: Page, name: string) => { if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `${name}.png`) }); };
 
+  // Targeted CI evidence: identical fixtures before/after, both widths, every look.
+  for (const width of [1440, 390]) for (const look of ['neon', 'lowlight', 'daylight']) {
+    it(`kit screenshot ${width} ${look}`, async () => {
+      ask('Keep the house backup current?');
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.addInitScript((look) => { localStorage.setItem('loom-look', look); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); }, look);
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const p = await ctx.newPage();
+      await p.goto(`${base}/inbox?t=*inbox`);
+      await expect.poll(() => mode(p)).toBe(width === 390 ? 'one' : 'three');
+      const item = row(p, 'Keep the house backup current?').first();
+      await item.waitFor();
+      expect(await p.locator('html').getAttribute('data-look')).toBe(look);
+      expect(await p.locator('html').evaluate((el) => getComputedStyle(el).getPropertyValue('--v-canvas').trim().toLowerCase())).toBe(
+        { neon: '#07070c', lowlight: '#15171a', daylight: '#f5f3ee' }[look]);
+      expect(await item.evaluate((el) => getComputedStyle(el).color)).toBe(
+        { neon: 'rgb(243, 241, 255)', lowlight: 'rgb(243, 244, 244)', daylight: 'rgb(31, 29, 39)' }[look]);
+
+      expect(await item.textContent()).toContain('Because keep the house backup current? matters.');
+      expect(await item.getAttribute('data-unread')).toBeTruthy();
+      expect(await item.locator('[aria-label="Unread"]').count()).toBe(1);
+      await shot(p, `inbox-${width}-${look}-list`);
+      await item.click();
+      await p.locator(reader).getByRole('button', { name: 'Yes', exact: true }).waitFor();
+      expect(await item.getAttribute('aria-current')).toBe('true');
+      expect(await item.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
+      await shot(p, `inbox-${width}-${look}-reader`);
+      if (width === 390) {
+        await p.locator('.loom-split__back').click();
+        await expect.poll(() => item.evaluate((e) => e === document.activeElement)).toBe(true);
+      }
+      await ctx.close();
+    });
+  }
+
   it('an open ask keeps its computed colours and enabled buttons through repeated events and rechecks, with no page asked again', async () => {
     ask('Keep these answer buttons steady?');
     const p = await screen(1280, 800, '/inbox?t=*inbox');

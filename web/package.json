@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "build": "node ../scripts/check-app-kit.mjs && tsc -b && vite build",
+    "lint": "oxlint && node ../scripts/check-app-kit.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -48,6 +48,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "oxlint": "^1.89.0",
     "postcss": "^8.5.32",
+    "react-test-renderer": "^19.3.1",
     "typescript": "~7.0.2",
     "vite": "^8.3.5"
   }
