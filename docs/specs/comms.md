@@ -1328,7 +1328,8 @@ Any loom item can start a private thread with what it's about attached.
   shows. On a phone, the page name's sheet offers it. An Inbox item's reader
   has a button for it. Inbox items, agent cards' job rows, Tasks and Approvals
   list/table rows, Changes rows and Knowledge rows carry `data-about`. Every
-  item page can be chatted about from its window or name.
+  item page can be chatted about from its window or name. On a phone, the
+  row's context action (long press) opens its Chat about this sheet directly.
 - **Existing threads.** The sheet offers **Continue in <thread>** for up to
   five unarchived threads about the same item, newest first, belonging to the
   same member and selected agent. Changing agent refetches the choices. The

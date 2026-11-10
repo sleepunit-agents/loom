@@ -97,7 +97,7 @@ describe.runIf(built && chrome && hasAge)('Chat about this', () => {
       { label: 'Knowledge example', ref: 'knowledge:example', knowledge: { total: 1, checkDays: 90, recentDays: 7, pages: [{ slug: 'example', title: 'Knowledge example', domain: 'ours', updated: new Date().toISOString(), fresh: 'fresh' }] } },
     ];
     for (const look of ['neon', 'lowlight', 'daylight']) for (const width of [1440, 390]) {
-      const ctx = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, ...(width === 390 ? { isMobile: true, hasTouch: true } : {}), serviceWorkers: 'block' });
       try {
         await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
         await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] })); }, look);
@@ -117,7 +117,50 @@ describe.runIf(built && chrome && hasAge)('Chat about this', () => {
           const about = JSON.parse((await row.getAttribute('data-about'))!);
           expect(about.label).toBe(fixture.label);
           if (fixture.ref) expect(about.ref).toBe(fixture.ref);
-          await row.evaluate((el) => dispatchEvent(new CustomEvent('loom-chat-about', { detail: { ...JSON.parse(el.getAttribute('data-about')!), seen: new Date().toISOString() } })));
+          if (width === 1440) {
+            await row.click({ button: 'right' });
+            await p.getByRole('menuitem', { name: 'Chat about this', exact: true }).click();
+          } else {
+            const touch = await ctx.newCDPSession(p);
+            let box = (await row.boundingBox())!;
+            let point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+            // A real touch hold: the pointer timer must work without a contextmenu event.
+            await p.evaluate(() => document.addEventListener('contextmenu', (e) => e.preventDefault(), { capture: true }));
+            if (fixture.label === 'Task example') {
+              await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+              await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...point, y: point.y + 30 }] });
+              await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+              await p.waitForTimeout(650);
+              expect(await p.locator('.loom-chat-about').count()).toBe(0);
+              box = (await row.boundingBox())!;
+              point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+            }
+            const heldUrl = p.url();
+            await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+            await p.locator('.loom-chat-about__label').filter({ hasText: fixture.label }).waitFor();
+            if (fixture.label === 'Task example') {
+              await p.locator('.loom-chat-about__change').waitFor();
+              await p.waitForTimeout(1700);
+              await p.evaluate(() => {
+                (window as Window & { heldClick?: boolean }).heldClick = false;
+                document.addEventListener('touchend', () => {
+                  const b = document.querySelector('.loom-chat-about__change');
+                  const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+                  b?.dispatchEvent(e);
+                  (window as Window & { heldClick?: boolean }).heldClick = !!b && e.defaultPrevented;
+                }, { once: true });
+              });
+            }
+            await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            if (fixture.label === 'Task example') {
+              // Safari may retarget the ending click onto the new dialog. It must not change agent or navigate.
+              expect(await p.evaluate(() => (window as Window & { heldClick?: boolean }).heldClick)).toBe(true);
+              expect(await p.locator('.loom-chat-about__pick').count()).toBe(0);
+              expect(p.url()).toBe(heldUrl);
+              await p.locator('.loom-chat-about__label').filter({ hasText: fixture.label }).waitFor();
+            }
+            await touch.detach();
+          }
           await p.locator('.loom-chat-about__label').filter({ hasText: fixture.label }).waitFor();
           expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
           await p.unroute('**/a/mark?row=*');
