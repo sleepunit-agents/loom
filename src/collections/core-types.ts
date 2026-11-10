@@ -11,6 +11,7 @@
 import { agentDir, type Household } from '../household.js';
 import { allThreads, threadRowStates, messageRecords, messageRevisions, messagesBySeq } from '../comms.js';
 import { agentName } from '../ui/core.js';
+import { listProjects } from '../tools/project.js';
 import { parseTypeDecl, type TypeDecl } from './contract.js';
 import { answerFrom, type MemRecord, type ProviderAnswer, type ProviderQuery } from './memory.js';
 import type { Viewer } from './viewer.js';
@@ -49,6 +50,30 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     default_fields: ['agent', 'name'],
     max_page: 100,
     aggregates: { count: {} },
+  }),
+  // The project directory (t-2029), from the same reader as project_list and the Projects app. Piece feeds and
+  // waiting counts remain their sources' responsibility; no piece calls or copied work state enter this type.
+  project: declare('project', {
+    version: '1.0',
+    schema: { type: 'object', properties: { slug: { type: 'string' }, name: { type: 'string' }, status: { type: 'string' } } },
+    agent: 'agent',
+    fields: {
+      agent: { class: 'household', filter: ['eq', 'in'], order: true },
+      slug: { class: 'household', filter: ['eq', 'in'], order: true },
+      name: { class: 'household', order: true },
+      status: { class: 'household', filter: ['eq', 'in'], order: true },
+      links: { class: 'household' },
+      activity: { class: 'household', filter: ['lt', 'lte', 'gt', 'gte'], order: true },
+      updated: { class: 'household', filter: ['lt', 'lte', 'gt', 'gte'], order: true },
+      synthesized_at: { class: 'household' },
+      stale: { class: 'household' },
+      unverified: { class: 'household' },
+      memories_since_synthesis: { class: 'household' },
+      unreadable: { class: 'household' },
+    },
+    default_fields: ['agent', 'slug', 'name', 'status', 'links', 'activity', 'updated', 'synthesized_at', 'stale', 'unverified', 'memories_since_synthesis', 'unreadable'],
+    max_page: 500,
+    aggregates: { count: { by: ['status'] } },
   }),
   thread: declare('thread', {
     version: '1.2',
@@ -188,7 +213,13 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
 };
 
 /** Core's records of `type` that core, as the provider, answers this viewer: it decides first, as any provider does. */
-function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
+function recordsFor(h: Household, type: string, viewer: Viewer, now = Date.now()): MemRecord[] {
+  if (type === 'project') {
+    if (viewer.kind !== 'core' && !(viewer.kind === 'member' && viewer.household)) return [];
+    return h.agents.flatMap((agent) => listProjects(agentDir(h, agent), { nowMs: now }).map((p) => ({
+      ...p, id: `${agent}:${p.slug}`, agent, audience: { owners: true },
+    })));
+  }
   if (type === 'agent') {
     const mine = viewer.kind === 'core' ? h.agents : viewer.kind === 'member' ? h.agents.filter((a) => viewer.agents.includes(a)) : h.agents.filter((a) => a === viewer.agent);
     return mine.map((a) => ({ id: a, agent: a, name: agentName(agentDir(h, a)), audience: { ownersOf: [a], agents: [a] } }));
@@ -219,7 +250,7 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
       // A type whose records come from a source no one has registered yet (loom just started, no page asked yet): not
       // "none", which would read as nothing needing anyone, but unavailable until it is.
       held.set(q.type, src ? await src(viewer, now).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
-        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer));
+        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer, now));
     }
     const recs = held.get(q.type)!;
     if (q.type === 'message' && recs !== 'unavailable') {

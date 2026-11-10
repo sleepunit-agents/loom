@@ -1167,3 +1167,17 @@ retain the collection pool and 15-second deadline. At most two servers run
 per command, binary version and environment; a version or settings change
 retires old idle servers. Idle servers end after one minute and are recycled
 after ten minutes. API and query commands never share a process.
+
+### As built: the project directory (t-2029)
+
+`loom/project@^1` publishes the same live project directory as `project_list`: slug, name, status, links,
+activity, updated/synthesis times and stale/unverified/memory counts. Identity includes the owning agent
+(`<agent>:<slug>`), so two agents' projects with the same slug never replace each other. Archived projects
+leave the directory; restoring one brings back the same identity. The provider restricts the agent set to
+household owners and core before filtering, paging and totals; agent owners and agent tokens get no rows,
+matching the Projects app. Each row also carries `owners: true` for core's independent audience check. It reads core stores directly and
+runs no piece commands. Counts depending on the clock use the batch's observation time.
+
+This is directory coverage only. Project waiting counts, piece feeds, cards and hub consumers have not
+moved to it yet. Their piece-owned membership and status rules must remain authoritative; do not derive
+them by copying those rules into core or by adding per-request piece commands.
