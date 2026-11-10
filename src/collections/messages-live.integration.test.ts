@@ -108,6 +108,9 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     expect(sentDigest({ ...record, message: { text: null } })).not.toBe(kept);
   });
 
+  // This fixture encrypts 104 replies, then decrypts several pages through
+  // the real age programs. Its assertion is pagination/isolation, not a
+  // five-second crypto throughput requirement on a shared CI runner.
   it("pages a member's words exactly as Comms does, and never another member's", async () => {
     const t = thread('jonathan', 'art', 'initial words');
     const other = thread('sam', 'art', 'private words');
@@ -131,7 +134,7 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     // The cursor is sealed to its member, even another owner of the same agent.
     const first = await ask('jonathan', { where: [['thread', 'eq', t.id]] });
     expect((await ask('sam', { where: [['thread', 'eq', t.id]], after: first.next })).error).toBe('bad-query');
-  });
+  }, 20_000);
 
   it('pairs payload, mutable metadata and revision from the same selected row across a writer race', async () => {
     const t = thread('jonathan', 'art', 'a delivery that moves during a read');

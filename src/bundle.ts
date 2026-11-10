@@ -26,7 +26,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
 import { resolveRepoRoot, resolveSqliteDbPath } from './config.js';
 import {
   AGENT_NAME, agentDir, commonsKnowledgePath, householdHome, householdOf, loadHousehold, type Household,

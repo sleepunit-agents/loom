@@ -20,7 +20,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, linkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { Decrypter } from 'age-encryption';
 import { findProgram } from './programs.js';
 import { agentDir, loadHousehold, type Household, type Member } from './household.js';
@@ -387,14 +388,19 @@ function openMessages(home: string): Database {
   const path = join(home, COMMS_DB);
   const fresh = !existsSync(path);
   const db = new BetterSqlite3(path);
-  if (fresh) chmodSync(path, 0o600);
-  db.pragma('busy_timeout = 5000');
-  // Rollback journal with secure_delete, as audit.db: a swept or deleted message's pages are zeroed.
-  db.pragma('journal_mode = DELETE');
-  db.pragma('secure_delete = ON');
-  db.exec(MESSAGES_SCHEMA);
-  addColumn(db, 'comms_messages', 'sending_at', 'INTEGER');
-  addColumn(db, 'comms_messages', 'delivery_json', 'TEXT');
+  try {
+    if (fresh) chmodSync(path, 0o600);
+    db.pragma('busy_timeout = 5000');
+    // Rollback journal with secure_delete, as audit.db: a swept or deleted message's pages are zeroed.
+    db.pragma('journal_mode = DELETE');
+    db.pragma('secure_delete = ON');
+    db.exec(MESSAGES_SCHEMA);
+    addColumn(db, 'comms_messages', 'sending_at', 'INTEGER');
+    addColumn(db, 'comms_messages', 'delivery_json', 'TEXT');
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 

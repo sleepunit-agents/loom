@@ -23,7 +23,8 @@
  * tools/project.ts, which knows the context dir.
  */
 import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { NOTE_PATH } from '../notes.js';
 import { MIGRATIONS } from './migrations.js';
@@ -384,21 +385,26 @@ export class ProjectsStore {
   constructor(config: ProjectsStoreConfig) {
     this.now = config.now ?? Date.now;
     this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    if (!config.readonly) {
-      this.db.pragma('journal_mode = WAL');
-      // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
-      for (const id of PROJECT_MIGRATIONS) {
-        const m = MIGRATIONS.find((x) => x.id === id)!;
-        if (m.pending(this.db)) m.run(this.db);
+    try {
+      this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
+      if (!config.readonly) {
+        this.db.pragma('journal_mode = WAL');
+        // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
+        for (const id of PROJECT_MIGRATIONS) {
+          const m = MIGRATIONS.find((x) => x.id === id)!;
+          if (m.pending(this.db)) m.run(this.db);
+        }
       }
+      this.migrated = ['projects', 'project_revisions', 'project_names'].every((t) => hasTable(this.db, t));
+      this.table = new CardTable<RawRow>(
+        this.db,
+        { table: 'projects', revisions: 'project_revisions', extraColumns: ['status'], noun: PROJECT_NOUN },
+        config.actor ?? null,
+      );
+    } catch (error) {
+      this.db.close();
+      throw error;
     }
-    this.migrated = ['projects', 'project_revisions', 'project_names'].every((t) => hasTable(this.db, t));
-    this.table = new CardTable<RawRow>(
-      this.db,
-      { table: 'projects', revisions: 'project_revisions', extraColumns: ['status'], noun: PROJECT_NOUN },
-      config.actor ?? null,
-    );
   }
 
   close(): void {

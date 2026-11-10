@@ -1,3 +1,4 @@
+import { sqliteMustYield } from '../sqlite.js';
 /**
  * SQLITE_BUSY retry ladder with exponential backoff + jitter.
  *
@@ -36,6 +37,9 @@ export function retryWrite<T>(fn: () => T, opts?: RetryWriteOptions): T {
       return fn();
     } catch (err: unknown) {
       if (isSqliteBusy(err)) {
+        // A synchronous caller cannot yield safely. Let its boundary return
+        // unavailable, or explicitly retry a replay-safe unit asynchronously.
+        if (sqliteMustYield()) throw err;
         lastErr = err;
         if (attempt < maxAttempts - 1) {
           const delay = baseMs * Math.pow(2, attempt);

@@ -36,7 +36,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
 import { managedBinDir, readRecord, versionKey } from './cli/pieces-managed.js';
 import { householdHome } from './household.js';
 import { grantsAuthority, runOffer } from './offers-registry.js';

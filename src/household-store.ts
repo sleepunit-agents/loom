@@ -16,7 +16,8 @@
  */
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { managedPieces } from './cli/pieces-managed.js';
 import type { VenueKind } from './offers.js';
 

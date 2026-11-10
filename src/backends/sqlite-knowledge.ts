@@ -9,7 +9,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { retryWrite } from './retry.js';
 import type {
   KnowledgeBackend,
@@ -71,12 +72,17 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     // Open in constructor for schema init; caller closes after use.
     this.db = new BetterSqlite3(config.dbPath);
-    this.db.pragma('journal_mode = WAL');
-    // busy_timeout: concurrent sleeves retry brief write-lock windows rather
-    // than failing immediately — see sqlite-vec.ts for the full rationale.
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    this.db.pragma('user_version = 1');
-    this.initSchema();
+    try {
+      this.db.pragma('journal_mode = WAL');
+      // busy_timeout: concurrent sleeves retry brief write-lock windows rather
+      // than failing immediately — see sqlite-vec.ts for the full rationale.
+      this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
+      this.db.pragma('user_version = 1');
+      this.initSchema();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   // ── KnowledgeBackend interface ──

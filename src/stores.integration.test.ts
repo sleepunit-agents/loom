@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 /**
  * Piece storage end to end (docs/specs/piece-storage.md): the grant loom hands a
  * piece's process, the store's HTTP API, and `loom store` with what loom gives.
@@ -53,6 +56,65 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => console.log(
 
   const post = (path: string, body: unknown, token?: string) => fetch(`http://127.0.0.1:${handle.port}${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+
+  it('keeps answering /login while another process holds a store write lock', async () => {
+    // Initialize before the other process takes the write lock.
+    expect((await post('/api/loom/store/notes/put', { collection: 'convos', key: 'lock-test', doc: { n: 0 } }, tok.piece)).status).toBe(200);
+    const child = spawn(process.execPath, ['-e', `
+      const Database = require('better-sqlite3');
+      const db = new Database(process.argv[1]);
+      db.exec('BEGIN IMMEDIATE');
+      console.log('locked');
+      process.stdin.once('data', () => { db.exec('ROLLBACK'); db.close(); process.exit(0); });
+      setTimeout(() => process.exit(2), 15000).unref();
+    `, join(h.home, 'commons', 'stores', 'notes.db')], { stdio: ['pipe', 'pipe', 'inherit'] });
+    let pending: Promise<Response> | undefined;
+    try {
+      await once(child.stdout, 'data');
+      const began = performance.now();
+      pending = post('/api/loom/store/notes/put', { collection: 'convos', key: 'lock-test', doc: { n: 1 } }, tok.piece);
+      await delay(100);
+      const login = await fetch(`http://127.0.0.1:${handle.port}/login`);
+      expect(login.status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1500);
+      // Release only AFTER login answered: a blocking implementation cannot pass.
+      child.stdin.end('release');
+      expect((await pending).status).toBe(200);
+      const got = await (await post('/api/loom/store/notes/get', { collection: 'convos', key: 'lock-test' }, tok.piece)).json();
+      expect(got).toMatchObject({ doc: { n: 1 }, rev: 2 });
+    } finally {
+      child.kill();
+      await pending?.catch(() => undefined);
+    }
+  }, 20000);
+
+  it('keeps /login responsive when a different process exclusively locks Comms', async () => {
+    const child = spawn(process.execPath, ['-e', `
+      const Database = require('better-sqlite3');
+      const db = new Database(process.argv[1]);
+      db.exec('CREATE TABLE IF NOT EXISTS lock_fixture (n INTEGER)');
+      db.exec('BEGIN EXCLUSIVE');
+      console.log('locked');
+      process.stdin.once('data', () => { db.exec('ROLLBACK'); db.close(); process.exit(0); });
+      setTimeout(() => process.exit(2), 15000).unref();
+    `, join(h.home, 'comms.db')], { stdio: ['pipe', 'pipe', 'inherit'] });
+    try {
+      await once(child.stdout, 'data');
+      const began = performance.now();
+      const blocked = fetch(`http://127.0.0.1:${handle.port}/comms`, { headers: { authorization: `Bearer ${tok.owner}`, accept: 'application/json' } });
+      await delay(100);
+      expect((await fetch(`http://127.0.0.1:${handle.port}/login`)).status).toBe(200);
+      const elapsed = performance.now() - began;
+      console.log(`exclusive lock: /login answered after ${Math.round(elapsed)} ms`);
+      expect(elapsed).toBeLessThan(1500);
+      const response = await blocked;
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: expect.stringContaining('Comms') });
+    } finally {
+      child.stdin.end('release');
+      await once(child, 'exit');
+    }
+  }, 20000);
 
   it("a piece's process gets a grant that says who it's serving", async () => {
     const asArt = await (await post('/api/notes/x', {}, tok.art)).json() as { grant: string; piece: string };
