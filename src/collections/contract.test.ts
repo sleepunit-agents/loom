@@ -54,6 +54,7 @@ describe('the collections offer: checked at install', () => {
     ['an aggregate naming an undeclared field', offer({ task: { ...TASK, aggregates: { count: { by: ['nope'] } } } }), /aggregates.count.by/],
     ['a filter operator that doesn\'t exist', offer({ task: { ...TASK, fields: { ...TASK.fields, status: { class: 'member', filter: ['like'] } } } }), /filter is a list of operators/],
     ['agent naming an undeclared field', offer({ task: { ...TASK, agent: 'owner' } }), /agent names one of its fields/],
+    ['agent naming an owner-class field', offer({ task: { ...TASK, agent: 'cost' } }), /agent can't be an owner-class field/],
     ['a default field that\'s heavy', offer({ task: { ...TASK, default_fields: ['description'] } }), /can't name a heavy field/],
     ['a heavy field to filter on', offer({ task: { ...TASK, fields: { ...TASK.fields, description: { class: 'member', heavy: true, filter: ['eq'] } } } }), /heavy field can't be filtered/],
     ['a kept: false field to order on', offer({ task: { ...TASK, fields: { ...TASK.fields, words: { class: 'member', kept: false, order: true } } } }), /kept: false field can't be/],

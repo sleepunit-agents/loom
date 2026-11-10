@@ -164,6 +164,11 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
   given its own share (a query that would overflow its share answers `too-big` alone and the others still answer),
   4 MB a line; each `changes` page bounded by bytes as well as by count; and a pool apart from the page's
   pieces (four running, sixteen waiting per provider), so live data can't starve page loads or the other way round.
+- **First-party providers only, until the conformance run (t-2026) can vouch for one.** Core checks every row, but
+  against a provider that ignores its viewer it can only take it out of contract at the first hidden row, and every
+  answer before that said no hidden record matched (t-2021's review). So a provider is trusted code, as a piece's
+  pages already are: core serves collections only from a piece installed from a repo in loom's catalog, never a local
+  or unlisted one, and its checks are the defence behind that, not the only one.
 - **`owners: 2`**, declared here and fixed at install: the gate [owners.md](owners.md) already has for pages.
   **A provider that doesn't declare it answers only household owners**, and core refuses any other viewer's query
   before running it. It's read from the installed declaration, never from a cached manifest, so it can't flap when a

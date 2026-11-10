@@ -18,7 +18,7 @@
  */
 import type { Household } from '../household.js';
 import { askGrant } from '../grants.js';
-import { managedPieces } from '../cli/pieces-managed.js';
+import { isLocal, managedPieces, readCatalog } from '../cli/pieces-managed.js';
 import { runOffer } from '../offers-registry.js';
 import { Pool, type ApiCaller } from '../ui/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, providerName, type CollectionsOffer, type TypeDecl } from './contract.js';
@@ -49,15 +49,31 @@ export interface Provider {
   install?: string;
 }
 
-/** Core and every installed piece publishing collections, by provider name, from their installed declarations. */
+/**
+ * Core and every installed first-party piece publishing collections, by provider name, from their installed
+ * declarations.
+ *
+ * First-party only, until the conformance run (t-2026) can vouch for a provider. Core checks every row, but against a
+ * provider that ignores its viewer it can only take it out of contract at the first hidden row, and every answer
+ * before that said no hidden record matched its query: a viewer choosing the queries can learn from that. So, as a
+ * piece's pages already are (owners.md: a piece with `owners: 2` scopes what it shows), a provider is trusted code:
+ * one installed from a repo in loom's catalog (assets/pieces.json), never a local or unlisted one.
+ */
+let firstPartyRepos: Set<string> | undefined;
+const firstParty = (): Set<string> => (firstPartyRepos ??= new Set(readCatalog().map((e) => e.repo)));
+
 export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
   const out = new Map<string, Provider>([[CORE_PROVIDER, { name: CORE_PROVIDER, owners2: true, types: CORE_TYPES }]]);
+  const taken = new Set<string>([CORE_PROVIDER]);
   for (const r of managedPieces(env)) {
     const c: CollectionsOffer | undefined = r.loom.collections;
     if (!c) continue;
+    if (isLocal(r.source) || !firstParty().has(r.source.repo)) continue;
     const name = providerName(r);
-    // Install refuses a taken name; were two ever present (piece.json edited by hand), neither is served.
-    if (out.has(name)) { out.delete(name); continue; }
+    // Install refuses a taken name; were two ever present (piece.json edited by hand), none of them is served, and
+    // core's own name is never a piece's.
+    if (taken.has(name)) { if (name !== CORE_PROVIDER) out.delete(name); continue; }
+    taken.add(name);
     out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed ?? ''}@${r.version ?? ''}` });
   }
   return out;

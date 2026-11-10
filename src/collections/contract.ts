@@ -136,6 +136,8 @@ export function parseTypeDecl(name: string, raw: unknown, where = `collections.t
   if (raw.agent !== undefined) {
     if (!declared(raw.agent)) return `${where}.agent names one of its fields`;
     if (fields[raw.agent].heavy) return `${where}.agent can't be a heavy field`;
+    // Core's agent rule reads it for every viewer, so whether it names one of theirs is something every viewer learns.
+    if (fields[raw.agent].class === 'owner') return `${where}.agent can't be an owner-class field`;
     agent = raw.agent;
   }
   if (!Array.isArray(raw.default_fields) || !raw.default_fields.every(declared) || new Set(raw.default_fields).size !== raw.default_fields.length) {

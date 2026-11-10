@@ -110,12 +110,13 @@ const TASK = {
   default_fields: ['title', 'status'], max_page: 10, aggregates: { count: { by: ['status'] } }, houses: true,
 };
 
-function piece(home: string, name: string, raw: Record<string, unknown>, body: string): void {
+function piece(home: string, name: string, raw: Record<string, unknown>, body: string, repo?: string): void {
   const loom = parseLoomBlock(raw, name, [`loom-${name}`]);
   if (typeof loom === 'string') throw new Error(`${name}: ${loom}`);
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
-  writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
+  // A first-party piece (its repo is in loom's catalog), unless the test says otherwise: only those are served.
+  writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: repo ?? 'sleepunit-agents/taskstore', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
     bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
   const bin = join(dir, 'current', 'cli');
   writeFileSync(bin, body);
@@ -314,6 +315,14 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(await ag(tok.jonathan)).toEqual(['loom/agent/art', 'loom/agent/mark', 'loom/agent/pond-bot']);
       expect(await ag(tok.art)).toEqual(['loom/agent/art']);
     });
+  });
+
+  it('a piece that isn\'t first-party (not in loom\'s catalog) publishes nothing until the conformance run can vouch for it', async () => {
+    piece(h.home, 'localnotes', { collections: { owners: 2, query: ['loom-localnotes', 'q'], types: { task: TASK } } }, PROVIDER_BIN('localnotes'), 'someone/else');
+    try {
+      expect((await query(tok.jonathan, [{ id: 'q', type: 'localnotes/task@^1' }])).body.answers[0]).toMatchObject({ error: 'unsupported-version' });
+      expect(runs('localnotes')).toEqual([]);
+    } finally { rmSync(join(h.home, 'pieces', 'localnotes'), { recursive: true, force: true }); }
   });
 
   describe('counts', () => {
