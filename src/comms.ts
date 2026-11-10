@@ -1221,7 +1221,7 @@ function spawnThread(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, u
   const askingMember = parentThread?.agent === agent ? h.members.find((m) => m.person === parentThread.member && owns(m, agent)) : undefined;
   const member = askingMember ?? h.members.find((m) => Array.isArray(m.agents) && m.agents.includes(agent)) ?? h.members.find((m) => m.agents === '*');
   if (!member) return fail('bad-input: the agent has no owner');
-  const id = base32(createHash('sha256').update(`spawn:${agent}:${cv.id}`).digest()).slice(0, 16);
+  const id = spawnFirstId(agent, cv.id);
   const opened = openThread(h, env, member, { agent, id, text: checkText(raw.text) }, now);
   withThreadsAt(h.home, (db) => db.prepare('UPDATE comms_threads SET conversation = ? WHERE id = ?').run(cv.id, opened.thread.id));
   withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = 1, sender = ? WHERE thread = ? AND seq = ?").run(agent, opened.thread.id, opened.seq));
@@ -1504,15 +1504,29 @@ export function threadOfAgentConversation(home: string, agent: string, conversat
  * and every deleted one by its id (its place) and, deleted since it was kept, by its conversation, each with its member
  * and agent.
  */
-export function threadMembers(home: string): { live: Map<string, { member: string; agent: string }>; deleted: Map<string, { member: string; agent: string }> } {
-  if (!existsSync(join(home, 'household.db'))) return { live: new Map(), deleted: new Map() };
+export function threadMembers(home: string): { live: Map<string, { member: string; agent: string }>; deleted: Map<string, { member: string; agent: string }>;
+  /** A spawned job's deleted thread, deleted before comms_deleted kept conversations: found by the place it had. */
+  deletedSpawn: (agent: string, cv: string) => { member: string; agent: string } | undefined } {
+  if (!existsSync(join(home, 'household.db'))) return { live: new Map(), deleted: new Map(), deletedSpawn: () => undefined };
   return withThreadsAt(home, (db) => {
     const gone = db.prepare('SELECT id, member, agent, conversation FROM comms_deleted').all() as Array<{ id: string; member: string; agent: string; conversation: string | null }>;
+    const deleted = new Map(gone.flatMap((r) => [[r.id, { member: r.member, agent: r.agent }] as const, ...(r.conversation ? [[r.conversation, { member: r.member, agent: r.agent }] as const] : [])]));
+    const unkept = gone.filter((r) => !r.conversation);
     return {
       live: new Map((db.prepare('SELECT conversation, member, agent FROM comms_threads').all() as Array<{ conversation: string; member: string; agent: string }>).map((r) => [r.conversation, { member: r.member, agent: r.agent }])),
-      deleted: new Map(gone.flatMap((r) => [[r.id, { member: r.member, agent: r.agent }] as const, ...(r.conversation ? [[r.conversation, { member: r.member, agent: r.agent }] as const] : [])])),
+      deleted,
+      deletedSpawn: (agent, cv) => {
+        const members = [...new Set(unkept.filter((r) => r.agent === agent).map((r) => r.member))];
+        for (const m of members) { const d = deleted.get(placeFor(home, m, agent, spawnFirstId(agent, cv))); if (d && d.agent === agent) return d; }
+        return undefined;
+      },
     };
   });
+}
+
+/** The first message id a spawned job's thread is opened with (spawnThread): its place follows from it. */
+function spawnFirstId(agent: string, cv: string): string {
+  return base32(createHash('sha256').update(`spawn:${agent}:${cv}`).digest()).slice(0, 16);
 }
 
 /** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */

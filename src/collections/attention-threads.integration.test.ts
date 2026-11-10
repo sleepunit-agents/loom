@@ -335,8 +335,10 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     const r = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' }) as { id: string };
     expect(texts((await get('sam', '/inbox')).items)).toContain('Job: OK to restart the build?');
     expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
-    // Its thread deleted: still Sam's, never the household owner's.
+    // Its thread deleted: still Sam's, never the household owner's; deleted before loom kept a deleted thread's
+    // conversation too (found by the place it had).
     deleteThread(h, threadFor(h, member('sam'), r.id));
+    { const db = new BetterSqlite3(join(h.home, 'household.db')); try { db.prepare('UPDATE comms_deleted SET conversation = NULL').run(); } finally { db.close(); } }
     expect(texts((await get('sam', '/inbox')).items)).toContain('Job: OK to restart the build?');
     expect(texts((await get('jonathan', '/inbox')).items)).not.toContain('Job: OK to restart the build?');
     // A job whose thread never opened (long past the runtime's step): the household owners'.
@@ -356,6 +358,9 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     });
     const state = (id: string) => JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))[id].state;
     expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000011' })).message).toBe('That ask isn\'t open any more.');
+    // Nor through the piece's page-only Always (an Allow and a standing rule), on or off the cards.
+    expect((await act('jonathan', '/act/approvals', { _action: 'always', id: 'a-00000011' })).message).toBe('That ask isn\'t open any more.');
+    expect(state('a-00000011')).toBeUndefined();
     expect(state('a-00000011')).toBeUndefined();
     expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000013' })).message).toBe('That ask isn\'t open any more.');
     expect(state('a-00000013')).toBeUndefined();
@@ -388,6 +393,30 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     const ix = async (who: string) => JSON.stringify(await get(who, '/projects'));
     expect(await ix('sam')).toMatch(/1 waiting on you/);
     expect(await ix('jonathan')).not.toMatch(/waiting on you|OK to ship the pond/);
+  }, 30_000);
+
+  it('a job\'s ask that\'s no one\'s for now is pushed once its thread opens, to its member', async () => {
+    const store = sessionStore(h.home);
+    const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'));
+    store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('sam'), undefined, 'sam');
+    const sent: Array<{ to: string }> = [];
+    const minute = async () => {
+      const f = join(h.home, 'ui-sessions.json');
+      try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+      // Asks only (a Comms reply's push is its own, comms-push.integration.test.ts).
+      const send = async (s2: { endpoint: string }, payload: string) => { if (JSON.parse(payload).url.startsWith('/inbox')) sent.push({ to: s2.endpoint }); return {} as never; };
+      return pushWatch({ contextDir: agentDir(h, 'art'), auth: { enabled: true, check: () => null, live: () => false }, env: process.env, household: () => h } as never, send as never);
+    };
+    await minute();
+    const parent = thread('sam');
+    const job = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-9', label: 'job', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime').conversation;
+    needs(job, 'Job: OK to restart the build?');
+    await minute();
+    expect(sent).toEqual([]);
+    adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' });
+    await minute();
+    expect(sent.map((x) => x.to.split('/').pop())).toEqual(['sam']);
   }, 30_000);
 
   it('a lead card absorbed by a member\'s Needs you is still pushed to household owners', async () => {

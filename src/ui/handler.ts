@@ -775,7 +775,10 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
       const o = whose(x.conversation!, x.agent);
       return typeof o === 'object' && memberOf(hh!, o.member)?.agents !== '*';
     })());
-    return [...[...asks, ...absorbed].map((a) => {
+    // One that's no one's for now (a job whose thread may still open) isn't announced, nor marked pushed: it's announced
+    // to whom it falls once it does.
+    const noOne = (a: HomeAsk) => { const cv = a.reply?.fields.conversation ?? a.conversation; return !!cv && whose(cv, a.agent) === 'no one'; };
+    return [...[...asks, ...absorbed].filter((a) => !noOne(a)).map((a) => {
       const cv = a.reply?.fields.conversation ?? a.conversation;
       const o = cv ? whose(cv, a.agent) : undefined;
       const lead = a.lead === true && !a.reply;
@@ -886,7 +889,7 @@ function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: strin
       let c: ReturnType<typeof conversationOf> | undefined;
       try { for (const a of agent ? (h.agents.includes(agent) ? [agent] : []) : h.agents) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
       if (c?.venue === COMMS_VENUE) o = t?.deleted.get(c.place) ?? 'no one';
-      else if (c?.venue === 'spawn') o = !t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household';
+      else if (c?.venue === 'spawn') o = (t && agent ? t.deletedSpawn(agent, cv) : undefined) ?? (!t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household');
     }
     seen.set(k, o);
     return o;
@@ -940,7 +943,7 @@ const HOUSEHOLD_KINDS: ReadonlySet<string> = new Set([...OWNER_KINDS, 'host']);
  * Whether a piece action answers an ask `who` may not see (t-2084). Hiding a card isn't the protection, so:
  * - any piece: an action whose button (the action and every field it posts) is on a card they can't see, and on none
  *   they can, is refused;
- * - the approvals piece's Allow, Deny and Allow every time fail closed: allowed when the approval is on a card they see,
+ * - the approvals piece's actions on an approval (Allow, Deny, Allow every time, Always: any naming one) fail closed: allowed when the approval is on a card they see,
  *   else only when the piece's own record says where it was asked (`conversation`, null for nowhere) and that's theirs
  *   to answer. The piece lists only so many cards at a time, so an id on none of them is read from it; one it can't
  *   read, or a piece too old to say where it was asked, is refused. One it has no record of goes on (it refuses it).
@@ -952,7 +955,8 @@ async function actOnHidden(pieces: PieceInfo[], piece: string, action: string, f
   if (seen.some(names)) return false;
   if (all.some(names)) return true;
   const id = fields.id ?? '';
-  if (pieceWithRole(env, 'approvals')?.name !== piece || !['allow', 'deny', 'every-time'].includes(action) || !/^a-[0-9a-f]{4,32}$/.test(id)) return false;
+  // Any of its actions that names an approval (Allow, Deny, Allow every time, Always, and any it adds later).
+  if (pieceWithRole(env, 'approvals')?.name !== piece || !/^a-[0-9a-f]{4,32}$/.test(id)) return false;
   let st: ApprovalState | null | undefined;
   try { st = (await pieceCheckers(env).approvals([id]))?.[id]; } catch { st = undefined; }
   if (st === null) return false;
