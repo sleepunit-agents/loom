@@ -9,11 +9,27 @@
  * tasks (t-2025 onward) add the rest.
  */
 import { agentDir, type Household } from '../household.js';
-import { allThreads } from '../comms.js';
+import { allThreads, threadRowStates } from '../comms.js';
 import { agentName } from '../ui/core.js';
 import { parseTypeDecl, type TypeDecl } from './contract.js';
 import { answerFrom, type MemRecord, type ProviderAnswer, type ProviderQuery } from './memory.js';
 import type { Viewer } from './viewer.js';
+
+/**
+ * Where a core type's records come from when they aren't core's own files to read here: the attention items are built
+ * by the Inbox's own code (src/ui/handler.ts, inboxItems: every piece's manifest, the conversations' asks, the
+ * member's read state), which registers itself for the household it serves. Answers the records that viewer gets, the
+ * viewer's own choice already made (as any provider decides first); none registered: no records.
+ */
+export type CoreSource = (viewer: Viewer, now: number) => Promise<MemRecord[]>;
+const sources = new Map<string, Map<string, CoreSource>>();
+/** The core types whose records only a registered source makes. */
+const SOURCED = new Set(['attention', 'agent-status']);
+export function registerCoreSource(home: string, type: string, f: CoreSource): void {
+  let m = sources.get(home);
+  if (!m) sources.set(home, (m = new Map()));
+  m.set(type, f);
+}
 
 const declare = (name: string, raw: unknown): TypeDecl => {
   const d = parseTypeDecl(name, raw, `loom.${name}`);
@@ -35,7 +51,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     aggregates: { count: {} },
   }),
   thread: declare('thread', {
-    version: '1.0',
+    version: '1.2',
     schema: { type: 'object', properties: { agent: { type: 'string' }, title: { type: ['string', 'null'] }, updated: { type: 'string' } } },
     agent: 'agent',
     fields: {
@@ -44,12 +60,105 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       updated: { class: 'member', filter: ['lt', 'lte', 'gt', 'gte'], order: true },
       opened: { class: 'member', order: true },
       pinned: { class: 'member', filter: ['eq'] },
-      archived: { class: 'member', filter: ['has'] },
+      archived: { class: 'member', filter: ['eq', 'has'] },
       project: { class: 'member', filter: ['eq', 'has'] },
+      // Its list row's state (comms.ts threadRowStates, t-2027): a reply past its member's read, its body at work, a job's
+      // thread its member hasn't written in (Background work), and its newest message's seq. Never its words.
+      unread: { class: 'member', filter: ['eq'] },
+      working: { class: 'member', filter: ['eq'] },
+      background: { class: 'member', filter: ['eq'] },
+      last_seq: { class: 'member' },
+      // The rest of its Comms list row (1.2, t-2027): what the list and a thread's menu draw (comms-routes.ts view, stateOf).
+      channel: { class: 'member' },
+      titled_by: { class: 'member' },
+      read_seq: { class: 'member' },
+      conversation: { class: 'member' },
+      working_since: { class: 'member' },
+      queued: { class: 'member' },
+      failed: { class: 'member' },
     },
     default_fields: ['agent', 'title', 'updated', 'pinned'],
     max_page: 200,
     aggregates: { count: {} },
+  }),
+  // One Inbox item (t-2025): an ask, a notice, an answered one, an FYI, as this member's Inbox files it. Its id is the
+  // Inbox's own item key, so Home, the Inbox, the badges, an agent card and a thread's ask card name the same record.
+  // What a viewer gets is decided for them by the Inbox's own code (their agents, their pieces, their read state), so
+  // it's an `ask` type: when anything in it moves, each subscription is asked again as its viewer.
+  attention: declare('attention', {
+    version: '1.0',
+    schema: { type: 'object', properties: { kind: { type: 'string' }, box: { type: 'string' }, attention: { type: 'boolean' }, text: { type: 'string' } } },
+    agent: 'agent',
+    fields: {
+      agent: { class: 'member', filter: ['eq', 'in', 'has'] },
+      kind: { class: 'member', filter: ['eq', 'in'] },
+      box: { class: 'member', filter: ['eq', 'in'] },
+      attention: { class: 'member', filter: ['eq'] },
+      unread: { class: 'member', filter: ['eq'] },
+      seen: { class: 'member' },
+      sort: { class: 'member', order: true },
+      at: { class: 'member' },
+      text: { class: 'member' },
+      meta: { class: 'member' },
+      outcome: { class: 'member' },
+      source: { class: 'member' },
+      sourceLabel: { class: 'member' },
+      page: { class: 'member' },
+      label: { class: 'member' },
+      href: { class: 'member' },
+      actions: { class: 'member' },
+      reply: { class: 'member' },
+      needs: { class: 'member' },
+      approval: { class: 'member' },
+      waitsOnApproval: { class: 'member', filter: ['eq'] },
+      fine: { class: 'member' },
+      relayedFrom: { class: 'member' },
+      conversation: { class: 'member', filter: ['eq'] },
+      // How many members have opened it: what the core viewer's snapshot holds instead of anyone's own read state, so
+      // a read moves the record and every subscription is asked again. Household owners' only, and never asked for.
+      reads: { class: 'owner' },
+      // A digest of every member's own copy of it (the snapshot's alone, as `reads`): a copy that moves moves the record.
+      copies: { class: 'owner' },
+    },
+    default_fields: ['agent', 'kind', 'box', 'attention', 'unread', 'seen', 'sort', 'at', 'text', 'meta', 'outcome', 'source', 'sourceLabel', 'page', 'label', 'href',
+      'actions', 'reply', 'needs', 'approval', 'waitsOnApproval', 'fine', 'relayedFrom', 'conversation'],
+    max_page: 500,
+    aggregates: { count: {} },
+    audience: 'ask',
+  }),
+  // One agent's card (t-2028): its state and why, what it has going (doing), every job a piece reports for it (running,
+  // waiting, scheduled, backlog), what's wrong, its readings, when it was last seen, its last few steps; as Home's own
+  // code makes it for this member (src/ui/handler.ts agentCards over their pieces; a Comms thread's job is its member's
+  // alone, handler.ts atWorkFor). So it's an `ask` type, each row's audience the viewer, as attention is.
+  'agent-status': declare('agent-status', {
+    version: '1.1',
+    schema: { type: 'object', properties: { agent: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' } } },
+    agent: 'agent',
+    fields: {
+      agent: { class: 'member', filter: ['eq', 'in'], order: true },
+      label: { class: 'member' },
+      bg: { class: 'member' },
+      fg: { class: 'member' },
+      face: { class: 'member' },
+      state: { class: 'member', filter: ['eq', 'in'] },
+      reason: { class: 'member' },
+      doing: { class: 'member' },
+      jobs: { class: 'member' },
+      // How many of its jobs are running now (the rail's boxes, t-2077; "Working · N things").
+      running: { class: 'member', filter: ['eq', 'gt', 'gte'] },
+      problems: { class: 'member' },
+      seen: { class: 'member' },
+      readings: { class: 'member' },
+      steps: { class: 'member' },
+      // What's moving for it (1.1): each piece that says it's working, and why; Home's list is every card's.
+      moving: { class: 'member' },
+      // A digest of every member's own copy (the core viewer's snapshot alone): a copy that moves moves the record.
+      copies: { class: 'owner' },
+    },
+    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps', 'moving'],
+    max_page: 100,
+    aggregates: { count: {} },
+    audience: 'ask',
   }),
 };
 
@@ -61,20 +170,33 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
   }
   if (type === 'thread') {
     if (viewer.kind === 'agent') return [];
-    return allThreads(h.home)
-      .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))))
-      .map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project, audience: { members: [t.member] } }));
+    const mine = allThreads(h.home)
+      .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
+    const state = threadRowStates(h, mine);
+    return mine.map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project,
+        channel: t.channel, titled_by: t.titled_by, read_seq: t.read_seq, conversation: t.conversation, working_since: t.working_since,
+        queued: t.queued_since !== null, failed: t.last_failed, ...state.get(t.id)!, audience: { members: [t.member] } }));
   }
   return [];
 }
 
 /** Core's answer to a batch of queries for one viewer, in the shape a piece's provider answers. */
-export function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now()): ProviderAnswer[] {
-  const held = new Map<string, MemRecord[]>();
-  return queries.map((q) => {
+export async function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now()): Promise<ProviderAnswer[]> {
+  const held = new Map<string, MemRecord[] | 'unavailable'>();
+  const out: ProviderAnswer[] = [];
+  for (const q of queries) {
     const decl = CORE_TYPES[q.type];
-    if (!decl) return { id: q.id, rows: [], more: false, error: 'unsupported-version' };
-    if (!held.has(q.type)) held.set(q.type, recordsFor(h, q.type, viewer));
-    return answerFrom(held.get(q.type)!, q, decl, now);
-  });
+    if (!decl) { out.push({ id: q.id, rows: [], more: false, error: 'unsupported-version' }); continue; }
+    if (!held.has(q.type)) {
+      const src = sources.get(h.home)?.get(q.type);
+      // A source that fails says unavailable for this answer, never "none" (which would read as everything gone).
+      // A type whose records come from a source no one has registered yet (loom just started, no page asked yet): not
+      // "none", which would read as nothing needing anyone, but unavailable until it is.
+      held.set(q.type, src ? await src(viewer, now).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
+        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer));
+    }
+    const recs = held.get(q.type)!;
+    out.push(recs === 'unavailable' ? { id: q.id, rows: [], more: false, error: 'unavailable' } : answerFrom(recs, q, decl, now));
+  }
+  return out;
 }

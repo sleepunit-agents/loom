@@ -25,6 +25,8 @@ import { useFollow } from './comms-follow';
 import { refBits, RefText, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
+import { attentionNow, onAttention } from './attention';
+import { useOtherThreads, useThreads } from './threads-live';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -37,11 +39,15 @@ type ThreadState = { working: boolean; working_since: string | null; queued: boo
 export type Thread = {
   id: string; agent: string; title: string | null; titled_by: string | null; project: string | null; pinned: boolean; archived: string | null;
   opened: string; last: string; read_seq: number; channel: number; conversation: string; state: ThreadState; unread?: boolean; last_seq?: number;
+  /** A spawned job's thread (t-2043): watched read-only until its member writes in it (joined). */
+  job?: { joined: boolean };
 };
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null; delivery?: Delivery };
 /** Where a message of yours is, as the server recorded it (comms.md, "Sending"): never a guess the app makes. */
 type Delivery = 'sending' | 'delivered' | 'failed';
+/** A thread's first read, and each earlier page: src/comms.ts PAGE. */
+const PAGE_SIZE = 100;
 const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
 /**
  * Whether a message can still change where it is on its own: one of yours on its way, or a step still running. The
@@ -370,17 +376,43 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin, onAction }
   );
 }
 
-function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload, onRemoved }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void; onRemoved: () => void }) {
+/** The list's archived threads or Background work, live (threads-live.ts, t-2027): mounted only while the list shows
+ * them, so the set is held only then. It hands the list its rows; null while it isn't live (the list asks loom then). */
+function OtherThreads({ which, csrf, onRows }: { which: 'archived' | 'background' | 'both'; csrf: string; onRows: (rows: Thread[] | null) => void }) {
+  const rows = useOtherThreads(csrf, which);
+  const had = useRef(false);
+  useEffect(() => { if (rows) { had.current = true; onRows(rows); } else if (had.current) onRows(null); }, [rows, onRows]);
+  // A set that hasn't answered in OTHER_WAIT_MS isn't coming soon (the stream down, an error): loom is asked then.
+  useEffect(() => { const t = setTimeout(() => { if (!had.current) onRows(null); }, OTHER_WAIT_MS); return () => clearTimeout(t); }, [onRows]);
+  return null;
+}
+const OTHER_WAIT_MS = 2_000;
+
+function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload, onRemoved }: { threads: Thread[]; live: boolean; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void; onRemoved: () => void }) {
   const [archived, setArchived] = useState<Thread[] | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showBackground, setShowBackground] = useState(false);
+  const which = showArchived && showBackground ? 'both' : showArchived ? 'archived' : showBackground ? 'background' : null;
+  // Live, the other view's rows come from its own set (OtherThreads); loom is asked only while that set isn't live.
+  // Kept with the view they're for, so a switch never shows one view's rows under another's name, nor asks loom.
+  const [heldOther, setHeldOther] = useState<{ which: string; rows: Thread[] | null } | null>(null);
+  const onOtherRows = useCallback((rows: Thread[] | null) => { setHeldOther(which ? { which, rows } : null); }, [which]);
+  // Closed, its rows go: the set stopped, so reopened, they're asked for again, never shown from before.
+  useEffect(() => { if (!which) setHeldOther(null); }, [which]);
+  const liveOther = heldOther && heldOther.which === which ? heldOther.rows : null;
+  const otherLive = live && liveOther !== null;
+  // The other view's own set: until it answers, a moment, nothing is asked of loom (live means it will).
+  const otherWaiting = live && which !== null && (heldOther === null || heldOther.which !== which);
+  // What moves the asked-for copy: the list's rows, only while nothing's live (live, a row's move comes on the stream).
+  const moved = live ? null : threads;
   useEffect(() => {
     if (!showArchived && !showBackground) return;
+    if (otherLive || otherWaiting) return;
     let cancelled = false;
     void getJson<{ threads: Thread[] }>(`/comms?archived=${showArchived ? 1 : 0}&background=${showBackground ? 1 : 0}`)
       .then((r) => { if (!cancelled) setArchived(r?.threads ?? []); });
     return () => { cancelled = true; };
-  }, [showArchived, showBackground, threads]);
+  }, [showArchived, showBackground, moved, otherLive, otherWaiting]);
   const groups = useMemo(() => {
     const pinned = threads.filter((t) => t.pinned), unread = threads.filter((t) => !t.pinned && t.unread), rest = threads.filter((t) => !t.pinned && !t.unread);
     return [['Pinned', pinned], ['Unread', unread], ['Threads', rest]] as const;
@@ -398,14 +430,16 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload, onRe
     } else if (verb === 'delete' && !confirm("Delete this thread and its words? This can't be undone.")) return;
     const result = await post(`/comms/${t.id}/${verb}`, csrf, body);
     if (!result.ok) { alert(String(result.body.error ?? "That didn't work.").replace(/^[a-z-]+: /, '')); return; }
-    reload();
+    // Live, the change reaches every list on the stream; nothing is asked again.
+    if (!live) reload();
     if (t.id === current && (verb === 'archive' || verb === 'delete')) onRemoved();
-    if (showArchived || showBackground) {
+    if ((showArchived || showBackground) && !otherLive) {
       const result = await getJson<{ threads: Thread[] }>(`/comms?archived=${showArchived ? 1 : 0}&background=${showBackground ? 1 : 0}`);
       setArchived(result?.threads ?? []);
     }
   };
-  const list = showArchived || showBackground ? [[showBackground ? 'Background work' : 'Archived', archived ?? []] as const] : groups;
+  const other = otherLive ? liveOther : archived;
+  const list = showArchived || showBackground ? [[showBackground ? 'Background work' : 'Archived', other ?? []] as const] : groups;
   return (
     <nav className="comms-list" aria-label="Threads">
       <header className="comms-list__head">
@@ -419,7 +453,8 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload, onRe
             onAction={(action) => void act(t, action)} onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
-      {(showArchived || showBackground) && archived?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
+      {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={onOtherRows} />}
+      {(showArchived || showBackground) && other?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
       {!threads.length && !showArchived && !showBackground && <p className="comms-empty">No threads yet. Start one with one of your agents.</p>}
       <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
       <button type="button" className="comms-archived" onClick={() => { setArchived(null); setShowArchived(!showArchived); }}>{showArchived ? 'Back to active' : 'Archived'}</button>
@@ -608,6 +643,12 @@ function Steps({ cards: all, owner }: { cards: Msg[]; owner?: string }) {
   );
 }
 
+/** What moves a thread's asks, from what needs you (attention.ts): its agent's items, whole but for whether they've been
+ * opened (src/comms-asks.ts isThreadAsk: a thread's asks are only ever its agent's); null while that set isn't live. */
+export function asksMark(a: { items: Array<{ key: string; agent?: string; unread?: boolean }> } | null, agent: string): string | null {
+  return a ? JSON.stringify(a.items.filter((i) => i.agent === agent).map(({ unread: _u, ...rest }) => rest).sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))) : null;
+}
+
 /** The thread's asks put where each was raised (comms.md, "Asks inline"): before the first message or run that came after it. */
 type Shown = { key: string; msg?: Msg; cards?: Msg[]; ask?: ThreadAsk };
 export function withAsks(groups: Shown[], asks: ThreadAsk[]): Shown[] {
@@ -657,6 +698,11 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   // Loom refused this thread's last read (a 503: comms.key missing or unreadable): its words, until a read works.
   const [refused, setRefused] = useState<string | null>(null);
+  // A job's thread opens to watch (t-2043): no composer and no Stop, so looking never touches the run, until Join in.
+  const [joining, setJoining] = useState(false);
+  const watching = !!thread.job && !thread.job.joined && !joining;
+  // Older messages, a page at a time, on demand: the first read is the newest page only.
+  const [earlier, setEarlier] = useState<'more' | 'loading' | 'all'>(initial.messages.length >= PAGE_SIZE ? 'more' : 'all');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
@@ -725,6 +771,18 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     onChanged();
   }, [thread.id, onChanged]);
 
+  const older = useCallback(async () => {
+    const first = shown.current[0]?.seq;
+    if (!first) { setEarlier('all'); return; }
+    setEarlier('loading');
+    const got = await getRead<{ messages: Msg[] }>(`/comms/${thread.id}/before/${first}`);
+    if (!got.ok) { setEarlier('more'); const why = readRefusal(got.status, got.error); if (why) setRefused(why); return; }
+    const page = got.body.messages.filter((m) => m.seq < first);
+    shown.current = [...page, ...shown.current];
+    setMessages((ms) => [...page, ...ms.filter((m) => m.seq >= first)]);
+    setEarlier(got.body.messages.length >= PAGE_SIZE ? 'more' : 'all');
+  }, [thread.id]);
+
   // The thread's own stream: {seq} only (comms.md, "Live"); a dropped one says so and catches up when it's back.
   useEffect(() => {
     let es: EventSource | null = null;
@@ -740,19 +798,28 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     return () => { stop = true; es?.close(); };
   }, [thread.id, pull]);
 
-  // Anything loom says moved (its live stream, /events): an ask answered in the Inbox, an approval filed. The thread
-  // reads again, so a card answered elsewhere shows its answer, and a new one shows its buttons (comms.md, "Asks inline").
-  useEffect(() => onLive(() => { void pull(); }), [pull]);
+  // An ask answered in the Inbox, an approval filed: the thread reads again, so a card answered elsewhere shows its answer,
+  // and a new one shows its buttons (comms.md, "Asks inline"). Its asks are the Inbox's items, so once what needs you is
+  // live (attention.ts, t-2027) it reads again when one of its agent's items moves (comes, goes, is answered); until
+  // then, on anything loom says moved (its bare change).
+  useEffect(() => {
+    let was = asksMark(attentionNow(), thread.agent);
+    const offA = onAttention(() => { const now = asksMark(attentionNow(), thread.agent); if (now !== null && was !== null && now !== was) void pull(); was = now; });
+    const offL = onLive(() => { if (attentionNow() === null) void pull(); });
+    return () => { offA(); offL(); };
+  }, [thread.agent, pull]);
 
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
     // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
     // The desktop's agent cards hear it (desk-agents.tsx useAgentComms): what's unread there moves at once.
-    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }).then(() => dispatchEvent(new Event('loom-comms-read'))); void pull(); } };
+    // (The look for asks only while what needs you isn't live: once it is, its moves are what read again, above.)
+    const read = (look = true) => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }).then(() => dispatchEvent(new Event('loom-comms-read'))); if (look) void pull(); } };
+    const shown = () => read();
     read();
-    const t = setInterval(read, 30_000);
-    document.addEventListener('visibilitychange', read);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', read); };
+    const t = setInterval(() => read(attentionNow() === null), 30_000);
+    document.addEventListener('visibilitychange', shown);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', shown); };
   }, [thread.id, csrf, messages.length, pull]);
 
   // Follow the bottom only while the reader's there (comms-follow.ts); their own message always brings them down.
@@ -842,7 +909,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
-        {thread.state.working && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
+        {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
         {context && <ThreadContextMenu thread={thread} at={context} close={closeContext} act={(action) => {
           if (action === 'title') void rename(); else if (action === 'project') void project(); else void verb(action);
@@ -859,7 +926,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
       </header>
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
-        {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
+        {!wide && <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} />}
         {/* A desktop's thread (Jonathan, 2026-11-07: "outlook-esque"): a band of fixed height over the chat, the comm screen
             at its own size on the left (never stretched), who's in the conversation and the thread's work on the right,
             scrolling inside the band so its height never changes; the chat takes the rest. */}
@@ -877,13 +944,14 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                     <span className="comms-people__name">{member.split('-').map((w) => (w[0]?.toUpperCase() ?? '') + w.slice(1)).join(' ')}</span><span className="comms-people__what loom-data">you</span></li>
                 </ul>
               </section>
-              <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />
+              <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} />
             </div>
           </div>
         )}
         <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
           <AgentChatThread className="comms-msgs" jumpLabel="Latest">
+            {earlier !== 'all' && <button type="button" className="comms-older" disabled={earlier === 'loading'} onClick={() => void older()}>{earlier === 'loading' ? 'Loading…' : 'Earlier messages'}</button>}
             {swept && initial.earlier?.length ? (
               <div className="comms-earlier">
                 <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>
@@ -919,7 +987,14 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         </ThreadRefs>
 
       </div>
-      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
+      {watching ? (
+        <div className="comms-watch" role="status">
+          <span className="comms-watch__what"><b>Watching</b> · {thread.state.working ? `${mark.label} keeps working when you close this.` : 'Closing this leaves the job as it is.'}</span>
+          <button type="button" className="comms-watch__join" onClick={() => setJoining(true)}>Join in</button>
+        </div>
+      ) : (
+        <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
+      )}
     </article>
   );
 }
@@ -998,9 +1073,26 @@ export function CommsView({ data }: { data: CommsData }) {
   const [threads, setThreads] = useState<Thread[]>(data.threads ?? []);
   const [agents, setAgents] = useState<string[]>(data.agents ?? []);
   const [making, setMaking] = useState(false);
+  // The list, live (threads-live.ts, t-2027): the same set as the dock's count and the agent cards, kept current on the
+  // stream, so nothing here asks loom again for it. Until it's live, the page's copy and a read of /comms, as before.
+  const live = useThreads(csrf)?.list ?? null;
+  const isLive = live !== null;
   const reload = useCallback(() => { void getJson<{ threads: Thread[]; agents: string[] }>('/comms').then((r) => { if (r) { setThreads(r.threads); setAgents(r.agents); } }); }, []);
-  // A thread's view doesn't carry the list: on a desktop (two panes) or for New thread, it's fetched beside it.
-  useEffect(() => { if (data.which === 'thread' || !data.threads) reload(); }, [data.which, data.threads, reload]);
+  const changed = useCallback(() => { if (!isLive) reload(); }, [isLive, reload]);
+  // Nothing kept the page's copy current while the set was live: when it stops being live, ask loom once.
+  const wasLive = useRef(false);
+  // (A thread's view already asks again then: the effect below.)
+  const listView = !(data.which === 'thread' || !data.threads);
+  useEffect(() => { if (wasLive.current && !isLive && listView) reload(); wasLive.current = isLive; }, [isLive, reload, listView]);
+  // A thread's view doesn't carry the list: on a desktop (two panes) or for New thread, it's fetched beside it (live:
+  // only once, for who can be written to).
+  const listed = useRef(false);
+  useEffect(() => {
+    if (!(data.which === 'thread' || !data.threads)) return;
+    if (isLive && listed.current) return;
+    listed.current = true;
+    reload();
+  }, [data.which, data.threads, reload, isLive]);
   // The list's own view carries it: the newest copy wins (this view stays mounted from page to page).
   useEffect(() => { if (data.threads) setThreads(data.threads); }, [data.threads]);
   // The thread asked for, from the moment it's pressed (t-1925 F): it's the one lit in the list, and its pane opens with
@@ -1035,9 +1127,9 @@ export function CommsView({ data }: { data: CommsData }) {
   const drawer: Drawer | undefined = wide && one ? { open: drawerOpen, toggle: () => setDrawerOpen((o) => !o) } : undefined;
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} drawer={drawer} />
     : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} drawer={drawer} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} drawer={drawer} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={changed} github={data.github} drawer={drawer} />
       : null;
-  const list = <ThreadList threads={threads} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} onRemoved={back} />;
+  const list = <ThreadList threads={live ?? threads} live={isLive} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} onRemoved={back} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
   // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
   // draft, its live messages), only the list comes and goes.

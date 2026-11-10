@@ -903,9 +903,13 @@ describe('the household page', () => {
       expect(push.open).toBe(keyOf('Push the fix'));
       expect(item(push, 'Push the fix')).toMatchObject({ expires: soon, source: { id: 'gate' } });
       expect((item(push, 'Push the fix').actions as Data[]).map((a) => a.label)).toEqual(['Allow once', 'Deny']);
-      // Opened is read: one unread left.
-      expect(unread(push)).toBe(1);
-      expect(item(push, 'Push the fix').unread).toBe(false);
+      // Opening it is a GET, which never writes (collections.md, "Read state"): the app posts the read, and then it's
+      // read: one unread left.
+      expect(unread(push)).toBe(2);
+      expect((await post(cookie, '/inbox/read', { _csrf: csrfOf(push), i: keyOf('Push the fix') })).status).toBe(200);
+      const after = await data(cookie, '/inbox');
+      expect(unread(after)).toBe(1);
+      expect(item(after, 'Push the fix').unread).toBe(false);
       const reply = await data(cookie, `/inbox?i=${keyOf('Tonight or tomorrow')}`);
       // Its own page, drawn here: its button posts to the piece; its page is a link away.
       expect(reply.inline.key).toBe(keyOf('Tonight or tomorrow'));
@@ -920,7 +924,10 @@ describe('the household page', () => {
       expect(elsewhere.inline).toBeUndefined();
       // An item with buttons of its own (the permission) keeps them, and draws no page.
       expect(push.inline).toBeUndefined();
-      expect(unread(reply)).toBe(0);
+      // Opened (the app's read, as it posts it), nothing is unread.
+      expect(unread(reply)).toBe(1);
+      expect((await post(cookie, '/inbox/read', { _csrf: csrfOf(reply), i: keyOf('Tonight or tomorrow') })).status).toBe(200);
+      expect(unread(await data(cookie, '/inbox'))).toBe(0);
       const decisions = await data(cookie, '/inbox?f=decision');
       expect(decisions.folder).toBe('question');
       // A decision nothing waits on is filed with the questions all the same (not counted in Needs you).

@@ -32,6 +32,7 @@ import { admit, capFor, GUTTER, layout, promote, railWidth, swap, underMinimum, 
 import { nameOf, readSet, writeSet, type TileSet } from './address';
 import { AGENT_FIT, fitFor, type Fit } from './fit';
 import { ContextMenu, type MenuAt, type MenuItem } from './menu';
+import { aboutOf, aboutPage, chatAbout } from '../about';
 import './tiles.css';
 import './surface.css';
 
@@ -135,7 +136,7 @@ type Named = { key: string; label: string };
 const withFit = <T extends Named>(r: T | null, own: (key: string) => Partial<Omit<Fit, 'why'>> | undefined): (T & { fit: Fit }) | null =>
   (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label, own(r.key)) } : null);
 
-export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, accent, onFocus, outerGo, shell, homeData, deskEnv, oneWindow }: {
+export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, accent, onFocus, onOpen, outerGo, shell, homeData, deskEnv, oneWindow }: {
   api: React.MutableRefObject<TilesApi | null>;
   /** The app a page is in, or null for the desktop (Home) and anything that isn't a tile. */
   appOf: (path: string) => Named | null;
@@ -151,6 +152,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   /** What a tile's page wears as its accent (index.css [data-accent]): its app's colour, or its agent's. */
   accent: (o: AppRef) => Accent;
   onFocus: (f: Focused) => void;
+  onOpen: (apps: { key: string; label: string }[]) => void;
   /** Anything that isn't a tile's (Find, signing out, another site). */
   outerGo: (href: string) => void;
   shell: Shell;
@@ -582,11 +584,14 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (t.closest('input, textarea, select, [contenteditable="true"], .loom-cmenu')) return null;
     const item = (id: string, label: string, run: () => void, hint?: string): MenuItem => ({ id, label, run, ...(hint ? { hint } : {}) });
     // a row that says what it offers
-    const row = t.closest<HTMLElement>('[data-row-menu]');
+    const row = t.closest<HTMLElement>('[data-row-menu], [data-about]');
     if (row && box.current?.contains(row)) {
       const items = (row.dataset.rowMenu ?? '').split('|').map((x) => x.split(':')).filter((x) => x.length === 2 && x[0] && x[1])
         .map(([id, label]) => item(id, label, () => row.dispatchEvent(new CustomEvent('loom-menu', { detail: id }))));
-      return items.length ? { title: row.dataset.rowMenuTitle || 'This item', items } : null;
+      // Any item that says what it is (about.ts `data-about`): Chat about this.
+      const about = aboutOf(row);
+      if (about) items.push(item('chat-about', 'Chat about this', () => chatAbout(about)));
+      return items.length ? { title: row.dataset.rowMenuTitle || about?.label.slice(0, 60) || 'This item', items } : null;
     }
     // the agents' rail (or its strip) and the dock's own ground: how each is shown
     const modes = (what: 'rail' | 'dock'): Omit<MenuAt, 'x' | 'y' | 'back'> => {
@@ -601,7 +606,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       if (!t.closest('.loom-tile__bar')) return null;
       const s = S.current, key = tile.dataset.tile!, i = s.apps.findIndex((a) => a.key === key), o = s.apps[i];
       if (!o) return null;
+      const page = aboutPage(o.url, tile.querySelector('h1')?.textContent?.trim() || o.label);
       return { title: o.label, items: [
+        ...(page ? [item('chat-about', 'Chat about this', () => chatAbout(page))] : []),
         item('min', 'Minimize', () => minimize(key), 'Alt+Shift+M'),
         ...(i > 0 ? [item('big', 'Make it the big one', () => makeBig(key), 'Alt+Shift+Enter')] : []),
         item('close', 'Close', () => close(key), 'Alt+Shift+W'),
@@ -750,6 +757,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const rail = useMemo<RailLink>(() => ({ onAir, shown: railShown, screen: screenOf && slot ? { agent: screenOf, el: slot } : null }), [onAir, railShown, screenOf, slot]);
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
   const fp = f ? pages.current.get(f.key) : undefined;
+  // Minimized windows remain open and keep their dock keys.
+  const openKeys = JSON.stringify([...s.apps, ...s.min].map(({ key, label }) => ({ key, label })));
+  useEffect(() => { onOpen(JSON.parse(openKeys)); }, [openKeys, onOpen]);
   const focusedTitle = f ? titleOf(fp ?? ({ data: null } as PageState), f) : '';
   const fd = fp && !fp.error && !fp.waiting ? fp.data as { view?: string; page?: { intro?: string }; intro?: string } | null : null;
   const focusedIntro = fd?.view === 'page' ? fd.page?.intro : fd?.view === 'sheet' ? fd.intro : undefined;

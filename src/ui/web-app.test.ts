@@ -21,7 +21,7 @@ describe('the app (web/)', () => {
     expect([...accepted].filter((t) => !drawn.has(t)), 'a block type with no case in web/src/blocks.tsx BlockView').toEqual([]);
   });
 
-  it.runIf(existsSync(`${root}dist/web/index.html`))('keeps its first page under 250 KB of JS and 120 KB of CSS, gzipped', () => {
+  it.runIf(existsSync(`${root}dist/web/index.html`))('keeps its first page under 230 KB of JS and 120 KB of CSS, gzipped', () => {
     const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
     const named = (re: RegExp) => [...index.matchAll(re)].map((m) => gzipSync(readFileSync(`${root}dist/web/${m[1]}`)).length).reduce((a, b) => a + b, 0);
     const js = named(/<script[^>]+src="\/app\/([^"]+\.js)"/g) + named(/<link rel="modulepreload"[^>]+href="\/app\/([^"]+\.js)"/g);
@@ -31,7 +31,7 @@ describe('the app (web/)', () => {
     const css = named(/<link rel="stylesheet"[^>]+href="\/app\/([^"]+\.css)"/g);
     expect(js).toBeGreaterThan(0);
     expect(css).toBeGreaterThan(0);
-    expect(js, 'first-page JS, gzipped').toBeLessThan(250_000);
+    expect(js, 'first-page JS, gzipped').toBeLessThan(230_000);
     expect(css, 'first-page CSS, gzipped').toBeLessThan(120_000);
   });
 

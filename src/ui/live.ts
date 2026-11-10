@@ -64,8 +64,20 @@ const seen = new Map<string, Map<string, string>>();
 /** Whether an app whose owner sees `sees` may hear of a change to `about`. */
 const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && about.some((a) => sees.includes(a)));
 
+/**
+ * What else hears "something changed", by household home: the shared collections, whose attention records are made
+ * from everything a change can move (t-2025: subs.ts nudges `loom/attention`, which costs at most one pull per GAP_MS).
+ */
+const changeHooks = new Map<string, () => void>();
+export function onChanged(home: string, f: () => void): void { changeHooks.set(home, f); }
+function hooks(): void { for (const f of changeHooks.values()) { try { f(); } catch { /* a hint; the poll still pulls */ } } }
+
 /** Tell the open apps that may see it that something changed (soon, and once for a burst). */
 export function changed(about: Sees = '*'): void {
+  hooks();
+  tell(about);
+}
+function tell(about: Sees): void {
   for (const c of clients) if (hears(c.sees, about)) nudge(c);
 }
 
@@ -74,6 +86,7 @@ export function changed(about: Sees = '*'): void {
  * (docs/specs/comms.md, rule 4), so another owner of the same agent never hears of it, not even as a bare change.
  */
 export function changedFor(member: string): void {
+  hooks();
   for (const c of clients) if (c.member === member) nudge(c);
 }
 
@@ -156,6 +169,8 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
       if (only && !before) continue;
       seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
+      // A piece's manifest moving is a piece's asks moving: the hooks hear it (the attention records, t-2025).
+      if (moved) hooks();
       // Piece pages stay piece-rendered: a `page` frame says which piece's pages moved (collections.md), beside the bare
       // change that t-2032 retires.
       if (before) for (const [path, print] of now) if (before.get(path) !== print) {
@@ -209,10 +224,12 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => {
         if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
-        else if (file && DATA.test(String(file)) && files.moved(String(file))) changed(whose(String(file)));
+        // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
+        // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
+        else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
       });
       // Reconcile the registration gap; queued callbacks then see the updated baseline.
-      for (const file of files.reconcile()) changed(whose(file));
+      for (const file of files.reconcile()) tell(whose(file));
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }
   ticking ??= setInterval(() => void tick(), WATCH_MS);

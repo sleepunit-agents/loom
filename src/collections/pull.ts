@@ -19,7 +19,8 @@ import { randomBytes } from 'node:crypto';
 import { readRecord } from '../cli/pieces-managed.js';
 import type { Household } from '../household.js';
 import { runOffer } from '../offers-registry.js';
-import { Pool } from '../ui/pieces.js';
+import { forgetPiecePages, Pool } from '../ui/pieces.js';
+import { findPiece } from '../cli/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, type TypeDecl } from './contract.js';
 import { coreAnswers } from './core-types.js';
 import type { ProviderQuery } from './memory.js';
@@ -179,8 +180,14 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     }
   }
   withLog(home, (db) => prune(db, now()));
-  if (wrote) tick(home);
+  if (wrote) { tick(home); pagesMoved(ctx, p); }
   return 'pulled';
+}
+
+/** A piece's records moved: its kept pages go (pieces.ts forgetPiecePages), so a page asked again is drawn again. */
+function pagesMoved(ctx: PullContext, p: Provider): void {
+  if (!p.piece) return;
+  try { const path = findPiece(p.piece, ctx.env); if (path) forgetPiecePages(path); } catch { /* a page kept 5 s more */ }
 }
 
 /**
@@ -199,7 +206,7 @@ async function snapshot(ctx: PullContext, p: Provider, types: readonly string[])
     for (;;) {
       const q: ProviderQuery = { id: 'bridge', type, version: Number(decl.version.split('.')[0]), where: [], order: [], limit: decl.max_page, after, fields, aggregates: [] };
       let answer;
-      if (!p.piece) answer = coreAnswers(ctx.household, { kind: 'core' }, [q], now())[0];
+      if (!p.piece) answer = (await coreAnswers(ctx.household, { kind: 'core' }, [q], now()))[0];
       else {
         const stdin = JSON.stringify({ viewer: { kind: 'core' }, now: new Date(now()).toISOString(), queries: [q] });
         // As the core viewer every row is admitted; it's read the same way as anyone's answer.
@@ -249,6 +256,7 @@ async function bridge(ctx: PullContext, p: Provider, domain: string, types: read
   if (diffs.length) {
     withLog(home, (db) => writeTxn(db, domain, epoch, diffs, (c) => ({ key: (c as Change & { key: string }).key, type: (c as Change & { type: string }).type }), now()));
     tick(home);
+    pagesMoved(ctx, p);
   }
   withLog(home, (db) => prune(db, now()));
   return 'bridged';
@@ -267,14 +275,19 @@ export class Puller {
   constructor(private readonly ctx: () => PullContext, private readonly wanted: () => Set<string>) {}
 
   start(): void {
+    this.stopped = false;
     this.poll ??= setInterval(() => this.round(), POLL_MS);
     this.poll.unref?.();
   }
 
+  private stopped = false;
   stop(): void {
+    this.stopped = true;
     clearInterval(this.poll); this.poll = undefined;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
+    for (const w of this.after.values()) w.resolve(undefined);
+    this.after.clear();
   }
 
   /** Every wanted domain, and the expiry pass. */
@@ -284,14 +297,27 @@ export class Puller {
     for (const d of this.wanted()) this.soon(d);
   }
 
-  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS, else when that's up. One at a time per domain. */
-  soon(domain: string): void {
-    if (this.timers.has(domain)) return;
+  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS, else when that's up. One at a time per domain.
+   * Answers when that pull is done (a caller may deliver right after it). */
+  soon(domain: string): Promise<PullOutcome | undefined> {
+    const waiting = this.after.get(domain);
+    if (this.timers.has(domain) && waiting) return waiting.promise;
+    let resolve!: (v: PullOutcome | undefined) => void;
+    const promise = new Promise<PullOutcome | undefined>((r) => { resolve = r; });
+    this.after.set(domain, { promise, resolve });
     const wait = Math.max(0, (this.last.get(domain) ?? 0) + GAP_MS - Date.now());
-    const t = setTimeout(() => { this.timers.delete(domain); void this.now(domain); }, wait);
+    const t = setTimeout(() => {
+      this.timers.delete(domain);
+      this.after.delete(domain);
+      // A pull already under way may have read before what this one was asked for: this one runs after it, never joins it.
+      const on = this.running.get(domain);
+      (on ? on.catch(() => undefined).then(() => (this.stopped ? undefined : this.now(domain))) : this.now(domain)).then(resolve, () => resolve(undefined));
+    }, wait);
     t.unref?.();
     this.timers.set(domain, t);
+    return promise;
   }
+  private after = new Map<string, { promise: Promise<PullOutcome | undefined>; resolve: (v: PullOutcome | undefined) => void }>();
 
   /** Pull `domain` now (or join the pull under way). */
   now(domain: string): Promise<PullOutcome> {

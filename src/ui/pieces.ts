@@ -107,6 +107,15 @@ export function clearPieceCache(path?: string): void {
 }
 
 /**
+ * A piece's shared records moved (collections/pull.ts logged a change, or its API said it wrote): its kept pages go, so
+ * the next look runs it, not the last copy (t-2029: an open Tasks page is asked again when its tasks move, and a copy kept
+ * for up to 5 s, then shown while revalidating, would answer with the old one). Its manifests stay.
+ */
+export function forgetPiecePages(path: string): void {
+  for (const k of [...pages.keys()]) if (k.startsWith(`${path}\0`)) pages.delete(k);
+}
+
+/**
  * A piece's pages, kept briefly the same way (stale while revalidating): opening one again shows the last copy
  * at once and asks the piece behind it, instead of starting its process on every visit (0.3-0.8s each). Keyed
  * by who's looking, the scope, the version, the path and the query; an action on the piece drops them all.
@@ -321,11 +330,18 @@ function resolved(path: string): string {
   }
 }
 
+/**
+ * The scope a piece answers for, as a cache key: the agent it's narrowed to (LOOM_SCOPE) and the agents an agent
+ * owner owns (LOOM_OWNER_SCOPE, owners.md). Both: a piece that understands agent owners answers them differently, so
+ * one viewer's answer is never another's (collections.md, "Before any domain moves", 5).
+ */
+const scopeKey = (env: NodeJS.ProcessEnv): string => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
+
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
   // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately. And per the file
   // the path resolves to now: an install points pieces/bin/loom-<name> at a new version, which is a new
   // answer at once, not 45s later (t-1584).
-  const key = `${path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(path)}`;
+  const key = `${path}\0${scopeKey(env)}\0${resolved(path)}`;
   const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
@@ -365,7 +381,7 @@ export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: Reado
   const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
-    const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
+    const key = `${p.path}\0${scopeKey(env)}\0${resolved(p.path)}`;
     const generation = manifestGeneration;
     const before = cache.get(key);
     const result = fetchManifest(p.name, p.path, env);
@@ -438,7 +454,7 @@ export async function piecePage(
       process.stderr.write(`loom: piece ${info.piece} page "${path}": cut short ${cut.join('; ')}\n`);
     });
   };
-  const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
+  const key = `${info.path}\0${scopeKey(env)}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);
   if (hit && now - hit.at < (hit.live ? PAGE_LIVE_MS : PAGE_FRESH_MS)) return hit.result;
   if (hit && !hit.live && now - hit.at < PAGE_STALE_MS) {
@@ -519,7 +535,7 @@ export async function pieceApi(
   request: { caller: ApiCaller; path: string; body: unknown },
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
-): Promise<{ status: number; body: unknown }> {
+): Promise<{ status: number; body: unknown; changed?: true }> {
   const r = await apiPool.run(() => {
     const env1 = withGrant(env, path, request.caller);
     // A path the piece answers from its long-lived server (piece-server.ts, t-2065): the grant goes in the request.
@@ -541,5 +557,7 @@ export async function pieceApi(
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 200 || status > 499) {
     return { status: 502, body: { error: 'the piece answered with a status outside 200-499' } };
   }
-  return { status, body: parsed.body };
+  // `changed: true`: the call wrote, so core pulls the piece's shared collections soon (http-server.ts pieceCall). Only
+  // that word is read; it never reaches the caller.
+  return { status, body: parsed.body, ...((parsed as { changed?: unknown }).changed === true ? { changed: true as const } : {}) };
 }

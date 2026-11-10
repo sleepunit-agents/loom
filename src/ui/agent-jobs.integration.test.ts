@@ -63,7 +63,25 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       await p.reload({ waitUntil: 'domcontentloaded' }); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
       expect(await card.getByText('First active session').count()).toBe(0);
       if (width === 1600) {
+        // The rail card: one box per running job (t-2077), and no NOW line beside them; capped, with how many more.
+        d.report({ art: { jobs: [...rows, ...['Third', 'Fourth'].map((t, n): Job => ({ id: `run-${n + 3}`, status: 'running', text: `${t} active session`, since: new Date(Date.now() - 5 * 60_000).toISOString() }))] } });
+        clearPieceCache(); await d.changed();
         await p.goto(d.base + '/people', { waitUntil: 'domcontentloaded' });
+        const rail = p.locator('.loom-rcard-wrap').filter({ has: p.locator('[data-agent="art"]') });
+        await rail.locator('.loom-doing').waitFor();
+        // Three of the four, in loom's order (agent-jobs.ts), each saying it's Art's doing and how long it has run.
+        const boxes = await rail.locator('.loom-doing__box').allTextContents();
+        expect(boxes).toHaveLength(3);
+        for (const b of boxes) expect(b).toMatch(/^Art is doing(First|Second|Third|Fourth) active session/);
+        expect(boxes.filter((b) => b.endsWith('session5m'))).toHaveLength(2);
+        expect(await rail.locator('.loom-doing__more').textContent()).toBe('+1 more');
+        expect(await rail.locator('.loom-rcard__now').count()).toBe(0);
+        if (process.env.LOOM_JOB_SHOTS) await p.screenshot({ path: `${process.env.LOOM_JOB_SHOTS}/rail-running.png` });
+        d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 't-1') } }); clearPieceCache(); await d.changed();
+        await p.goto(d.base + '/people', { waitUntil: 'domcontentloaded' });
+        // Nothing running: no boxes, and the NOW line says so.
+        await rail.locator('.loom-rcard__now').waitFor();
+        expect(await rail.locator('.loom-doing').count()).toBe(0);
         const compact = p.locator('.loom-rcard-wrap').filter({ has: p.locator('[data-agent="art"]') });
         await compact.locator('summary').click();
         expect(await compact.locator('.loom-jobs li').count()).toBe(14);

@@ -331,7 +331,8 @@ const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
     agent   TEXT NOT NULL,
     channel INTEGER NOT NULL,
     at      TEXT NOT NULL
-  );`;
+  );
+  CREATE TABLE IF NOT EXISTS comms_delete_pending (id TEXT PRIMARY KEY);`;
 
 const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     thread    TEXT NOT NULL,
@@ -350,7 +351,9 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     PRIMARY KEY (thread, seq)
   );
   CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
+  CREATE INDEX IF NOT EXISTS comms_reply_ref ON comms_messages (id) WHERE kind = 'reply';
   CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);
+  CREATE TABLE IF NOT EXISTS comms_continuation_clock (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), highwater INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS comms_asks (
     thread      TEXT NOT NULL,
     ref         TEXT NOT NULL,
@@ -541,15 +544,48 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
   // Keep it reachable by its link and in Background work until they actually write in it.
   const visible = listed.filter((t) => {
     if (opts.background === 'include') return true;
-    const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
-      && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
-    const background = spawned && !withMessages(h.home, (db) => db.prepare(
-      "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
-    ).get(t.id, t.member));
+    const background = isBackground(h, t);
     return opts.background === 'only' ? background : !background;
   });
   return visible.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
+
+/** A spawned job's thread: its conversation is the job's own, not the agent's Comms one. */
+export function isJob(h: Household, t: Thread): boolean {
+  return t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
+    && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+}
+
+/** A job's thread its member hasn't written in (a spawn assigned to them for access): Background work, not their list. */
+export function isBackground(h: Household, t: Thread): boolean {
+  return isJob(h, t) && !withMessages(h.home, (db) => db.prepare(
+    "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
+  ).get(t.id, t.member));
+}
+
+/**
+ * threadRowState for many threads at once: one grouped read of comms.db for every thread's seqs and whether its member
+ * wrote in it, and the agent's store read only for a thread whose conversation isn't its own Comms one (a spawn's).
+ * What a snapshot of every thread uses (core-types.ts): a few queries, however many threads.
+ */
+export function threadRowStates(h: Household, threads: readonly Thread[]): Map<string, { unread: boolean; working: boolean; background: boolean; last_seq: number }> {
+  const seqs = new Map<string, { last: number; reply: number }>();
+  const wrote = new Set<string>();
+  if (threads.length && existsSync(join(h.home, COMMS_DB))) withMessages(h.home, (db) => {
+    for (const r of db.prepare("SELECT thread, MAX(seq) AS last, MAX(CASE WHEN kind = 'reply' THEN seq END) AS reply FROM comms_messages GROUP BY thread").all() as Array<{ thread: string; last: number | null; reply: number | null }>) {
+      seqs.set(r.thread, { last: r.last ?? 0, reply: r.reply ?? 0 });
+    }
+    for (const r of db.prepare("SELECT DISTINCT m.thread AS thread, m.sender AS sender FROM comms_messages m WHERE m.kind = 'message'").all() as Array<{ thread: string; sender: string }>) wrote.add(`${r.thread}\0${r.sender}`);
+  });
+  const out = new Map<string, { unread: boolean; working: boolean; background: boolean; last_seq: number }>();
+  for (const t of threads) {
+    const s = seqs.get(t.id) ?? { last: 0, reply: 0 };
+    const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id) && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+    out.set(t.id, { unread: s.reply > t.read_seq, working: t.working_since !== null, background: spawned && !wrote.has(`${t.id}\0${t.member}`), last_seq: s.last });
+  }
+  return out;
+}
+
 
 /** The most of a first unread reply's words that a desktop card carries (one line of it, docs/specs/agent-desk.md). */
 export const FIRST_LINE_MAX = 160;
@@ -596,7 +632,8 @@ export async function agentsComms(h: Household, env: NodeJS.ProcessEnv, member: 
     const newest = [...mine].sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
     const counts = haveMessages ? withMessages(h.home, (db) => newest.map((t) => (t.unread
       ? (db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ? AND kind = 'reply' AND seq > ?").get(t.id, t.read_seq) as { n: number }).n : 0))) : [];
-    const unread = counts.reduce((n, c) => n + c, 0);
+    // Threads with something unread, as everywhere (collections.md, owner decision 3); a thread says its own count.
+    const unread = counts.filter((c) => c > 0).length;
     const a: AgentComms = { agent, unread };
     const last = newest[0];
     if (last) a.last = { thread: last.id, title: last.title, at: last.last };
@@ -634,25 +671,77 @@ const withThreadsAt = withThreads;
  */
 export function bump(home: string): void {
   if (!home) return;
-  try { writeFileSync(join(home, 'comms.tick'), String(Date.now())); } catch { /* the streams' fallback poll still finds it */ }
+  // A stamp no other write makes (the time, and this process and a count): a listener here knows its own tick's echo.
+  const stamp = `${Date.now()}.${process.pid}.${++bumps}`;
+  try { writeFileSync(join(home, 'comms.tick'), stamp); ownTicks.set(home, stamp); } catch { /* the streams' fallback poll still finds it */ }
   for (const f of listeners) f();
+}
+let bumps = 0;
+const ownTicks = new Map<string, string>();
+/** Whether comms.tick holds this process's own last stamp (an echo of a bump already heard through onBump). */
+export function isOwnTick(home: string): boolean {
+  const mine = ownTicks.get(home);
+  if (!mine) return false;
+  try { return readFileSync(join(home, 'comms.tick'), 'utf-8') === mine; } catch { return false; }
 }
 const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
 export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
 
-function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending' }, now: Date): number {
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean; expiresAt?: number }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
-  const seq = withMessages(home, (db) => db.transaction(() => {
+  let inserted = false;
+  const result = withMessages(home, (db) => db.transaction(() => {
+    // Check under the same writer transaction as insertion: two listeners must
+    // never both accept one stable report. Hash binds the complete payload.
+    if (m.deduplicate) {
+      const prior = continuationReceipt(db, m.id, m.hash!);
+      if (prior !== undefined) return { seq: prior };
+      const clock = observeContinuationClock(db);
+      if (clock.rollback) return { problem: 'continuation clock moved backwards' };
+      if (m.expiresAt === undefined || clock.now >= m.expiresAt) return { problem: 'continuation deadline reached' };
+    }
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
     db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
       m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
-    return seq;
+    inserted = true;
+    return { seq };
   }).immediate());
+  // Refusals leave the highwater committed, including across a restart.
+  // A backwards clock is a hold until wall time recovers (503: retry the same ref later); a reached deadline is final.
+  if (result.problem) return fail(result.problem, result.problem === 'continuation clock moved backwards' ? 503 : 409);
+  const seq = result.seq!;
   // The work it names, as refs only, beside the thread (comms.md, "The refs index").
-  noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
+  if (inserted) noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
   return seq;
+}
+
+/** Observed only while holding the same message writer lock as acceptance.
+ * A backwards clock holds new acceptance until wall time reaches the persisted mark. */
+function observeContinuationClock(db: Database): { now: number; rollback: boolean } {
+  const now = Date.now();
+  const prior = db.prepare('SELECT highwater FROM comms_continuation_clock WHERE singleton = 1').get() as { highwater: number } | undefined;
+  db.prepare('INSERT INTO comms_continuation_clock VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET highwater = MAX(highwater, excluded.highwater)').run(now);
+  return { now, rollback: prior !== undefined && now < prior.highwater };
+}
+
+function continuationDeadline(value: unknown): number | undefined {
+  if (value === undefined) return undefined; // legacy receipt lookup only
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > 8640000000000000)
+    return fail('bad-input: expiresAt is a positive integer Unix millisecond deadline');
+  return value;
+}
+
+/** A continuation ref is runtime-issued, globally unique, and bound to all post
+ * fields, including destination. Keep its hash beside the encrypted reply, in the
+ * same transaction, so acceptance survives a lost HTTP receipt or process death.
+ */
+function continuationReceipt(db: Database, ref: string, hash: string): number | undefined {
+  const prior = db.prepare("SELECT seq, hash FROM comms_messages WHERE kind = 'reply' AND id = ?").get(ref) as { seq: number; hash: string | null } | undefined;
+  if (!prior) return undefined;
+  if (prior.hash !== hash) return fail('conflict: continuation ref already used for a different payload', 409);
+  return prior.seq;
 }
 
 /** Whether `slug` is one of `agent`'s live projects. */
@@ -854,7 +943,11 @@ export function setArchived(h: Household, t: Thread, archived: boolean, now: Dat
 /** The member read up to `seq` (never backwards), with the thread in front now. */
 export function markRead(h: Household, t: Thread, seq: unknown, now: Date = new Date()): void {
   if (!Number.isSafeInteger(seq) || (seq as number) < 0) fail('bad-input: seq is a whole number');
-  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
+  const read = Math.max(t.read_seq, seq as number);
+  // Nothing newly read (the app's 30 s read while a thread is in front): only when it was in front (push reads that),
+  // and no bump: no list row moved, so no stream or live set is told, nor every thread pulled again for it.
+  if (read === t.read_seq) { withThreadsAt(h.home, (db) => db.prepare('UPDATE comms_threads SET in_front = ? WHERE id = ?').run(now.getTime(), t.id)); return; }
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: read, in_front: now.getTime() }, now));
 }
 
 export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
@@ -863,13 +956,29 @@ export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
 
 /** Delete a thread: its row and every message, words included, at once; a tombstone stays. */
 export function deleteThread(h: Household, t: Thread, now: Date = new Date()): void {
-  withMessages(h.home, (db) => { db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(t.id); db.prepare('DELETE FROM comms_asks WHERE thread = ?').run(t.id); });
+  // Publish revocation before removing the receipt. These stores are separate
+  // SQLite databases: removing words first permits a lost-receipt retry to
+  // recreate a reply if the process dies before the thread tombstone commits.
   withThreadsAt(h.home, (db) => db.transaction(() => {
     db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
+    db.prepare('INSERT OR IGNORE INTO comms_delete_pending (id) VALUES (?)').run(t.id);
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
-  dropRefs(h.home, t.id);
+  finishThreadDeletion(h.home, t.id);
   bump(h.home);
+}
+
+/** Idempotent deletion cleanup, resumed by the startup/minute sweep after a crash.
+ * The tombstone already fences the target. Clear the journal only after both
+ * words and references are gone; an interrupted cleanup remains retryable.
+ */
+function finishThreadDeletion(home: string, id: string): void {
+  withMessages(home, (db) => db.transaction(() => {
+    db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(id);
+    db.prepare('DELETE FROM comms_asks WHERE thread = ?').run(id);
+  }).immediate());
+  dropRefs(home, id);
+  withThreadsAt(home, (db) => db.prepare('DELETE FROM comms_delete_pending WHERE id = ?').run(id));
 }
 
 // ─── Asks kept on their thread (comms.md, "Asks inline") ──────────────────────
@@ -927,7 +1036,7 @@ function liveThreadAt(home: string, agent: string, place: string): ThreadRow | u
   return r && r.agent === agent && r.archived === null ? r : undefined;
 }
 
-export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true; trace?: ThreadTrace } | { ok: false; reason: string; permanent?: true };
+export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true; trace?: ThreadTrace; state?: 'delivered' | 'not-accepted' | 'unresolved' | 'deleted' } | { ok: false; reason: string; permanent?: true };
 
 /** One message of a thread as a trace shows it (t-1895): where it is and what it was, never its words. */
 export interface TraceMessage {
@@ -1077,7 +1186,7 @@ function spawnThread(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, u
 export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): AdapterAnswer {
   const { op, place, agent } = raw;
   if (op === 'spawn') return spawnThread(h, env, raw, now);
-  if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace') return fail('bad-input: op is post, describe, status or trace');
+  if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace' && op !== 'reconcile') return fail('bad-input: op is post, describe, status, trace or reconcile');
   if (typeof agent !== 'string' || !h.agents.includes(agent)) return fail('bad-input: agent names one of this household\'s agents');
   if (typeof place !== 'string') return fail('bad-input: place is a thread');
   // trace (t-1895): the thread's delivery facts for the runtime's reply trace, read only. An archived thread too (its
@@ -1089,8 +1198,39 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     return { ok: true, trace: traceOf(h.home, t) };
   }
   const r = liveThreadAt(h.home, agent, place);
-  if (op === 'post') {
+  if (op === 'post' || op === 'reconcile') {
     const text = raw.text;
+    const continuation = typeof raw.ref === 'string' && raw.ref.startsWith('continuation-');
+    if (continuation && !/^continuation-[0-9a-f]{64}$/.test(raw.ref as string)) return fail('bad-input: malformed continuation ref');
+    const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
+    const run = typeof raw.run === 'string' ? raw.run : undefined;
+    const expiresAt = continuation ? continuationDeadline(raw.expiresAt) : undefined;
+    const hash = continuation ? wordsHash(h.home, JSON.stringify({ agent, place, text, run: run ?? null, on: on ?? null, ...(expiresAt === undefined ? {} : { expiresAt }) })) : undefined;
+    if (op === 'reconcile') {
+      if (!continuation) return fail('bad-input: reconciliation requires a continuation ref');
+      if (withThreadsAt(h.home, (db) => db.prepare('SELECT 1 FROM comms_deleted WHERE id = ?').get(place)))
+        return { ok: true, state: 'deleted' };
+      try {
+        return withMessages(h.home, (db) => db.transaction((): AdapterAnswer => {
+          const clock = observeContinuationClock(db);
+          const prior = continuationReceipt(db, raw.ref as string, hash!);
+          if (prior !== undefined) return { ok: true, state: 'delivered', id: String(prior) };
+          // Legacy has no cutoff: a missing receipt never proves non-acceptance.
+          return { ok: true, state: !clock.rollback && expiresAt !== undefined && clock.now >= expiresAt ? 'not-accepted' : 'unresolved' };
+        }).immediate());
+      } catch (error) {
+        if ((error as { code?: string }).code === 'SQLITE_BUSY') return { ok: true, state: 'unresolved' };
+        throw error;
+      }
+    }
+    // Exact retries return the original receipt even if the thread was archived
+    // or encryption is temporarily unavailable after the original acceptance.
+    if (continuation) {
+      if (withThreadsAt(h.home, (db) => db.prepare('SELECT 1 FROM comms_deleted WHERE id = ?').get(place)))
+        return { ok: false, reason: `${place} is a deleted thread`, permanent: true };
+      const prior = withMessages(h.home, (db) => continuationReceipt(db, raw.ref as string, hash!));
+      if (prior !== undefined) return { ok: true, id: String(prior) };
+    }
     if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s (archived, deleted, or never one)`, permanent: true };
     if (typeof text !== 'string' || text.length < 1) return { ok: false, reason: 'the reply is empty', permanent: true };
     if (text.length > MAX_TEXT) return { ok: false, reason: `the reply is over ${MAX_TEXT} characters`, permanent: true };
@@ -1101,15 +1241,19 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     }
     // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
     // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
-    const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
-    const ref = typeof raw.ref === 'string' && /^spawn-run-[0-9a-f]{12}$/.test(raw.ref) ? raw.ref : undefined;
-    if (ref) {
+    const ref = continuation ? raw.ref as string : typeof raw.ref === 'string' && /^spawn-run-[0-9a-f]{12}$/.test(raw.ref) ? raw.ref : undefined;
+    if (ref && !continuation) {
       const prior = withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'reply' AND id = ?").get(r.id, ref) as { seq: number } | undefined);
       if (prior) return { ok: true, id: String(prior.seq) };
     }
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
-    settleStarts(h.home, r.id);
-    withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(continuation ? { hash, deduplicate: true, expiresAt } : {}), ...(run ? { run } : {}), ...(on ? { card: { on } } : {}) }, now);
+    // A continuation report is another run's follow-up, not the holder's answer: it moves the thread's last, but
+    // leaves what the current holder still owes (its queued messages, its start cards, a failure) as it was.
+    if (continuation) withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now) }, now));
+    else {
+      settleStarts(h.home, r.id);
+      withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    }
     return { ok: true, id: String(seq) };
   }
   if (op === 'describe') {
@@ -1204,6 +1348,10 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
  * working for BUSY_MS gains its busy line once. Answers how many messages lost their words.
  */
 export function sweepComms(h: Household, now: Date = new Date()): number {
+  if (existsSync(join(h.home, 'household.db'))) {
+    const pending = withThreadsAt(h.home, (db) => db.prepare('SELECT id FROM comms_delete_pending').all() as Array<{ id: string }>);
+    for (const { id } of pending) finishThreadDeletion(h.home, id);
+  }
   const days = h.commsDays ?? COMMS_DAYS_DEFAULT;
   let swept = 0;
   if (existsSync(join(h.home, COMMS_DB))) {

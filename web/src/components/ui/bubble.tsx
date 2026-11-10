@@ -1,5 +1,5 @@
 "use client"
-import { motion } from "motion/react"
+import { m } from "motion/react"
 import { useMotionVisibility } from "@/lib/cojeev-motion/use-motion-visibility"
 import { useChoreography } from "@/lib/cojeev-motion/choreography"
 import { assignMotionRef } from "@/lib/cojeev-motion/refs"
@@ -44,6 +44,6 @@ export function BubbleTyping({label="Typing",className,ref,...props}:BubbleTypin
   const {quiet}=useChoreography()
   const active=enabled&&inView&&!quiet
   return <span {...props} ref={attach} data-slot="bubble-typing" className={cn("v-bubble__typing",className)} role="status" aria-label={label}>
-    {[0,1,2].map(index=><motion.span key={index} aria-hidden="true" className="v-bubble__typing-dot" initial={false} animate={active?{y:[0,-3,0],scale:[1,1.14,1],opacity:[.45,1,.45]}:{y:0,scale:1,opacity:.65}} transition={active?{duration:1.2,delay:index*.14,repeat:Infinity,ease:"easeInOut"}:{duration:0}}/>)}
+    {[0,1,2].map(index=><m.span key={index} aria-hidden="true" className="v-bubble__typing-dot" initial={false} animate={active?{y:[0,-3,0],scale:[1,1.14,1],opacity:[.45,1,.45]}:{y:0,scale:1,opacity:.65}} transition={active?{duration:1.2,delay:index*.14,repeat:Infinity,ease:"easeInOut"}:{duration:0}}/>)}
   </span>
 }

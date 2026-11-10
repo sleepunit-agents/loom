@@ -34,15 +34,13 @@ import { agentJobs } from './agent-jobs.js';
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
-import { changed, closeSession, openStream, type Sees } from './live.js';
+import { changed, closeSession, onChanged, openStream, type Sees } from './live.js';
 import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, gzipSync } from 'node:zlib';
-import { promisify } from 'node:util';
-const brotliAsync = promisify(brotliCompress);
-const gzipAsync = promisify(gzip);
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
+import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
@@ -81,7 +79,10 @@ import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Agent
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
-import { closeStream as subsClose, openStream as subsOpen, pullAfterAction } from '../collections/subs.js';
+import { registerCoreSource } from '../collections/core-types.js';
+import type { MemRecord } from '../collections/memory.js';
+import { AGENT_STATUS_DOMAIN, ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
+import { GAP_MS, nudge } from '../collections/pull.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
@@ -532,37 +533,38 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  * files are compressed once, at their best, and kept (Jonathan, 2026-10-29: "this site is sloooow": its script
  * went out as 786 KB); a page's data is compressed quickly, when it's big enough to be worth it.
  */
-const packed = new Map<string, { br: Buffer; gzip: Buffer }>();
 // The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at
 // start, off the event loop (zlib's thread pool), so nothing waits on it.
-setTimeout(() => {
+setTimeout(async () => {
   const dir = join(WEB_DIR, 'assets');
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
     const file = join(dir, f);
-    if (!/\.(js|css|svg|json)$/.test(f) || packed.has(file)) continue;
+    if (!/\.(js|css|svg|json)$/.test(f)) continue;
     const body = readFileSync(file);
-    void Promise.all([
-      brotliAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } }),
-      gzipAsync(body, { level: 9 }),
-    ]).then(([br, gzip]) => { if (!packed.has(file)) packed.set(file, { br, gzip }); }).catch(() => {});
+    // Keep spare zlib workers for response decoding, crypto and cold requests.
+    // Enqueuing the entire build here can hold fetch().json() behind Brotli11.
+    await packAsset(file, body).catch(() => {});
   }
 }, 1_000).unref();
-function encoded(req: IncomingMessage, body: Buffer, keep?: string): { body: Buffer; headers: Record<string, string> } {
+function encoded(req: IncomingMessage, body: Buffer): { body: Buffer; headers: Record<string, string> } {
   const accepts = String(req.headers['accept-encoding'] ?? '');
   const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
   if ((!br && !gz) || body.length < 1024) return { body, headers: { vary: 'accept-encoding' } };
-  let both = keep ? packed.get(keep) : undefined;
-  if (!both) {
-    const quality = keep ? 11 : 4;
-    const make = (which: 'br' | 'gzip') => (which === 'br'
-      ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: quality, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } })
-      : gzipSync(body, { level: keep ? 9 : 6 }));
-    if (!keep) { const which = br ? 'br' : 'gzip'; return { body: make(which), headers: { 'content-encoding': which, vary: 'accept-encoding' } }; }
-    both = { br: make('br'), gzip: make('gzip') };
-    packed.set(keep, both);
-  }
-  return br ? { body: both.br, headers: { 'content-encoding': 'br', vary: 'accept-encoding' } } : { body: both.gzip, headers: { 'content-encoding': 'gzip', vary: 'accept-encoding' } };
+  const which = br ? 'br' : 'gzip';
+  const compressed = br
+    ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } })
+    : gzipSync(body, { level: 6 });
+  return { body: compressed, headers: { 'content-encoding': which, vary: 'accept-encoding' } };
+}
+
+async function encodedAsset(req: IncomingMessage, body: Buffer, file: string) {
+  const accepts = String(req.headers['accept-encoding'] ?? '');
+  const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
+  if ((!br && !gz) || body.length < 1024) return { body, headers: { vary: 'accept-encoding' } };
+  const which = br ? 'br' : 'gzip';
+  const both = await packAsset(file, body);
+  return { body: both[which], headers: { 'content-encoding': which, vary: 'accept-encoding' } };
 }
 
 function redirect(res: ServerResponse, to: string, extra: Record<string, string | string[]> = {}): void {
@@ -1009,7 +1011,9 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length || jobs.some((j) => j.status === 'running') ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
-    return { id: a, ...marks[a], state, reason, doing, jobs, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
+    // What's moving (Home's list): each piece that says it's working, in the pieces' order.
+    const moving = reports.filter((x) => x.r.state === 'working').map((x) => ({ agent: a, text: x.r.reason ?? `${marks[a].label} is working`, meta: x.p.manifest.tab?.label ?? x.p.piece }));
+    return { id: a, ...marks[a], state, reason, doing, jobs, moving, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -1059,6 +1063,208 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   // Newest first; an ask with no time stays where its piece put it, ahead of the dated ones.
   const t = (it: InboxItem) => (it.at ? Date.parse(it.at) : Number.POSITIVE_INFINITY);
   return items.map((it, i) => ({ it, i })).sort((x, y) => t(y.it) - t(x.it) || x.i - y.i).map((x) => x.it);
+}
+
+/**
+ * The attention records (core's `attention` type, src/collections/core-types.ts; t-2025): one member's Inbox items as
+ * the Inbox itself builds them for them (their agents, the pieces that understand them, their read state and their own
+ * outcomes), so a badge, Home, the Inbox and a thread's ask card read one set. For the core viewer: every member's,
+ * once each, without anyone's own read state, and with how many members have opened each, so a read moves it.
+ */
+/**
+ * "Something changed" (live.ts: an action, a piece's manifest moving) moves the attention records: a nudge, at most one
+ * per GAP_MS a household (a burst costs one write; one inside the gap lands at its end). The stores' own file changes
+ * aren't heard here: building the records reads them, and that reading writes to them, so hearing it would rebuild the
+ * records forever (measured: every 1.5 s, with nothing changing). An agent's ask nudges itself (the digest tool,
+ * src/server.ts); anything else of theirs waits for the 15 s pull.
+ */
+const nudgedAt = new Map<string, number>();
+const nudgeLater = new Map<string, NodeJS.Timeout>();
+/** How many times each household's attention records were built (the echo test counts them). */
+const builds = new Map<string, number>();
+export const attentionBuilds = (home: string): number => builds.get(home) ?? 0;
+
+/** The same for any other domain loom's bare "something changed" moves (one timer per home and domain). */
+const liveNudgedAt = new Map<string, number>();
+const liveNudgeLater = new Map<string, NodeJS.Timeout>();
+function nudgeLive(home: string, domain: string): void {
+  const k = `${home}\0${domain}`;
+  if (liveNudgeLater.has(k)) return;
+  const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
+  const go = () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); nudge(home, domain); };
+  if (!wait) { go(); return; }
+  const t = setTimeout(go, wait);
+  t.unref?.();
+  liveNudgeLater.set(k, t);
+}
+
+function nudgeAttention(home: string): void {
+  if (nudgeLater.has(home)) return;
+  const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
+  const go = () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
+  if (!wait) { go(); return; }
+  const t = setTimeout(go, wait);
+  t.unref?.();
+  nudgeLater.set(home, t);
+}
+
+async function memberInbox(base: UiOptions, full: Household, m: Member): Promise<{ items: InboxItem[]; reader?: string }> {
+  const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
+  const hh = own ? narrowed(full, own) : full;
+  const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
+  const pieces = forOwner((await pieceManifests(env)).pieces, own);
+  const reader = m.person === firstOwner(full).person ? undefined : m.person;
+  const store = storeFor(base);
+  const items = inboxItems(hh, pieces, env, store.doneItems(reader), !own);
+  const opened = store.openedAt(reader);
+  for (const it of items) {
+    it.unread = it.attention && !opened.has(it.key);
+    const at = opened.get(it.key);
+    if (at) it.seen = new Date(at * 1000).toISOString();
+  }
+  return { items, reader };
+}
+
+/** An Inbox item as a record: its key is its id, its time its sort (one with no time first, as the Inbox files it). */
+export function attentionRecord(it: InboxItem, audience: Record<string, unknown>, perViewer: boolean): MemRecord {
+  const t = it.at ? Date.parse(it.at) : NaN;
+  const exp = it.expires ? Date.parse(it.expires) : NaN;
+  const { key, expires: _e, unread, seen, ...rest } = it;
+  return {
+    ...rest, id: key, audience, sort: Number.isFinite(t) ? t : 8.64e15,
+    ...(Number.isFinite(exp) ? { expires: exp } : {}),
+    ...(perViewer ? { unread, ...(seen ? { seen } : {}) } : {}),
+  } as MemRecord;
+}
+
+/**
+ * One build per viewer at a time, and at most one queued after it: however many subscriptions a viewer holds (six
+ * streams of 64), the re-asks a change sets off cost that viewer one build, or two, never one each. A re-ask never joins
+ * a build already under way (it may have read before the change it was asked for): it shares the one queued after it.
+ */
+const slots = new Map<string, { cur: Promise<MemRecord[]>; next?: Promise<MemRecord[]> }>();
+
+function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
+  const full = base.household?.();
+  if (!full || viewer.kind === 'agent') return Promise.resolve([]);
+  const k = `${full.home}\0${viewerId(viewer)}`;
+  const run = (): Promise<MemRecord[]> => {
+    // The household as it is when the build starts (a queued one may start after a member was added).
+    const now = base.household?.() ?? full;
+    const p: Promise<MemRecord[]> = buildAttention(base, now, viewer).finally(() => {
+      builds.set(full.home, (builds.get(full.home) ?? 0) + 1);
+      const s = slots.get(k);
+      if (s?.cur === p && !s.next) slots.delete(k);
+    });
+    return p;
+  };
+  const s = slots.get(k);
+  if (!s) { const cur = run(); slots.set(k, { cur }); return cur; }
+  s.next ??= s.cur.catch(() => undefined).then(() => { const cur = run(); slots.set(k, { cur }); return cur; });
+  return s.next;
+}
+
+async function buildAttention(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+  if (viewer.kind === 'member') {
+    const m = full.members.find((x) => x.person === viewer.person);
+    if (!m) return [];
+    const { items } = await memberInbox(base, full, m);
+    // Each item is this member's own Inbox's: theirs alone, whoever else's Inbox has the same one.
+    return items.map((it) => attentionRecord(it, { members: [viewer.person] }, true));
+  }
+  // Each item's audience is exactly the members whose Inbox has it (a member's own outcome is theirs alone; a scoped
+  // piece's answer is that owner's), never a wider term: anything that reads these as the core viewer (push, Needs
+  // auto-resolve) filters for a person by it.
+  const store = storeFor(base);
+  const all = new Map<string, MemRecord>();
+  const whose = new Map<string, string[]>();
+  const reads = new Map<string, number>();
+  // Each member's own copy, as a digest: two members' copies of one item can differ (their pieces, absorbed approvals),
+  // so one that moves in a copy other than the first moves the record too, and its member is asked again.
+  const copies = new Map<string, ReturnType<typeof createHash>>();
+  for (const m of full.members) {
+    const { items, reader } = await memberInbox(base, full, m);
+    const opened = store.openedKeys(reader);
+    for (const it of items) {
+      if (opened.has(it.key)) reads.set(it.key, (reads.get(it.key) ?? 0) + 1);
+      whose.set(it.key, [...(whose.get(it.key) ?? []), m.person]);
+      const rec = attentionRecord(it, {}, false);
+      if (!copies.has(it.key)) copies.set(it.key, createHash('sha256'));
+      copies.get(it.key)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
+      if (!all.has(it.key)) all.set(it.key, rec);
+    }
+  }
+  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
+}
+
+/**
+ * The agent-status records (core's `agent-status` type, src/collections/core-types.ts; t-2028): each agent's card as
+ * Home's own code makes it for this member (agentCards over their pieces, atWorkFor: a Comms thread's job is its
+ * member's alone), so the desktop's cards, the rail, the bar's agents at work and Home read one set. For the core
+ * viewer: each agent once, its audience exactly the members who own it, with a digest of every member's own copy (two
+ * members' copies differ by their threads' jobs), so a change to any copy moves it and that member is asked again.
+ */
+async function memberCards(base: UiOptions, full: Household, m: Member): Promise<AgentCard[]> {
+  const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
+  const hh = own ? narrowed(full, own) : full;
+  const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
+  const pieces = atWorkFor(forOwner((await pieceManifests(env)).pieces, own), full, m);
+  return agentCards(hh, pieces, agentsOf(hh)!, Date.now());
+}
+
+/** A card as a record: its agent is its id. */
+const statusRecord = (c: AgentCard, audience: Record<string, unknown>): MemRecord => {
+  const { id, ...rest } = c;
+  return { ...rest, id, agent: id, running: (c.jobs ?? []).filter((j) => j.status === 'running').length, audience } as MemRecord;
+};
+
+const statusSlots = new Map<string, { cur: Promise<MemRecord[]>; next?: Promise<MemRecord[]> }>();
+/** How many times each household's agent-status records were built (tests). */
+const statusBuilds = new Map<string, number>();
+export const agentStatusBuilds = (home: string): number => statusBuilds.get(home) ?? 0;
+
+/** One build per viewer at a time, and at most one queued after it (attentionFor's rule). */
+function agentStatusFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
+  const full = base.household?.();
+  if (!full || viewer.kind === 'agent') return Promise.resolve([]);
+  const k = `${full.home}\0${viewerId(viewer)}`;
+  const run = (): Promise<MemRecord[]> => {
+    const now = base.household?.() ?? full;
+    const p: Promise<MemRecord[]> = buildAgentStatus(base, now, viewer).finally(() => {
+      statusBuilds.set(full.home, (statusBuilds.get(full.home) ?? 0) + 1);
+      const s = statusSlots.get(k);
+      if (s?.cur === p && !s.next) statusSlots.delete(k);
+    });
+    return p;
+  };
+  const s = statusSlots.get(k);
+  if (!s) { const cur = run(); statusSlots.set(k, { cur }); return cur; }
+  s.next ??= s.cur.catch(() => undefined).then(() => { const cur = run(); statusSlots.set(k, { cur }); return cur; });
+  return s.next;
+}
+
+async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+  if (viewer.kind === 'member') {
+    const m = full.members.find((x) => x.person === viewer.person);
+    if (!m) return [];
+    // This member's own copy of each card (their threads' jobs): theirs alone.
+    return (await memberCards(base, full, m)).map((c) => statusRecord(c, { members: [viewer.person] }));
+  }
+  // The snapshot holds no member's card, only that one moved: a card carries its member's own threads' jobs (their titles
+  // and links), and the snapshot's audience is every owner of the agent. What anyone is shown is asked again as them.
+  // A card's "Last seen 3 min ago" is left out of the digest: it moves every minute with nothing else moving, and
+  // would ask every viewer again each time. The window says it again from `seen.at` (web/src/agents-live.ts freshCard).
+  const whose = new Map<string, string[]>();
+  const copies = new Map<string, ReturnType<typeof createHash>>();
+  for (const m of full.members) {
+    for (const c of await memberCards(base, full, m)) {
+      const rec = statusRecord({ ...c, readings: c.readings.filter((r) => r.label !== 'Last seen') }, {});
+      whose.set(c.id, [...(whose.get(c.id) ?? []), m.person]);
+      if (!copies.has(c.id)) copies.set(c.id, createHash('sha256'));
+      copies.get(c.id)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
+    }
+  }
+  return [...whose].map(([agent, members]) => ({ id: agent, agent, audience: { members }, copies: copies.get(agent)!.digest('base64url').slice(0, 22) } as MemRecord));
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
@@ -1419,7 +1625,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const immutable = pathname.startsWith('/app/assets/');
     const type = WEB_TYPES[extname(file)] ?? 'application/octet-stream';
     // Fonts and images are compressed already; the script and the stylesheet are text, packed once (their names change with them).
-    const out = /^(text|application\/(javascript|json))|svg/.test(type) ? encoded(req, readFileSync(file), immutable ? file : undefined) : { body: readFileSync(file), headers: {} };
+    const out = /^(text|application\/(javascript|json))|svg/.test(type) ? (immutable ? await encodedAsset(req, readFileSync(file), file) : encoded(req, readFileSync(file))) : { body: readFileSync(file), headers: {} };
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache', ...out.headers });
     return void res.end(req.method === 'HEAD' ? undefined : out.body);
   }
@@ -1481,11 +1687,21 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
+  // The attention records are the Inbox's own (t-2025): registered for this household, with the options as they came
+  // (never an agent owner's narrowed ones: each viewer's are made from their own membership).
+  if (full) {
+    const base = opts, home = full.home;
+    registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
+    // Each agent's card (t-2028), made by Home's own code for each viewer.
+    registerCoreSource(home, 'agent-status', (v) => agentStatusFor(base, v));
+    onChanged(home, () => { nudgeAttention(home); nudgeLive(home, AGENT_STATUS_DOMAIN); });
+  }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
   if (full && who?.member) opts = { ...opts, member: who.member };
   if (full && who?.member && who.member.agents !== '*') {
-    const own = who.member.agents;
+    // The agents they own that are still the household's (memberViewer's rule): a departed one is in no one's scope.
+    const own = who.member.agents.filter((a) => full.agents.includes(a));
     if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
     const base = opts.household!;
     opts = { ...opts, household: () => narrowed(base(), own), ownerScope: own, env: { ...opts.env, LOOM_OWNER_SCOPE: own.join(',') } };
@@ -1753,6 +1969,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const key = form.get('i') ?? '';
     if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
     storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
+    // A read is a change like any other (collections.md, "Read state"): every window of this member's hears it. Pulled
+    // soon (at once if it wasn't in the last GAP_MS, else when that's up), never awaited here: a loop of reads costs one
+    // pull per gap, not one each.
+    if (full) pullSoon(full.home, [ATTENTION_DOMAIN]);
     return sendJson(res, 200, { ok: true });
   }
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;
@@ -2168,8 +2388,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const broken = down('broken');
       const out = down('unavailable');
       const headline = broken.length ? say(broken, 'broken') : out.length ? say(out, 'unavailable') : 'Everyone\u2019s fine';
-      const moving = pieces.flatMap((p) => Object.entries(p.manifest.agents ?? {}).filter(([a, r]) => hh.agents.includes(a) && r.state === 'working')
-        .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
+      // Each card's own (agent-status carries it, so a window keeps Home's list live from the cards: web/src/agents-live.ts).
+      const moving = cards.flatMap((c) => c.moving);
       const d: HouseHome = {
         headline, needs: waiting.length, need: waiting[0], cards, moving,
         // A desktop's Home answers the first few in place (web/src/desk.tsx); a phone's shows the first as its row.
@@ -2211,8 +2431,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
       const folder: InboxFolder = folderOf(query.f);
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
-      // Opening an attention item reads it; nothing else is ever unread.
-      if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
+      // Opening an attention item reads it, but a GET never writes (collections.md, "Read state"): the app posts
+      // /inbox/read for the item it opens (web/src/inbox.tsx), as it does for every pick.
       const opened = store.openedAt(reader);
       for (const it of items) {
         it.unread = it.attention && !opened.has(it.key);

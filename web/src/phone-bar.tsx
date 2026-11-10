@@ -8,9 +8,8 @@
 // The ticker (his rules): only its middle moves, the needs-you count never scrolls away; it moves only when its words
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands
 // still, cut short with an ellipsis.
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { lazy, Suspense, Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+const PageInfoDrawer = lazy(() => import('./page-info-drawer'));
 import { buzz, HapticLabel, useHaptics } from './haptic';
 import { loomNow, type Shell } from './loom';
 import { placeWords } from './system-bar';
@@ -114,43 +113,37 @@ export type PageInfo = { line?: string; more?: string };
 /** The page's name, and when the page says something about itself, the way to read it (Jonathan, 2026-11-05: "I like
  * the idea of the helper icon thing but right now it's also wasting vertical space"): the name is the button (44 px tall to a finger, looks/looks.css, in a 24 px bar), a small ⓘ
  * after it (looks/looks.css: drawn, so it's not part of the name), and it opens a sheet with the page's line and its intro. Without either, a plain name. */
-function PageName({ title, info, where }: { title: string; info?: PageInfo; where: string }) {
+function PageName({ title, info, where, chat }: { title: string; info?: PageInfo; where: string; chat?: () => void }) {
   const haptics = useHaptics();
   const [open, setOpen] = useState(false);
+  const [used, setUsed] = useState(false);
   useEffect(() => setOpen(false), [where]);
   const line = info?.line?.trim() || undefined;
   // The intro past its line: a page's line is often its intro's first sentence, said once.
   const full = info?.more?.trim();
   const more = (full && line && full.startsWith(line) ? full.slice(line.length).trim() : full) || undefined;
-  if (!line && !more) return <h1>{title}</h1>;
+  if (!line && !more && !chat) return <h1>{title}</h1>;
   return (
     <>
       <h1>
         <button type="button" className="loom-pbar__info relative" aria-label={`About ${title}`} aria-haspopup="dialog" aria-expanded={open}
-          onClick={() => { buzz(haptics, true); setOpen(true); }}>
+          onClick={() => { buzz(haptics, true); setUsed(true); setOpen(true); }}>
           <span className="loom-pbar__title">{title}</span>
           <HapticLabel on={haptics} />
         </button>
       </h1>
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent className="loom-page-info">
-          <DrawerHeader className="flex-col items-stretch gap-2">
-            <DrawerTitle className="mb-0 break-words text-left leading-snug">{title}</DrawerTitle>
-            {line && <DrawerDescription className="break-words text-left">{line}</DrawerDescription>}
-            {more && <p className="loom-page-info__more max-w-prose break-words text-left text-sm leading-relaxed opacity-80">{more}</p>}
-          </DrawerHeader>
-          <DrawerFooter><DrawerClose asChild><Button variant="outline">Close</Button></DrawerClose></DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+      {used && <Suspense fallback={null}><PageInfoDrawer open={open} onOpenChange={setOpen} title={title} line={line} more={more} chat={chat ? () => { setOpen(false); chat(); } : undefined} /></Suspense>}
     </>
   );
 }
 
 /** The bar itself: the page's name (in its app's colour, or its agent's; the way to its info when it has some), the
  * ticker, LOOM//OS, and the count. */
-export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where, clock, status }: {
+export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where, clock, status, chat }: {
   title: string; color: string; crumb?: { label: string; href: string }; go: (href: string) => void; shell: Shell; offline: boolean;
   info?: PageInfo; where: string;
+  /** Chat about this page (about.ts), on a phone: in the page name's sheet. */
+  chat?: () => void;
   /** The chevron goes back in the app's history (App.tsx, trail.ts) rather than to `crumb.href` as a new page. */
   onBack?: () => void;
   /** A desktop's one line (Jonathan, 2026-11-06): loom's clock before the name, the status glyphs after LOOM//OS
@@ -175,7 +168,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
           </button>
         )}
-        <PageName title={title} info={info} where={where} />
+        <PageName title={title} info={info} where={where} chat={chat} />
       </div>
       </Side>
       <Ticker live={!offline} parts={tickerParts(shell, tickNow, offline || !navigator.onLine)} go={go} />

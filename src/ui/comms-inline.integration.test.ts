@@ -224,6 +224,37 @@ describe.runIf(built && chrome && hasAge)('asks and loom things inline in Comms 
     } finally { await ctx.close(); }
   }, 120_000);
 
+  it('once what needs you is live, the thread reads again when its agent\'s asks move, not on another agent\'s (t-2027)', async () => {
+    const t = thread();
+    const raised = new Date(Date.now() - 500).toISOString();
+    asks([permission('a-00000110', t.conversation, raised)]);
+    const { ctx, page, errors } = await open('jonathan', DESK);
+    const reads: number[] = [];
+    page.on('request', (r) => { if (r.url().includes(`${t.id.replace(/^th:/, '')}/since/`)) reads.push(Date.now()); });
+    try {
+      await page.goto(`${base}/comms/${t.id}`);
+      await page.waitForFunction(() => document.documentElement.dataset.attention === 'live');
+      const allow = page.getByRole('button', { name: 'Allow once' });
+      await expect.poll(() => allow.isEnabled(), { timeout: 10_000 }).toBe(true);
+      await new Promise((r) => setTimeout(r, 2_000));
+      const before = reads.length;
+      // Mark's ask, from Mark's own conversation: what needs you moves, and loom says something changed; this thread of
+      // Art's has nothing new, so it isn't read again (before: once for the bare change).
+      asks([permission('a-00000110', t.conversation, raised), permission('a-00000111', 'cv-0000000000ff', new Date().toISOString(), { agent: 'mark' })]);
+      await fetch(`${base}/act/approvals`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}` },
+        body: new URLSearchParams({ _action: 'noop', id: 'a-00000199' }) });
+      await new Promise((r) => setTimeout(r, 4_000));
+      expect(reads.length - before, 'reads after another agent\'s ask').toBe(0);
+      // Art's own, answered in the Inbox: read again, and the card says so.
+      const r = await fetch(`${base}/act/approvals`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}` },
+        body: new URLSearchParams({ _action: 'deny', id: 'a-00000110' }) });
+      expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+      await expect.poll(() => page.locator('.comms-ask .v-agent-chat__receipt').textContent({ timeout: 500 }).catch(() => ''), { timeout: 20_000 }).toMatch(/^Denied by you · /);
+      expect(reads.length - before).toBeGreaterThanOrEqual(1);
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 120_000);
+
   it('a member who may not give it (not the household\'s owner) sees the card with no buttons', async () => {
     const t = thread(h.members[1], 'It needs a piece: see above.');
     asks([{ ...permission('a-00000103', t.conversation, new Date(Date.now() - 500).toISOString()), text: 'Give Art E Fish the relay piece?', lead: true }]);

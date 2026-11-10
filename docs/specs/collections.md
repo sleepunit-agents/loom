@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`). A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`); what needs you (t-2025: core's `attention` type, below); each agent's card (t-2028: `agent-status`, below). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -645,6 +645,203 @@ along with the listeners. The adapter is the only code that imports the client l
   window, and the budget is that, not more.
 - A view nobody reads is kept 30 s (a window reopened in that time is warm, with no request), a type nobody reads
   5 minutes; past 20,000 records the least recently read types without an open view go first.
+
+## As built: what needs you (t-2025)
+
+- **One record type, `loom/attention`** (core's, `src/collections/core-types.ts`): one Inbox item each, keyed by the
+  Inbox's own item key (`askKey`, a hash of source, text and page). Provider ids on asks (Inventory, "Before any domain
+  moves", 1) are still owed by the pieces; until they come, a reworded ask is a new record, as it's a new Inbox item
+  today. The key reaches no one the item doesn't (delivered keys).
+- **Made for each viewer by the Inbox's own code** (`handler.ts` `memberInbox`: their agents, `forOwner`, their scope's
+  manifests, their read state and their own outcomes), so what a member gets is exactly their Inbox page's items: the
+  parity test (`attention.integration.test.ts`) holds both to it, for a household owner and an owner of one agent.
+  The type is `audience: "ask"` (a viewer's rows are re-asked as them when anything moves), and each row's audience is
+  `members: [viewer]`: core's agent rule still applies on top of it.
+- **The core viewer's snapshot** (the bridge) is every member's items once each, its audience exactly the members
+  whose Inbox has it (`members: [...]`: a member's own outcome is theirs alone), with no one's read state and an
+  owner-class `reads` (how many members opened it), so a read moves the record and the member's subscriptions are
+  asked again; and an owner-class `copies`, a digest of every member's own copy, so a change to any member's copy
+  moves it too. What moves it: a piece's manifest moving (`live.ts` `tick`), every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read` (a pull
+  soon, never awaited, so a loop of reads costs one pull per 1.5 s), and everything that says loom's bare "something
+  changed" (`live.ts` `onChanged`), plus the 15 s pull.
+- **The snapshot's records are for noticing change, not for showing.** Each body is the first member's copy of the
+  item (two members' copies of one key can differ: `absorbApprovals` and lead cards depend on their pieces), so
+  anything that later reads them as the core viewer for a person (push, Needs auto-resolve) filters by the audience
+  and then asks again as that person, through the per-viewer source.
+- **After an action**, `loom/attention` is pulled soon (coalesced, never awaited); the acting piece's own domains
+  are still pulled before the answer.
+- **Builds are bounded per viewer**: one build of a viewer's records at a time and at most one queued after it, shared
+  by every re-ask (`handler.ts` `attentionFor`), so a viewer's subscriptions (up to six streams of 64) cost one or two
+  builds a change, never one each; a re-ask never joins a build that may have read before its change. A coalesced
+  pull likewise runs after a pull under way rather than joining it (`pull.ts` `soon`).
+- **Before any page has been asked for** (loom just started), nothing has registered the Inbox's code, and the type
+  answers `unavailable`, never an empty set that would read as "nothing needs you".
+- **A re-ask is leading-edge**: at once when the subscription wasn't asked in the last 1.5 s, else when the gap is up
+  (`subs.ts` `reaskSoon`); a coalesced pull (`pullSoon`) delivers as soon as it lands. Measured
+  (`attention.bench.integration.test.ts`, 10 asks, an action every 3.5 s, median of 7): an Allow reached another
+  window in 0.16 s (was 0.86 s: the bare change, then the Inbox's and Home's pages again) and the action answered in
+  0.10 s (0.18 s while it awaited the attention pull); a read reached the member's other windows in 0.06 s (was their
+  next timed refetch, 20 to 60 s); the first load is one 6 ms, 4.9 KB answer (was the Inbox's page, 12 ms and 6.9 KB,
+  and Home's, 12 ms and 4.6 KB, each carrying its own copy). Actions closer than 1.5 s apart coalesce by design.
+- **The stores' files echo reads.** Building the records reads the agents' stores, and that code writes to them
+  (and closing a connection folds SQLite's `-wal` back), which loom's file watcher (`live.ts`) hears as "something
+  changed". Nudged on that, the records rebuilt themselves every 1.5 s with nothing changing (and every 5 s when
+  throttled, every ~3 s with an echo window: the file events can't tell a write from an echo). So the stores' file
+  changes don't move them; the digest tool (`server.ts`) nudges `loom/attention` when an agent writes an ask, and
+  anything else of an agent's waits for the 15 s pull. The test counts builds over 12 idle seconds. The old bare
+  `change` hears the same echo (noted on t-2032).
+- **`GET /inbox?i=` no longer marks read**; the app posts `/inbox/read` for the item it opens.
+- **The manifest cache key now includes `LOOM_OWNER_SCOPE`** (`pieces.ts` `scopeKey`): the parity test found a
+  household owner's Inbox missing another agent's ask after an agent owner's request had cached its narrowed answer.
+- **In the window** (`web/src/attention.ts`): one subscription per tab, read by `withAttention` into every page view
+  (the shell's total and per-agent badges, Home's `needs`/`need`/`stack`, an agent window's `waiting`, the Inbox's
+  `items`), and by `ask-open.ts` to show whether a card is open: an item it holds is open or answered; one it doesn't
+  hold yet (a thread can show an ask first) is loom's to say, and loom is still asked right before a send. Until the
+  set is live and complete, each view reads its page's own copy, as before. Once it's live, the Inbox isn't asked
+  again on a bare change or on its timer (`page.ts` `liveViews`). `document.documentElement.dataset.attention` says
+  `live` or `page`.
+- **Counts now agree**: the badge total, Needs you, the Inbox's folders and From counts and each agent's badge all
+  count the same records. Two formulas changed as a result: an agent's badge counts one item for its memory
+  proposals (as the Inbox shows one), not each proposal (owner decision 2, one record per proposal, is still to do),
+  and absorbed approval cards are no longer subtracted twice.
+- **Still to move** (later in t-2025's line): the push watch (`yourCall`) and Needs auto-resolve reading the records as
+  the core viewer; a Comms thread's own asks (`threadAsks`) as a filtered view of this set; project "waiting".
+
+## As built: Comms threads' unread (t-2027, first slice)
+
+- **Core's `thread` type (1.1) carries each thread's list state**: `unread` (a reply past its member's read),
+  `working`, `background` (a job's thread its member hasn't written in) and `last_seq`, from `comms.ts`
+  `threadRowStates` (one grouped read for every thread), the same rule as the Comms list (`threadsOf`, which now shares `isBackground`). Never a word:
+  the first line a card shows stays on `GET /comms/agents`. `archived` is filterable with `eq` (`null`: open).
+- **In the window** (`web/src/threads-live.ts`, on `live-set.ts`): one subscription per tab to the member's open,
+  non-background threads. The dock's Comms count (`withThreads`) and each desktop agent card's unread count read it,
+  counting threads (owner decision 3; `GET /comms/agents` counts threads too now, so a card never flips between
+  threads and replies when the set drops to its fallback). `useAgentComms` (desk-agents.tsx) asks `/comms/agents` again only when a
+  thread's unread or newest message moves, no longer on every bare change and every minute.
+- **Parity** (`threads-live.integration.test.ts`): a member's live threads and their unread are exactly `GET /comms`'s
+  list and its count, never another member's (another owner of the same agent included). A reply reached the
+  member's live window in 35 ms; a read right after it in 1.5 s (coalesced with the reply's pull).
+- **The Comms list itself** (second slice): `thread` 1.2 adds the rest of a list row (`channel`, `titled_by`, `read_seq`,
+  `conversation`, `working_since`, `queued`, `failed`; still never a word), and the list draws its rows from the same
+  subscription as the dock and the cards (`web/src/thread-rows.ts` `listOf`: pinned, then unread, then newest, as
+  `threadsOf`). Archived threads, Background work and both are their own sets, subscribed only while the list shows
+  them (loom is asked for one only if its set hasn't answered in 2 s). Live, nothing asks `GET /comms` again: not
+  after a pin, an archive, a title, a delete, nor after every pull of an open thread (`onChanged`), and the Comms page
+  itself isn't refetched on a bare change or its timer (`liveViews`, now one entry per live set); it's asked once for
+  who can be written to, and once more if the set stops being live. Parity
+  (`threads-live.integration.test.ts`): for each member and each of the four views, the rows the app draws are
+  `GET /comms`'s, field for field and in order; in a real browser (`comms-app.integration.test.ts`) a thread renamed
+  elsewhere moves in an open list with no `/comms` request (before: one).
+- **Another process's thread write arrives at once**: the subscriptions watch `comms.tick` (written by every thread
+  write, `comms.ts` `bump`; a tick still holding this process's own stamp is its echo, so one write is one pull), so a reply the runtime posts through another listener,
+  or a CLI's write, is pulled within `GAP_MS`, not on the next 15 s pull (the test fails without it).
+- **A read that reads nothing new doesn't bump** (the app's 30 s read while a thread is in front): it records only
+  that the thread was in front (push reads that), so no list row moves and no listener pulls every thread for it.
+- **Known edges**: a view of more than 200 threads isn't whole, so it reads `GET /comms` once and isn't kept current
+  (archived lists that long); two threads with the same newest time can sort differently from `GET /comms`.
+- **A thread's asks move with what needs you** (third slice): an open thread reads again (`/comms/<t>/since`, which
+  carries its asks) when one of its agent's items in the live attention set moves, not on loom's bare change, and its
+  30 s look for asks stops while that set is live (its read, which says it's in front, goes on). A thread's asks are
+  only ever its agent's (`comms-asks.ts` `isThreadAsk`), so another agent's ask never reads it again. In a real browser
+  (`comms-inline.integration.test.ts`): another agent's ask arriving read the thread 0 times (before: 3), and the
+  thread's own ask answered in the Inbox still showed its answer live. The cards themselves are still made by loom
+  (`threadAsks`: kept answers, who may Allow), not drawn from the records.
+- **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
+  refs and previews, and the conversation page.
+
+## As built: tasks, the first piece's collection (t-2029, first slice)
+
+- **The tasks role publishes `tasks/task`** (sleepunit-agents/taskstore `src/collections.ts`, pinned here):
+  `loom-tasks collections query --json` answers a batch over every task as a record. The record has `title`, `type`,
+  `status`, `priority`, `assignee`, `created`, `updated` (its newest activity: made, started, closed or commented; an
+  update doesn't move it), `closed`, `parent`, `source`, `goal`, `why`, `doneWhen`, `ask`, `comments` (a count) and
+  `description` (heavy). taskstore stays the authority; core keeps no copy beyond its log and index.
+- **Who**: no `owners: 2`, as with its pages, so household owners only. Its audience is `{owners: true}`, and the
+  provider answers no rows to any other viewer, deciding before it pages.
+- **No change log yet**: core bridges it, with a snapshot as the core viewer on each pull (measured on the real
+  store: 2,126 tasks, five pages of 500, about 0.7 s). Past 10,000 tasks a snapshot is partial and deletes nothing, so
+  a `changes` verb is owed before then.
+- **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
+  store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.
+- **The queues are a filter** (tasks/task 1.1): `ready` (the `taskstore ready` rule: open, not an epic, no open blocker),
+  `blocked` and `blockers` (the open blockers' ids), and `closeReason`. So the ready queue is `ready eq true` ordered by
+  priority then created, and the blocked queue `blocked eq true`; parity with `taskstore ready` is taskstore's test.
+- **A write says so** (second slice): a piece API call that wrote answers `changed: true` (extensions.md, "The API"), and
+  core pulls the piece's domains soon (`subs.ts` `pullPieceSoon`) and drops its kept pages. Any pull that logs a change
+  drops them too (`pull.ts` `pagesMoved`), so a page asked again after its records moved is drawn again, never served
+  from the 5 s copy. A write on loom's machine that doesn't go through the API still arrives on the 15 s pull.
+- **The Tasks pages read them** (pages stay piece-rendered): `web/src/tasks-live.ts`, its own chunk, holds every open or
+  started task and every task that moved in the last eight days, read whole (every page), while a page that reads tasks
+  is shown (`tasks-pages.ts`: the work page, a task's page, a project's). When one moves, that page is asked again (one
+  ask, 250 ms after the burst), and the work page is no longer asked on the bare change or its timer while the records
+  are live, only every 10 minutes all the same (what it says depends on the day too: "Done in the last 7 days"). A task's page and a project's are asked on both (they show what the records here don't: comments, other
+  pieces' work). A household owner of only some agents is refused the set, and their pages work as before. In a real
+  browser (`tasks-live.integration.test.ts`): a task closed through the API left an open Tasks page in 0.88 s with one
+  page ask, and nothing asked again while idle (before: 5.9 s, and a page ask every 1.5 s from the bare change).
+- **A thread's work panel** asks `/comms/<t>/work` again when a task it shows, or one made in its conversation, moves,
+  or a change it shows does (`changes/change`, by its `ref`), not every 60 s; it keeps the 60 s read only while the
+  tasks aren't live, or it shows a change and the changes aren't.
+- **Changes' pages and a project's move with the changes too** (`tasks-pages.ts` `pulseOf`): the same chunk holds the open
+  changes and those that moved in eight days, while a Changes page (`/p/changes…`), a project's page or a work panel is
+  shown, and asks the page again when one moves. Both stay asked on the bare change as well (they show a merge rule's
+  verdict, which the approvals piece holds). The two sets are held apart, so a household without the Changes piece still
+  has its tasks live. In a real browser, a change's checks passing reached an open Changes page 0.85 s after core's
+  pull logged it.
+- **Still to move**: project feeds and counts as records (project pages are only asked again on a task's move), the
+  agent cards' backlog jobs, a `changes` verb (owed before ~10,000 tasks), and Changes (PRs, checks, merge state), which
+  needs its own provider in loom-changes.
+
+## As built: changes, Changes' own provider (t-2029)
+
+- **The changes role publishes `changes/change`** (sleepunit-agents/loom-changes `lib/loom_changes/collections.py`,
+  pinned here): `loom-changes collections query --json` answers every change in its snapshot as a record. Its id is the
+  change's own in the record grammar (`github:acme/app#3` is `github:acme:app:3`), and `ref` keeps the change's own form,
+  which is how a thread names it. Fields: `repo`, `number`, `title`, `state`, `draft`, `author`, `agent` (whose it is,
+  by the piece's own `CHANGES_AGENTS`), `mine`, `projects` (whose cards name its repo), `head`, `base`, `checks`,
+  `failing`, `review`, `mergeable`, `url`, `page`, `created`, `updated`, `closed`. Never its body or a credential.
+- **Who**: no `owners: 2`, as with its pages: household owners only, decided before paging; audience `{owners: true}`.
+- **No change log**: core bridges it with snapshots. Its sync service rereads the forges every `CHANGES_INTERVAL` (180 s
+  by default), and nothing in a record moves on a read that found nothing new (when its repo was last read isn't a
+  field), so a record moves only when its change does.
+- **Not read yet**: the Changes page, a project's page and a Comms thread's work panel still ask the piece. Moving them
+  is the next step (as the Tasks pages did: asked again when a change they show moves); a merge rule's verdict reads
+  the approvals piece and stays the page's (t-2031).
+
+## As built: each agent's card (t-2028, first slice)
+
+- **One record type, `loom/agent-status`** (core's, `audience: "ask"`): one record per agent, its id the agent, which is
+  Home's own card for it as `handler.ts` `agentCards` makes it for this member, over their pieces (`forOwner`, their
+  `LOOM_OWNER_SCOPE`) and `atWorkFor`. That covers its state and why, what it has going (`doing`), every job a piece
+  reports (`jobs`: running, waiting, scheduled, backlog; `agentJobs` dedupes), how many run now (`running`), what's
+  wrong, its readings (the clock's `Next` among them) and its last steps. A job in a member's Comms thread is that
+  member's alone, so each row's audience is `members: [viewer]`. The core viewer's snapshot is each agent once, its
+  audience the members who own it, carrying no one's card: only an owner-class `copies` digest of every member's copy,
+  so the log and index never hold a member's thread jobs under a wider audience. The digest leaves out "Last seen N
+  min ago", which would otherwise ask every viewer again each minute with nothing else moving: the window says it
+  again from the card's `seen.at` whenever it draws (`agents-live.ts` `freshCard`).
+- **What moves it**: whatever moves loom's bare "something changed" (`live.ts` `onChanged`: a piece's manifest moving,
+  an action, a thread), coalesced to one nudge per `GAP_MS` (`handler.ts` `nudgeLive`), the 15 s pull, and after an action
+  a pull soon (never awaited: `subs.ts` `SOON`). Builds are one per viewer at a time, one queued (attention's rule).
+- **Parity** (`agent-status.integration.test.ts`): for a household owner and an owner of one agent, the records are
+  exactly Home's `cards`, field for field. Another owner of the same agent never gets a member's thread job or its thread.
+  An agent owner never gets another agent's card. A job that starts reaches a live subscription as its agent's change.
+- **In the window** (`web/src/agents-live.ts`): one subscription per tab. Home's cards and headline, the shell's agents
+  at work (`working`, the same rule as a card's state), and the desktop's cards and rail read it. On any page, not only
+  while Home is the main one: the desk's data is made from the live cards and the attention set when Home's page isn't
+  to hand (`deskHomeOf`). In a real browser (`agent-desk.integration.test.ts`), with Home's page refused after load, a
+  job that starts and stops shows on the rail (before: it never did).
+- **For the rail's boxes of running jobs (t-2077)**: each record's `jobs` already holds every job with its `id`,
+  `text`, `where`, `since`, `href` (a thread, for its member), `status`, and `running` counts the running ones. A
+  job's latest step is the producer's `doing[].activity.action` (fresh for 30 s). So t-2077 is a view over
+  `useAgentCards()`, with no new data.
+- **What's moving rides on the cards** (second slice, agent-status 1.1): each card carries `moving` (each piece that says
+  its agent is working, and why), Home's list is every card's (`handler.ts`, the same on its page), and a window draws it
+  from the live cards. Home itself is still asked again on a bare change: its chrome isn't records yet (the ticker's
+  activity, "last active", the tiles' stats, the backup and Boxes alerts), and holding it back would freeze those.
+- **Still to move**: the clock's wakes and schedules as their own records (they need a stable job id: wake ids churn),
+  boxes, houses and services health, models and accounts, a Comms thread's harness choice, the ticker's activity
+  (`tickerActivityOf`) and "last active"; then Home need not be asked again on a bare change. The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
+  way (`live.ts` `tick`): up to 15 s, the same for the old bare change.
 
 ## What stays on its own transport (exceptions)
 

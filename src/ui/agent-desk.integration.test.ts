@@ -107,10 +107,11 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
       await expect.poll(() => art.locator('[data-row="last"] dd').textContent()).toMatch(/^An offsite copy for the backup · /);
       if (await art.locator('[data-row="wake"]').count()) expect(await art.locator('[data-row="wake"] dd').textContent()).toBe('tonight · 03:00 · backup check');
       expect(await art.locator('[data-kind="ask"]').textContent()).toContain('OK to clear the stale lock');
-      // Mark: quiet, two new replies and the first one's line; Sam's thread never counts.
+      // Mark: quiet, one thread with new replies (unread counts threads: the owner's decision, collections.md "Owner
+      // decisions" 3; the replies are the thread's own count) and the first one's line; Sam's thread never counts.
       const mark = card(p, 'mark');
       expect(await mark.locator('.loom-bigcard__eb').textContent()).toMatch(/quiet/i);
-      await expect.poll(() => mark.locator('[data-kind="unread"]').textContent()).toBe('2 new‘On it. I’ll keep Wednesday clear and move the house jobs around it.’');
+      await expect.poll(() => mark.locator('[data-kind="unread"]').textContent()).toBe('1 new‘On it. I’ll keep Wednesday clear and move the house jobs around it.’');
       // Nova: nothing at all yet, said plainly.
       expect(await card(p, 'nova').locator('[data-kind="none"]').textContent()).toBe('No new messages');
       for (const id of ['art', 'mark', 'nova']) expect(await card(p, id).locator('input[aria-label^="Message"]').count()).toBe(1);
@@ -146,6 +147,36 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
       await p.context().close();
     });
   }
+
+  it('a job that starts shows on its agent\'s rail card from the live cards alone, Home\'s page never asked again (t-2028)', async () => {
+    const p = await screen(1440, 900, '/inbox?t=*inbox');
+    await rail(p, 'nova').waitFor();
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent()).toMatch(/quiet/i);
+    await p.waitForFunction(() => document.documentElement.dataset.attention === 'live');
+    // From here Home's page (the desk's own, under the tiles) can't answer: whatever the rail shows next came live.
+    const asked: string[] = [];
+    await p.route((u) => u.pathname === '/', (r) => { if (r.request().resourceType() === 'document') return r.continue(); asked.push(r.request().url()); return r.abort(); });
+    const now = new Date().toISOString();
+    d.report({
+      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
+      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
+      nova: { jobs: [{ id: 'job-nova', text: 'Sorting the photo library', kind: 'lane', status: 'running', where: 'wake', since: now }] },
+    });
+    await d.changed();
+    // Within the pieces' round: the runtime's word is heard at once alone, but after the 15 s round when other scopes'
+    // rounds are under way (live.ts tick; the bare change waits the same).
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent(), { timeout: 30_000 }).toMatch(/working/i);
+    // Its own "is doing" box on the card (t-2077), under the card's button.
+    const wrap = p.locator('.loom-arail .loom-rcard-wrap').filter({ has: p.locator('.loom-rcard[data-agent="nova"]') });
+    expect(await wrap.locator('.loom-doing__box').textContent()).toContain('Sorting the photo library');
+    d.report({
+      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
+      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
+    });
+    await d.changed();
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent(), { timeout: 30_000 }).toMatch(/quiet/i);
+    await p.context().close();
+  }, 90_000);
 
   it('only the viewer\'s own agents: Sam owns Mark, so Mark alone, and only Sam\'s unread', async () => {
     const p = await screen(1440, 900, '/', { who: 'sam' });

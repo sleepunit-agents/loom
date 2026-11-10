@@ -80,7 +80,8 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // Read the older thread up to its end: only the newer one's two replies are new.
     markRead(h, threadFor(h, member('jonathan'), older.id), 99);
     let art = (await agentsComms(h, process.env, member('jonathan'))).find((a) => a.agent === 'art')!;
-    expect(art).toMatchObject({ agent: 'art', unread: 2, first: { thread: t.id, text: 'The lock is cleared. The run is going now.' }, last: { thread: t.id } });
+    // Unread counts threads (collections.md, owner decision 3): one thread, whatever its two replies.
+    expect(art).toMatchObject({ agent: 'art', unread: 1, first: { thread: t.id, text: 'The lock is cleared. The run is going now.' }, last: { thread: t.id } });
     // Read one of them: one left, and the line is the next.
     const firstReply = 2;
     markRead(h, threadFor(h, member('jonathan'), t.id), firstReply);
@@ -149,9 +150,9 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     reply(three, 'read already');
     markRead(h, threadFor(h, member('jonathan'), three.id), 99);
     const pond = (await agentsComms(h, process.env, member('jonathan'))).find((a) => a.agent === 'pond-bot')!;
-    // 2 + 1 across the two threads with unread replies; the first is in the newer of those two, not the oldest, and
-    // not the newest thread (read already).
-    expect(pond.unread).toBe(3);
+    // The two threads with unread replies (threads, not their 2 + 1 replies); the first is in the newer of those two,
+    // not the oldest, and not the newest thread (read already).
+    expect(pond.unread).toBe(2);
     expect(pond.first).toEqual({ thread: two.id, text: 'new unread C' });
     expect(pond.last?.thread).toBe(three.id);
     for (const t of [one, two]) markRead(h, threadFor(h, member('jonathan'), t.id), 99);

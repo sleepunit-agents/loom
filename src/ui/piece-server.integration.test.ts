@@ -24,7 +24,7 @@ describe('pieceApi with api_serve', () => {
       bins: ['loom-runner'], loom: { settings: [], services: [], api_serve: ['body-sync'] } }));
     const cli = join(dir, 'current', 'cli');
     writeFileSync(cli, `#!${process.execPath}
-const answer = (req, grant) => ({ body: { how: process.argv.includes('--serve') ? 'served' : 'once', pid: process.pid, path: req.path, grant: grant ?? null, envGrant: process.env.LOOM_STORE_GRANT ? 'set' : null } });
+const answer = (req, grant) => ({ ...(req.path === 'write' || req.path === 'body-sync' ? { changed: true } : req.path === 'odd' ? { changed: 'yes' } : {}), body: { how: process.argv.includes('--serve') ? 'served' : 'once', pid: process.pid, path: req.path, grant: grant ?? null, envGrant: process.env.LOOM_STORE_GRANT ? 'set' : null } });
 if (process.argv.includes('--serve')) {
   require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
     const m = JSON.parse(l);
@@ -53,6 +53,16 @@ if (process.argv.includes('--serve')) {
     expect(a.body.how).toBe('served');
     expect(b.body.pid).toBe(a.body.pid);
     expect([a.body.grant, a.body.envGrant]).toEqual(['set', null]);
+  });
+
+  it('says the call wrote only on the piece\'s own changed: true, served or run once, and never in the body', async () => {
+    const out = (path: string) => pieceApi(bin, { caller: { kind: 'agent', agent: 'art', house: 'h-1' }, path, body: {} }, env);
+    for (const path of ['write', 'body-sync']) {
+      const r = await out(path);
+      expect(r.changed, path).toBe(true);
+      expect(r.body).not.toHaveProperty('changed');
+    }
+    for (const path of ['odd', 'send']) expect(await out(path), path).not.toHaveProperty('changed');
   });
 
   it('any other path runs once, as before, with its grant in its env', async () => {

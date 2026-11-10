@@ -24,7 +24,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { Household } from '../household.js';
-import { onBump } from '../comms.js';
+import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
 import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
@@ -88,6 +88,8 @@ interface Sub {
   sent: Map<string, string>;
   /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
   retry?: boolean;
+  /** When it was last asked again (reaskSoon): the next waits out AGG_GAP_MS from then, never from the change. */
+  askedAt?: number;
 }
 
 /**
@@ -116,6 +118,8 @@ interface HomeState {
   passing: Promise<void> | undefined;
   again: boolean;
   offBump?: () => void;
+  /** comms.tick: a thread moved by another process (a reply the runtime posted to another listener, a CLI). */
+  commsWatcher?: FSWatcher;
 }
 
 const homes = new Map<string, HomeState>();
@@ -161,8 +165,17 @@ function ensureRunning(h: HomeState): void {
   }
   h.poll ??= setInterval(() => pass(h), PASS_MS);
   h.poll.unref?.();
-  // Core's own threads move through comms.ts: their domain is pulled when they do.
-  h.offBump ??= onBump(() => h.puller.soon('loom/thread'));
+  // Core's own threads move through comms.ts: their domain is pulled when they do, here (onBump) and in any other
+  // process (a reply the runtime posts through another listener, a CLI), by the tick file every write leaves (comms.ts
+  // bump). A tick that still holds this process's own stamp is that bump's echo: one write, one pull.
+  h.offBump ??= onBump(() => { void h.puller.soon('loom/thread'); });
+  if (!h.commsWatcher) {
+    try {
+      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick' && !isOwnTick(home)) void h.puller.soon('loom/thread'); });
+      h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; });
+      h.commsWatcher.unref?.();
+    } catch { /* the poll still runs */ }
+  }
 }
 
 function stopIfIdle(h: HomeState): void {
@@ -171,6 +184,7 @@ function stopIfIdle(h: HomeState): void {
   h.watcher?.close(); h.watcher = undefined;
   clearInterval(h.poll); h.poll = undefined;
   h.offBump?.(); h.offBump = undefined;
+  h.commsWatcher?.close(); h.commsWatcher = undefined;
   homes.delete(h.household().home);
 }
 
@@ -490,7 +504,11 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     return v;
   };
   void (async () => {
-    await new Promise((r) => setTimeout(r, AGG_GAP_MS));
+    // At most once per AGG_GAP_MS, and at once when the last ask is that long ago: the first change in a while reaches
+    // the window without waiting, and a burst still costs one ask per gap (t-2025's measure: 1.7 s became ~0.2 s).
+    const wait = Math.max(0, (sub.askedAt ?? 0) + AGG_GAP_MS - Date.now());
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    sub.askedAt = Date.now();
     const v = still();
     const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
@@ -534,11 +552,48 @@ export function pullNow(home: string, domain: string): Promise<unknown> {
  * PULL_WAIT_MS for it, and the stream catches up with the rest.
  */
 export const PULL_WAIT_MS = 3_000;
+/** Core's attention records are made from every piece's asks (t-2025): any action may move them. */
+export const ATTENTION_DOMAIN = 'loom/attention';
+/** Core's agent-status records are each agent's card from every piece's reports (t-2028): any action may move them too. */
+export const AGENT_STATUS_DOMAIN = 'loom/agent-status';
+/** Built again from every piece for every member: pulled soon after an action, never awaited by its answer. */
+const SOON = [ATTENTION_DOMAIN, AGENT_STATUS_DOMAIN];
 export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piece: string): Promise<void> {
   let domains: string[];
   try {
     domains = [...providers(env).values()].filter((p) => (piece === 'loom' ? !p.piece : p.piece === piece)).flatMap((p) => [...domainsOf(p).keys()]);
   } catch { return; }
+  // The attention records are every member's Inbox, built again: pulled soon (coalesced, one per GAP_MS), never
+  // awaited, so a run of actions can't make each one rebuild them all. The acting piece's own domains are awaited.
+  pullSoon(home, SOON);
+  await pullNowAll(home, domains.filter((d) => !SOON.includes(d)));
+}
+
+/**
+ * A piece's API call said it wrote (`changed: true` beside its answer, docs/extensions.md "The API"): its own domains are
+ * pulled soon (coalesced, never awaited), so a house's `taskstore close` reaches open windows at once, not on the next
+ * 15 s pull.
+ */
+export function pullPieceSoon(home: string, env: NodeJS.ProcessEnv, piece: string): void {
+  let domains: string[];
+  try { domains = [...providers(env).values()].filter((p) => p.piece === piece).flatMap((p) => [...domainsOf(p).keys()]); } catch { return; }
+  if (domains.length) pullSoon(home, domains);
+}
+
+/** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
+ * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
+export function pullSoon(home: string, domains: readonly string[]): void {
+  for (const d of domains) nudge(home, d);
+  const h = homes.get(home);
+  if (!h) return;
+  const wanted = wantedOf(h);
+  // Delivered as soon as each lands, not on the next pass.
+  for (const d of domains) if (wanted.has(d)) void h.puller.soon(d).then(() => deliverNow(home)).catch(() => undefined);
+}
+
+/** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them
+ * for every other listener. */
+export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
   for (const d of domains) nudge(home, d);
   const h = homes.get(home);

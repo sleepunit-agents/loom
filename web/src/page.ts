@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { fetchView, type View } from './loom';
 import { refreshEvery, type Showing } from './refresh';
+import { pulseOf, tasksPageKind } from './tasks-pages';
 import type { Note } from './toasts';
 
 /** Where a page's address is kept: what it is now, a new one after it (a link), or this one corrected in place (a
@@ -89,6 +90,22 @@ export function collectionsRuntime(csrf: () => string): NonNullable<typeof colle
   collections = (was ? was.then((m) => (m.runtime.isCleared() ? makeCollections(csrf) : m), () => makeCollections(csrf)) : makeCollections(csrf));
   return collections;
 }
+
+/**
+ * Views read live from shared collections (attention.ts says the Inbox, threads-live.ts Comms, once each set is live): a
+ * page showing one isn't asked again on a bare change or on a timer, since what changes on it arrives on its own (t-2025).
+ * Each live set says its own views; a view is live if any says so.
+ */
+const liveSayers: Array<(view: string) => boolean> = [];
+const readLive = (view: string, url: string): boolean => liveSayers.some((f) => f(view)) || (tasksPageKind(url) === 'live' && !!tasksPulse?.live());
+export function liveViews(f: (view: string) => boolean): void { liveSayers.push(f); }
+
+/**
+ * Piece pages stay piece-rendered (docs/specs/collections.md); what they show moves with their piece's records. The
+ * Tasks pages are asked again when the tasks' records move (tasks-live.ts, its own chunk, loaded with the first such page;
+ * tasks-pages.ts says which). A `live` one isn't asked again on a bare change or a timer while those are live.
+ */
+let tasksPulse: typeof import('./tasks-live').tasksPulse | undefined;
 
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
@@ -202,9 +219,10 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   }, [say]);
 
   const [live, setLive] = useState(false);
+  const shownView = useRef('');
   useEffect(() => {
     // Revalidate in the background without making a confirmed page look like a cached copy.
-    const again = () => { if (!document.hidden) { void load(showing.current, false, true); } };
+    const again = () => { if (!document.hidden && !readLive(shownView.current, showing.current)) { void load(showing.current, false, true); } };
     const stop = listen({ change: again, open: setLive });
     document.addEventListener('visibilitychange', again);
     return () => { stop(); document.removeEventListener('visibilitychange', again); };
@@ -213,14 +231,30 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
   // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
   const every = refreshEvery(data as Showing | null, live);
+  shownView.current = (data as Showing | null)?.view ?? '';
   useEffect(() => {
     if (!every) return;
     const t = setInterval(() => {
+      if (readLive(shownView.current, navNow.current.here())) return;
       const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
       if (!busy) void load(navNow.current.here(), false, true);
     }, every * 1000);
     return () => clearInterval(t);
   }, [every]);
+
+  // What's shown reads tasks: asked again when they move (tasks-live.ts watchPage). Held while any such page is shown,
+  // not per address, so a sort or a filter keeps it.
+  const csrf = (data as { chrome?: { csrf?: string } } | null)?.chrome?.csrf;
+  const pulse = pulseOf(url);
+  useEffect(() => {
+    if (!csrf || !pulse) return;
+    let off: (() => void) | undefined, done = false;
+    void import('./tasks-live').then((m) => {
+      tasksPulse = m.tasksPulse;
+      if (!done) off = m.tasksPulse.watchPage(csrf, () => { if (tasksPageKind(showing.current)) void load(showing.current, false, true); }, pulse);
+    }, () => { /* no chunk: asked as before */ });
+    return () => { done = true; off?.(); };
+  }, [pulse, csrf, load]);
 
   useEffect(() => {
     const f = () => void load(navNow.current.here(), false, true);

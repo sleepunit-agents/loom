@@ -15,7 +15,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn } from '../backends/conversations.js';
-import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery } from '../comms.js';
+import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery, setTitle, threadFor } from '../comms.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from './pieces.js';
 import { stopCommsWatch } from './comms-live.js';
@@ -102,6 +102,35 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
+  it('keeps its list live: a thread renamed elsewhere moves in the open list, and /comms isn\'t asked again (t-2027)', async () => {
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      // The list's set is live once its rows come from it: give the stream its first answer.
+      await page.waitForResponse((r) => r.url().endsWith('/collections/query'), { timeout: 10_000 }).catch(() => undefined);
+      await page.waitForTimeout(300);
+      const asked: string[] = [];
+      page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/comms' && r.method() === 'GET') asked.push(u.search); });
+      setTitle(h, threadFor(h, h.members[0], thread.id), 'Renamed elsewhere', 'agent');
+      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      // Archived threads are their own live set: shown without asking loom either.
+      await page.getByRole('button', { name: 'Archived', exact: true }).click();
+      await page.locator('.comms-empty').filter({ hasText: 'No archived threads.' }).waitFor({ timeout: 5_000 });
+      await page.getByRole('button', { name: 'Back to active', exact: true }).click();
+      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      await page.waitForTimeout(500);
+      expect(asked).toEqual([]);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      // Later tests expect the thread untitled.
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('UPDATE comms_threads SET title = NULL, titled_by = NULL WHERE id = ?').run(thread.id);
+      db.close();
+    }
+  }, 30_000);
+
   it('keeps jobs in Background work and attributes the job brief to Art', async () => {
     const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'background-ui', label: 'Internal diagnostic',
       at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
@@ -128,6 +157,77 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       db.close();
     }
   }, 30_000);
+
+  it('opens a running job to watch, read-only, its steps arriving live, in every look at 1440 and phone width (t-2043)', async () => {
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'watch-ui', label: 'Nightly backup check',
+      at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'Check last night\'s backup' }) as { id: string };
+    const step = (id: string, summary: string, state: 'running' | 'done') => postActivity(h, process.env, { conversation: cv.conversation, run: 'run-0123456789ab', cards: [{ id, tool: 'Bash', summary, state }] });
+    step('s1', 'Listed the backup folder', 'done');
+    step('s2', 'Ran restic check', 'running');
+    let n = 0;
+    try {
+      for (const look of ['neon', 'lowlight', 'daylight']) for (const phone of [false, true]) {
+        const ctx = await browser.newContext(phone
+          ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, serviceWorkers: 'block' }
+          : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+        await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+        await ctx.addInitScript((l) => { try { localStorage.setItem('loom-look', l); } catch { /* private */ } }, look);
+        const page = await ctx.newPage();
+        const errors: string[] = [];
+        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('pageerror', (e) => errors.push(e.message));
+        try {
+          await page.goto(`${base}/comms/${job.id.slice(3)}`);
+          const bar = page.locator('.comms-watch');
+          await bar.waitFor();
+          expect(await bar.textContent()).toContain('Watching');
+          // Looking never touches the run: nothing to type into and no Stop.
+          expect(await page.locator('.comms-composer').count()).toBe(0);
+          expect(await page.locator('.comms-stop').count()).toBe(0);
+          // Its steps so far, folded to one line: how many, and the newest.
+          await page.locator('.comms-steps').filter({ hasText: n ? `Compared snapshot ${n - 1}` : 'Ran restic check' }).waitFor();
+          // A new step arrives live, without a reload.
+          step(`s${3 + n}`, `Compared snapshot ${n}`, 'running');
+          await page.locator('.comms-steps').filter({ hasText: `Compared snapshot ${n}` }).waitFor({ timeout: 10_000 });
+          n++;
+          expect(await noSideways(page)).toBe(true);
+          const box = await bar.boundingBox();
+          expect(box && box.y + box.height <= (phone ? 844 : 900) + 1).toBe(true);
+          if (process.env.LOOM_WATCH_SHOTS) await page.waitForTimeout(phone ? 2500 : 7000), await page.screenshot({ path: join(process.env.LOOM_WATCH_SHOTS, `watch-${look}-${phone ? 390 : 1440}.png`) });
+          // Join in: now it's a conversation, with its composer and Stop.
+          await page.getByRole('button', { name: 'Join in', exact: true }).click();
+          await page.locator('.comms-composer textarea').waitFor();
+          expect(await page.locator('.comms-stop').count()).toBe(1);
+          expect(errors).toEqual([]);
+        } finally { await ctx.close(); }
+      }
+    } finally {
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(job.id);
+      db.close();
+    }
+  }, 120_000);
+
+  it('opens a long thread at its newest page and loads earlier ones on demand (t-2043)', async () => {
+    const long = openThread(h, process.env, h.members[0], { agent: 'art', id: 'aaaaaaaaaaaalong', text: 'The first words' }).thread;
+    for (let i = 1; i <= 120; i++) expect(adapterCall(h, process.env, { op: 'post', place: long.id, agent: 'art', text: `Reply ${i}`, ref: `long-${i}` })).toMatchObject({ ok: true });
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms/${long.id.slice(3)}`);
+      await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'Reply 120' }).first().waitFor();
+      expect(await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'The first words' }).count()).toBe(0);
+      await page.getByRole('button', { name: 'Earlier messages', exact: true }).click();
+      await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'The first words' }).first().waitFor();
+      expect(await page.locator('.comms-older').count()).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(long.id);
+      db.close();
+    }
+  }, 60_000);
 
   it('lets the owner choose a thread model, keeps the choice, and reports a failed save', async () => {
     const { ctx, page, errors } = await open(false);

@@ -233,3 +233,12 @@
 .loom-jobs { list-style: none; margin: .5rem 0; padding: 0; }
 .loom-jobs li { display: flex; flex-direction: column; gap: .15rem; padding: .4rem 0; overflow-wrap: anywhere; }
 .loom-jobs small { opacity: .7; font-size: .7rem; }
+/* What it's doing, one box per running job (t-2077): under the card, before its jobs list. */
+.loom-doing { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.loom-doing__box { display: flex; flex-direction: column; gap: 2px; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c, var(--v-pink)) 45%, transparent); background: color-mix(in srgb, var(--c, var(--v-pink)) 8%, transparent); color: var(--v-text); text-decoration: none; }
+a.loom-doing__box:hover, a.loom-doing__box:focus-visible { border-color: var(--c, var(--v-pink)); }
+.loom-doing__who { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--v-text-3); font-weight: 400; }
+.loom-doing__what { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-doing__meta { font-size: 11px; color: var(--v-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-doing__more { font-size: 11px; color: var(--v-text-3); padding: 0 10px; }

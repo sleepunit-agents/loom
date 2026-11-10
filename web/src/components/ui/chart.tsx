@@ -1,7 +1,7 @@
 "use client";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import * as React from "react";
-import { AnimatePresence, motion, useIsPresent } from "motion/react";
+import { AnimatePresence, m, useIsPresent } from "motion/react";
 import {
   Card,
   CardHeader,
@@ -509,10 +509,10 @@ export type ChartPlotState = {
   inspect: (index: number) => void;
 };
 
-function ChartPlotSvg(props: React.ComponentProps<typeof motion.svg>) {
+function ChartPlotSvg(props: React.ComponentProps<typeof m.svg>) {
   const present = useIsPresent();
   return (
-    <motion.svg
+    <m.svg
       {...props}
       tabIndex={present ? props.tabIndex : -1}
       aria-hidden={present ? props["aria-hidden"] : true}
@@ -676,7 +676,7 @@ export function ChartFrame({
       aria-describedby={description ? `${id}-description` : undefined}
     >
       <AnimatePresence initial={!quiet}>
-        <motion.div
+        <m.div
           key="chart"
           initial={quiet ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -826,7 +826,7 @@ export function ChartFrame({
                       })}
                     </ChartPlotSvg>
                   ) : (
-                    <motion.div
+                    <m.div
                       key="empty"
                       className="v-chart-empty"
                       initial={{ opacity: 0 }}
@@ -838,7 +838,7 @@ export function ChartFrame({
                       {hidden.length
                         ? "Choose a legend item to show its data."
                         : emptyMessage}
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
                 <span
@@ -892,7 +892,7 @@ export function ChartFrame({
               </div>
             )}
           </Card>
-        </motion.div>
+        </m.div>
       </AnimatePresence>
     </ChartContainer>
   );

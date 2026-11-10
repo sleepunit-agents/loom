@@ -314,6 +314,8 @@ export interface AgentCard {
   seen?: { at: string; where: string };
   readings: Array<Reading & { source: Source }>;
   steps?: Array<{ text: string; at: string; where: string }>;
+  /** What's moving for it: each piece that says it's working, and why (Home's "moving", made per agent). */
+  moving: Array<{ agent: string; text: string; meta?: string }>;
 }
 
 export interface HouseHome {

@@ -1,5 +1,8 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
+import { useAttention, withAttention } from './attention';
+import { useThreads, withThreads } from './threads-live';
+import { deskHomeOf, useAgentCards, withAgentCards } from './agents-live';
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
@@ -27,6 +30,8 @@ import { usePage, hasKept, screenNav, type PageNav, type PageState } from './pag
 import { nameOf as tileName } from './tiling/name';
 // The toasts load with the first one (toasts.tsx).
 const Toasts = lazy(() => import('./toasts'));
+// Chat about this (about.ts): its sheet's own chunk, the first time something asks.
+const ChatAbout = lazy(() => import('./chat-about'));
 import type { Note } from './toasts';
 import { act, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
@@ -72,6 +77,7 @@ import { canMove, moveTo, scrub, type Move } from './transitions';
 import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
+import { aboutPage, chatAbout, CHAT_ABOUT, type About } from './about';
 import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
 import { keep, LOOKS, lookOf, markColor, modeOf, oneWindowKept, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
@@ -136,6 +142,13 @@ export default function App() {
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
+  // Chat about this (about.ts): undefined until something first asks (its chunk isn't loaded before), null when closed.
+  const [about, setAbout] = useState<(About & { seen: string }) | null | undefined>(undefined);
+  useEffect(() => {
+    const f = (e: Event) => setAbout((e as CustomEvent<About & { seen: string }>).detail);
+    addEventListener(CHAT_ABOUT, f);
+    return () => removeEventListener(CHAT_ABOUT, f);
+  }, []);
   // The launcher (launcher.tsx), a desktop's: open, and whether it has opened yet (its chunk stays for its next time).
   const [launching, setLaunchingState] = useState(false);
   const [launchAsked, setLaunchAsked] = useState(false);
@@ -218,11 +231,20 @@ export default function App() {
     replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
   }), []);
   const mainPage = usePage(location.pathname + location.search, say, appNav);
-  const { url, data, error, waiting, pending, savedAt, showing, load } = mainPage;
+  const { url, error, waiting, pending, savedAt, showing, load } = mainPage;
+  // What needs you, live (attention.ts; t-2025): the badges, Home's Needs you and the Inbox read one set once it's in.
+  const attention = useAttention(mainPage.data?.chrome?.csrf);
+  // And the member's Comms threads, live (threads-live.ts, t-2027): the dock's count and the agent cards read them.
+  const threads = useThreads(mainPage.data?.chrome?.csrf);
+  // And each agent's card, live (agents-live.ts, t-2028): the desktop's cards and rail, and Home's, on every page.
+  const cards = useAgentCards(mainPage.data?.chrome?.csrf);
+  const data = useMemo(() => withAgentCards(withThreads(withAttention(mainPage.data, attention), threads), cards), [mainPage.data, attention, threads, cards]);
+  const deskHome = useMemo(() => deskHomeOf(data?.view === 'house-home' ? data.home as never : null, cards, attention), [data, cards, attention]);
   const tilesApi = useRef<import('./tiling/tiles').TilesApi | null>(null);
   // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
   const [D, setD] = useState(desk$);
   // The tile that has focus (tiles.tsx tells): the dock lights its key and the bar says its page.
+  const [tileOpen, setTileOpen] = useState<{ key: string; label: string }[]>([]);
   const [tileFocus, setTileFocus] = useState<import('./tiling/tiles').Focused>(null);
 
   // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
@@ -392,7 +414,7 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <>{agentDock
+    value: t.href, label: t.label, open: tiled && tileOpen.some((a) => a.key === t.href), icon: <>{agentDock
       // An agent's own dock wears the agent's colour, not an app's tint (looks.css): the pixel ramps are the apps' tints,
       // so its keys keep their line icons.
       ? <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />
@@ -404,6 +426,9 @@ export default function App() {
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
   const lit = launching && wide && chrome?.shell?.household ? '#apps' : tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
+  const temporary = tiled && !agentDock ? tileOpen.filter((a) => !phoneTabs.some((t) => t.href === a.key)) : [];
+  const temporaryItems = dockItems(temporary.map((a) => ({ href: a.key, label: a.label, current: false })))
+    .map((a, i) => ({ ...a, divider: i === 0 }));
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
@@ -425,6 +450,9 @@ export default function App() {
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'activity' ? 'Activity' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
+  // Chat about this page (about.ts): a phone's page-name sheet and More offer it; a desktop's window menu does.
+  const pageAbout = aboutPage(url, title || head?.label || 'This page');
+  const pageChat = pageAbout ? () => chatAbout(pageAbout) : undefined;
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
   const placeAt = (at: string) => shellPlaces.find((p) => at === p.href) ?? shellPlaces.find((p) => p.href !== '/' && at.startsWith(`${p.href}/`));
   // Which app a page is in, as a tile (tiling/tiles.tsx): keyed as the dock keys it (trail.ts keys the same), an agent's
@@ -479,7 +507,7 @@ export default function App() {
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
   const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
-    const data = pg.data;
+    const data = withAgentCards(withThreads(withAttention(pg.data, attention), threads), cards);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
     const inAgent = !!agentHead?.id && !!data?.chrome?.shell?.household;
@@ -648,7 +676,7 @@ export default function App() {
                 <PhoneBar clock={desk ? <SysClock clock={{ text: chrome.clock, tz: chrome.tz }} /> : undefined}
                   status={desk ? <SysIcons shell={chrome.shell} offline={!!savedAt} go={go} /> : undefined} title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={tiled && tileFocus ? `${tileFocus.key}\0${tileFocus.title}` : url}
                   info={tiled ? { more: tileFocus?.intro } : { line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
-                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
+                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} chat={desk ? undefined : pageChat} />
               </div>
             </header>
           ) : (
@@ -663,8 +691,8 @@ export default function App() {
 
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
-              <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
-                shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} deskEnv={(g) => pageEnv(mainPage, g)}
+              <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} onOpen={setTileOpen} outerGo={go}
+                shell={chrome.shell} homeData={deskHome} deskEnv={(g) => pageEnv(mainPage, g)}
                 oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.
@@ -693,7 +721,7 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(me ? [me] : []),
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...temporaryItems, ...(me ? [me] : []),
                   // A desktop's last key: every app (launcher.tsx).
                   ...(desk && !agentDock ? [{ value: '#apps', label: 'All apps', tint: 'olive', icon: <span className="loom-apps-dots" aria-hidden>{Array.from({ length: 9 }, (_, n) => <i key={n} />)}</span> }] : [])]}
                 value={lit} onValueChange={pick}
@@ -710,6 +738,7 @@ export default function App() {
       }} />}
 
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
+        chat={pageChat ? () => { setMore(false); pageChat(); } : undefined}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}
 
       {launchAsked && desk && chrome?.shell && <Suspense fallback={null}><Launcher open={launching} onOpenChange={setLaunching} shell={chrome.shell} icon={icon}
@@ -717,6 +746,9 @@ export default function App() {
         launch={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
       {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
+
+      {about !== undefined && chrome && <Suspense fallback={null}><ChatAbout about={about} csrf={chrome.csrf} agents={chrome.shell?.agents ?? []} onClose={() => setAbout(null)}
+        go={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}

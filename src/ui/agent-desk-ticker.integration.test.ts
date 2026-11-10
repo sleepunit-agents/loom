@@ -102,7 +102,9 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
     await link.click();
     await expect.poll(() => p.url()).toContain(t.id.replace(/^th:/, ''));
     await expect.poll(() => line.innerText(), { timeout: 16000 }).toContain('Mark · Activity unavailable');
-    d.report({ mark: { idle: { observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } } }); await d.changed();
+    // Both ends share one clock read: 30,001ms is rightly rejected by the manifest parser.
+    const idleAt = Date.now();
+    d.report({ mark: { idle: { observedAt: new Date(idleAt).toISOString(), expiresAt: new Date(idleAt+30000).toISOString() } } }); await d.changed();
     await p.reload();
     await expect.poll(() => line.innerText()).toContain('Mark · Idle');
     await p.context().close();
@@ -110,8 +112,9 @@ describe.runIf(built && chrome)('the desktop\'s ticker', () => {
 
   it('a saved offline shell cannot keep its fresh-looking activity claim', async () => {
     const t = d.thread('jonathan', 'mark', 'private', 'A conversation');
+    const observedAt = Date.now();
     d.report({ mark: { doing: [{ text: 'private', kind: 'talk', conversation: t.conversation,
-      activity: { action: 'Reading a file', observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } }] } });
+      activity: { action: 'Reading a file', observedAt: new Date(observedAt).toISOString(), expiresAt: new Date(observedAt+30000).toISOString() } }] } });
     await d.changed();
     const p = await screen(1280, 800, '/');
     const line = p.locator('.loom-top--one .loom-tick__line').first();

@@ -5,6 +5,7 @@
 // asks inside a Comms thread and the desktop's Needs you.
 import { useEffect, useRef, useState } from 'react';
 import { onLive } from './page';
+import { onAttention, openFromLive } from './attention';
 import type { Env } from './blocks';
 
 export type Live = 'checking' | 'live' | 'gone' | 'unknown';
@@ -13,7 +14,11 @@ export type Live = 'checking' | 'live' | 'gone' | 'unknown';
 export type AskRef = { k: string } | { a: string };
 
 /** Whether loom says, now, that the ask is still open. Never from a copy: a stamped one (x-loom-saved-at) can't tell. */
-export async function stillOpen(ref: AskRef): Promise<Live> {
+export async function stillOpen(ref: AskRef, fresh = false): Promise<Live> {
+  // To show it: the live attention set, while it's live (attention.ts), says it without asking, kept current by loom's
+  // changes and never a kept copy. Right before a send (`fresh`), and whenever the set isn't live, loom is asked.
+  const local = fresh ? undefined : openFromLive('k' in ref ? { k: ref.k } : { a: ref.a });
+  if (local !== undefined) return local ? 'live' : 'gone';
   try {
     const q = 'k' in ref ? `k=${encodeURIComponent(ref.k)}` : `a=${encodeURIComponent(ref.a)}`;
     const r = await fetch(`/inbox/open?${q}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
@@ -38,7 +43,7 @@ export function useAskLive(ref: AskRef | null, recheck: unknown = 0): { live: Li
   const live = state.id === id ? state.live : ref ? 'checking' : 'live';
   const check = async () => {
     if (!ref) return true;
-    const l = await stillOpen(ref);
+    const l = await stillOpen(ref, true);
     if (current.current !== id) return false;
     setState({ id, live: l });
     return l === 'live';
@@ -52,7 +57,8 @@ export function useAskLive(ref: AskRef | null, recheck: unknown = 0): { live: Li
     // Keep the last confirmed answer while checking the same ask. A different id starts gated above.
     void refresh();
     const stop = onLive(() => void refresh());
-    return () => { active = false; stop(); };
+    const stopLive = onAttention(() => void refresh());
+    return () => { active = false; stop(); stopLive(); };
   }, [id, recheck]); // eslint-disable-line react-hooks/exhaustive-deps
   return { live, check };
 }
