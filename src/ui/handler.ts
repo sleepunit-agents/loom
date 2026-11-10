@@ -1011,7 +1011,9 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length || jobs.some((j) => j.status === 'running') ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
-    return { id: a, ...marks[a], state, reason, doing, jobs, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
+    // What's moving (Home's list): each piece that says it's working, in the pieces' order.
+    const moving = reports.filter((x) => x.r.state === 'working').map((x) => ({ agent: a, text: x.r.reason ?? `${marks[a].label} is working`, meta: x.p.manifest.tab?.label ?? x.p.piece }));
+    return { id: a, ...marks[a], state, reason, doing, jobs, moving, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -2386,8 +2388,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const broken = down('broken');
       const out = down('unavailable');
       const headline = broken.length ? say(broken, 'broken') : out.length ? say(out, 'unavailable') : 'Everyone\u2019s fine';
-      const moving = pieces.flatMap((p) => Object.entries(p.manifest.agents ?? {}).filter(([a, r]) => hh.agents.includes(a) && r.state === 'working')
-        .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
+      // Each card's own (agent-status carries it, so a window keeps Home's list live from the cards: web/src/agents-live.ts).
+      const moving = cards.flatMap((c) => c.moving);
       const d: HouseHome = {
         headline, needs: waiting.length, need: waiting[0], cards, moving,
         // A desktop's Home answers the first few in place (web/src/desk.tsx); a phone's shows the first as its row.

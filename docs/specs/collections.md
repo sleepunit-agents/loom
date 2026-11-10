@@ -787,10 +787,15 @@ along with the listeners. The adapter is the only code that imports the client l
   `text`, `where`, `since`, `href` (a thread, for its member), `status`, and `running` counts the running ones. A
   job's latest step is the producer's `doing[].activity.action` (fresh for 30 s). So t-2077 is a view over
   `useAgentCards()`, with no new data.
+- **Home is live** (second slice, agent-status 1.1): each card carries `moving` (each piece that says its agent is
+  working, and why), and Home's list is every card's (`handler.ts`, the same on its page). So Home's cards, headline,
+  what's moving and what needs you are all live, and Home isn't asked again on a bare change or its timer while both
+  sets are (`agents-live.ts` `liveViews`), except while it shows its first-run card (no pieces yet). In a real browser
+  (`agent-desk.integration.test.ts`), a job that starts and stops shows on Home's card with no `GET /` (before: one per
+  change).
 - **Still to move**: the clock's wakes and schedules as their own records (they need a stable job id: wake ids churn),
   boxes, houses and services health, models and accounts, a Comms thread's harness choice, and the ticker's activity
-  (`tickerActivityOf`). Home's page is still asked again on a bare change (it carries `moving` and `firstRun`, not yet
-  records). The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
+  (`tickerActivityOf`). The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
   way (`live.ts` `tick`): up to 15 s, the same for the old bare change.
 
 ## What stays on its own transport (exceptions)

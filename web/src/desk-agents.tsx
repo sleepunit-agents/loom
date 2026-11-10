@@ -32,7 +32,8 @@ type Job = Doing & { id: string; status: 'running' | 'waiting' | 'scheduled' | '
 type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
-  jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[] };
+  jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[];
+  moving?: { agent: string; text: string; meta?: string }[] };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 /** The member's own Comms, per agent (src/comms.ts agentsComms). */
 export type AgentComms = { agent: string; unread: number; first?: { thread: string; text: string | null };
