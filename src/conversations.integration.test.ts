@@ -26,6 +26,7 @@ import { conversationsSection, conversationView, genericRender, householdConvers
 import { bindHouseConversation, houseConversation, listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
 import { tapeForContext } from './backends/episodes.js';
+import { handleCliBody } from './transport/cli-endpoint.js';
 import { remember } from './tools/remember.js';
 import { projectHubOf } from './tools/project.js';
 import { openProjectsStore } from './backends/projects.js';
@@ -387,13 +388,68 @@ describe('criterion 3: digests (conversation_digest)', () => {
     const marks = await mcp(art, { house: 'h-4' });
     await marks.call('identity', { conversation: conv, run: 'run-1' });
     expect((await marks.call('conversation_digest', { summary: 'x' })).error).toBe(true);
-    // A service's house (a bridge runs many conversations) and no house at all (loom's machine): as before.
+    // A service's house (a chat bridge people other than the owner steer) holds no conversation the runtime named, so it
+    // writes none (t-2118). No house at all (loom's machine): as before.
     const bridge = await mcp(art, { house: 'h-5', service: 'discord' });
     await bridge.call('identity', { conversation: other, run: 'run-9' });
-    expect((await bridge.call('conversation_digest', { summary: 'bridge' })).error).toBe(false);
+    expect(String((await bridge.call('conversation_digest', { summary: 'bridge' })).body.error)).toMatch(/h-5 holds no conversation the runtime named/);
     const local = await mcp(art);
     await local.call('identity', { conversation: other, run: 'run-8' });
     expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);
+  });
+
+  // t-2118: a digest summarises its conversation's words, so a house reads only the conversation it holds: the list,
+  // one conversation, its findings and a project hub's conversations section. A service's house (with or without a
+  // house id) reads none; loom's machine (no house) reads all, as before.
+  it('from a house, the conversations it reads are the one it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U3', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-11', conversation: conv });
+    const ids = (r: { body: Record<string, unknown> }) => (r.body.conversations as Array<{ id: string }>).map((c) => c.id);
+    const own = await mcp(art, { house: 'h-11' });
+    expect(ids(await own.call('conversations'))).toEqual([conv]);
+    expect((await own.call('conversation', { id: conv })).error).toBe(false);
+    const theirs = await own.call('conversation', { id: other });
+    expect(theirs.error).toBe(true);
+    expect(String(theirs.body.error)).toBe(`no conversation ${other}`);
+    for (const caller of [{ house: 'h-12' }, { house: 'h-13', service: 'discord' }, { service: 'discord' }]) {
+      const none = await mcp(art, caller);
+      expect(ids(await none.call('conversations'))).toEqual([]);
+      expect((await none.call('conversation', { id: conv })).error).toBe(true);
+      expect((await none.call('conversation_findings')).body.findings).toEqual([]);
+    }
+    const local = await mcp(art);
+    expect(ids(await local.call('conversations'))).toEqual(expect.arrayContaining([conv, other]));
+  });
+
+  // t-2118: the boot tape (identity's "Last 24h", the episodes tool, `/cli wake` and `memory tape`) carries digests:
+  // from a house, only the held conversation's; from one that holds none, none.
+  it('from a house, the tape carries only the digests of the conversation it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U4', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-14', conversation: conv });
+    writeDigest(art, { conversation: conv, run: 'run-t1' }, { summary: 'held-conversation-words' });
+    writeDigest(art, { conversation: other, run: 'run-t2' }, { summary: 'another-conversation-words' });
+    const text = (r: { body: unknown }) => JSON.stringify(r.body);
+    const own = await mcp(art, { house: 'h-14' });
+    for (const t of [text(await own.call('identity', { client: 'claude-code' })), text(await own.call('episodes', { hours: 100000 }))]) {
+      expect(t).toContain('held-conversation-words');
+      expect(t).not.toContain('another-conversation-words');
+    }
+    const bridge = await mcp(art, { house: 'h-15', service: 'discord' });
+    expect(text(await bridge.call('episodes', { hours: 100000 }))).not.toMatch(/conversation-words/);
+    const local = await mcp(art);
+    expect(text(await local.call('episodes', {}))).toContain('another-conversation-words');
+    for (const argv of [['memory', 'tape', '--hours', '100000'], ['wake']]) {
+      const none = await handleCliBody(art, { argv }, null);
+      const held = await handleCliBody(art, { argv }, conv);
+      const all = await handleCliBody(art, { argv }, undefined);
+      if (!none.ok || !held.ok || !all.ok) throw new Error('cli refused');
+      expect(none.response.stdout).not.toMatch(/conversation-words/);
+      expect(held.response.stdout).toContain('held-conversation-words');
+      expect(held.response.stdout).not.toContain('another-conversation-words');
+      expect(all.response.stdout).toContain('another-conversation-words');
+    }
+    // A request can't name what it holds itself: its env carries LOOM_CLIENT and LOOM_MODEL only.
+    expect(await handleCliBody(art, { argv: ['wake'], env: { LOOM_HOUSE_HELD: conv } })).toMatchObject({ ok: false });
   });
 
   it('a house holds one conversation, for good', () => {
@@ -803,6 +859,16 @@ describe('criterion 12, end to end: project_hub carries the conversations core s
     expect(conv.items.filter((i) => i.new).length).toBe(4);   // the channel, 22, 21, 20
     const hockey = await projectHubOf(dir, { slug: 'hockey', since });
     expect(('sections' in hockey) && (hockey.sections.find((x) => x.key === 'conversations') as { items: unknown[] }).items).toHaveLength(1);
+    // From a house (t-2118): no conversations section at all, the rest as before.
+    const housed = await projectHubOf(dir, { slug: 'on-pond', since }, { noConversations: true });
+    expect(('sections' in housed) && housed.sections.map((x) => x.key)).not.toContain('conversations');
+    const viaTool = await mcp(dir, { house: 'h-20', service: 'discord' });
+    expect(JSON.stringify((await viaTool.call('project_hub', { slug: 'pond' })).body)).not.toContain('Pond channel');
+    expect(JSON.stringify((await (await mcp(dir)).call('project_hub', { slug: 'pond' })).body)).toContain('Pond channel');
+    // And through /cli from a house (t-2118): the same.
+    const cliHub = async (held?: string | null) => { const r = await handleCliBody(dir, { argv: ['project', 'hub', 'pond', '--json'] }, held); if (!r.ok) throw new Error(r.error); return r.response.stdout; };
+    expect(await cliHub(null)).not.toContain('Pond channel');
+    expect(await cliHub(undefined)).toContain('Pond channel');
   });
 });
 

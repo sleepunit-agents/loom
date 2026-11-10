@@ -7,7 +7,9 @@
  * Which asks: the viewer's own Inbox items (handler.ts inboxItems, with the Inbox's own piece filter) that are still open,
  * need the owner, are this thread's agent's, and name this thread's conversation: a piece's ask by its `conversation`
  * (the approvals piece's, any kind: merge, grant, vouch-wake, principal-reset, relay…), a Needs you by its page
- * (`loom:conversation/<cv>`). A conversation id is the body's claim; the agent is what binds it.
+ * (`loom:conversation/<cv>`). The approvals piece keeps a body's conversation only when the runtime's signed statement
+ * is for it (t-2117), and core takes a house's digest only for the conversation that house holds (t-2061); the agent
+ * binds it too.
  *
  * Once shown, an ask is kept on its thread (comms.ts keepThreadAsk: its words sealed like the thread's), so after it
  * has left the Inbox the thread still shows it, answered: "Allowed by you · 14:14". The answer is what core recorded

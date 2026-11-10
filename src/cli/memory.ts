@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { memoryList } from '../tools/memory-list.js';
 import { prune } from '../tools/prune.js';
 import { recomputeSalienceForContext, digestForContext } from '../backends/salience.js';
-import { tapeForContext } from '../backends/episodes.js';
+import { heldFromEnv, tapeForContext } from '../backends/episodes.js';
 import { findSimilar } from '../tools/find-similar.js';
 import { memoryAudit } from '../tools/memory-audit.js';
 import { archive } from '../tools/archive.js';
@@ -181,7 +181,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     }
     const hours = parsed.values.hours ? Number(parsed.values.hours) : undefined;
     if (hours !== undefined && !(hours > 0)) { io.stderr(`--hours must be a positive number\n`); return 2; }
-    const t = tapeForContext(env.contextDir, { hours, tokenBudget: 6000 });
+    const t = tapeForContext(env.contextDir, { hours, tokenBudget: 6000, onlyConversation: heldFromEnv(io.env) });
     io.stdout((t ?? `(no episodes in the last ${hours ?? 24}h)`) + '\n');
     return 0;
   }
