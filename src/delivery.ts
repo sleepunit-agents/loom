@@ -43,7 +43,7 @@ export const DELIVER_MAX_BYTES = 256 * 1024;
  */
 export type DeliverKind = 'message' | 'wake';
 const DELIVER_KINDS: readonly DeliverKind[] = ['message', 'wake'];
-const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text', 'local'] as const;
+const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text', 'local', 'continuation'] as const;
 
 /** A checked deliver body (agent-runtime.md, "The deliver contract"). */
 export interface DeliverBody {
@@ -62,6 +62,8 @@ export interface DeliverBody {
    * so only for a wake set on loom's machine. A structured field, never read from the text.
    */
   local?: true;
+  /** Opaque capability carried only by the authenticated clock, never display lineage. */
+  continuation?: { handle: string; wake: string; expiresAt: number };
 }
 
 export type BodyState = 'fed' | 'resumed' | 'started' | 'queued' | 'failed';
@@ -116,6 +118,13 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   if (!DELIVER_KINDS.includes(raw.kind as DeliverKind)) return `kind is one of ${DELIVER_KINDS.join(', ')}`;
   if (raw.local !== undefined && raw.local !== true) return 'local is true, or left out';
   if (raw.local === true && (raw.venue !== 'wake' || raw.kind !== 'wake')) return 'local is only for a wake, on venue wake';
+  if (raw.continuation !== undefined) {
+    const c = raw.continuation;
+    if (!isObject(c) || Object.keys(c).some((k) => !['handle', 'wake', 'expiresAt'].includes(k)) ||
+        typeof c.handle !== 'string' || !/^cont-[0-9a-f]{64}$/.test(c.handle) ||
+        typeof c.wake !== 'string' || !/^w-[0-9a-f]{6}$/.test(c.wake) || !Number.isSafeInteger(c.expiresAt) || (c.expiresAt as number) <= 0) return 'continuation is an opaque handle and exact wake id';
+    if (raw.venue !== 'wake' || raw.kind !== 'wake' || !isObject(raw.from) || raw.from.kind !== 'schedule') return 'continuation is only for a scheduled wake';
+  }
   // The key and turn fields are conversations.md's: the turn parser checks them the same way.
   let turn;
   try {
@@ -126,6 +135,7 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   }
   return {
     id: raw.id, agent: raw.agent, venue: turn.venue, place: turn.place, ...(turn.label !== undefined ? { label: turn.label } : {}),
+    ...(raw.continuation !== undefined ? { continuation: { handle: (raw.continuation as Record<string, string>).handle, wake: (raw.continuation as Record<string, string>).wake, expiresAt: (raw.continuation as Record<string, unknown>).expiresAt as number } } : {}),
     from: turn.from, kind: raw.kind as DeliverKind, at: turn.at, text: raw.text, ...(raw.local === true ? { local: true as const } : {}),
   };
 }
@@ -163,6 +173,7 @@ export async function grantRefusal(env: NodeJS.ProcessEnv, h: Household, agent: 
 
 /** Who may deliver what: the reason a delivery is refused before it's forwarded, or undefined. */
 export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody): Promise<DeliverResult | undefined> {
+  if (d.continuation && caller.piece !== 'clock') return refuse(403, 'forbidden: only the clock may carry a continuation');
   const rec = readRecord(env, caller.piece);
   if (!rec) return refuse(403, `forbidden: ${caller.piece} isn't an installed managed piece`);
   // The runtime is the installed delivery piece, not any piece whose block claims the role.
@@ -196,7 +207,7 @@ export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, call
  * the same however its JSON was written. The table keeps this, never the text.
  */
 export function deliveryHash(d: DeliverBody): string {
-  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : [])];
+  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : []), ...(d.continuation ? ['continuation', d.continuation.handle, d.continuation.wake, d.continuation.expiresAt] : [])];
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
