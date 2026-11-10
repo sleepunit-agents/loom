@@ -145,6 +145,10 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       const first = new URL(p.url()).pathname;
       expect(first).toMatch(/^\/comms\/[a-z2-7]{10}$/);
       await p.locator(`${tile('Comms')} .comms-composer textarea`).fill('half a thought');
+      // A thread read goes below the unread ones, live (comms.md, "Phone"; t-2027): its read reaches the list before
+      // the next press, so the rows don't move under it. Rows are found by title from here (t-2099).
+      const row = (title: string) => p.locator(`${list} .comms-row:has(.comms-row__title:text-is("${title}"))`);
+      await expect.poll(() => row(firstTitle).getAttribute('data-unread')).toBeNull();
       // Another thread, with its page held back: the pane says which at once, before its page lands.
       let release!: () => void;
       const held = new Promise<void>((r) => { release = r; });
@@ -153,9 +157,10 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await p.locator(`${list} .comms-row__btn`).nth(12).evaluate((e) => { e.scrollIntoView({ block: 'nearest' }); });
       const before = await p.locator(list).evaluate((e) => e.scrollTop);
       expect(before).toBeGreaterThan(0);
+      const pressed = (await p.locator(`${list} .comms-row__title`).nth(12).textContent())!;
       await p.locator(`${list} .comms-row__btn`).nth(12).evaluate((e) => (e as HTMLElement).click());
       await p.locator(`${tile('Comms')} .comms-thread--opening`).waitFor({ timeout: 1000 });
-      expect(await p.locator(`${list} .comms-row`).nth(12).getAttribute('data-current')).not.toBeNull();
+      expect(await row(pressed).getAttribute('data-current')).not.toBeNull();
       expect(await kept(p, list)).toBe(true);
       release();
       await p.unroute(/\/comms\/(th:)?[a-z2-7]{10}$/);
@@ -164,15 +169,16 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       const second = new URL(p.url()).pathname;
       expect(second).toMatch(/^\/comms\/[a-z2-7]{10}$/);
       expect(second).not.toBe(first);
-      // The list: the same element, scrolled where it was, the pressed thread lit.
+      // The list: the same element, scrolled where it was, the pressed thread lit, once its read has landed too.
+      await expect.poll(() => row(pressed).getAttribute('data-unread')).toBeNull();
       expect(await kept(p, list)).toBe(true);
       expect(await p.locator(list).evaluate((e) => e.scrollTop)).toBe(before);
       expect(await p.locator(`${list} .comms-row[data-current]`).count()).toBe(1);
-      expect(await p.locator(`${list} .comms-row`).nth(12).getAttribute('data-current')).not.toBeNull();
+      expect(await row(pressed).getAttribute('data-current')).not.toBeNull();
       // Back to the first, loom slow from here: it opens from the tab's copy at once (no wait in the pane), its
       // draft as it was left.
       await p.route(/\/comms\/th:[a-z2-7]+$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
-      await p.locator(`${list} .comms-row__btn:has(.comms-row__title:text-is("${firstTitle}"))`).evaluate((e) => (e as HTMLElement).click());
+      await row(firstTitle).locator('.comms-row__btn').evaluate((e) => (e as HTMLElement).click());
       await expect.poll(() => new URL(p.url()).pathname, { timeout: 800 }).toBe(first);
       expect(await p.locator(`${tile('Comms')} .comms-thread--opening`).count()).toBe(0);
       await expect.poll(() => p.locator(`${tile('Comms')} .comms-composer textarea`).inputValue()).toBe('half a thought');
