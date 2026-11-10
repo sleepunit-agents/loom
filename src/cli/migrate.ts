@@ -7,7 +7,7 @@
  */
 import { parseArgs } from 'node:util';
 import { existsSync } from 'node:fs';
-import BetterSqlite3 from '../sqlite.js';
+import BetterSqlite3 from 'better-sqlite3';
 import { runMigrations, pendingMigrations } from '../backends/migrations.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';

@@ -26,8 +26,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import BetterSqlite3 from './sqlite.js';
-import type { Database } from 'better-sqlite3';
+import BetterSqlite3, { type Database } from 'better-sqlite3';
 
 export const COLLECTION = /^[a-z][a-z0-9-]{0,39}$/;
 export const KEY = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/;
@@ -119,21 +118,16 @@ export class PieceStore {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.path = join(dir, `${piece}.db`);
     this.db = new BetterSqlite3(this.path);
-    try {
-      chmodSync(this.path, 0o600);
-      this.db.pragma('journal_mode = WAL');
-      this.db.pragma('secure_delete = ON');
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS docs (collection TEXT NOT NULL, key TEXT NOT NULL, doc TEXT NOT NULL,
-          rev INTEGER NOT NULL, updated TEXT NOT NULL, by TEXT NOT NULL, PRIMARY KEY (collection, key));
-        CREATE TABLE IF NOT EXISTS revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, collection TEXT NOT NULL,
-          key TEXT NOT NULL, doc TEXT, rev INTEGER NOT NULL, op TEXT NOT NULL, at TEXT NOT NULL, by TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS revisions_doc ON revisions (collection, key, id);
-      `);
-    } catch (error) {
-      this.db.close();
-      throw error;
-    }
+    chmodSync(this.path, 0o600);
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('secure_delete = ON');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS docs (collection TEXT NOT NULL, key TEXT NOT NULL, doc TEXT NOT NULL,
+        rev INTEGER NOT NULL, updated TEXT NOT NULL, by TEXT NOT NULL, PRIMARY KEY (collection, key));
+      CREATE TABLE IF NOT EXISTS revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, collection TEXT NOT NULL,
+        key TEXT NOT NULL, doc TEXT, rev INTEGER NOT NULL, op TEXT NOT NULL, at TEXT NOT NULL, by TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS revisions_doc ON revisions (collection, key, id);
+    `);
   }
 
   close(): void { this.db.close(); }
