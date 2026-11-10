@@ -11,7 +11,7 @@ import { request, type ClientRequest } from 'node:http';
 import { sessionStore } from './ui/sessions.js';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -374,6 +374,25 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     }, 20_000);
   }
 
+  for (const path of ['/mcp', '/cli']) {
+    it(`${path} never queues a token revoked during upload`, async () => {
+      const label = path === '/mcp' ? 'upload-mcp' : 'upload-cli';
+      const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label }).token;
+      const upload = uploading(path, JSON.stringify(path === '/mcp' ? { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'upload', version: '1' } } } : { argv: ['memory', 'list'] }), {
+        authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+      });
+      await upload.started;
+      const memory = join(agentDir(h, 'art'), 'memories.db'), keeper = new BetterSqlite3(memory);
+      keeper.pragma('journal_mode = WAL'); keeper.prepare('SELECT 1 FROM sqlite_master').get();
+      const held = await hold(memory, 'recovery');
+      try {
+        revokeToken(h, label); upload.finish();
+        expect(await upload.result).toBe(401);
+        expect(pendingLockWaits()).toBe(0);
+      } finally { await held.release(); keeper.close(); }
+    }, 20_000);
+  }
+
   it('Comms refuses a caller revoked during the final lock wait', async () => {
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'slow-revoked' }).token;
     const upload = uploading('/comms/new', JSON.stringify({ agent: 'art', id: mid(n++), text: 'must not land' }), {
@@ -469,6 +488,18 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(pendingLockWaits()).toBe(0);
     } finally { rmSync(lock, { force: true }); }
   });
+
+  it('a pasted token revoked during its wait cannot sign in', async () => {
+    const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'pasted-revoked' }).token;
+    const lock = join(h.home, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    try {
+      const signin = fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }), redirect: 'manual' });
+      await delay(100); expect(await pending(signin)).toBe(true);
+      revokeToken(h, 'pasted-revoked'); rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401); expect(denied.headers.has('set-cookie')).toBe(false);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
 
   it('a link whose token was revoked during its wait cannot sign in', async () => {
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'link-revoked' }).token;
@@ -667,7 +698,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const holder = spawn(process.execPath, ['-e', `
       const fs = require('node:fs'); const lock = process.argv[1];
       fs.writeFileSync(lock, String(process.pid)); console.log('held');
-      process.stdin.once('data', () => { fs.rmSync(lock, {force:true}); process.exit(0); });
+      process.stdin.once('data', () => setTimeout(() => { fs.rmSync(lock, {force:true}); process.exit(0); }, 250));
       setTimeout(() => { fs.rmSync(lock, {force:true}); process.exit(2); }, 15000).unref();
     `, lock], { stdio: 'pipe' });
     await once(holder.stdout, 'data');
@@ -681,6 +712,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     try {
       const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
       expect(expired).toBe(true);
+      expect(existsSync(lock)).toBe(false); // The child releases 250 ms after expiry: a bypass would answer with it still held.
       expect(r.status).toBe(303); expect(r.headers.has('set-cookie')).toBe(true);
     } finally { probe.mockRestore(); holder.kill(); rmSync(lock, { force: true }); }
   }, 20_000);

@@ -1973,16 +1973,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   const tokens = pathname.startsWith('/act/') || /^\/a\/[a-z][a-z0-9-]{0,39}\/act\//.test(pathname) || pathname.startsWith('/passkeys') || pathname === '/account';
   const authority = JSON.stringify([who.member ?? null, full?.agents ?? null]);
-  const waitForWrite = async (): Promise<boolean> => {
-    await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+  const changedAuthority = (): boolean => {
     const current = whoIs(req, unscoped);
-    // Do not reuse the request's captured owner scope after it changed. The page can reload under the new scope;
-    // this action runs only when the same credentials and authority still hold after the final lock wait.
-    if (!current || JSON.stringify([current.member ?? null, householdNow?.().agents ?? null]) !== authority) {
-      sendJson(res, 403, { error: 'this sign-in or its permissions changed; reload and try again' });
-      return false;
-    }
+    if (current && JSON.stringify([current.member ?? null, householdNow?.().agents ?? null]) === authority) return false;
+    sendJson(res, 403, { error: 'this sign-in or its permissions changed; reload and try again' });
     return true;
+  };
+  const waitForWrite = async (): Promise<boolean> => {
+    // Check at admission too: a credential revoked during upload must not join the authenticated lock line.
+    if (changedAuthority()) return false;
+    await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+    // Scope captured before the upload/wait is used only if it still holds. A changed scope reloads the page.
+    return !changedAuthority();
   };
   if (!reads && !await waitForWrite()) return;
 

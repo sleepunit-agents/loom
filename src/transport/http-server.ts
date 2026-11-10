@@ -398,7 +398,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const maintain = (name: string, work: () => Promise<void>): Promise<void> => {
     const running = maintaining.get(name);
     if (running) return running;
-    const run = work().catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
+    const run = stalls.timed(name, work).catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
       .finally(() => maintaining.delete(name));
     maintaining.set(name, run);
     return run;
@@ -1213,6 +1213,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         } catch (e) {
           return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
         }
+        if (!stillAuthorized()) return;
         await waitForMemory();
         if (!stillAuthorized()) return;
         // From a house (or a service's token), what it reads is the conversation it holds (t-2118).
@@ -1273,6 +1274,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
       }
 
+      if (!stillAuthorized()) return;
       await waitForMemory();
       if (!stillAuthorized()) return;
       let transport = existingSession?.transport;
