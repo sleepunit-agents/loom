@@ -88,7 +88,7 @@ import { resolveSqliteDbPath } from '../config.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
 import { AUDIT_DB } from '../audit.js';
 import { COMMS_DB } from '../comms.js';
-import { isSqliteBusy, waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
+import { isSqliteBusy, TURN_WAIT_MS, waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import { watchStalls } from './stall-watch.js';
 import {
@@ -859,6 +859,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (household) {
       const h = live!();
       const named = (body as { agent?: unknown } | null)?.agent;
+      const turnish = subpath === 'conversations/turn' || subpath === 'audit' || subpath === 'conversations/house';
       const agent = role.kind === 'agent' ? role.agent : typeof named === 'string' && h.agents.includes(named) ? named : undefined;
       const memories = agent ? [resolveSqliteDbPath(agentDir(h, agent))] : [];
       const write = subpath === 'conversations/turn' ? [householdDb(h), ...memories]
@@ -868,8 +869,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         : [];
       // A reconciliation only reads household.db and writes comms.db, and answers a store it can't take as unresolved
       // itself (comms.ts): it waits the read budget, then asks as before.
-      if (subpath === 'comms/adapter' && (body as { op?: unknown }).op === 'reconcile') await waitForLocks({ read: [householdDb(h)], write: [join(h.home, COMMS_DB)] });
-      else if (write.length) await waitForLocks({ write, budgetMs: WRITE_WAIT_MS });
+      if (subpath === 'comms/adapter' && (body as { op?: unknown } | null)?.op === 'reconcile') await waitForLocks({ read: [householdDb(h)], write: [join(h.home, COMMS_DB)] });
+      else if (write.length) await waitForLocks({ write, budgetMs: turnish ? TURN_WAIT_MS : WRITE_WAIT_MS });
     }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
     if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {

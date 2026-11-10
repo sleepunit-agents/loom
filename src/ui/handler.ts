@@ -1926,14 +1926,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   // Locks this signed-in request may meet, waited out off the event loop before its synchronous code (lock-gate.ts):
-  // Comms' pages and posts read (or write) its two databases; a change may take household.json's lock or the
-  // sessions file's. A spent wait goes on to the old synchronous one: nothing fails sooner.
+  // Comms' pages and posts read (or write) its two databases; any change may touch the sessions file, and the
+  // household's actions and token pages (/act, an agent's /a/<name>/act, /passkeys, /account) household.json. A spent wait goes on to the old
+  // synchronous one: nothing fails sooner.
   const reads = req.method === 'GET' || req.method === 'HEAD';
   if (full && (pathname === '/comms' || pathname.startsWith('/comms/'))) {
     const dbs = [join(full.home, HOUSEHOLD_DB), join(full.home, COMMS_DB)];
     await waitForLocks(reads ? { read: dbs } : { write: dbs, budgetMs: WRITE_WAIT_MS });
   }
-  if (!reads) await waitForLocks({ files: [...(full ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+  const tokens = pathname.startsWith('/act/') || /^\/a\/[a-z][a-z0-9-]{0,39}\/act\//.test(pathname) || pathname.startsWith('/passkeys') || pathname === '/account';
+  if (!reads) await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 

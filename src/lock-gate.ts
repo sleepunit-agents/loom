@@ -31,8 +31,14 @@ export function isSqliteBusy(error: unknown): boolean {
 
 /** The old synchronous budget, kept as the async one: a read, or a wait that may not be needed. */
 export const READ_WAIT_MS = 5_000;
-/** A write that must land (a Comms post, a turn, an audit entry) waits longer before its old synchronous wait. */
-export const WRITE_WAIT_MS = 15_000;
+/**
+ * A Comms post or live update, which must land, waits longer. Its budget and the old 5 s synchronous wait after it
+ * stay inside the runtime's 15 s for a Comms call (loom-box core.mjs), so core never commits a post the runtime has
+ * given up on and would send again.
+ */
+export const WRITE_WAIT_MS = 8_000;
+/** A turn, an audit entry or a house binding: the runtime gives these 5 s in all. Past this, the old wait goes on. */
+export const TURN_WAIT_MS = 2_500;
 const PROBE_EVERY_MS = 5;
 
 /** A lock file the request may take: held while it exists and its holder is live (each lock says what live means). */
@@ -95,6 +101,10 @@ async function pump(key: string, line: Line): Promise<void> {
       // Its synchronous section runs, and the requests that came meanwhile are answered, before the next goes.
       await nextTurn();
     }
+  } catch (error) {
+    // Nothing above throws today; if a lock's check ever does, every waiter still goes on, to its old wait.
+    console.error('loom: a lock wait failed; going on without it', error);
+    for (const x of line.waiters.splice(0)) x.go(false);
   } finally {
     lines.delete(key);
   }

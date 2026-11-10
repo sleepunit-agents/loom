@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and pages, live updates, turns, audit entries, deliveries, piece stores, household changes and sign-ins wait in a
   line, asynchronously, until the database (a held write lock, or a WAL recovery) or the lock file is free, then run.
   /login answers in about 100 ms meanwhile, where it waited 2 to 20 s behind the lock. Nothing fails sooner than
-  before: a wait past its budget (5 s, 15 s for writes) goes on to the old synchronous wait, and only a lock still held
+  before: a wait past its budget (5 s; 8 s for a Comms post, inside the runtime's 15 s; 2.5 s for a turn, inside its 5 s) goes on to the old synchronous wait, and only a lock still held
   after that is a 503 with retry-after. Replaces the fail-fast change (#776, #783) that refused Comms posts on deploy.
   `scripts/lock-smoke.ts` posts 50 Comms messages under a concurrent writer on a scratch copy of a household.
 
