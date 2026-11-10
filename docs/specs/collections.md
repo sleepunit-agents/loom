@@ -767,7 +767,7 @@ along with the listeners. The adapter is the only code that imports the client l
   started task and every task that moved in the last eight days, read whole (every page), while a page that reads tasks
   is shown (`tasks-pages.ts`: the work page, a task's page, a project's). When one moves, that page is asked again (one
   ask, 250 ms after the burst), and the work page is no longer asked on the bare change or its timer while the records
-  are live. A task's page and a project's are asked on both (they show what the records here don't: comments, other
+  are live, only every 10 minutes all the same (what it says depends on the day too: "Done in the last 7 days"). A task's page and a project's are asked on both (they show what the records here don't: comments, other
   pieces' work). A household owner of only some agents is refused the set, and their pages work as before. In a real
   browser (`tasks-live.integration.test.ts`): a task closed through the API left an open Tasks page in 0.88 s with one
   page ask, and nothing asked again while idle (before: 5.9 s, and a page ask every 1.5 s from the bare change).

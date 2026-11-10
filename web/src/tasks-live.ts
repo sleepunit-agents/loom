@@ -112,20 +112,26 @@ export function watchTasks(csrf: string, f: Moved): () => void {
 /** Whether the tasks are live and whole now. */
 export const tasksLive = (): boolean => held !== null;
 
+/** A quiet live page is drawn again this often all the same: what it says depends on the day too ("Done in the last 7
+ * days", a time that was today), which no record's move would tell it. */
+export const REDRAW_MS = 10 * 60_000;
+
 /**
  * A page that reads tasks (page.ts): `ask` when they move, a moment later so a burst of moves is one ask; one heard while
- * the tab is hidden is asked for when it's shown again (a live page isn't asked on its own then).
+ * the tab is hidden is asked for when it's shown again (a live page isn't asked on its own then); and every REDRAW_MS.
  */
 function watchPage(csrf: string, ask: () => void): () => void {
   let t: ReturnType<typeof setTimeout> | undefined;
   let missed = false;
+  const later = () => { if (document.hidden) missed = true; else ask(); };
   const shown = () => { if (missed && !document.hidden) { missed = false; ask(); } };
   document.addEventListener('visibilitychange', shown);
+  const slow = setInterval(later, REDRAW_MS);
   const off = watchTasks(csrf, () => {
     clearTimeout(t);
-    t = setTimeout(() => { if (document.hidden) missed = true; else ask(); }, 250);
+    t = setTimeout(later, 250);
   });
-  return () => { clearTimeout(t); document.removeEventListener('visibilitychange', shown); off(); };
+  return () => { clearTimeout(t); clearInterval(slow); document.removeEventListener('visibilitychange', shown); off(); };
 }
 
 /** For page.ts, which loads this chunk only when a page that reads tasks is shown (tasks-pages.ts). */
