@@ -132,7 +132,8 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
     await new Promise((res) => setTimeout(res, 1500));
     try {
       // The runtime: a body at work in the thread (its manifest names the conversation, never the title).
-      manifest([{ text: 'In a Comms thread', kind: 'talk', where: 'Comms', conversation: thread.conversation, since: new Date().toISOString(), activity: { action: 'Running a command', observedAt: new Date().toISOString(), expiresAt: new Date(Date.now()+30000).toISOString() } }]);
+      const observedAt = Date.now();
+      manifest([{ text: 'In a Comms thread', kind: 'talk', where: 'Comms', conversation: thread.conversation, since: new Date().toISOString(), activity: { action: 'Running a command', observedAt: new Date(observedAt).toISOString(), expiresAt: new Date(observedAt+30000).toISOString() } }]);
       const heard = app.next();
       await changed();
       expect(await heard).toBeLessThan(5000);
