@@ -130,7 +130,7 @@ type Data = any;
 const IDS = 'art:w-0f0cfb,w-3c68fa,w-55e1c0,w-59e199,w-840b4e';
 let ART_CV = '';
 const WRITE_OFF = {
-  'a-0000d00d': { state: 'pending', agent: 'art', kind: 'box-write-off', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c', text: 'The box “one” has been silent for 12 minutes. Carry on Art\'s conversation from there on another box?',
+  'a-0000d00d': { state: 'pending', agent: 'art', kind: 'box-write-off', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c@1762718400', text: 'The box “one” has been silent for 12 minutes. Carry on Art\'s conversation from there on another box?',
     details: 'Box 7f9310-0a1b2c-3d4e5f-6a7b8c, last heard 2026-11-09T20:00:00Z.' },
 };
 const CARDS = {
@@ -257,7 +257,7 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
     approvals({ ...CARDS, ...WRITE_OFF });
     const cookie = await login('jonathan');
     await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000d00d', target: 'mark:elsewhere', agent: 'mark' });
-    expect(acts()).toMatchObject([{ piece: 'Boxes', action: 'writeoff-approved', fields: { id: 'a-0000d00d', agent: 'art', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c' },
+    expect(acts()).toMatchObject([{ piece: 'Boxes', action: 'writeoff-approved', fields: { id: 'a-0000d00d', agent: 'art', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c@1762718400' },
       caller: { kind: 'owner', who: 'jonathan', agents: '*' } }]);
   });
 

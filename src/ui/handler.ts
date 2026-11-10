@@ -408,8 +408,9 @@ const OWNER_APPLIED: Record<string, { action: string; piece: (env: NodeJS.Proces
     none: 'no clock is installed to apply it.', after: '' },
   'principal-reset': { action: 'reset-approved', piece: (env) => deliveryPiece(env).piece, target: (t, agent) => { const m = /^([a-z][a-z0-9-]{0,39}):(cv-[0-9a-f]{12})$/.exec(t); return !!m && m[1] === agent; },
     who: 'only the household owner says whose work a conversation is.', none: 'no runtime is installed to apply it.', after: '' },
-  // t-2057: the agent's houses on a box that went silent are written off, and its conversations go on elsewhere.
-  'box-write-off': { action: 'writeoff-approved', piece: (env) => deliveryPiece(env).piece, target: (t, agent) => { const m = /^([a-z][a-z0-9-]{0,39}):([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(t); return !!m && m[1] === agent; },
+  // t-2057: `<agent>:<box>@<last heard>`: the agent's houses on a box that went silent are written off, and its
+  // conversations go on elsewhere.
+  'box-write-off': { action: 'writeoff-approved', piece: (env) => deliveryPiece(env).piece, target: (t, agent) => { const m = /^([a-z][a-z0-9-]{0,39}):([A-Za-z0-9][A-Za-z0-9._-]{0,63})@([0-9]{1,12})$/.exec(t); return !!m && m[1] === agent; },
     who: 'only the household owner says a box\'s work is moved off it.', none: 'no runtime is installed to apply it.', after: '' },
 };
 
