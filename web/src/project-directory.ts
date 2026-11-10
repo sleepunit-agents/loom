@@ -20,7 +20,7 @@ export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<strin
       // A quiet card never had its feeds counted. Do not promote its absent count to "nothing waiting".
       if (old?.status === 'active' && typeof r.updated === 'string' && old.directoryUpdated === r.updated) {
         c.waiting = old.waiting; c.lately = old.lately; c.people = old.people; c.spark = old.spark; c.changes = old.changes;
-      } else c.waiting = { unknown: "Couldn't count what's waiting: its sections haven't been read yet." };
+      } else c.waiting = { unknown: "Couldn't count what's waiting: its sections haven't been read for this card yet." };
       active.push(c);
     } else quiet.push(c);
   }
@@ -29,4 +29,3 @@ export function projectDirectory(cards: ProjectCards, records: ReadonlyMap<strin
   quiet.sort((a, b) => Date.parse(b.activity) - Date.parse(a.activity));
   return { active, quiet, waiting: active.reduce((n, c) => n + (c.waiting && 'count' in c.waiting ? c.waiting.count : 0), 0) };
 }
-
