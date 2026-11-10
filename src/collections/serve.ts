@@ -209,7 +209,7 @@ export function parseProviderAnswers(v: unknown): ProviderAnswer[] | string {
   if (!Array.isArray(answers)) return 'answers is a list';
   const out: ProviderAnswer[] = [];
   for (const a of answers) {
-    if (!a || typeof a !== 'object' || Array.isArray(a) || typeof a.id !== 'string') return 'an answer is {id, rows, next, …}';
+    if (!a || typeof a !== 'object' || Array.isArray(a) || typeof a.id !== 'string') return 'an answer is {id, rows, more, …}';
     if (a.error !== undefined) {
       if (!PROVIDER_ERRORS.includes(a.error)) return `an answer's error is one of ${PROVIDER_ERRORS.join(', ')}`;
       out.push({ id: a.id, rows: [], more: false, error: a.error });
