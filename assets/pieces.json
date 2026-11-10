@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "86b52fa5c3a9554ff2786dc868ef9efe3c280aa0",
+      "commit": "c34c195de072348b8ed22bb948a14a5fb6ceb035",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
@@ -52,7 +52,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "fac97958be017fad593e26066fdfefbb4a22d93a",
+      "commit": "ef3cb6164aec3998e51fa8e71c44108e6911bea3",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
