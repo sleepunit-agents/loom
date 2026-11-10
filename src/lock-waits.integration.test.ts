@@ -21,7 +21,8 @@ import { AUDIT_DB, openAuditDb } from './audit.js';
 import { agentDir, createToken, loadHousehold, markIndexOf, revokeToken, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { backfillRefs, backfilled } from './comms-work.js';
+import * as comms from './comms.js';
+import { backfillRefs, backfilled, refsOf } from './comms-work.js';
 import { COMMS_DB } from './comms.js';
 import { HOUSEHOLD_DB } from './household-store.js';
 import * as lockGate from './lock-gate.js';
@@ -134,9 +135,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
 
   const api = (path: string, body: unknown) => fetch(`${base}/api/loom/${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.runtime}` }, body: JSON.stringify(body) });
-  const open = async () => {
+  const open = async (text = 'hello') => {
     const r = await fetch(`${base}/comms/new`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${tok.jonathan}` },
-      body: JSON.stringify({ agent: 'art', id: mid(n++), text: 'hello' }) });
+      body: JSON.stringify({ agent: 'art', id: mid(n++), text }) });
     expect(r.status, await r.clone().text()).toBe(200);
     return ((await r.json()) as { thread: { id: string; conversation: string } }).thread;
   };
@@ -603,22 +604,26 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     expect(await upload.result).toBe(403);
   });
 
-  it('refs backfill waits before enumerating existing threads under a Comms lock', async () => {
-    await open();
+  it('refs backfill waits before enumerating threads, indexes refs and crosses a page', async () => {
+    const t = await open('see t-4242');
+    const first = (await comms.messagesOf(h, process.env, t, { after: 0 }))[0];
+    const original = comms.messagesOf;
+    const source = vi.spyOn(comms, 'messagesOf').mockImplementation(async (...args) => {
+      if (args[2].id !== t.id) return original(...args);
+      const after = args[3]?.after ?? 0;
+      return Array.from({ length: after === 0 ? comms.SINCE_MAX : 1 }, (_, i) => ({ ...first, seq: after + i + 1 }));
+    });
     const index = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
-    index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.close();
+    index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.prepare('DELETE FROM comms_refs').run(); index.close();
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
-      const began = performance.now();
-      const backfill = backfillRefs(h, process.env);
-      await delay(100);
-      expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
-      expect(await pending(backfill)).toBe(true);
-      await held.release();
-      expect(await backfill).toBeGreaterThan(0);
+      const began = performance.now(); const backfill = backfillRefs(h, process.env);
+      await delay(100); expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(backfill)).toBe(true);
+      await held.release(); expect(await backfill).toBeGreaterThan(comms.SINCE_MAX);
+      expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4242', seq: comms.SINCE_MAX + 1 }));
       expect(backfilled(h.home)).toBe(true);
-    } finally { await held.release(); }
+    } finally { source.mockRestore(); await held.release(); }
   }, 20_000);
 
   it('folding and scorecard measures wait for memory recovery, then both finish', async () => {
@@ -644,6 +649,28 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
         try { return check.prepare("SELECT COUNT(*) AS n FROM scorecards WHERE model = 'maintenance-fixture' AND measure = 'first_reply_s'").get(); }
         finally { check.close(); }
       }).toEqual({ n: 1 });
+    } finally { await held.release(); keeper.close(); }
+  }, 20_000);
+
+  it.each(['title', 'project'])('a slow Comms %s post waits on its agent store', async (kind) => {
+    const dir = agentDir(h, 'art'), memory = join(dir, 'memories.db');
+    const t = await open();
+    recordTurn(dir, 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime');
+    const keeper = new BetterSqlite3(memory); keeper.pragma('journal_mode = WAL');
+    keeper.exec("CREATE TABLE IF NOT EXISTS project_names (name TEXT PRIMARY KEY, slug TEXT NOT NULL, kind TEXT NOT NULL)");
+    keeper.prepare('INSERT OR REPLACE INTO project_names VALUES (?, ?, ?)').run('lock-project', 'lock-project', 'slug');
+    const path = kind === 'title' ? `/comms/${t.id}/title` : '/comms/new';
+    const body = kind === 'title' ? { title: 'Label after recovery' } : { agent: 'art', id: mid(n++), text: 'project during recovery', project: 'lock-project' };
+    const upload = uploading(path, JSON.stringify(body), { authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/json', accept: 'application/json' });
+    await upload.started;
+    const held = await hold(memory, 'recovery');
+    try {
+      const began = performance.now(); upload.finish(); await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
+      await held.release(); expect(await upload.result).toBe(200);
+      if (kind === 'title') expect(keeper.prepare('SELECT label FROM conversations WHERE id = ?').get(t.conversation)).toEqual({ label: 'Label after recovery' });
+      else expect(JSON.parse(upload.text()).thread.project).toBe('lock-project');
     } finally { await held.release(); keeper.close(); }
   }, 20_000);
 
@@ -680,6 +707,26 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(backfilled(h.home)).toBe(false);
     } finally { active = false; await held.release(); }
   }, 20_000);
+
+  it('refs backfill cancelled after decryption writes neither refs nor its completion marker', async () => {
+    await open('late cancel t-4343');
+    const index = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+    index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.prepare('DELETE FROM comms_refs').run(); index.close();
+    let active = true;
+    const original = comms.messagesOf;
+    const source = vi.spyOn(comms, 'messagesOf').mockImplementation(async (...args) => {
+      const messages = await original(...args);
+      active = false; // The listener closes during its asynchronous decryption.
+      return messages.map((m) => ({ ...m, text: 'late cancel t-4343' }));
+    });
+    try {
+      await backfillRefs(h, process.env, new Date(), () => active);
+      const check = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+      try { expect(check.prepare('SELECT COUNT(*) AS n FROM comms_refs').get()).toEqual({ n: 0 }); }
+      finally { check.close(); }
+      expect(backfilled(h.home)).toBe(false);
+    } finally { source.mockRestore(); }
+  });
 
   it('a failed probe never becomes a failed sign-in', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);

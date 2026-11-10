@@ -176,6 +176,21 @@ describe('passkeys', () => {
     } finally { rmSync(lock, { force: true }); }
   });
 
+  it('a fresh challenge signed with a stale counter never joins the sessions queue', async () => {
+    const device = new Device();
+    expect((await addPasskey(await signIn(), device)).status).toBe(200);
+    expect((await passkeySignIn(device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const assertion = device.assert(challenge, { bump: false });
+    const lock = join(stack, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const refused = await call('POST', '/login/passkey', { json: assertion });
+      expect(refused.status).toBe(401); expect(refused.body).toContain('counter went backwards');
+      expect(performance.now() - began).toBeLessThan(1000); expect(pendingLockWaits()).toBe(0);
+    } finally { rmSync(lock, { force: true }); }
+  });
+
   it.each(['removed', 'replaced'])('a passkey %s during its lock wait cannot open a session', async (how) => {
     const cookie = await signIn();
     const device = new Device();
@@ -388,6 +403,24 @@ describe('passkeys in a household', () => {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     await rm(h.home, { recursive: true, force: true });
   });
+
+  it.each(['token revoked', 'member removed'])('a queued passkey sign-in is refused after its %s', async (change) => {
+    const device = new Device();
+    expect((await addPasskey(await linkSignIn('sam'), device, 'Queued Sam')).status).toBe(200);
+    const key = byId()[device.id.toString('base64url')];
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(h.home, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    try {
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      if (change === 'token revoked') revokeToken(h, key.tokenLabel!);
+      else removeMember(h, 'sam');
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401); expect(denied.headers['set-cookie']).toBeUndefined();
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
 
   it('revoking the sign-in links token leaves a passkey signing its person in', async () => {
     const cookie = await linkSignIn();

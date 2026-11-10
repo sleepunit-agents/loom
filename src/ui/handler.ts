@@ -1860,6 +1860,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     try {
       let a = verifyAssertion(body, stored, rp);
       if (!store.hasChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
+      if ((a.counter !== 0 || stored.counter !== 0) && a.counter <= stored.counter) return sendJson(res, 401, { error: 'that passkey\'s counter went backwards: it may have been copied, so it was refused' });
       // Only a verified credential joins the wait; reread and verify after it as a key may have been removed or
       // replaced meanwhile. Challenge consumption and counter checks stay inside the same synchronous section.
       if (!opts.auth.live(Buffer.from(stored.secret, 'hex'))) return sendJson(res, 401, { error: passkeyStopped(stored) });

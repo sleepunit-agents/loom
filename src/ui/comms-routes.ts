@@ -224,8 +224,13 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     return send(503, { error: 'unavailable: Comms couldn\'t answer; see the daemon log' });
   };
   const m = c.member;
-  const postReady = async (body: Record<string, unknown>) => {
-    await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB), join(h.home, 'comms.db')], budgetMs: WRITE_WAIT_MS });
+  const postReady = async (body: Record<string, unknown>, agent?: string, writesMemory = false) => {
+    const before = c.live(), owner = before && m ? memberOf(before, m.person) : undefined;
+    if (!before || !owner || (agent && (!before.agents.includes(agent) || (owner.agents !== '*' && !owner.agents.includes(agent))))) {
+      throw new CommsError('forbidden: you can post only with an agent you own', 403);
+    }
+    const memories = agent ? [resolveSqliteDbPath(agentDir(before, agent))] : [];
+    await waitForLocks({ read: writesMemory ? [] : memories, write: [join(h.home, HOUSEHOLD_DB), join(h.home, 'comms.db'), ...(writesMemory ? memories : [])], budgetMs: WRITE_WAIT_MS });
     const why = c.guard(req, body);
     if (why) throw new CommsError(why, 403);
     const current = c.live(), member = current && m ? memberOf(current, m.person) : undefined;
@@ -285,7 +290,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         body.text = withAbout(body.text, about);
         delete body.about;
       }
-      const current = await postReady(body);
+      const current = await postReady(body, typeof body.agent === 'string' ? body.agent : undefined);
       const o = openThread(current.household, c.env, current.member, body, new Date(), aboutKey);
       if (o.created) {
         deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
@@ -339,7 +344,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     if (!body) return send(400, { error: 'bad-input: a JSON object' }), true;
     const why = c.guard(req, body);
     if (why) return send(403, { error: why }), true;
-    const current = await postReady(body);
+    const current = await postReady(body, t.agent, verb === 'title');
     // The thread and the member's scope may have moved while the body arrived or its locks were held.
     t = threadFor(current.household, current.member, t.id);
     switch (verb) {
