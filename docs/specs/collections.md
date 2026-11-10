@@ -349,14 +349,15 @@ A provider never pushes records to core. Core **pulls** them with the provider's
 - **A transaction is never split**: an answer ends on a transaction boundary, except a transaction bigger than one
   page, which ends with `more: true`; core holds it until its last change arrives. Core delivers one transaction to a
   subscriber in one frame, with the aggregates that go with it.
+- **Every change carries a `txn` id that is unique for the store's whole life**: random, never derived from `rev`
+  or a counter, so a restored store can't produce the same id at the same revision again.
 - **Core proves the log didn't go backwards on every pull.** It sends, with its cursor, the transaction id it holds
   at that revision (`{"rev": 8812, "txn": "x90"}`), and the provider answers `{"reset": true}` unless its own log
   has that transaction at that revision. Every answer also carries the domain's head (`"head": 8814`), and a head
   below the cursor is the same reset. A store restored by any route, even one that has since written past the
   cursor, fails the check, and core mints a new epoch for the domain.
-- **Too old**: a revision older than the provider's log answers `{"reset": true}` for that domain. A new epoch (a
-  replaced implementation, a restored store) answers with the new epoch and no changes. Either way core resets the
-  domain's subscriptions.
+- **Too old**: a revision older than the provider's log answers `{"reset": true}` for that domain. Core mints a new epoch for the domain on a `reset`, as it does on install, replacement and restore, and resets
+  the domain's subscriptions.
 - **No change log yet**: a provider that can't say what changed answers `{"invalidate": true}`. Core then re-runs
   the domain's open subscriptions' queries (batched, at most once per 1.5 s, the existing `GAP_MS`), diffs the
   answers, and numbers the differences with its own sequence for that domain, under an epoch of core's own. When
@@ -390,7 +391,8 @@ A provider never pushes records to core. Core **pulls** them with the provider's
   fields any declared filter, order or aggregate uses. That's what tells core, for a change to a record last touched
   yesterday, who could see it before and whether it matched a subscription before, so narrowing deletes and
   aggregate arithmetic never depend on the log's window. **Every query answer and snapshot that passes through core
-  fills it too** (they carry the key, revision, audience and those fields), so a record that hasn't changed since
+  fills it too**: core always asks the provider for the index fields along with what the viewer asked for, and strips
+  them before trimming the answer for the viewer, so a record that hasn't changed since
   core started still has a row once anyone has read it. A key's index row goes when its delete leaves the log.
 - Where core still can't know a record's prior state (a key with no index row), it sends a delete to every
   subscription in the domain whose viewer the new audience doesn't admit (harmless where the viewer never held the
@@ -697,7 +699,8 @@ The conformance suite (t-2026) runs against core's provider and every installed 
 - **Revocation**: sign-out, session revocation on another listener, an agent owner's agents narrowed, and a stream
   opened after revocation all close, reset or refuse; an answer from an older scope epoch is dropped by the client.
 - **Pull**: a change committed by a process that dies before nudging still arrives within one pull period; two
-  writers committing out of order are delivered in commit order; a forged nudge causes one pull and no change.
+  writers committing out of order are delivered in commit order; a forged nudge causes one pull and no change. A store restored to an earlier copy and then written past core's cursor is caught
+  on the next pull (its `txn` at the cursor differs), and every subscription resets; no two changes share a `txn`.
 - **Handover**: a change committed between the query and its answer is delivered exactly once; a snapshot older than
   a delivered change never overwrites it.
 - **Windows and membership**: an update that moves a record out of a filter, or past the last loaded row, deletes
