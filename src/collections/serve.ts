@@ -241,7 +241,12 @@ export function readAnswers(asks: readonly ProviderQuery[], share: number, admit
     let v: Record<string, unknown>;
     try { v = JSON.parse(line); } catch { tripped = true; return 'stop'; }
     if (!v || typeof v !== 'object' || Array.isArray(v)) { tripped = true; return 'stop'; }
-    if (v.id === undefined && v.at !== undefined) { at = v.at; return 'go'; }
+    if (v.id === undefined && v.at !== undefined) {
+      // Exactly `{"at": …}`, once.
+      if (Object.keys(v).length !== 1 || at !== undefined) { tripped = true; return 'stop'; }
+      at = v.at;
+      return 'go';
+    }
     const q = typeof v.id === 'string' ? st.get(v.id) : undefined;
     if (!q || q.more !== undefined || q.error !== undefined) { tripped = true; return 'stop'; }
     if (Object.hasOwn(v, 'row')) {
