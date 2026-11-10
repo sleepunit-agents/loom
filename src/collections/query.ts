@@ -56,6 +56,9 @@ export interface Query {
   /** Named fields the viewer's class may not see: absent from every row, and listed so a window says "hidden". */
   withheld: string[];
   aggregates: string[];
+  /** A live query (collections.md, "Subscription"): its changes come on `stream` after its answer. */
+  subscribe: boolean;
+  stream?: string;
 }
 
 export type QueryError = { id: string; error: 'bad-query'; clause?: number; why: string } | { id: string; error: 'unsupported-version' | 'denied' | 'unavailable' | 'too-big'; why?: string };
@@ -83,7 +86,9 @@ export function checkQuery(q: QueryIn, decl: TypeDecl, classes: ReadonlySet<Fiel
   if (majorOf(decl.version) !== ref.major) return { id, error: 'unsupported-version', why: `${ref.provider}/${ref.type} is served at ${decl.version}` };
   const bad = (why: string, clause?: number): QueryError => ({ id, error: 'bad-query', why, ...(clause !== undefined ? { clause } : {}) });
   const visible = (f: string) => Object.hasOwn(decl.fields, f) && classes.has(decl.fields[f].class);
-  if (q.subscribe !== undefined && q.subscribe !== false) return bad('subscriptions come with the live stream (t-2022); ask without subscribe');
+  if (q.subscribe !== undefined && typeof q.subscribe !== 'boolean') return bad('subscribe is true or false');
+  const subscribe = q.subscribe === true;
+  if (subscribe && (typeof q.stream !== 'string' || !/^e-[A-Za-z0-9_-]{1,64}$/.test(q.stream))) return bad('a subscription names its stream (the hello\'s)');
   // where
   const whereIn = q.where ?? [];
   if (!Array.isArray(whereIn)) return bad('where is a list of clauses');
@@ -153,7 +158,7 @@ export function checkQuery(q: QueryIn, decl: TypeDecl, classes: ReadonlySet<Fiel
     if (!Array.isArray(key) || key.length !== order.length + 1) return bad('that cursor isn\'t this query\'s (or it expired): ask for the first page again');
     after = key;
   }
-  return { id, provider: ref.provider, type: ref.type, major: ref.major, where, order, limit: limit as number, after, fields, withheld, aggregates };
+  return { id, provider: ref.provider, type: ref.type, major: ref.major, where, order, limit: limit as number, after, fields, withheld, aggregates, subscribe, ...(subscribe ? { stream: q.stream as string } : {}) };
 }
 
 /** What a cursor is bound to beside its viewer: the type and the filter and order it pages. */

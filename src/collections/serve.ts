@@ -24,11 +24,15 @@ import { Pool, type ApiCaller } from '../ui/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, providerName, type CollectionsOffer, type TypeDecl } from './contract.js';
 import { CORE_TYPES, coreAnswers } from './core-types.js';
 import type { ProviderAnswer, ProviderQuery } from './memory.js';
-import { checkQuery, MAX_PROVIDER_CURSOR, MAX_QUERIES, queryShape, sealerFor, typeRef, validQueryId, type Query, type QueryError, type QueryIn } from './query.js';
+import { checkQuery, MAX_PROVIDER_CURSOR, MAX_QUERIES, queryShape, sealerFor, typeRef, validQueryId, type Query, type QueryError, type QueryIn, type Sealer } from './query.js';
+import { domainOfType } from './pull.js';
+import { atOf, attach, prepare, streamFor, unsubscribe } from './subs.js';
 import { admits, classesOf, isHouseholdOwner, parseAudience, presented, providerAdmits, viewerId, type Audience, type Viewer } from './viewer.js';
 
 /** Where a batch is asked: POST /collections/query (the page) and POST /api/loom/<this> (tokens). */
 export const COLLECTIONS_QUERY_ROUTE = 'collections/query';
+/** Where anyone who wrote says a domain moved (pull.ts, nudge). */
+export const COLLECTIONS_NUDGE_ROUTE = 'collections/nudge';
 /** A batch of queries' body. */
 export const COLLECTIONS_MAX_BYTES = 64 * 1024;
 /** An answer's byte budget, shared among the queries a provider is asked in one batch. */
@@ -47,6 +51,8 @@ export interface Provider {
   query?: string[];
   /** Which install this is (the piece and when it was installed): a reinstall is a new chance (outOfContract). */
   install?: string;
+  /** The provider's `changes` argv; none: core bridges it (pull.ts). */
+  changes?: string[];
 }
 
 /**
@@ -74,7 +80,7 @@ export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
     // core's own name is never a piece's.
     if (taken.has(name)) { if (name !== CORE_PROVIDER) out.delete(name); continue; }
     taken.add(name);
-    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed ?? ''}@${r.version ?? ''}` });
+    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed ?? ''}@${r.version ?? ''}`, ...(c.changes ? { changes: c.changes } : {}) });
   }
   return out;
 }
@@ -87,6 +93,8 @@ export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
  */
 const outOfContract = new Set<string>();
 export const clearOutOfContract = (): void => outOfContract.clear();
+/** Whether a provider is out of contract now (subs.ts resets its live subscriptions). */
+export const isOutOfContract = (p: Provider): boolean => p.install !== undefined && outOfContract.has(p.install);
 
 const pools = new Map<string, Pool>();
 const poolOf = (provider: string): Pool => {
@@ -102,6 +110,9 @@ export interface ClientAnswer {
   coverage: { complete: boolean; total?: { n: number; exact: boolean } };
   aggregates?: Record<string, { n: number; exact: boolean; by?: Record<string, number> }>;
   withheld: string[];
+  /** A live query's: the stream seq its frames follow, and the viewer's scope epoch. */
+  at?: number;
+  scope?: number;
 }
 
 export type BatchResult = { status: 200; body: { answers: Array<ClientAnswer | QueryError> } } | { status: 400; body: { error: string } };
@@ -109,7 +120,11 @@ export type BatchResult = { status: 200; body: { answers: Array<ClientAnswer | Q
 export interface ServeContext {
   env: NodeJS.ProcessEnv;
   household: Household;
+  /** The household read fresh, for a subscription that outlives this request (default: `household`). */
+  live?: () => Household;
   now?: number;
+  /** The page's own request (its session, by streamOwner): only it may subscribe, on its own streams. */
+  page?: { session: string };
 }
 
 /** The caller a piece's provider runs as, for its store grant (src/ui/pieces.ts, withGrant). */
@@ -124,6 +139,15 @@ function callerOf(viewer: Viewer): ApiCaller {
 /** The answers to a batch of queries (a POST body `{queries: [...]}`) for one viewer. */
 export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unknown): Promise<BatchResult> {
   const now = ctx.now ?? Date.now();
+  // A window done with some live queries (`close: {stream, ids}`): its own stream's only.
+  const close = (body as { close?: { stream?: unknown; ids?: unknown } } | null)?.close;
+  if (close !== undefined) {
+    if (!ctx.page || !close || typeof close.stream !== 'string' || !Array.isArray(close.ids) || close.ids.length > 64 || !close.ids.every(validQueryId)) {
+      return { status: 400, body: { error: 'close is {stream, ids}: this page\'s stream and up to 64 of its live queries' } };
+    }
+    unsubscribe(ctx.household.home, close.stream, ctx.page.session, close.ids as string[]);
+    if ((body as { queries?: unknown }).queries === undefined) return { status: 200, body: { answers: [] } };
+  }
   const qs = (body as { queries?: unknown } | null)?.queries;
   if (!Array.isArray(qs) || !qs.length || qs.length > MAX_QUERIES) return { status: 400, body: { error: `queries is a list of 1-${MAX_QUERIES} queries` } };
   const ids = new Set<string>();
@@ -171,33 +195,102 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     byProvider.set(p.name, list);
   }
 
+  const householdNow = ctx.live ?? (() => ctx.household);
+  const envNow = () => ctx.env;
   await Promise.all([...byProvider].map(async ([name, list]) => {
     const p = all.get(name)!;
-    const share = Math.floor(ANSWER_MAX_BYTES / list.length);
-    // One row more than the page: core says there's more only when it has seen (and admitted) a row past the page, so
-    // `next` never says a hidden record matched. The order's fields and the agent field too: core makes the cursor from
-    // the one and reads the other for its agent rule. Both are dropped again unless asked for.
-    const asks: ProviderQuery[] = list.map((q) => ({ id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit + 1, after: q.after,
-      fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...q.order.map(([f]) => f), ...(p.types[q.type].agent ? [p.types[q.type].agent!] : [])])], aggregates: q.aggregates }));
-    const broken = () => p.install !== undefined && outOfContract.has(p.install);
-    const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, list, asks, share, now);
-    const checked = list.map((q) => {
-      if (got === OUT_OF_CONTRACT) return OUT_OF_CONTRACT;
-      const a = typeof got === 'string' ? undefined : got.get(q.id);
-      if (!a) return { id: q.id, error: 'unavailable' } as QueryError;
-      return checkAnswer(viewer, p, q, a, share, now, (c) => sealer.seal(c, vid, queryShape({ provider: q.provider, type: q.type, major: q.major }, q.where, q.order), now));
-    });
-    // One row out of contract makes the whole run's answers unavailable, not just its own query's: the batch's other
-    // answers came from the same provider, deciding for the same viewer.
-    // Marked out of contract while this run was out (another run's row): this one answers as the provider now does.
-    const bad = checked.some((a) => a === OUT_OF_CONTRACT) || broken();
-    if (bad && p.install !== undefined && !broken()) {
-      outOfContract.add(p.install);
-      process.stderr.write(`loom: collections provider ${p.name} (${p.piece}) answered a row its viewer may not have; it answers no one until it's reinstalled or loom restarts\n`);
+    // A live query: its stream must be this page's own, open here; its domain is in the log before the provider runs.
+    const starts = new Map<string, number>();
+    for (const q of list.filter((x) => x.subscribe)) {
+      if (!ctx.page) { answers.set(q.id, { id: q.id, error: 'bad-query', why: 'subscribing is the page\'s: there\'s no stream on /api' }); continue; }
+      if (!streamFor(ctx.household.home, q.stream, ctx.page.session)) { answers.set(q.id, { id: q.id, error: 'bad-query', why: 'stream isn\'t one of this session\'s open streams' }); continue; }
+      if (p.types[q.type].audience === 'ask' && q.after !== null) { answers.set(q.id, { id: q.id, error: 'bad-query', why: 'a live query of this type is one page' }); continue; }
+      if (!starts.has(q.type)) starts.set(q.type, (await prepare(householdNow, envNow, p, q.type)).startSeq);
     }
-    list.forEach((q, i) => answers.set(q.id, bad || checked[i] === OUT_OF_CONTRACT ? { id: q.id, error: 'unavailable' } : checked[i] as ClientAnswer | QueryError));
+    const runnable = list.filter((q) => !answers.has(q.id));
+    if (!runnable.length) return;
+    const ran = await runChecked(ctx, p, viewer, runnable, now, sealer, vid);
+    for (const q of runnable) {
+      let r = ran.get(q.id)!;
+      if (q.subscribe && 'rows' in r.answer) {
+        for (let tries = 0; ; tries++) {
+          if (!('rows' in r.answer)) break;
+          const a = r.answer;
+          const att = await attach(householdNow, envNow, { stream: q.stream!, session: ctx.page!.session }, viewer, p, q,
+            { next: a.next, aggregates: a.aggregates, complete: a.coverage.complete }, r.admitted, r.last, r.at, starts.get(q.type) ?? 0,
+            // Asked again later, for as long as the subscription lives: the household and env as they are then.
+            (v, pp, qq) => reask({ ...ctx, household: householdNow(), env: envNow() }, pp, v, qq, sealer));
+          if ('at' in att) { r = { ...r, answer: { ...a, at: att.at, scope: att.scope } }; break; }
+          if ('error' in att) { r = { ...r, answer: { id: q.id, error: att.error, ...(att.why ? { why: att.why } : {}) } as QueryError }; break; }
+          // The store's history moved under the answer: ask again (a new epoch, or a revision the log no longer holds).
+          if (tries >= 2) { r = { ...r, answer: { id: q.id, error: 'unavailable' } }; break; }
+          r = (await runChecked(ctx, p, viewer, [q], now, sealer, vid)).get(q.id)!;
+        }
+      }
+      answers.set(q.id, r.answer);
+    }
   }));
   return { status: 200, body: { answers: (qs as QueryIn[]).map((q) => answers.get(q.id)!) } };
+}
+
+interface Ran {
+  answer: ClientAnswer | QueryError;
+  /** The provider's own answer (for its next), the rows core admitted (whole, as the provider sent them), its last row. */
+  provider?: ProviderAnswer;
+  admitted: Record<string, unknown>[];
+  last?: Record<string, unknown>;
+  at?: { rev: number; txn: string };
+}
+
+/**
+ * Run a provider for some of a batch's queries and check every answer (checkAnswer), taking the provider out of
+ * contract when any row in the run is one its viewer may not have. A live query asks for its order and by fields too,
+ * so core can keep its window and counts; they're dropped from what the viewer gets unless asked for.
+ */
+async function runChecked(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], now: number, sealer: Sealer, vid: string): Promise<Map<string, Ran>> {
+  const share = Math.floor(ANSWER_MAX_BYTES / list.length);
+  const asks: ProviderQuery[] = list.map((q) => {
+    const decl = p.types[q.type];
+    // One row more than the page: core says there's more only when it has seen (and admitted) a row past the page, so
+    // `next` never says a hidden record matched. The order's fields and the agent field too: core makes the cursor from
+    // the one and reads the other for its agent rule; a live query's by fields, for the counts core keeps. All are
+    // dropped again unless asked for.
+    const extra = [...q.order.map(([f]) => f), ...(q.subscribe ? q.aggregates.flatMap((a) => decl.aggregates?.[a]?.by ?? []) : [])];
+    return { id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit + 1, after: q.after,
+      fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...(decl.agent ? [decl.agent] : []), ...extra])], aggregates: q.aggregates };
+  });
+  const broken = () => p.install !== undefined && outOfContract.has(p.install);
+  const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, list, asks, share, now);
+  const out = new Map<string, Ran>();
+  const checked = list.map((q) => {
+    const collect: Collected = { admitted: [] };
+    if (got === OUT_OF_CONTRACT) return { q, a: undefined, collect, c: OUT_OF_CONTRACT as typeof OUT_OF_CONTRACT };
+    const a = typeof got === 'string' ? undefined : got.answers.get(q.id);
+    if (!a) return { q, a, collect, c: { id: q.id, error: 'unavailable' } as QueryError };
+    return { q, a, collect, c: checkAnswer(viewer, p, q, a, share, now, (c) => sealer.seal(c, vid, queryShape({ provider: q.provider, type: q.type, major: q.major }, q.where, q.order), now), collect) };
+  });
+  // One row out of contract makes the whole run's answers unavailable, not just its own query's: the batch's other
+  // answers came from the same provider, deciding for the same viewer. Marked out of contract while this run was out
+  // (another run's row): this one answers as the provider now does.
+  const bad = checked.some((x) => x.c === OUT_OF_CONTRACT) || broken();
+  if (bad && p.install !== undefined && !broken()) {
+    outOfContract.add(p.install);
+    process.stderr.write(`loom: collections provider ${p.name} (${p.piece}) answered a row its viewer may not have; it answers no one until it's reinstalled or loom restarts\n`);
+  }
+  for (const { q, a, collect, c } of checked) {
+    const answer = bad || c === OUT_OF_CONTRACT ? { id: q.id, error: 'unavailable' } as QueryError : c as ClientAnswer | QueryError;
+    const at = typeof got === 'string' || got === OUT_OF_CONTRACT ? undefined : atOf(got.at, domainOfType(p, q.type));
+    out.set(q.id, { answer, ...(a ? { provider: a } : {}), admitted: collect.admitted, ...(collect.last ? { last: collect.last } : {}), ...(at ? { at } : {}) });
+  }
+  return out;
+}
+
+/** A live query asked again for its subscription (subs.ts): its first page, as its viewer, through the same checks. */
+async function reask(ctx: ServeContext, p: Provider, viewer: Viewer, q: Query, sealer: Sealer): Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: ClientAnswer['aggregates'] } | undefined> {
+  const again: Query = { ...q, after: null, subscribe: false, ...(p.types[q.type].audience === 'ask' ? {} : { limit: 1 }) };
+  const r = (await runChecked(ctx, p, viewer, [again], Date.now(), sealer, viewerId(viewer))).get(q.id);
+  if (!r || !('rows' in r.answer)) return undefined;
+  return { rows: r.answer.rows, admitted: r.admitted, ...(r.answer.aggregates ? { aggregates: r.answer.aggregates } : {}) };
 }
 
 /**
@@ -209,8 +302,8 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
  * share of the answer's bytes, and only core says a query is `too-big`: a provider's own size, error or count over rows
  * it didn't filter would tell a viewer choosing the queries that hidden records matched.
  */
-async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], asks: ProviderQuery[], share: number, now: number): Promise<Map<string, ProviderAnswer> | string | typeof OUT_OF_CONTRACT> {
-  if (!p.piece) return new Map(coreAnswers(ctx.household, viewer, asks, now).map((a) => [a.id, a]));
+async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], asks: ProviderQuery[], share: number, now: number): Promise<{ answers: Map<string, ProviderAnswer>; at?: unknown } | string | typeof OUT_OF_CONTRACT> {
+  if (!p.piece) return { answers: new Map(coreAnswers(ctx.household, viewer, asks, now).map((a) => [a.id, a])) };
   const piece = p.piece;
   // The scope a page's piece gets (owners.md), and never one inherited from loom's own environment.
   const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...env0 } = ctx.env;
@@ -235,7 +328,7 @@ async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list:
     process.stderr.write(`loom: collections provider ${p.name} (${piece}) failed: ${r.error}\n`);
     return r.error;
   }
-  return reading.answers();
+  return { answers: reading.answers(), at: reading.at() };
 }
 
 /**
@@ -322,7 +415,9 @@ export const OUT_OF_CONTRACT = Symbol('out of contract');
  * viewer may not have, or one that isn't a row, makes the answer OUT_OF_CONTRACT; a row that expired since the
  * provider read it (it was the viewer's) is only left out.
  */
-export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string): ClientAnswer | QueryError | typeof OUT_OF_CONTRACT {
+export interface Collected { admitted: Record<string, unknown>[]; last?: Record<string, unknown> }
+
+export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string, collect?: Collected): ClientAnswer | QueryError | typeof OUT_OF_CONTRACT {
   if (a.error) return { id: q.id, error: a.error as QueryError['error'] } as QueryError;
   const decl = p.types[q.type];
   // More rows than asked (the page and one past it): how many it sent may count rows the viewer can't have. And its own
@@ -360,12 +455,14 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
     if (expires !== undefined) out.expires = new Date(expires).toISOString();
     if (Buffer.byteLength(JSON.stringify(out)) > RECORD_MAX_BYTES) { unusable = 'too-big'; continue; }
     rows.push(out);
+    collect?.admitted.push(r);
   }
   if (unusable) return { id: q.id, error: unusable };
   // The row past the page, if the provider had one (and it's the viewer's: checked above with the rest), says there's
   // more; it isn't sent. The cursor is core's own: the last sent row's order key, sealed.
   const more = a.rows.length > q.limit;
   const lastSent = more ? (a.rows[q.limit - 1] as Record<string, unknown>) : undefined;
+  if (collect && lastSent) collect.last = lastSent;
   const complete = !more && q.after === null;
   // A provider's numbers can't be rechecked, and a careless one's would count records the viewer can't open (another
   // member's own, for a household owner too) and name their values in a `by`. So until the conformance run can vouch

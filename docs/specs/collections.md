@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`). A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -563,6 +563,22 @@ every window, the acting one included, through the stream, trimmed as usual. So 
 action, and none gets a record its viewer couldn't read. A window may show its own action as pending, but never
 shows a grant or an approval as done until the receipt says so. t-2024 owns the details.
 
+As built (t-2024):
+
+- **An operation id.** The page's script posts an action with `_op` (random, the window's own). Core keeps its receipt
+  in `live.db`, shared by every listener: a retry under the same id gets the first answer, and the action never runs
+  twice, so a single-use approval is spent once. Another session's id is refused (409). One still running answers
+  `accepted` (202); one that never finished answers `unknown` after two minutes, and is never run again.
+- **The answer carries the receipt** (`{op, state: done | failed, why}`), beside today's `ok` and `message`. CSRF,
+  same-origin, the caller and every grant check are unchanged: the receipt is added after them.
+- **Its changes before its answer**: the acting piece's domains (core's for `loom`) are nudged for every listener, and
+  pulled and delivered here (bounded at 3 s) before the answer goes, so the acting window hears its own change on its
+  stream like any other, and no window refetches.
+- **In the window** (`runtime.ts`, `command`): a dropped connection is retried under the same id; `accepted` is asked
+  again; an optimistic preview is allowed only for a reversible change to a record a view holds, never for a grant or
+  an approval, and a failure takes it back unless a frame has written the record since.
+- Read markers and prefs as records, and the Inbox's GET that marks read, move with the Inbox (t-2025).
+
 ## Read state and other per-viewer records
 
 What a viewer has read is a record, not a side effect of looking:
@@ -615,6 +631,20 @@ Windows bind derived views (filters, sorts, joins by key) to it and keep their o
 subscription holds is dropped; a collection nobody has read for 5 minutes is dropped, and any memory cap drops the
 least recently read first. Sign-out, a scope change, a new epoch or a provider's removal clears what it affected,
 along with the listeners. The adapter is the only code that imports the client library.
+
+### As built (t-2023)
+
+- `runtime.ts` holds the stores, subscriptions and the stream handover, and imports no library; `adapter.ts` is the
+  only file that imports TanStack DB (`@tanstack/db` and `@tanstack/react-db` at exactly 1.0.0-rc.1.4, which bring
+  `@tanstack/db-ivm` 1.0.0-rc.1.2: the versions t-2018 measured). An upgrade is one change to `web/package.json` and
+  its lock, checked by `src/ui/collections-runtime.test.ts`; the library is a release candidate, so it moves only with
+  that test and a look at the bench.
+- `transport.ts` asks with the page's anti-forgery token and listens on the page's one `/events` stream (`page.ts`).
+- **Bundle budget**: the adapter and runtime minify to about 286 KB, 82 KB gzipped (React excluded). Nothing imports
+  them until the first app moves (t-2025), so the app's bundle is unchanged now; that move loads them with its first
+  window, and the budget is that, not more.
+- A view nobody reads is kept 30 s (a window reopened in that time is warm, with no request), a type nobody reads
+  5 minutes; past 20,000 records the least recently read types without an open view go first.
 
 ## What stays on its own transport (exceptions)
 

@@ -110,7 +110,7 @@ describe('a query: bounded, and never on a hidden field', () => {
     ['a heavy field in a big list', { fields: ['description'], limit: 21 }, /heavy field has at most 20/],
     ['an order on a field without order', { order: [['title', 'asc']] }, /no field "title" to order by/],
     ['an unknown aggregate', { aggregates: ['sum'] }, /no aggregate "sum"/],
-    ['a subscription (the live stream is t-2022)', { subscribe: true }, /subscriptions come with the live stream/],
+    ['a subscription without its stream', { subscribe: true }, /names its stream/],
     ['a value that isn\'t a scalar', { where: [['status', 'eq', { $ne: 1 }]] }, /a value is/],
   ])('refuses %s as bad-query', (_, q, why) => {
     expect(check(q as Partial<QueryIn>)).toMatchObject({ error: 'bad-query', why: expect.stringMatching(why) });

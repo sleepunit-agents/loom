@@ -34,7 +34,7 @@ import { agentJobs } from './agent-jobs.js';
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
-import { changed, openStream, type Sees } from './live.js';
+import { changed, closeSession, openStream, type Sees } from './live.js';
 import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -80,7 +80,9 @@ import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
-import { memberViewer } from '../collections/viewer.js';
+import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
+import { closeStream as subsClose, openStream as subsOpen, pullAfterAction } from '../collections/subs.js';
+import { beginOp, finishOp, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -368,7 +370,7 @@ function readCookie(req: IncomingMessage, name: string): string | undefined {
 
 /** Who's asking: a browser session (with its cookie, for the anti-forgery token), a script with the bearer, or nobody. */
 /** A signed-in request, and the member it is (docs/specs/owners.md): from its session's token, or the bearer's. */
-type Who = { kind: 'session'; cookie: string; member?: Member } | { kind: 'bearer'; member?: Member } | null;
+type Who = { kind: 'session'; cookie: string; member?: Member } | { kind: 'bearer'; member?: Member; digest: Buffer } | null;
 
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   if (!opts.auth.enabled) return null;
@@ -380,7 +382,7 @@ function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   const header = req.headers['authorization'];
   const presented = header?.replace(/^Bearer\s+/i, '').trim();
   const d = presented ? opts.auth.check(presented) : null;
-  if (d) return { kind: 'bearer', member: opts.auth.member?.(d) };
+  if (d) return { kind: 'bearer', member: opts.auth.member?.(d), digest: d };
   return null;
 }
 
@@ -1474,6 +1476,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const who = whoIs(req, opts);
+  // The household as it is, whoever's asking: a live stream reads it again for as long as it's open.
+  const householdNow = opts.household;
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
@@ -1500,7 +1504,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
-    if (c && /^[0-9a-f]{64}$/.test(c)) storeFor(opts).delete(c);
+    if (c && /^[0-9a-f]{64}$/.test(c)) { storeFor(opts).delete(c); closeSession(`session:${c}`); }
     // And the copies of pages this browser kept for offline (https only; the sign-in page's /app.js also asks the worker).
     return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, 'clear-site-data': '"cache", "storage"' });
   }
@@ -1516,6 +1520,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // The app's live stream (src/ui/live.ts): "something changed", and nothing else.
   if (pathname === '/events') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    // The stream check is /act's (collections.md): a page on another port of this host can't open streams in a
+    // member's name.
+    if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     const hh = opts.household?.();
     const home = hh?.home ?? opts.contextDir;
     // Whose a changed file is: under an agent's folder, that agent's; anything else, the household's.
@@ -1526,7 +1533,33 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
       return a ? [a] : '*';
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}) });
+    // Who this stream is, read again before every frame (collections.md, "The viewer is checked on every frame"): the
+    // session (or the bearer) still live, and the member's agents as the household says now.
+    const auth = opts.auth;
+    const sessionOpts = opts;
+    const viewerNow = (): Viewer | null => {
+      const h = householdNow?.();
+      if (!h) return null;
+      let m: Member | undefined;
+      if (who.kind === 'session') {
+        if (!validSession(who.cookie, sessionOpts)) return null;
+        const sess = storeFor(sessionOpts).get(who.cookie);
+        m = sess ? auth.member?.(sess.secret) : undefined;
+      } else {
+        if (!auth.live(who.digest)) return null;
+        m = auth.member?.(who.digest);
+      }
+      const now = m ? memberOf(h, m.person) : undefined;
+      return now ? memberViewer(h, now) : null;
+    };
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}),
+      opened: (port) => {
+        const v = householdNow && full ? viewerNow() : null;
+        if (!v) return undefined;
+        subsOpen(() => householdNow!(), () => opts.env, { ...port, viewer: viewerNow }, v);
+        // Who it's for, as an opaque tag: a window that hears a different one drops everything it held first.
+        return { scope: 1, viewer: createHmac('sha256', storeFor(opts).key).update(`loom-viewer\0${viewerId(v)}`).digest('base64url').slice(0, 22), onClose: () => subsClose(home, port.id) };
+      } });
   }
 
   // Shared collections (docs/specs/collections.md, "Asking: queries"): a batch of bounded queries, answered for this
@@ -1538,7 +1571,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, COLLECTIONS_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
-    const r = await answerBatch({ env: opts.env, household: full }, memberViewer(full, who.member), body);
+    const r = await answerBatch({ env: opts.env, household: full, live: () => householdNow!(), page: { session: streamOwner(req, who) } }, memberViewer(full, who.member), body);
     return sendJson(res, r.status, r.body);
   }
 
@@ -1739,6 +1772,32 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const action = form.get('_action') ?? '';
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');
+    // An operation id (docs/specs/collections.md, "Commands"; t-2024): the window's name for this one action, so a retry
+    // (a dropped connection, another listener) gets the first one's answer and never runs it twice: a single-use
+    // approval is spent once. Only the page's own fetch sends one.
+    const op = form.get('_op');
+    // Whose an operation is, as live.db keeps it: a keyed hash of the session (or the bearer), never the cookie itself,
+    // which would sign whoever read the file in (sessions.ts keeps only hashes for the same reason).
+    const opSession = createHmac('sha256', storeFor(opts).key).update(`loom-op\0${streamOwner(req, who)}`).digest('base64url');
+    const opHome = (opts.household?.() ?? hh)?.home;
+    // Without a household there's no shared store for receipts: the action runs as one without an id.
+    if (op !== null && opHome) {
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(op)) return send(res, 400, 'text/plain', 'bad operation id');
+      // What the id was made for: the same action, at the same place, with the same fields. Keyed, so the values (a
+      // secret typed into a form) can't be guessed back from what live.db keeps.
+      const what = createHmac('sha256', storeFor(opts).key).update(JSON.stringify([pathname, action, back, [...form].filter(([k]) => k !== '_op' && k !== '_csrf')])).digest('base64url');
+      const b = withLog(opHome, (db) => beginOp(db, op, opSession, what));
+      if ('other' in b) return sendJson(res, 409, { error: 'that operation id is another session\'s' });
+      if ('answer' in b) return send(res, 200, 'application/json', b.answer);
+      if ('state' in b) return sendJson(res, 202, { ok: false, message: b.state === 'accepted' ? 'Still working on it.' : 'loom didn\'t hear how that went: look before trying again.', receipt: { op, state: b.state } });
+      // A way out before the action ran (a piece that isn't there, a form refused) says so in its receipt; one after it
+      // ran that never answered stays accepted, and becomes unknown: never run again.
+      res.once('finish', () => {
+        if ([400, 403, 404, 413].includes(res.statusCode)) {
+          try { withLog(opHome, (db) => finishOp(db, op, opSession, 'failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true)); } catch { /* it stays accepted, then unknown */ }
+        }
+      });
+    }
     const backLink = splitPage(back) ? back : '';
     // A form has up to LIMITS.fields fields plus LIMITS.hidden hidden values.
     // More than that is refused whole, never cut short: a truncated form
@@ -1890,6 +1949,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         if (approvals) recordApprovalAnswer(hh, fields.id ?? '', { verdict: pieceVerdict!, by });
       }
     }
+    // What it changed is in the log before the answer (collections.md, "Commands"): its piece's domains (or core's) are
+    // pulled now, and the other listeners nudged, so every window hears it through its stream, this one included.
+    if (opHome && result.ok) await pullAfterAction(opHome, opts.env, source.id === 'loom' ? 'loom' : source.id);
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
     // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
@@ -1908,9 +1970,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // JSON and stays where it is, unless the action lands somewhere else.
     if (req.headers['x-loom-fetch'] === '1') {
       const stay = to === pageHref(backLink, source);
-      return sendJson(res, 200, { ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
-        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }) });
+      // The receipt: done or failed, as the piece said. A grant or an approval is shown done only on this, never before.
+      const receipt = op !== null ? { receipt: { op, state: result.ok ? 'done' : 'failed', ...(result.ok ? {} : { why: result.message }) } } : {};
+      const answer = JSON.stringify({ ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
+        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }), ...receipt });
+      // A retry gets this same answer, never a second run. A one-time message (a secret, a link: `keep`) is never written
+      // down: a retry hears it was done, and that it was shown once.
+      const kept = result.keep ? JSON.stringify({ ok: result.ok, message: result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.', ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
+      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', kept));
+      return send(res, 200, 'application/json', answer);
     }
+    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } })));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 

@@ -58,7 +58,8 @@ import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROL
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { askGrant } from '../grants.js';
 import { grantsAuthority } from '../offers-registry.js';
-import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
+import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_NUDGE_ROUTE, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
+import { nudge as collectionsNudge } from '../collections/pull.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
@@ -561,6 +562,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // POST /api/loom/collections/query (docs/specs/collections.md, "Asking: queries"): an owner's, an agent's or a house's
     // token, each as a viewer of its own kind. No stream here: subscribing is the page's.
     if (piece === 'loom' && subpath === COLLECTIONS_QUERY_ROUTE) return collectionsApi(req, res, role);
+    // POST /api/loom/collections/nudge {domain}: someone wrote; core pulls that domain soon (collections.md, "A nudge").
+    if (piece === 'loom' && subpath === COLLECTIONS_NUDGE_ROUTE) return nudgeApi(req, res, role, req.headers['authorization'] ?? '');
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -638,6 +641,35 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (r.status !== 200) return sendError(res, r.status, `bad-input: ${r.body.error}`);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(r.body));
+  }
+
+  /**
+   * POST /api/loom/collections/nudge {domain}: an agent's, a house's, an owner's or a piece's token (never a peer's or a
+   * review's), at most one a second per token. It carries a domain name and nothing else, and the answer is the same
+   * whether or not the domain exists, so a nudge can't probe what's installed; a forged one costs at most one pull.
+   */
+  const nudgedAt = new Map<string, number>();
+  async function nudgeApi(req: IncomingMessage, res: ServerResponse, role: Role, bearer: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (role.kind !== 'agent' && role.kind !== 'owner' && role.kind !== 'piece') return sendError(res, 403, `forbidden: a ${role.kind} token doesn't nudge`);
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a nudge is a domain name');
+    let body: { domain?: unknown };
+    try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // Per token: the credential itself, as roleFor reads it, so another spelling of the header is the same token.
+    const who = createHash('sha256').update(bearer.replace(/^Bearer\s+/i, '').trim()).digest('hex');
+    const now = Date.now();
+    if (now - (nudgedAt.get(who) ?? 0) < 1000) return sendError(res, 429, 'too-many: one nudge a second');
+    nudgedAt.delete(who);
+    nudgedAt.set(who, now);
+    // Oldest first (a Map keeps insertion order): past the cap, the oldest go, whatever their age.
+    for (const k of nudgedAt.keys()) { if (nudgedAt.size <= 4096) break; nudgedAt.delete(k); }
+    if (typeof body?.domain === 'string') collectionsNudge(h.home, body.domain);
+    res.writeHead(202, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end('{"ok":true}');
   }
 
   /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
