@@ -1,6 +1,6 @@
 /**
  * Offers: what a managed piece declares, in its package's `loom` block, that it
- * offers through core (docs/extensions.md, "Offers"). Five sibling keys, each
+ * offers through core (docs/extensions.md, "Offers"). Six sibling keys, each
  * with its own schema:
  *
  *   sections   a project section feed           docs/specs/projects.md, "Section feeds (the seam)"
@@ -8,6 +8,7 @@
  *   mcp_tools  tools core adds to an agent's MCP session   docs/specs/agent-runtime.md, "Seams", 2
  *   grants     the argv core asks before an agent's piece call   docs/specs/agent-runtime.md, "Permissions"
  *   delivery   the argv core forwards POST /api/loom/deliver to (the runtime's)   agent-runtime.md, "Delivery"
+ *   collections  the shared collections a piece publishes   docs/specs/collections.md, "Declaring a provider"
  *
  * This module is the one install-time validation path: `parseOffers` checks a
  * block's own declarations (called from parseLoomBlock, so an invalid offer
@@ -17,6 +18,7 @@
  * installed and run a piece, are in offers-registry.ts.
  */
 import { TOOLS } from './clients.js';
+import { parseCollectionsOffer, providerConflict, type CollectionsOffer } from './collections/contract.js';
 
 export type VenueKind = 'live' | 'scheduled' | 'agent';
 
@@ -67,6 +69,13 @@ export interface Offers {
    */
   grants?: string[];
   /**
+   * The grants authority's promise that its answer is a function of the ask and of this one
+   * collection of its own store alone (and of its installed version). Core then reuses an answer
+   * while that collection is unchanged, instead of running the authority again (src/grants.ts):
+   * any write to the collection is a new ask at once. Only with `grants`.
+   */
+  grants_store?: string;
+  /**
    * The argv core runs with a `deliver` body on stdin (src/delivery.ts). Only a piece whose
    * block says `"role": "runtime"` declares it, and only one installed piece may.
    */
@@ -76,11 +85,13 @@ export interface Offers {
    * `"wake": {}`, which references core's venue rather than defining one. The clock does.
    */
   delivers_wake?: true;
+  /** The shared collections the piece publishes (docs/specs/collections.md): its query argv and its record types. */
+  collections?: CollectionsOffer;
 }
 
 /** The offers core runs or lists by kind (`delivers_wake` is a permission, not an offer it runs). */
-export type OfferKind = 'sections' | 'venues' | 'mcp_tools' | 'grants' | 'delivery';
-export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery'];
+export type OfferKind = 'sections' | 'venues' | 'mcp_tools' | 'grants' | 'delivery' | 'collections';
+export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery', 'collections'];
 
 export const MAX_ARGV = 16;
 export const MAX_ARG = 200;
@@ -250,11 +261,21 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
     if (a) return a;
     out.grants = [...(b.grants as string[])];
   }
+  if (b.grants_store !== undefined) {
+    if (!out.grants) return 'loom.grants_store is declared only with loom.grants';
+    if (typeof b.grants_store !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(b.grants_store)) return 'loom.grants_store names one of the piece\'s store collections';
+    out.grants_store = b.grants_store;
+  }
   if (b.delivery !== undefined) {
     if (ctx.role !== 'runtime') return 'loom.delivery is declared only by the runtime (a loom block with "role": "runtime")';
     const a = argvError(b.delivery, bins, 'loom.delivery');
     if (a) return a;
     out.delivery = [...(b.delivery as string[])];
+  }
+  if (b.collections !== undefined) {
+    const c = parseCollectionsOffer(b.collections, (v, where) => argvError(v, bins, where));
+    if (typeof c === 'string') return c;
+    out.collections = c;
   }
   return out;
 }
@@ -287,7 +308,8 @@ export function offerConflicts(name: string, offers: Offers & { role?: string },
     // A household has one runtime (conversations.md: the runtime token is minted for the one piece).
     if (offers.role === 'runtime' && other.loom.role === 'runtime') return `the ${other.name} piece is already the runtime: a household has one`;
   }
-  return undefined;
+  // A provider name (its role, else its name) is one piece's (docs/specs/collections.md, "Record keys").
+  return providerConflict(name, offers.collections, offers.role, installed);
 }
 
 // ─── Feed output (projects.md "Section feeds", Output) ───────────────────────

@@ -176,7 +176,7 @@ built: see "Offers" below.
 ### Offers
 
 A managed piece (specs/pieces-install.md) declares in its package's `loom`
-block what it offers through core. These are five sibling keys, each with its
+block what it offers through core. These are six sibling keys, each with its
 own schema:
 
 | Key | What core does with it | Its schema |
@@ -186,6 +186,7 @@ own schema:
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
 | `delivery` | forwards [`POST /api/loom/deliver`](#deliver-anything-addressed-to-an-agent) to this piece | [specs/agent-runtime.md](specs/agent-runtime.md), "Delivery" |
+| `collections` | serves the piece's shared collections to windows and tokens, checking every row against its viewer | [specs/collections.md](specs/collections.md), "Declaring a provider" |
 
 ```jsonc
 "loom": {
@@ -225,8 +226,33 @@ own schema:
   while it was asked is a 503 with the reason (fail closed). Owner calls never
   ask. With no authority installed, each piece decides by its own agent list
   (`src/grants.ts`).
+- **`grants_store`:** with `grants` only, one of the piece's own store
+  collections (declared in `loom.store`, keeping its revisions). It promises the
+  authority's answer depends on the ask, its installed version and that
+  collection alone. Core then adds `basis: true` to the ask, and the authority
+  may answer `basis: {piece, collection, key, sha256}` beside `allow`: whose store
+  and which collection it read,
+  the document of the collection it decided on, and the sha256 of its text
+  (null: there was none). Core reads the collection from the authority's store
+  file itself, and keeps the answer only when the store read was the
+  authority's own and that document is exactly what the authority read (and the
+  collection didn't change while it was asked); it reuses it while the
+  collection stays in that state, read again before every call, for at most a
+  minute, and only while the authority's bin resolves to the same file. Any
+  write to it (a grant given or taken) is a new ask on the very next
+  call. A failure is never kept, nor an answer without a basis
+  (`src/grants.ts`, t-2065).
 - **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
   may declare it, and a second installed piece offering it is refused.
+- **`collections`:** the record types the piece publishes and the `query` argv
+  core runs with one viewer and a batch of up to 32 queries on stdin
+  ([specs/collections.md](specs/collections.md)). It publishes under its role,
+  else its name: a provider name is one piece's, and `loom` is core's. Its
+  limits are its own: 15 s and 1 MB an answer, four at once and sixteen waiting
+  per provider. Core checks every row it answers against the viewer (the
+  record's audience, core's agent rule, the field classes), so a provider that
+  ignores who's asking leaks nothing: it's out of contract, and answers no one
+  until it's reinstalled (`src/collections/`).
 - **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
   delivers on it (the clock) declares an empty entry for it, which defines
   nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
@@ -239,7 +265,8 @@ own schema:
   section-feed schema; without one, or once orphaned, core's generic render
   shows the conversation.
 - **Against what's installed:** a venue or tool name another installed piece
-  declares is refused, and so is a second piece offering `grants` or `delivery`. A piece's
+  declares is refused, and so is a second piece offering `grants` or `delivery`, or a
+  provider name (a role or a name) another piece already holds. A piece's
   own update, or a rollback, is checked the same way.
 - **One runner.** Core runs an offer's argv, plus that offer's arguments (and
   stdin, where it has one), in the piece's own environment, through the
@@ -252,7 +279,7 @@ own schema:
   and each has a pool of its own, apart from the page's pieces and from each
   other: `mcp_tools` four at once and sixteen waiting, `delivery` eight at
   once and thirty-two waiting (more than one calling piece's share, so one
-  piece at its cap leaves room for the rest). `grants` has 2 s. A non-zero exit keeps its
+  piece at its cap leaves room for the rest). `grants` has 10 s. A non-zero exit keeps its
   code and its stdout, so an offer can say why it failed.
 - **Only a managed piece offers.** A piece found on `PATH` has no package for
   loom to read, so it is never run as an offer. piece.json keeps a copy of the
@@ -711,6 +738,19 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
+- **Served, where a piece says** (t-2065). A path its `loom` block lists in
+  `api_serve` (at most 8, fixed when it's installed) goes to a long-lived
+  `loom-<piece> api --serve` instead of a process per call: core writes one
+  request per line, `{"id", "grant", "request"}`, and the piece answers one
+  line per request, `{"id", "exit", "stdout"}`, where `stdout` is exactly what
+  `api --json` would print. One request at a time per server, at most two
+  servers per version and environment (both busy: the call runs the one-shot
+  way), the same limits as above. `grant` is that call's store grant (or
+  null): the server's own environment has none, and the piece applies it to
+  that request alone. A new install, a settings change, 60 s idle or 10
+  minutes up, and the server goes. List a path only if handling it keeps
+  nothing of one caller for the next (the runtime's `body-sync`, every 2 s
+  from each warm house).
 
 ### `run`: the piece's CLI, from elsewhere
 
@@ -922,3 +962,38 @@ usual validation and limits. The top page's sections appear above the list for
 notices and existing actions. `group`, `repo` and `author` query parameters keep
 the selection and filters in the address. The piece still owns all authorization
 and action handling, including the selected reader's buttons.
+
+### Complete agent jobs
+
+An agent report may include `jobs`, independently of the legacy active-only `doing` summary.
+Each job has a producer-stable `id`, `text`, and `status`: `running` (observed active body),
+`waiting` (queued, held or parked work), `scheduled` (future clock entry), or `backlog`
+(open task without an observed execution). Optional `tasks` contains explicit task references;
+`conversation` restricts visibility using Comms membership or agent ownership; `page` links to
+its producer; `run`, `wake`, `since`, and `at` carry identity and times. Bodies' private labels
+stay out of runtime manifests and core supplies them only after checking visibility.
+
+The Home cards merge all jobs, without the legacy eight-row cap. A task-only row (backlog or waiting on its owner) is
+absorbed when a visible non-backlog job explicitly references it. Matching titles or conversation
+provenance never establish work identity; two concurrent runs remain two rows. Producers omit
+completed work on their next manifest. The complete list is on large/phone cards and under
+“All jobs” on compact cards. Waiting, scheduled and backlog rows do not make an agent busy.
+
+Install core support before producers: older core ignores the optional field. The normal manifest
+size limits still apply (512 KiB and at most 10,000 jobs per agent). Tasks retain their existing
+household-only visibility; adding jobs does not make the Tasks piece available to agent owners.
+
+### Current activity observations
+
+A `doing` row may carry `activity: { action, observedAt, expiresAt }`. This is separate from
+`since`, which remains a lifecycle timestamp. Both times are ISO 8601; expiry must follow the
+observation by at most 30 seconds. `action` is one of Working, Running a command, Reading a
+file, Editing a file, Writing a file, Searching files, Searching the web, Using a tool, or
+Starting a helper. Arguments, paths, chat excerpts, and activity-card summaries are excluded.
+Core applies conversation membership before putting an observation in the shell. Its ticker
+uses fixed venue categories and the authorized conversation link, and stops claiming current
+activity at expiry even when its shell is cached or offline.
+
+An agent report may instead carry `idle: { observedAt, expiresAt }` with the same time bounds,
+only when its producer actually observed that it has no body working or unknown. Missing,
+expired, and offline reports mean activity unavailable; they are not proof of idle.

@@ -18,6 +18,7 @@
  * Install only pieces you'd trust with the daemon itself.
  */
 import { pieceOfPath } from '../cli/pieces-managed.js';
+import { serveCall } from './piece-server.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
@@ -85,16 +86,21 @@ type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?:
 type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
+let manifestGeneration = 0;
 
 /**
  * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
  * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
+ * `path`: that piece's alone, in every scope (t-2065).
  */
-export function expirePieceManifests(): void {
-  cache.clear();
+export function expirePieceManifests(path?: string): void {
+  manifestGeneration++;
+  if (path === undefined) { cache.clear(); return; }
+  for (const k of [...cache.keys()]) if (k.startsWith(`${path}\0`)) cache.delete(k);
 }
 
 export function clearPieceCache(path?: string): void {
+  manifestGeneration++;
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
   for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
@@ -189,18 +195,24 @@ export const MAX_DELIVERY_RUNNING = 8;
 export const MAX_DELIVERY_WAITING = 32;
 export const MAX_GRANTS_RUNNING = 8;
 export const MAX_GRANTS_WAITING = 32;
-export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants';
+export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants' | 'collections';
 const offerPools: Record<Exclude<OfferPool, 'page'>, Pool> = {
   tools: new Pool(MAX_TOOLS_RUNNING, MAX_TOOLS_WAITING),
   grants: new Pool(MAX_GRANTS_RUNNING, MAX_GRANTS_WAITING),
   delivery: new Pool(MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING),
+  // Bounded per provider by its caller (src/collections/providers.ts: four running, sixteen waiting each).
+  collections: new Pool(Infinity),
 };
 
 async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
-function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number }): Promise<Answer> {
+/**
+ * `onLine`: the answer read as it comes, a line at a time (collections, src/collections/serve.ts): nothing is kept, and
+ * `stop` ends the piece there (`stopped`).
+ */
+function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number; onLine?: (line: string) => 'go' | 'stop' }): Promise<Answer> {
   return new Promise((resolve) => {
     // Its own process group, so a timeout takes the piece's children with it.
     const child = spawn(path, args, {
@@ -224,10 +236,22 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       resolve(r);
     };
     const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
-    child.stdout?.on('data', (d: Buffer) => {
-      bytes += d.length;
-      if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
-      out += d.toString('utf-8');
+    // Decoded as a stream, so a character split across two chunks stays whole.
+    child.stdout?.setEncoding('utf-8');
+    child.stdout?.on('data', (d: string) => {
+      bytes += Buffer.byteLength(d);
+      // Read a line at a time, only the line still coming is held, and the cap is on it: every line before it was
+      // already read (and checked) by the caller, so no limit here turns on what an unread line held.
+      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
+      out += d;
+      if (!opts.onLine) return;
+      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { killGroup(child.pid); finish({ ok: false, reason: 'line too long' }); return; }
+      let i;
+      while ((i = out.indexOf('\n')) >= 0) {
+        const line = out.slice(0, i);
+        out = out.slice(i + 1);
+        if (line.trim() && opts.onLine(line) === 'stop') { killGroup(child.pid); finish({ ok: false, reason: 'stopped' }); return; }
+      }
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));
     if (opts.stdin !== undefined && child.stdin) {
@@ -238,7 +262,11 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
-      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+      const done = () => {
+        // The last line, unterminated.
+        if (opts.onLine && out.trim() && !settled) { const line = out; out = ''; if (opts.onLine(line) === 'stop') return finish({ ok: false, reason: 'stopped' }); }
+        finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+      };
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
       drain = setTimeout(done, DRAIN_MS);
@@ -258,11 +286,11 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number } = {},
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number; onLine?: (line: string) => 'go' | 'stop' } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
   const r = opts.pool && opts.pool !== 'page'
-    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
+    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs, onLine: opts.onLine }))
     : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
   if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;
@@ -332,15 +360,20 @@ function shownPieces(env: NodeJS.ProcessEnv): Array<{ name: string; path: string
  * this while an app is open). Returns each piece's answer as a fingerprint, so a caller can tell which changed;
  * a piece that changed has its kept pages dropped, so the next look at them is fresh.
  */
-export async function refreshPieceManifests(env: NodeJS.ProcessEnv): Promise<Map<string, string>> {
-  const installed = shownPieces(env);
+export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Promise<Map<string, string>> {
+  // `only`: just these pieces' paths (the one that said it moved, t-2065); the others keep their last answers.
+  const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
     const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
+    const generation = manifestGeneration;
+    const before = cache.get(key);
     const result = fetchManifest(p.name, p.path, env);
     const r = await result;
     // A piece that failed this once keeps its last good answer, as a page load would.
-    if ('manifest' in r || !cache.has(key)) cache.set(key, { at: Date.now(), result });
+    // Invalidation or a newer page load wins over a refresh started before it.
+    if (generation === manifestGeneration && cache.get(key) === before && ('manifest' in r || !before))
+      cache.set(key, { at: Date.now(), result });
     out.set(p.path, 'manifest' in r ? JSON.stringify(r.manifest) : '');
   }));
   return out;
@@ -487,7 +520,17 @@ export async function pieceApi(
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
-  const r = await apiPool.run(() => run(path, ['api', '--json'], withGrant(env, path, request.caller), { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES }), gone);
+  const r = await apiPool.run(() => {
+    const env1 = withGrant(env, path, request.caller);
+    // A path the piece answers from its long-lived server (piece-server.ts, t-2065): the grant goes in the request.
+    const served = pieceOfPath(env, path)?.loom.api_serve;
+    if (Array.isArray(served) && served.includes(request.path)) {
+      const { LOOM_STORE_GRANT: grant, ...rest } = env1;
+      const answer = serveCall(path, resolved(path), pieceEnvFor(path, pieceEnv(rest)), grant, request, { timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
+      if (answer) return answer;
+    }
+    return run(path, ['api', '--json'], env1, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES });
+  }, gone);
   if (r === null) return { status: 503, body: { error: 'busy: too many piece API calls at once; try again shortly' } };
   if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
   const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;

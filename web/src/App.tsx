@@ -358,7 +358,8 @@ export default function App() {
       if (!ch) return false;
       const r: ActResult = await act(c, ch.csrf, action, fields);
       say({ ok: r.ok, message: r.message, from: r.from, undo: r.undo });
-      if (r.go) goTo(r.go); else if (r.ok) void pg.load(pg.url, false);
+      // Unsure whether it landed (an unreadable answer, t-1995): read the page again, so it shows what loom recorded.
+      if (r.go) goTo(r.go); else if (r.ok || r.unsure) void pg.load(pg.url, false);
       return r.ok;
     };
     const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => sendAs(a, f, c), go: goTo, wide, stale: !pg.fresh, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });

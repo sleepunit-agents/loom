@@ -22,9 +22,10 @@
  * household file) goes to household owners. And the pieces are asked one round at a time, at most every
  * TICK_MIN_MS however many apps open, with at most STREAMS_PER_SESSION streams per signed-in browser.
  */
-import { watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dataChanges } from './live-files.js';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
 
@@ -40,7 +41,11 @@ export const PIECES_TICK = 'pieces.tick';
 
 /** What an app's owner may see: every agent (`*`, a household owner), or theirs. */
 export type Sees = '*' | readonly string[];
-interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string }
+/**
+ * `id` is the stream's name (its `hello`, docs/specs/collections.md: queries name it to subscribe on it); `seq` counts
+ * the frames this stream was sent and nothing else; `behind` counts writes the socket hasn't drained.
+ */
+interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void }
 const clients = new Set<Client>();
 let watcher: FSWatcher | undefined;
 let ticking: NodeJS.Timeout | undefined;
@@ -49,7 +54,10 @@ const pending = new Map<Client, NodeJS.Timeout>();
 const lastSent = new WeakMap<Client, number>();
 let ticked = 0;
 let tickRunning: Promise<void> | undefined;
-let tickAgain = false;
+// What the next round asks, once the one under way is done: false nothing, true every piece, a set just those paths.
+let tickAgain: boolean | Set<string> = false;
+// The regular round came due while another ran: it runs next.
+let roundAgain = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
 
@@ -78,11 +86,35 @@ function nudge(c: Client): void {
 }
 
 function send(c: Client, text: string): void {
-  try { c.res.write(text); } catch { drop(c); }
+  try {
+    if (!c.res.write(text)) {
+      if (!c.behind) c.res.once('drain', () => { c.behind = 0; });
+      c.behind++;
+    }
+  } catch { drop(c); }
+}
+
+/** A numbered frame on a stream (collections.md, "Core to window"): its seq is the stream's next. */
+function frame(c: Client, event: string, data: Record<string, unknown>): number {
+  c.seq++;
+  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`);
+  return c.seq;
+}
+
+/** What the collections runtime holds of a stream (src/collections/subs.ts, StreamPort). */
+export interface StreamHandle {
+  id: string;
+  session: string;
+  frame: (event: string, data: Record<string, unknown>) => number;
+  seq: () => number;
+  behind: () => number;
+  close: () => void;
 }
 
 function drop(c: Client): void {
+  if (!clients.has(c)) return;
   clients.delete(c);
+  c.onClose?.();
   clearTimeout(pending.get(c)); pending.delete(c);
   if (clients.size) return;
   watcher?.close(); watcher = undefined;
@@ -93,28 +125,64 @@ function drop(c: Client): void {
 
 const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
-/** Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change. */
-function tick(now = false): Promise<void> {
+/**
+ * Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change.
+ * `now`: a piece's own word, asked at once; `only` (with it): just the paths that moved (t-2065), else every piece.
+ */
+function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
   // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
-  if (now && tickRunning) { tickAgain = true; return tickRunning; }
+  if (now && tickRunning) {
+    tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
+    return tickRunning;
+  }
+  // The regular round, due while one piece's round runs: it comes straight after, never skipped.
+  if (!now && tickRunning && Date.now() - ticked >= TICK_MIN_MS) { roundAgain = true; return tickRunning; }
   if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
-  ticked = Date.now();
-  // A piece's own word: every scope's kept answer goes (the open ones are asked again just below).
-  if (now) expirePieceManifests();
+  // A round of every piece resets the clock; one piece's word doesn't, so the round every WATCH_MS still comes.
+  if (!only) ticked = Date.now();
+  // A piece's own word: its kept answer goes in every scope (the open ones are asked again just below).
+  if (now) { if (only) for (const p of only) expirePieceManifests(p); else expirePieceManifests(); }
   tickRunning = (async () => {
     const scopes = new Map<string, NodeJS.ProcessEnv>();
     for (const c of clients) scopes.set(scopeOf(c.env), c.env);
     for (const [scope, env] of scopes) {
-      const now = await refreshPieceManifests(env).catch(() => undefined);
+      const now = await refreshPieceManifests(env, only).catch(() => undefined);
       if (!now) continue;
       const before = seen.get(scope);
       let moved = false;
       if (before) for (const [path, print] of now) if (before.get(path) !== print) { clearPiecePages(path); moved = true; }
-      seen.set(scope, now);
+      // Only what was asked replaces what was seen: the others' last answers stay the ones to compare with.
+      // A round of some pieces is no first look at a scope: the next full round is (else every other piece "moved").
+      if (only && !before) continue;
+      seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
+      // Piece pages stay piece-rendered: a `page` frame says which piece's pages moved (collections.md), beside the bare
+      // change that t-2032 retires.
+      if (before) for (const [path, print] of now) if (before.get(path) !== print) {
+        const piece = basename(path).replace(/^loom-/, '');
+        // Household owners' streams only: an owner of some agents isn't told which pieces are installed (a piece that
+        // doesn't scope them is hidden from them), and still hears the bare change, as before.
+        for (const c of clients) if (scopeOf(c.env) === scope && c.sees === '*') frame(c, 'page', { piece });
+      }
     }
-  })().finally(() => { tickRunning = undefined; if (tickAgain) { tickAgain = false; void tick(true); } });
+  })().finally(() => {
+    tickRunning = undefined;
+    const again = tickAgain, round = roundAgain;
+    tickAgain = false; roundAgain = false;
+    // A regular round due goes first: it asks every piece, the one that moved too (its kept answer already went when
+    // it said so), so a stream of one piece's words can never put it off. Else that piece's word.
+    if (round && again !== true) void tick();
+    else if (again) void tick(true, again === true ? undefined : again);
+  });
   return tickRunning;
+}
+
+/** The piece paths a tick file names (one per line after its time), or undefined: every piece. */
+function tickPaths(home: string): Set<string> | undefined {
+  try {
+    const [, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
+    return paths.length ? new Set(paths) : undefined;
+  } catch { return undefined; }
 }
 
 /**
@@ -123,12 +191,16 @@ function tick(now = false): Promise<void> {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}) };
+  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
+  // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
+  const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
+  if (held) c.onClose = held.onClose;
+  res.write(`event: hello\ndata: ${JSON.stringify({ stream: c.id, scope: held?.scope ?? 0, seq: 0, ...(held ? { viewer: held.viewer } : {}) })}\n\n`);
   whose = opts.place;
   clients.add(c);
   res.on('close', () => drop(c));
@@ -136,7 +208,7 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => {
-        if (String(file) === PIECES_TICK) void tick(true);
+        if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
         else if (file && DATA.test(String(file)) && files.moved(String(file))) changed(whose(String(file)));
       });
       // Reconcile the registration gap; queued callbacks then see the updated baseline.
@@ -148,10 +220,21 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   void tick();
 }
 
+/** Close every stream of a session (sign-out: collections.md, "Sign-out or revocation closes the session's streams"). */
+export function closeSession(session: string): void {
+  for (const c of [...clients]) if (c.session === session) { try { c.res.end(); } catch { /* gone */ } drop(c); }
+}
+
 /** How many apps are listening (for tests). */
 export const listening = () => clients.size;
 
-/** A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now. */
-export function piecesMoved(home: string): void {
-  try { writeFileSync(join(home, PIECES_TICK), String(Date.now())); } catch { /* the pieces' own tick finds it */ }
+/**
+ * A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now.
+ * `path`: the piece that said so, and only it is asked again (t-2065: the runtime says so at every body's start and end,
+ * and each word used to re-run every piece's `ui --json`); none, every piece.
+ */
+export function piecesMoved(home: string, path?: string): void {
+  // A producer's new observation also matters when no stream is open to watch the tick file.
+  expirePieceManifests(path);
+  try { writeFileSync(join(home, PIECES_TICK), `${Date.now()}\n${path ?? ''}\n`); } catch { /* the pieces' own tick finds it */ }
 }

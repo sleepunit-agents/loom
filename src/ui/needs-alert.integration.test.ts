@@ -7,6 +7,7 @@
  * $LOOM_HOME/runtime-calls.jsonl: the owner's words reach the runtime as a person's message on the conversation's
  * own venue and place (here `wake`, a venue no piece may deliver a person's message on), from core (`source: loom`).
  */
+import { requestTrace } from './request-trace.fixture.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,15 +94,15 @@ describe('a Needs you alert: its sheet replies, marks done and dismisses', () =>
     rmSync(h.home, { recursive: true, force: true });
   });
 
-  const login = async () => {
-    const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
+  const login = async (request = fetch) => {
+    const r = await request(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
     return (r.headers.get('set-cookie') ?? '').split(';')[0];
   };
-  const inbox = async (cookie: string): Promise<Data> => (await fetch(`${base}/inbox`, { headers: { cookie, accept: 'application/json' } })).json();
+  const inbox = async (cookie: string, request = fetch): Promise<Data> => (await request(`${base}/inbox`, { headers: { cookie, accept: 'application/json' } })).json();
   const alertOf = (d: Data): Data => (d.items as Data[]).find((i) => i.kind === 'alert' && /needs you/.test(i.text));
   /** What the sheet does with one of its buttons (blocks.tsx ActButton, inbox.tsx ReplyBox): post the action, as fetch. */
-  const press = async (cookie: string, d: Data, item: Data, action: string, fields: Record<string, string>) => {
-    const r = await fetch(`${base}${item.source.act}`, {
+  const press = async (cookie: string, d: Data, item: Data, action: string, fields: Record<string, string>, request = fetch) => {
+    const r = await request(`${base}${item.source.act}`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
       body: new URLSearchParams({ _csrf: d.ctx.csrf, _action: action, _path: 'loom:inbox', ...fields }).toString(),
     });
@@ -159,12 +160,13 @@ describe('a Needs you alert: its sheet replies, marks done and dismisses', () =>
   });
 
   it('Done answers it: out of Needs you, in the history as Done', async () => {
-    const cookie = await login();
-    const d = await inbox(cookie);
+    const trace = requestTrace();
+    const cookie = await login(trace.fetch);
+    const d = await inbox(cookie, trace.fetch);
     const a = alertOf(d);
     const done = a.actions.find((b: Data) => b.label === 'Done');
-    expect(await press(cookie, d, a, done.action, done.fields)).toMatchObject({ ok: true });
-    const after = await inbox(cookie);
+    expect(await press(cookie, d, a, done.action, done.fields, trace.fetch)).toMatchObject({ ok: true });
+    const after = await inbox(cookie, trace.fetch);
     expect(alertOf(after)).toBeUndefined();
     expect((after.items as Data[]).find((i) => i.kind === 'answered')).toMatchObject({ outcome: 'Done', text: a.text });
     expect(calls()).toEqual([]);
@@ -228,15 +230,15 @@ describe('a yes/no Needs you: Yes and No answer it, and nothing typed is lost to
     rmSync(h.home, { recursive: true, force: true });
   });
 
-  const login = async () => {
-    const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
+  const login = async (request = fetch) => {
+    const r = await request(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
     return (r.headers.get('set-cookie') ?? '').split(';')[0];
   };
-  const inbox = async (cookie: string): Promise<Data> => (await fetch(`${base}/inbox`, { headers: { cookie, accept: 'application/json' } })).json();
+  const inbox = async (cookie: string, request = fetch): Promise<Data> => (await request(`${base}/inbox`, { headers: { cookie, accept: 'application/json' } })).json();
   const alertOf = (d: Data): Data => (d.items as Data[]).find((i) => i.kind === 'alert' && i.attention);
   /** What the sheet posts (inbox.tsx useAnswer, blocks.tsx ActButton): the action, with the item's reply fields. */
-  const press = async (cookie: string, d: Data, item: Data, action: string, fields: Record<string, string>) => {
-    const r = await fetch(`${base}${item.source.act}`, {
+  const press = async (cookie: string, d: Data, item: Data, action: string, fields: Record<string, string>, request = fetch) => {
+    const r = await request(`${base}${item.source.act}`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
       body: new URLSearchParams({ _csrf: d.ctx.csrf, _action: action, _path: 'loom:inbox', ...fields }).toString(),
     });
