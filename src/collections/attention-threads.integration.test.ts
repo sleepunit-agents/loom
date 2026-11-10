@@ -245,7 +245,7 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
   it('Activity shows a spawned job\'s ask only to its thread\'s member', async () => {
     const parent = thread('sam');
     const job = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-a', label: 'job', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime').conversation;
-    adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' });
+    const jobThread = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: job, parent: parent.conversation, text: 'Restart the build' }) as { id: string };
     const d = needs(job, 'Job: OK to restart the build?') as unknown as { id: string };
     const e = `d~art~${d.id}`;
     const open = async (who: string) => (await get(who, `/activity?e=${encodeURIComponent(e)}`)).activity.open;
@@ -253,6 +253,10 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     const jon = await open('jonathan');
     expect(jon).toBeTruthy();
     expect(jon.needs).toBeUndefined();
+    // Its thread deleted: still Sam's.
+    deleteThread(h, threadFor(h, member('sam'), jobThread.id));
+    expect((await open('sam')).needs).toBeTruthy();
+    expect((await open('jonathan')).needs).toBeUndefined();
   }, 30_000);
 
   it('the conversation page says "needs you" only to whom the ask is for', async () => {

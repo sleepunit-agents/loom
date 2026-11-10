@@ -2629,7 +2629,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const person = who?.member?.person ?? firstOwner(hh).person;
       const named = householdPersonName(hh, person) ?? (person === firstOwner(hh).person && hh.owner ? hh.owner : person);
       const ownerLabel = named.split(/[\s-]+/)[0].replace(/^./, (x) => x.toUpperCase());
-      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github });
+      const sees = seesConversation(hh, lookerOf(opts, hh));
+      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github, seesAsk: (cv, a) => sees(cv, a) });
       { const ctx = { ...ctxOf(at), agents: agentsOf(hh)! }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
         return view('activity', { activity, ctx, chrome: ch }); }
     }
