@@ -166,7 +166,9 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     // Within the pieces' round: the runtime's word is heard at once alone, but after the 15 s round when other scopes'
     // rounds are under way (live.ts tick; the bare change waits the same).
     await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent(), { timeout: 30_000 }).toMatch(/working/i);
-    expect(await rail(p, 'nova').textContent()).toContain('Sorting the photo library');
+    // Its own "is doing" box on the card (t-2077), under the card's button.
+    const wrap = p.locator('.loom-arail .loom-rcard-wrap').filter({ has: p.locator('.loom-rcard[data-agent="nova"]') });
+    expect(await wrap.locator('.loom-doing__box').textContent()).toContain('Sorting the photo library');
     d.report({
       art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
       mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
