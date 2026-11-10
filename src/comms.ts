@@ -1385,9 +1385,9 @@ export const MAX_DETAIL = 4000;
 export const MAX_BODY = 32_000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 /** Shown text: line breaks and tabs, and colour codes (ANSI SGR) only; no other control or line separator. */
-const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
+const SHOWN_TEXT = /^(?:(?![\p{Cf}])[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/u;
 /** A step's one-line word (its result, a plan item): printable, no C1 control (NEL, 8-bit CSI) either. */
-const STEP_LINE = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]*$/;
+const STEP_LINE = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029\p{Cf}]*$/u;
 type StepWords = { detail?: string; body?: string; result?: string; items?: Array<{ text: string; state: 'done' | 'now' | 'todo' }> };
 type StepPlain = { exit?: number; limit?: number; t0?: string; t1?: string; parent?: string };
 
@@ -1411,9 +1411,9 @@ function stepOfCard(o: Record<string, unknown>, i: number): { words: StepWords |
   if (o.exit !== undefined) { if (!Number.isInteger(o.exit) || Math.abs(o.exit as number) > 999_999) bad('exit', 'is a whole number'); plain.exit = o.exit as number; }
   if (o.limit !== undefined) { if (!Number.isInteger(o.limit) || (o.limit as number) < 1 || (o.limit as number) > 86_400) bad('limit', 'is 1-86400 seconds'); plain.limit = o.limit as number; }
   if (o.parent !== undefined) { if (typeof o.parent !== 'string' || !CARD_ID.test(o.parent)) bad('parent', 'is a card id'); plain.parent = o.parent as string; }
-  if (o.end !== undefined) { if (typeof o.end !== 'string' || !ISO.test(o.end)) bad('end', 'is an ISO time'); plain.t1 = o.end as string; }
+  if (o.end !== undefined) { if (typeof o.end !== 'string' || !ISO.test(o.end) || !Number.isFinite(Date.parse(o.end))) bad('end', 'is an ISO time'); plain.t1 = o.end as string; }
   // Its own start, when it says one that's a time (a house's word is only kept as a time).
-  if (typeof o.at === 'string' && ISO.test(o.at)) plain.t0 = o.at;
+  if (typeof o.at === 'string' && ISO.test(o.at) && Number.isFinite(Date.parse(o.at))) plain.t0 = o.at;
   return { words: Object.keys(words).length ? words : null, plain };
 }
 
@@ -1456,8 +1456,9 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
     // Private Comms and spawned jobs never fall back to the agent-wide conversation viewer,
     // including after deletion. Their member-only thread is their sole step store.
     if (!c || c.venue === COMMS_VENUE || c.venue === 'spawn') return fail('conflict: that conversation has no live thread', 409);
-    // A conversation's own page keeps a step's label only (its further words are a Comms thread's, t-2109).
-    const sealed = checked.map((c) => ({ id: c.id, tool: c.tool, state: c.state, words: encrypt(h.home, env, c.summary) }));
+    // A conversation's own page keeps a step's label only (its further words are a Comms thread's, t-2109); never the
+    // body's own words (a `text` card's label is their first line), which only its member's thread shows.
+    const sealed = checked.filter((c) => c.tool !== 'text').map((c) => ({ id: c.id, tool: c.tool, state: c.state, words: encrypt(h.home, env, c.summary) }));
     return withMessages(h.home, (db) => db.transaction(() => {
       let added = 0, updated = 0;
       for (const c of sealed) {
@@ -1479,7 +1480,9 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       const was = JSON.parse(prior.card_json) as Record<string, unknown>;
       // When it left running, by its own word or core's clock (t-2109: how long a step took).
       const ended = c.state !== 'running' ? (c.plain.t1 ?? (typeof was.t1 === 'string' ? was.t1 : was.state === 'running' ? nowIso(now) : undefined)) : undefined;
-      const card = { ...was, ...c.plain, state: c.state, ...(ended ? { t1: ended } : {}) };
+      // Its plain parts are the post's whole, as its words are: one it no longer says is gone (its start and end kept).
+      const { exit: _e, limit: _l, parent: _p, ...kept } = was;
+      const card = { ...kept, ...c.plain, state: c.state, ...(ended ? { t1: ended } : {}) };
       if (c.state === 'running') delete card.t1;
       withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(card), r.id, prior.seq));
       // Its label moves with it (t-1944: a failed step says why, a plan says where it's got to), sealed like the first
@@ -1501,9 +1504,13 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
     }
   }
   settleStarts(h.home, r.id);
-  // A sign of life alone (t-2109) keeps the beat and the working line, as a card does.
-  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null,
-    ...(alive ? { alive_at: alive.at, ...(alive.tokens !== undefined ? { alive_tokens: alive.tokens } : {}) } : {}) }, now));
+  // A running step starts a spell of work; any post keeps the beat of one already going (t-2109). A post of finished
+  // steps or a sign of life alone never starts one: the runtime tells a turn's end (its status) before its last cards.
+  const working = r.working_since !== null || checked.some((c) => c.state === 'running');
+  // A sign of life moves only forward, and never to one from the future (a clock ahead would hold it for good).
+  const takeAlive = !!alive && alive.at <= now.getTime() + 60_000 && alive.at > (r.alive_at ?? 0);
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { ...(working ? { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null } : {}),
+    ...(takeAlive ? { alive_at: alive.at, ...(alive.tokens !== undefined ? { alive_tokens: alive.tokens } : {}) } : {}) }, now));
   return { ok: true, added, updated };
 }
 

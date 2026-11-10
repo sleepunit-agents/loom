@@ -881,7 +881,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const alive = aliveOf(thread.state, messages.filter((m) => m.kind === 'card') as unknown as WorkCard[], now);
   // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
   const running = (() => {
-    const cards = messages.filter((m) => m.kind === 'card' && !isPlan(m) && (!lastMine || m.seq > lastMine.seq));
+    // Steps only: the body's own words (a `text` card) aren't a step it's on.
+    const cards = messages.filter((m) => m.kind === 'card' && !isPlan(m) && String(m.card?.tool ?? '') !== 'text' && (!lastMine || m.seq > lastMine.seq));
     return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
   })();
   // On a desktop, the agents' rail beside this tile opens this agent's card (desk-rail.ts).

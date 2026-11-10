@@ -614,6 +614,11 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       expect(JSON.stringify(earlier)).toContain('History step 0');
       expect(JSON.stringify(earlier)).not.toContain('History step 100');
     });
+    it('a conversation page keeps steps only, never the body\'s own words (t-2109)', async () => {
+      const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'wake', place: 'watch-words', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:runtime').conversation;
+      expect((await api(tok.runtime, 'comms/activity', { conversation: cv, run: 'r1', cards: [card('said', { tool: 'text', state: 'done', summary: 'THE-BODY-WORDS', body: 'THE-BODY-WORDS' }), card('step')] })).body).toMatchObject({ ok: true, added: 1 });
+      expect((await conversationSteps(h.home, process.env, cv)).map((s) => s.text)).toEqual(['Ran the tests']);
+    });
     it('never revives a deleted private thread as agent-wide conversation steps', async () => {
       const t = await open();
       recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');

@@ -62,12 +62,15 @@ export function took(msN: number): string {
 export function workTree<T extends WorkCard>(cards: T[]): Array<WorkNode<T>> {
   const nodes = new Map<string, WorkNode<T>>();
   const top: Array<WorkNode<T>> = [];
+  // Whether `p` is `n` or already sits somewhere under it.
+  const under = (p: WorkNode<T>, n: WorkNode<T>): boolean => p === n || n.kids.some((k) => under(p, k));
   for (const c of cards) if (!isPlan(c)) nodes.set(c.id, { c, kids: [] });
   for (const c of cards) {
     if (isPlan(c)) continue;
     const n = nodes.get(c.id)!;
     const p = typeof c.card?.parent === 'string' ? nodes.get(c.card.parent) : undefined;
-    if (p && p !== n) p.kids.push(n); else top.push(n);
+    // Under its parent unless that would close a loop (a→b, b→a): then at the top, never lost.
+    if (p && !under(p, n)) p.kids.push(n); else top.push(n);
   }
   return top;
 }

@@ -20,6 +20,12 @@ describe('work rows', () => {
     expect(stepsUnder(tree[0])).toBe(2);
   });
 
+  it('a loop of parents (a→b, b→a) keeps every step: one at the top, never lost', () => {
+    const tree = workTree([card('a', 'Bash', 'done', { parent: 'b' }), card('b', 'Bash', 'done', { parent: 'a' }), card('s', 'Bash', 'done', { parent: 's' })]);
+    const all = (ns: typeof tree): string[] => ns.flatMap((n) => [n.c.id, ...all(n.kids)]);
+    expect(all(tree).sort()).toEqual(['a', 'b', 's']);
+  });
+
   it('times a step from its own start and end, and a running one to now', () => {
     expect(spanOf(card('x', 'Bash', 'done', { t0: iso(0), t1: iso(133_000) }))).toEqual({ start: T0, end: T0 + 133_000 });
     expect(spanOf(card('y', 'Bash', 'running', { t0: iso(0) })).end).toBeNull();
