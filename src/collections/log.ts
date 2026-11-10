@@ -72,6 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_domain ON idx (domain);
 CREATE TABLE IF NOT EXISTS receipts (
   op       TEXT PRIMARY KEY,
   session  TEXT NOT NULL,
+  what     TEXT NOT NULL DEFAULT '',
   at       INTEGER NOT NULL,
   state    TEXT NOT NULL,
   answer   TEXT
@@ -318,12 +319,13 @@ export type OpBegin = { fresh: true } | { state: 'accepted' | 'unknown' } | { an
  * an action twice), or another session's id (refused). Shared by every listener, so a retry that lands on another
  * one is the same operation.
  */
-export function beginOp(db: Database, op: string, session: string, now = Date.now()): OpBegin {
+export function beginOp(db: Database, op: string, session: string, what: string, now = Date.now()): OpBegin {
   return db.transaction((): OpBegin => {
     db.prepare('DELETE FROM receipts WHERE at < ?').run(now - RECEIPT_KEEP_MS);
-    const r = db.prepare('SELECT session, at, state, answer FROM receipts WHERE op = ?').get(op) as { session: string; at: number; state: string; answer: string | null } | undefined;
-    if (!r) { db.prepare("INSERT INTO receipts (op, session, at, state) VALUES (?, ?, ?, 'accepted')").run(op, session, now); return { fresh: true }; }
-    if (r.session !== session) return { other: true };
+    const r = db.prepare('SELECT session, what, at, state, answer FROM receipts WHERE op = ?').get(op) as { session: string; what: string; at: number; state: string; answer: string | null } | undefined;
+    if (!r) { db.prepare("INSERT INTO receipts (op, session, what, at, state) VALUES (?, ?, ?, ?, 'accepted')").run(op, session, what, now); return { fresh: true }; }
+    // Another session's, or this id used for another action: not this operation's to answer.
+    if (r.session !== session || r.what !== what) return { other: true };
     if (r.answer !== null) return { answer: r.answer };
     return { state: now - r.at > RECEIPT_STUCK_MS ? 'unknown' : 'accepted' };
   }).immediate();

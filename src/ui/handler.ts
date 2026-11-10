@@ -1779,9 +1779,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // which would sign whoever read the file in (sessions.ts keeps only hashes for the same reason).
     const opSession = createHmac('sha256', storeFor(opts).key).update(`loom-op\0${streamOwner(req, who)}`).digest('base64url');
     const opHome = (opts.household?.() ?? hh)?.home;
-    if (op !== null) {
-      if (!/^[A-Za-z0-9_-]{16,64}$/.test(op) || !opHome) return send(res, 400, 'text/plain', 'bad operation id');
-      const b = withLog(opHome, (db) => beginOp(db, op, opSession));
+    // Without a household there's no shared store for receipts: the action runs as one without an id.
+    if (op !== null && opHome) {
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(op)) return send(res, 400, 'text/plain', 'bad operation id');
+      // What the id was made for: the same action, at the same place, with the same fields. Keyed, so the values (a
+      // secret typed into a form) can't be guessed back from what live.db keeps.
+      const what = createHmac('sha256', storeFor(opts).key).update(JSON.stringify([pathname, action, back, [...form].filter(([k]) => k !== '_op' && k !== '_csrf')])).digest('base64url');
+      const b = withLog(opHome, (db) => beginOp(db, op, opSession, what));
       if ('other' in b) return sendJson(res, 409, { error: 'that operation id is another session\'s' });
       if ('answer' in b) return send(res, 200, 'application/json', b.answer);
       if ('state' in b) return sendJson(res, 202, { ok: false, message: b.state === 'accepted' ? 'Still working on it.' : 'loom didn\'t hear how that went: look before trying again.', receipt: { op, state: b.state } });

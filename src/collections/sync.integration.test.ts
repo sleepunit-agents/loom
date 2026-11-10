@@ -426,8 +426,9 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
       const again = await act(tok.jonathan, { _action: 'close', id: 't-1', _op: op });
       expect(await again.json()).toEqual(body);
       expect(acted()).toEqual(['close t-1']);
-      // Another session can't use or read it.
+      // Another session can't use or read it, and this one can't spend the id on another action.
       expect((await act(tok.loren, { _action: 'close', id: 't-1', _op: op })).status).toBe(409);
+      expect((await act(tok.jonathan, { _action: 'close', id: 't-2', _op: op })).status).toBe(409);
       expect(acted()).toEqual(['close t-1']);
     });
 
