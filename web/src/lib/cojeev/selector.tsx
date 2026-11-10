@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { shapeContour, signatureShapePaths } from "@/lib/cojeev/signature-shapes";
 import { useChoreography } from "@/lib/cojeev-motion/choreography";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
@@ -169,7 +169,7 @@ export function SelectorGlyph({
           } as React.CSSProperties
         }
       />
-      <motion.svg
+      <m.svg
         data-slot="selector-drawing"
         aria-hidden="true"
         focusable="false"
@@ -178,7 +178,7 @@ export function SelectorGlyph({
         height="100%"
         style={{ display: "block", overflow: "visible", flexShrink: 0 }}
       >
-        <motion.path
+        <m.path
           data-slot="selector-surface"
           d={paths[shape]}
           initial={false}
@@ -197,7 +197,7 @@ export function SelectorGlyph({
         />
         <AnimatePresence initial={false}>
           {active && showIndicator && (
-            <motion.g
+            <m.g
               key={`${state}-${mark}`}
               data-slot="selector-mark"
               initial={quiet ? false : { opacity: 0, scale: 0.55 }}
@@ -229,10 +229,10 @@ export function SelectorGlyph({
               ) : (
                 <circle cx="50" cy="50" r="13" fill={ink} />
               )}
-            </motion.g>
+            </m.g>
           )}
         </AnimatePresence>
-      </motion.svg>
+      </m.svg>
     </span>
   );
 }

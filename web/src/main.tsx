@@ -2,6 +2,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
+// The shell needs animation and focus/hover features, but no drag or layout projection.
+// Keep these synchronous so initial presence states paint and animate on the first frame.
+import { LazyMotion, domAnimation } from 'motion/react';
 import { markIosApp } from './standalone';
 import { allowZoom, noTouchMenus } from './immersion';
 import { keptFollow, wearContrast, wearMotion } from './access';
@@ -22,4 +25,4 @@ noTouchMenus();
 wearMotion(keptFollow('loom-motion'));
 wearContrast(keptFollow('loom-contrast'));
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><App /></LazyMotion></StrictMode>);
