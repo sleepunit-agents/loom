@@ -73,7 +73,7 @@ export function coreAnswers(h: Household, viewer: Viewer, queries: readonly Prov
   const held = new Map<string, MemRecord[]>();
   return queries.map((q) => {
     const decl = CORE_TYPES[q.type];
-    if (!decl) return { id: q.id, rows: [], next: null, error: 'unsupported-version' };
+    if (!decl) return { id: q.id, rows: [], more: false, error: 'unsupported-version' };
     if (!held.has(q.type)) held.set(q.type, recordsFor(h, q.type, viewer));
     return answerFrom(held.get(q.type)!, q, decl, now);
   });

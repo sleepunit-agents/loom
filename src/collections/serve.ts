@@ -212,17 +212,16 @@ export function parseProviderAnswers(v: unknown): ProviderAnswer[] | string {
     if (!a || typeof a !== 'object' || Array.isArray(a) || typeof a.id !== 'string') return 'an answer is {id, rows, next, …}';
     if (a.error !== undefined) {
       if (!PROVIDER_ERRORS.includes(a.error)) return `an answer's error is one of ${PROVIDER_ERRORS.join(', ')}`;
-      out.push({ id: a.id, rows: [], next: null, error: a.error });
+      out.push({ id: a.id, rows: [], more: false, error: a.error });
       continue;
     }
     if (!Array.isArray(a.rows)) return 'an answer\'s rows is a list';
-    if (a.next !== null && (typeof a.next !== 'string' || !a.next.length || a.next.length > MAX_PROVIDER_CURSOR)) return `an answer's next is null or a cursor of at most ${MAX_PROVIDER_CURSOR} characters`;
-    out.push({ id: a.id, rows: a.rows, next: a.next, ...(a.total !== undefined ? { total: a.total } : {}), ...(a.aggregates !== undefined ? { aggregates: a.aggregates } : {}) });
+    if (typeof a.more !== 'boolean') return 'an answer says whether more rows match (more: true or false)';
+    out.push({ id: a.id, rows: a.rows, more: a.more, ...(a.total !== undefined ? { total: a.total } : {}), ...(a.aggregates !== undefined ? { aggregates: a.aggregates } : {}) });
   }
   return out;
 }
 
-const count = (v: unknown): v is { n: number; exact: boolean } => !!v && typeof v === 'object' && Number.isInteger((v as { n: unknown }).n) && (v as { n: number }).n >= 0 && typeof (v as { exact: unknown }).exact === 'boolean';
 
 /** Expiry as the provider says it: ms since the epoch, or an ISO time. NaN when it's neither. */
 function expiresAt(v: unknown): number {
@@ -242,13 +241,12 @@ export const OUT_OF_CONTRACT = Symbol('out of contract');
 export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string): ClientAnswer | QueryError | typeof OUT_OF_CONTRACT {
   if (a.error) return { id: q.id, error: a.error as QueryError['error'] } as QueryError;
   const decl = p.types[q.type];
-  // More rows than asked (the page and one past it): how many it sent may count rows the viewer can't have.
-  if (a.rows.length > q.limit + 1) return OUT_OF_CONTRACT;
+  // More rows than asked (the page and one past it): how many it sent may count rows the viewer can't have. And its own
+  // `more` must agree with what it sent: one that paged before it filtered says there's more beside a short page, and
+  // a short page taken as the end would tell the viewer hidden records matched.
+  if (a.rows.length > q.limit + 1 || (a.more && a.rows.length !== q.limit + 1)) return OUT_OF_CONTRACT;
   const seen = new Set<string>();
   const rows: Record<string, unknown>[] = [];
-  // A row left out (it expired since the provider read it) isn't in the provider's numbers' view of things: its
-  // counts go too.
-  let dropped = false;
   // A row of the viewer's that core can't send (a bad id, a repeat, an expiry that isn't a time, too big) fails this
   // answer alone: it was theirs, so saying so tells them nothing hidden.
   let unusable: 'unavailable' | 'too-big' | undefined;
@@ -275,7 +273,7 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
       expires = expiresAt(r.expires);
       if (!Number.isFinite(expires)) { unusable ??= 'unavailable'; continue; }
       // Expired since the provider read it: the viewer's own row, so leaving it out tells them nothing hidden.
-      if (expires <= now) { dropped = true; continue; }
+      if (expires <= now) continue;
     }
     const out: Record<string, unknown> = { key: `${p.name}/${q.type}/${r.id}` };
     for (const f of q.fields) {
@@ -296,7 +294,6 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   // member's own, for a household owner too) and name their values in a `by`. So until the conformance run can vouch
   // for a provider's counts (t-2026), none are passed on, to anyone: a complete answer core counts itself (every row in
   // it passed core's checks); a partial one has no total ("20", not "20 of …").
-  void dropped;
   const coverage: ClientAnswer['coverage'] = { complete };
   if (complete) coverage.total = { n: rows.length, exact: true };
   let aggregates: ClientAnswer['aggregates'];

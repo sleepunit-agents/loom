@@ -12,7 +12,8 @@ export interface MemRecord { id: string; audience: Record<string, unknown>; expi
 export interface ProviderAnswer {
   id: string;
   rows: Record<string, unknown>[];
-  next: string | null;
+  /** Whether more rows match past the ones sent (the provider's own word: true only beside a full page, as asked). */
+  more: boolean;
   total?: { n: number; exact: boolean };
   aggregates?: Record<string, { n: number; exact: boolean; by?: Record<string, number> }>;
   error?: string;
@@ -72,7 +73,7 @@ export function answerFrom(records: readonly MemRecord[], q: ProviderQuery, decl
   let from = 0;
   if (q.after !== null) {
     const k = q.after;
-    if (!Array.isArray(k) || k.length !== q.order.length + 1) return { id: q.id, rows: [], next: null, error: 'bad-query' };
+    if (!Array.isArray(k) || k.length !== q.order.length + 1) return { id: q.id, rows: [], more: false, error: 'bad-query' };
     from = live.findIndex((r) => cmpKeys(keyOf(r, q.order), k, q.order) > 0);
     if (from < 0) from = live.length;
   }
@@ -92,7 +93,7 @@ export function answerFrom(records: readonly MemRecord[], q: ProviderQuery, decl
     aggregates[a] = { n: live.length, exact: true, ...(by ? { by: counted } : {}) };
   }
   return {
-    id: q.id, rows, next: more ? JSON.stringify(keyOf(page[page.length - 1], q.order)) : null,
+    id: q.id, rows, more,
     total: { n: live.length, exact: true }, ...(q.aggregates.length ? { aggregates } : {}),
   };
 }

@@ -62,7 +62,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     return (a.agents || []).includes(v.agent);
   };
   const answers = ask.queries.map((q) => {
-    if (mode === 'big' && q.id === 'big') return { id: q.id, rows: [{ id: 'x', audience: { owners: true }, title: 'y'.repeat(q.limit * 20000) }], next: null };
+    if (mode === 'big' && q.id === 'big') return { id: q.id, rows: [{ id: 'x', audience: { owners: true }, title: 'y'.repeat(q.limit * 20000) }], more: false };
     let rs = all.filter(mine).filter((r) => q.where.every(([f, op, val]) => op === 'eq' ? r[f] === val : op === 'in' ? val.includes(r[f]) : true));
     rs.sort((a, b) => a.id < b.id ? -1 : 1);
     const total = rs.length;
@@ -72,8 +72,9 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     // short: a page cut before it's filtered, as a provider that pages first would.
     const page = mode === 'short' ? rs.filter((r) => r.agent === 'pond-bot').slice(0, 1) : rs.slice(0, q.limit);
     const more = mode === 'short' ? true : rs.length > q.limit;
+    const unsaid = mode === 'nomore';
     return { id: q.id, rows: page.map((r) => { const o = { id: r.id, audience: r.audience }; if (r.expires) o.expires = r.expires; for (const f of q.fields) if (f in r) o[f] = r[f]; return o; }),
-      next: more ? JSON.stringify([page[page.length - 1].id]) : null, total: { n: total, exact: true }, aggregates: q.aggregates.includes('count') ? { count: { n: total, exact: true, by } } : undefined };
+      ...(unsaid ? {} : { more }), total: { n: total, exact: true }, aggregates: q.aggregates.includes('count') ? { count: { n: total, exact: true, by } } : undefined };
   });
   console.log(JSON.stringify({ answers }));
 });
@@ -229,11 +230,15 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(keys(await one(tok.loren, { where: [['agent', 'eq', 'pond-bot']] }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
     });
 
-    it('a provider that pages before it filters gives a short answer, never a next that says hidden records matched', async () => {
+    it('a provider that pages before it filters says there\'s more beside a short page: out of contract, never a short page taken as the end', async () => {
       mode('tasks', 'short');
-      const a = await one(tok.loren, { limit: 2 });
-      expect(keys(a)).toEqual(['tasks/task/t-2']);
-      expect(a.next).toBeNull();
+      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+      mode('tasks', '');
+      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+      clearOutOfContract();
+      // One that doesn't say whether there's more isn't answering the contract at all.
+      mode('tasks', 'nomore');
+      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
       mode('tasks', '');
       expect(keys(await one(tok.loren, { limit: 2 }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
     });

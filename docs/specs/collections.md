@@ -222,7 +222,9 @@ below), and may not subscribe there: there is no stream on `/api`.
   order values, then its id), and seals it (AES-GCM, bound to the viewer and the query), so a cursor can't be read,
   edited or reused by another viewer or query. A provider is asked for **one row more than the page** and given
   `after` as that order key: core says there's more only when the row past the page is one the viewer may have, so a
-  `next` never says that a hidden record matched (t-2021's review).
+  `next` never says that a hidden record matched (t-2021's review). The provider says `more` itself (more rows match past
+  those it sent), and only beside a full page as asked: a provider that paged before it filtered says there's more
+  beside a short page, which is out of contract (below), never a short page taken as the end.
 - **Fields**: an answer carries the record key and only the fields named (or the type's `default_fields`), further
   cut down to what the viewer's class allows. A field the viewer may not see is **absent**, not null, and the answer
   lists which named fields were withheld, so a window shows "hidden", not "empty". A record's `audience` is sent to
