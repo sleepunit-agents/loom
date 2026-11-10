@@ -175,6 +175,8 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     const stream = await openEvents(base, tok.jonathan); streams.push(stream);
     const a = await ask('jonathan', { where: [['thread', 'eq', t.id]], subscribe: true, stream: stream.hello.stream });
     expect(a.error).toBeUndefined();
+    const metadata = await ask('jonathan', { id: 'metadata', where: [['thread', 'eq', t.id]], fields: ['thread', 'seq', 'delivered'], subscribe: true, stream: stream.hello.stream });
+    expect(metadata.error).toBeUndefined();
     const { pullNow, deliverNow } = await import('./subs.js');
     await pullNow(h.home, 'loom/message'); await deliverNow(h.home);
     await new Promise((r) => setTimeout(r, 1700));
@@ -195,7 +197,9 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
       renameSync(join(h.home, 'comms.key.saved'), join(h.home, 'comms.key'));
     }
     expect(await until(() => stream.frames.some((f) => f.event === 'rows' && f.data.status === 'live'))).toBe(true);
-    expect(stream.frames.filter((f) => f.event === 'rows' && f.data.upserts)).toHaveLength(0);
+    expect(stream.frames.filter((f) => f.event === 'rows' && f.data.sub === 'q' && f.data.upserts)).toHaveLength(0);
+    expect(stream.frames.filter((f) => f.event === 'rows' && f.data.status).every((f) => f.data.sub === 'q')).toBe(true);
+    expect(stream.frames.some((f) => f.event === 'rows' && f.data.sub === 'metadata' && (f.data.upserts as Data[] | undefined)?.some((r) => r.delivered === true))).toBe(true);
     stream.stop();
   }, 20_000);
 
