@@ -730,14 +730,10 @@ function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): Ag
   return [['Today', ''], ['Mind', 'mind'], ...own, ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
 }
 
-/** Your call, everywhere: the household's proposals and every piece's asks (or a lone agent's). For the push watch. */
-export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
+/** Your call for a lone agent (no household): every piece's asks that need the owner. For the push watch. */
+async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
-  const hh = opts.household?.();
-  const needs = (a: HomeAsk) => a.attention !== false;
-  // Push: the watch's own `hears` lets only household owners hear an ask with no agent (the backup's).
-  if (hh) return absorbApprovals([...coreAsks(hh, 'everyone'), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
-  return pieceAsks(pieces, opts.env).filter(needs);
+  return pieceAsks(pieces, opts.env).filter((a) => a.attention !== false);
 }
 
 /** Who loom's pushes are from (VAPID's subject): its public address, else a placeholder. */
@@ -747,52 +743,23 @@ const pushSubject = (opts: UiOptions) => (opts.env.LOOM_PUBLIC_URL?.startsWith('
 export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
   const subject = pushSubject(opts);
   const hh = opts.household?.();
-  // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
-  const ownersOk = new Set((await pieceManifests(opts.env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => pieceSource(p.piece).id));
-  // A device hears only of its member's agents; a household ask, only household owners (docs/specs/owners.md).
-  const hears = (member: string | undefined, a: { agent?: string; open?: boolean }) => {
-    const m = hh ? (member === undefined ? firstOwner(hh) : memberOf(hh, member)) : undefined;
-    if (!hh) return true;
-    if (!m) return false;
-    return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
-  };
-  // An ask from a Comms thread is its member's alone (t-2084): only their devices hear it. A lead card asked from one
-  // (only a household owner may give it) goes to household owners as any household ask does: no agent, so `hears`
-  // admits only them. A thread the store can't place ('') is no one's.
-  // A household owners' ask (a lead card, a job with no thread, a departed member's thread's) has no agent, so `hears`
-  // admits household owners alone. One that's no one's ('no one') goes to a member that's no one.
+  // A household's asks are the attention records (t-2025), read as the core viewer: each one that needs someone, to
+  // exactly the members whose Inbox has it (its audience), so a push follows the Inbox's own rules (whose agents, whose
+  // Comms threads, t-2084; a household owner's alone) and never decides them again. One that's in no one's Inbox yet
+  // (a job whose thread may still open) isn't announced, nor marked pushed; each member is marked on their own (push.ts
+  // watch), so one it falls to later hears of it then.
   return watch(storeFor(opts), async () => {
-    // Threads that can't be read: skip this minute (an ask announced to no one would be marked pushed, never to come).
-    if (hh) threadMembers(hh.home);
-    const whose = hh ? askOwners(hh) : () => undefined;
-    const asks = await yourCall(opts);
-    // A lead card a member's Needs you absorbed is still the household owners' to give: they hear of its own card, by
-    // the key their Inbox files it under (theirs doesn't absorb it), and its member hears of the Needs you.
-    // So is any card its member can't reach (a piece that doesn't understand agent owners): household owners answer it.
-    const leads = hh ? (await pieceManifests(opts.env)).pieces.flatMap((p) => p.manifest.asks.filter((x) => (x.lead || p.manifest.owners !== 2) && x.conversation && x.attention !== false)
-      .map((x) => ({ ...x, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece } as HomeAsk))) : [];
-    // Only one asked from a thread whose member can't give it: one of a household owner's thread is in his Needs you.
-    const absorbed = leads.filter((x) => !asks.some((a) => askKey(a) === askKey(x)) && (() => {
-      const o = whose(x.conversation!, x.agent);
-      return typeof o === 'object' && memberOf(hh!, o.member)?.agents !== '*';
-    })());
-    // One that's no one's for now (a job whose thread may still open) isn't announced, nor marked pushed: it's announced
-    // to whom it falls once it does.
-    const noOne = (a: HomeAsk) => { const cv = a.reply?.fields.conversation ?? a.conversation; return !!cv && whose(cv, a.agent) === 'no one'; };
-    return [...[...asks, ...absorbed].filter((a) => !noOne(a)).map((a) => {
-      const cv = a.reply?.fields.conversation ?? a.conversation;
-      const o = cv ? whose(cv, a.agent) : undefined;
-      const lead = a.lead === true && !a.reply;
-      // A piece's card its member can't reach (a piece that doesn't understand agent owners) is household owners' too.
-      const household = o === 'household' || (o !== undefined && lead) || (typeof o === 'object' && hh && !(() => { const m = memberOf(hh, o.member);
-        return m && owns(m, o.agent) && (!!a.reply || a.source.id === CORE.id || m.agents === '*' || ownersOk.has(a.source.id)); })());
-      return {
-        key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent && !household ? { agent: a.agent } : {}),
-        open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-        ...(household || o === undefined ? {} : { member: o === 'no one' ? '' : o.member }),
-      };
-    }), ...(hh ? commsAnnouncements(hh) : [])];
-  }, subject, send, hears, () => (hh ? firstOwner(hh).person : undefined),
+    if (!hh) return (await yourCall(opts)).map((a) => ({ key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text }));
+    // Comms replies first (a burst of asks can't hold one back), and whatever the records do: a build that fails this
+    // minute leaves its asks unmarked, so they go next minute.
+    let records: MemRecord[] = [];
+    try { records = await attentionFor(opts, { kind: 'core' }); } catch (e) { process.stderr.write(`loom: push couldn't read the attention records: ${(e as Error).message}\n`); }
+    return [...commsAnnouncements(hh), ...records.filter((r) => r.attention === true && r.box !== 'done').map((r) => {
+      const source = r.source as Source;
+      return { key: String(r.id), title: pushTitle(r.kind as AskKind | undefined, (r.sourceLabel as string | undefined) ?? source.id), body: String(r.text ?? ''),
+        members: ((r.audience as { members?: string[] }).members ?? []) };
+    })];
+  }, subject, send, () => true, () => (hh ? firstOwner(hh).person : undefined),
   // A device whose person left the household goes (t-1978); none is the first owner's, who always belongs.
   (member) => !hh || member === undefined || !!memberOf(hh, member));
 }
@@ -843,10 +810,10 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
 }
 
 /** loom's own asks for every agent, as `who` may see them: memory proposals, then conversations that need the owner. */
-export function coreAsks(h: Household, who: Looker | 'everyone'): HomeAsk[] {
+export function coreAsks(h: Household, who: Looker): HomeAsk[] {
   // The backup's alert names its target and its errors: a household owner's only, never an agent owner's (ownerScope).
   return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h, who),
-    ...(who === 'everyone' || who.householdOwner ? backupAsks(h) : [])];
+    ...(who.householdOwner ? backupAsks(h) : [])];
 }
 
 /** Who is looking at the asks (t-2084): the member, and whether they're a household owner (owners.md). */
@@ -903,11 +870,9 @@ function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: strin
  * Whether `who` sees a conversation's asks (t-2084; docs/specs/comms.md, rule 2): a Comms thread's are its member's
  * alone, household owners included, unless its member no longer owns its agent (left, or lost it): then they're household
  * owners', as the household's last resort, so an ask is never no one's for good. Any other conversation's are its agent's
- * owners', as they always were (see askOwners). 'everyone' is the core viewer (yourCall: the push watch gives each device
- * only its member's, pushWatch).
+ * owners', as they always were (see askOwners).
  */
-export function seesConversation(h: Household, who: Looker | 'everyone', reaches: (m: Member) => boolean = () => true): (cv: string, agent?: string) => boolean {
-  if (who === 'everyone') return () => true;
+export function seesConversation(h: Household, who: Looker, reaches: (m: Member) => boolean = () => true): (cv: string, agent?: string) => boolean {
   const of = askOwners(h);
   return (cv, agent) => {
     const o = of(cv, agent);
@@ -992,7 +957,7 @@ export function backupAsks(h: Household, nowMs = Date.now()): HomeAsk[] {
  * Needs you (docs/specs/conversations.md): a conversation whose newest digest has `needs_owner`
  * is an ask from core, linking to the conversation, until a later digest in it has none.
  */
-export function conversationAsks(h: Household, who: Looker | 'everyone'): HomeAsk[] {
+export function conversationAsks(h: Household, who: Looker): HomeAsk[] {
   const sees = seesConversation(h, who);
   return h.agents.flatMap((a) => {
     let open: ReturnType<typeof openNeeds>;
@@ -1328,6 +1293,13 @@ async function memberInbox(base: UiOptions, full: Household, m: Member): Promise
     if (at) it.seen = new Date(at * 1000).toISOString();
   }
   return { items, reader };
+}
+
+/** An attention record back as the Inbox item it was made from (attentionRecord's inverse, less the viewer's read state). */
+export function inboxItemOf(r: MemRecord): InboxItem {
+  const { id, audience: _a, sort: _s, unread, seen: _seen, reads: _r, copies: _c, expires, ...rest } = r as MemRecord & Record<string, unknown>;
+  return { ...(rest as unknown as Omit<InboxItem, 'key' | 'unread'>), key: String(id), unread: unread === true,
+    ...(typeof expires === 'number' ? { expires: new Date(expires).toISOString() } : {}) } as InboxItem;
 }
 
 /** An Inbox item as a record: its key is its id, its time its sort (one with no time first, as the Inbox files it). */
@@ -1904,6 +1876,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
   // pieces are the ones that understand them. The household's own pages are refused.
   const full = opts.household?.();
+  /** The options as they came, before this request's member narrows them: what the attention records are made with. */
+  const unscoped = opts;
   // The attention records are the Inbox's own (t-2025): registered for this household, with the options as they came
   // (never an agent owner's narrowed ones: each viewer's are made from their own membership).
   if (full) {
@@ -2042,11 +2016,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
       pieces: commsPieces, session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard,
       // A thread's asks are the member's own Inbox items (comms.md, "Asks inline"): the same household, pieces and rule.
+      // Read from the member's own attention records (t-2025): the same build their Inbox, Home and badges read.
       inbox: () => (inboxOnce ??= (async () => {
         const seen = opts.household?.();
         const ps = await commsPieces();
         const appr = pieceWithRole(opts.env, 'approvals')?.name;
-        return { items: seen ? inboxItems(seen, ps, opts.env, [], lookerOf(opts, seen)) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+        const recs = seen && who.member ? await attentionFor(unscoped, memberViewer(full, who.member)) : [];
+        // Its lead cards from the same read of the pieces as the records (no LOOM_SCOPE: memberInbox's).
+        const leads = leadIds(forOwner((await pieceManifests(unscoped.env)).pieces, opts.ownerScope), opts.env);
+        return { items: recs.map(inboxItemOf), leads, householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
           ...(appr ? { approvals: pieceSource(appr).id } : {}) };
       })()) });
     return;

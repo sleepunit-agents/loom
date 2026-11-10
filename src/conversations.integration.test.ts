@@ -661,6 +661,9 @@ process.stdin.on('data', (d) => s += d).on('end', () => {
   });
 });
 
+/** The household's owner, looking (a household with no members is its first owner's). */
+const OWNER = { person: 'owner', householdOwner: true };
+
 // ─── 11. Needs you ──────────────────────────────────────────────────────────
 
 describe('criterion 11: Needs you', () => {
@@ -673,21 +676,21 @@ describe('criterion 11: Needs you', () => {
     const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Loren (DM)' }, 'runtime:shuttle').conversation;
     const other = recordTurn(art, 'art', msg('dm:U2', 0, 'matt'), 'runtime:shuttle').conversation;
     writeDigest(art, { conversation: other, run: 'r1' }, { summary: 'Nothing for the owner.' });
-    expect(conversationAsks(h, 'everyone')).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
 
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Loren wants the WAF exception.', needs_owner: 'approve the WAF exception' }, new Date(T0));
-    const asks = conversationAsks(h, 'everyone');
+    const asks = conversationAsks(h, OWNER);
     expect(asks).toHaveLength(1);
     expect(asks[0]).toMatchObject({ text: 'art needs you: approve the WAF exception', page: `loom:conversation/${conv}`, agent: 'art', source: { id: 'loom' } });
     expect(asks[0].attention).not.toBe(false);
-    expect(coreAsks(h, 'everyone').map((a) => a.page)).toContain(`loom:conversation/${conv}`);
+    expect(coreAsks(h, OWNER).map((a) => a.page)).toContain(`loom:conversation/${conv}`);
 
     // The same run rewritten still needing the owner: still one ask.
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Still waiting.', needs_owner: 'approve the WAF exception' }, new Date(T0 + 1000));
-    expect(conversationAsks(h, 'everyone')).toHaveLength(1);
+    expect(conversationAsks(h, OWNER)).toHaveLength(1);
     // A later run's digest with none clears it.
     writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Approved; done.' }, new Date(T0 + 2000));
-    expect(conversationAsks(h, 'everyone')).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
   });
 });
 
@@ -741,7 +744,7 @@ describe('criterion 12: the hub shows needs_owner exactly when the Inbox does (2
 
     answerNeeds(art, { conversation: conv, digest: d.id, verdict, by: verdict === 'resolved' ? 'loom' : 'jonathan' }, new Date(T0 + 1000));
     expect(openNeeds(art)).toEqual([]);
-    expect(conversationAsks(h, 'everyone')).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
     expect(hubNeeds()).toEqual([null]);
     expect(conversationsSection(art, 'loom', at(0))!.items[0]).toMatchObject({ needs_digest: null, summary: 'PR up.' });
     expect(listConversations(art).map((c) => c.needs_owner)).toEqual([null]);
@@ -751,7 +754,7 @@ describe('criterion 12: the hub shows needs_owner exactly when the Inbox does (2
     const art = agentDir(h, 'art');
     const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Pond' }, 'runtime:shuttle').conversation;
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Asked.', projects: ['loom'], needs_owner: { ask: 'OK to merge the fix for the hub?', why: 'It fixes the hub.', refs: ['sleepunit-agents/art#70'] } } as never, new Date(T0));
-    const [inboxAsk] = conversationAsks(h, 'everyone');
+    const [inboxAsk] = conversationAsks(h, OWNER);
     const hub = await projectHubPage({ agent: 'art', dir: art }, 'loom', {
       hub: async () => ({ found: true, card: { slug: 'loom' }, sections: [conversationsSection(art, 'loom', at(0))!] }) as never,
     });
