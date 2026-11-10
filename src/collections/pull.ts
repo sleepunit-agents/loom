@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Core pulls; anyone may nudge (docs/specs/collections.md, "Changes: from provider to window").
  *
@@ -350,6 +351,10 @@ export class Puller {
 
   /** Every wanted domain that's due, and the expiry pass. */
   round(): void {
+    return backgroundJob('collection round', () => this.roundWork());
+  }
+
+  private roundWork(): void {
     const c = this.ctx();
     try { if (withLog(c.household.home, (db) => expire(db))) tick(c.household.home); } catch (e) { process.stderr.write(`loom: collections expiry failed: ${(e as Error).message}\n`); }
     const wanted = this.wanted();
@@ -429,6 +434,10 @@ export class Puller {
   }
 
   private run(domain: string): Promise<PullOutcome> {
+    return backgroundJob(`collection refresh ${domain}`, () => this.runWork(domain));
+  }
+
+  private runWork(domain: string): Promise<PullOutcome> {
     const on = this.running.get(domain);
     if (on) return on;
     const started = Date.now();

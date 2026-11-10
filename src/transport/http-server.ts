@@ -90,7 +90,7 @@ import { AUDIT_DB } from '../audit.js';
 import { COMMS_DB } from '../comms.js';
 import { isSqliteBusy, TURN_WAIT_MS, waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
-import { watchStalls } from './stall-watch.js';
+import { backgroundJob, watchStalls } from './stall-watch.js';
 import {
   assertSafeBind,
   checkBearer,
@@ -427,7 +427,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     try { if (backgroundActive) stalls.timed('comms sweep', () => sweepComms(live())); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     watchComms(live().home);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
-    if (backgroundActive) void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
+    if (backgroundActive) void backgroundJob('comms refs backfill', () => backfillRefs(live(), process.env)).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
   }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
@@ -503,7 +503,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // dead peer or a reaped stream → close the session so it can't zombie, and
     // the client recovers via the 404 re-init path.
     let misses = 0;
-    const heartbeat = setInterval(() => {
+    const heartbeat = setInterval(() => backgroundJob('mcp heartbeat', () => {
       void server.server
         .request({ method: 'ping' }, EmptyResultSchema, { timeout: HEARTBEAT_TIMEOUT_MS })
         .then(() => {
@@ -516,7 +516,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
             void transport.close().catch(() => undefined);
           }
         });
-    }, heartbeatMs);
+    }), heartbeatMs);
     // Don't let the heartbeat keep the event loop alive (clean process exit / test teardown).
     if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
@@ -1043,7 +1043,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
     if (!backgroundActive) return;
-    stalls.timed('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+    backgroundJob('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`)));
   }, WATCH_S * 1000);
   pushTimer?.unref();
@@ -1051,7 +1051,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
     if (!backgroundActive || !live) return;
-    stalls.timed('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
+    backgroundJob('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
       .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`)));
   };
   const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
@@ -1283,7 +1283,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         foldAll(); sweepAll();
         if (live && !opts.createServer) {
           try { stalls.timed('comms sweep', () => sweepComms(live!())); } catch { /* next timer retries */ }
-          stalls.timed('comms refs backfill', () => void backfillRefs(live!(), process.env).catch(() => undefined));
+          backgroundJob('comms refs backfill', () => void backfillRefs(live!(), process.env).catch(() => undefined));
         }
       });
     },

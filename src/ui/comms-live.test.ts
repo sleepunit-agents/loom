@@ -32,3 +32,18 @@ it('reports unexpected polling failures without terminating the listener', async
   await vi.advanceTimersByTimeAsync(2000);
   expect(reads.movedSince.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
+
+it('names the actual Comms timer continuation after its async database probe', async () => {
+  const { watchStalls } = await import('../transport/stall-watch.js');
+  const lines: string[] = [];
+  const w = watchStalls({ thresholdMs: 100, tickMs: 20, log: (l) => lines.push(l) });
+  reads.movedSince.mockImplementationOnce(() => {
+    const end = performance.now() + 220;
+    while (performance.now() < end) { /* the real tick's work, after its awaited probe */ }
+    return [];
+  });
+  try {
+    watchComms('/missing-comms-attribution');
+    await expect.poll(() => lines.some((l) => /slowest: comms live tick 2\d\d ms/.test(l))).toBe(true);
+  } finally { w.stop(); }
+});

@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Talking to installed pieces for the page: each `loom-<piece>` on PATH is
  * asked `ui --json` for its manifest, `ui page --json` for a page and
@@ -460,7 +461,7 @@ function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Key
   const generation = manifestGeneration;
   const under = running.get(key);
   if (under && under.generation === manifestGeneration) return under.result;
-  const result = fetchManifest(piece, path, env).then((r): ManifestResult => {
+  const result = backgroundJob(`piece manifest ${piece}`, () => fetchManifest(piece, path, env).then((r): ManifestResult => {
     if (!('manifest' in r)) {
       if (generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
       return r;
@@ -469,7 +470,7 @@ function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Key
     turnsOn.set(`${path}\0${version}`, now);
     if (on && ((now.scope && !on.scope) || (now.owners && !on.owners))) return { piece, reason: 'reads a new scope' };
     return r;
-  }).finally(() => { if (running.get(key)?.result === result) running.delete(key); });
+  }).finally(() => { if (running.get(key)?.result === result) running.delete(key); }));
   running.set(key, { generation: manifestGeneration, result });
   return result;
 }
@@ -557,6 +558,10 @@ function roundWait(e: CacheEntry): number {
  * look at them is fresh.
  */
 export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Promise<Map<string, string>> {
+  return backgroundJob('piece manifest round', () => refreshPieceManifestsWork(env, only));
+}
+
+async function refreshPieceManifestsWork(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Promise<Map<string, string>> {
   // `only`: just these pieces' paths (the one that said it moved, t-2065); the others keep their last answers.
   const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();

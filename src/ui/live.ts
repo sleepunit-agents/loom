@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * The page, live (docs/specs/ui-app.md, "Live"; Jonathan, 2026-10-29: "websocket to send own information as it
  * updates"). Each open app holds one event stream, GET /events (server-sent events: loom to the app is all it
@@ -93,10 +94,10 @@ export function changedFor(member: string): void {
 
 function nudge(c: Client): void {
   if (pending.has(c)) return;
-  pending.set(c, setTimeout(() => {
+  pending.set(c, setTimeout(() => backgroundJob('live change frame', () => {
     pending.delete(c); lastSent.set(c, Date.now());
     send(c, 'event: change\ndata: {}\n\n');
-  }, Math.max(0, (lastSent.get(c) ?? 0) + GAP_MS - Date.now())));
+  }), Math.max(0, (lastSent.get(c) ?? 0) + GAP_MS - Date.now())));
 }
 
 function send(c: Client, text: string): void {
@@ -144,6 +145,10 @@ const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM
  * `now`: a piece's own word, asked at once; `only` (with it): just the paths that moved (t-2065), else every piece.
  */
 function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
+  return backgroundJob('live manifest tick', () => tickWork(now, only));
+}
+
+function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
   // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
   if (now && tickRunning) {
     tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
@@ -230,18 +235,18 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   if (!watcher) {
     try {
       const files = dataChanges(home, DATA);
-      watcher = watch(home, { recursive: true }, (_e, file) => {
+      watcher = watch(home, { recursive: true }, (_e, file) => backgroundJob('live files watch', () => {
         if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) void tick(true, w.paths); }
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
         else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
-      });
+      }));
       // Reconcile the registration gap; queued callbacks then see the updated baseline.
       for (const file of files.reconcile()) tell(whose(file));
     } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }
   ticking ??= setInterval(() => void tick(), WATCH_MS);
-  beating ??= setInterval(() => { for (const x of clients) send(x, ': beat\n\n'); }, BEAT_MS);
+  beating ??= setInterval(() => backgroundJob('live heartbeat', () => { for (const x of clients) send(x, ': beat\n\n'); }), BEAT_MS);
   void tick();
 }
 
