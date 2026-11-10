@@ -342,7 +342,7 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
     out.description = b.description;
   }
   const settings = b.settings ?? [];
-  if (!Array.isArray(settings) || settings.length > 20) return 'loom.settings is not a list of at most 20';
+  if (!Array.isArray(settings) || settings.length > 32) return 'loom.settings is not a list of at most 32';
   for (const s of settings as Record<string, unknown>[]) {
     const name = s?.name;
     if (typeof name !== 'string' || !SETTING.test(name) || (name.startsWith('LOOM_') && !(own && name.startsWith(own))) || RESERVED_SETTINGS.has(name)) {

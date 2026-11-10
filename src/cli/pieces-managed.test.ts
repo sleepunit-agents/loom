@@ -209,6 +209,10 @@ describe('managed pieces', () => {
     expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'box')).toMatchObject({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL' }] });
     expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'tasks')).toMatch(/isn't loom's own/);
     expect(parseLoomBlock({ settings: [{ name: 'PATH', label: 'x' }] })).toMatch(/PATH/);
+    // The runtime declares 21 (t-2079): up to 32 are taken, more are refused.
+    const many = (n: number) => ({ settings: Array.from({ length: n }, (_, i) => ({ name: `SETTING_${i}`, label: 'x' })) });
+    expect(parseLoomBlock(many(32))).toMatchObject({ settings: expect.any(Array) });
+    expect(parseLoomBlock(many(33))).toBe('loom.settings is not a list of at most 32');
   });
 
   it('a package with several loom-<name> bins names its piece; the others are part of it', async () => {
