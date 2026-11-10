@@ -70,7 +70,7 @@ export const useRefs = () => useContext(RefsContext);
 
 /** A thread's refs: asked for as they're drawn (a batch at a time), asked again `refresh` after it changes (a new reply
  * may have moved a task), and the one card open. */
-export function ThreadRefs({ thread, refresh, csrf, children }: { thread: string; refresh: number; csrf: string; children: ReactNode }) {
+export function ThreadRefs({ thread, refresh, csrf, member, children }: { thread: string; refresh: number; csrf: string; member: string; children: ReactNode }) {
   const [cards, setCards] = useState<Cards>(() => new Map());
   const asked = useRef(new Set<string>());
   const queue = useRef(new Set<string>());
@@ -116,7 +116,7 @@ export function ThreadRefs({ thread, refresh, csrf, children }: { thread: string
     if (!csrf || !needsTasks) return;
     return watchTasks(csrf, (_keys, records) => setTasks(records), true);
   }, [csrf, needsTasks]);
-  const liveCards = useMemo(() => taskCardsOf(cards, tasks), [cards, tasks]);
+  const liveCards = useMemo(() => taskCardsOf(cards, tasks, member), [cards, tasks, member]);
   const [shown, setShown] = useState<{ ref: string; at: HTMLElement } | null>(null);
   const open = useCallback((ref: string, at: HTMLElement) => setShown((s) => (s?.ref === ref && s.at === at ? null : { ref, at })), []);
   const api = useMemo(() => ({ cards: liveCards, want, open }), [liveCards, want, open]);

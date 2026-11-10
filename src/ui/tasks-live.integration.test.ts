@@ -100,9 +100,9 @@ const CHANGE = {
 
 const STR = { class: 'household' } as const;
 const TASK = {
-  version: '1.1', schema: { type: 'object' },
+  version: '1.2', schema: { type: 'object' },
   fields: {
-    title: STR, type: { class: 'household', filter: ['eq', 'in'] }, status: { class: 'household', filter: ['eq', 'in'], order: true },
+    refState: STR, title: STR, type: { class: 'household', filter: ['eq', 'in'] }, status: { class: 'household', filter: ['eq', 'in'], order: true },
     priority: { class: 'household', filter: ['eq', 'in', 'lte'], order: true }, assignee: { class: 'household', filter: ['eq', 'has'] },
     created: { class: 'household', filter: ['gte'], order: true }, updated: { class: 'household', filter: ['gte'], order: true },
     closed: { class: 'household', filter: ['has'] }, ask: STR, goal: STR, blocked: { class: 'household', filter: ['eq'] },
@@ -235,6 +235,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
       const file = join(h.home, 'tasks.json');
       const ts = JSON.parse(readFileSync(file, 'utf-8'));
       const task = ts.find((t: { id: string }) => t.id === 't-2');
+      task.refState = { status: 'Waiting on Jonathan', tone: 'warn', owner: 'jonathan', ownerStatus: 'Waiting on you' };
       task.title = 'Original task title'; task.status = 'open'; task.blocked = false; task.updated = new Date().toISOString();
       writeFileSync(file, JSON.stringify(ts));
       const { pullNow } = await import('../collections/subs.js');
@@ -252,7 +253,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
       // Isolate admission from presentation: t-2 is admitted, t-3 is refused even though its record is readable.
       await page.route(`**/comms/${thread.id}/refs?*`, async (route) => {
         refs++;
-        await route.fulfill({ json: { refs: { 't-2': { kind: 'task', title: 'Original task title', status: 'Waiting on you', tone: 'warn', page: 'p/tasks/task/t-2' }, 't-3': null } } });
+        await route.fulfill({ json: { refs: { 't-2': { kind: 'task', title: 'Original task title', status: 'Open', page: 'p/tasks/task/t-2' }, 't-3': null } } });
       });
       try {
         await page.goto(`${base}/comms/${thread.id}`);
@@ -260,13 +261,15 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
         await chip.click();
         await page.getByRole('dialog', { name: 'Task: Original task title' }).waitFor();
         const before = refs;
-        task.title = 'Renamed while the chip is open'; task.status = 'closed'; task.updated = new Date().toISOString();
+        task.refState = { status: 'Cancelled', tone: null, owner: 'jonathan', ownerStatus: 'Cancelled' };
+        task.status = 'closed'; task.updated = new Date().toISOString();
         writeFileSync(file, JSON.stringify(ts));
         const start = Date.now();
         await pullNow(h.home, 'tasks/task');
-        await page.getByRole('dialog', { name: 'Task: Renamed while the chip is open' }).waitFor({ timeout: 8000 });
-        await page.getByRole('button', { name: 'Task t-2: Renamed while the chip is open, Waiting on you', exact: true }).waitFor();
+        await page.getByRole('dialog', { name: 'Task: Original task title' }).getByText('Cancelled', { exact: true }).waitFor({ timeout: 8000 });
+        await page.getByRole('button', { name: 'Task t-2: Original task title, Cancelled', exact: true }).waitFor();
         expect(await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).getAttribute('href')).toBe('/p/tasks/task/t-2');
+        expect(await page.getByRole('dialog').locator('.comms-refcard__status').getAttribute('data-tone')).toBeNull();
         expect(refs).toBe(before);
         expect(await page.getByRole('button', { name: /^Task t-3:/ }).count()).toBe(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
