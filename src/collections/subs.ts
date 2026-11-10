@@ -81,7 +81,10 @@ interface Sub {
   frame: Frame;
   /** Asking its provider again, as it was asked (serve.ts): its own, never another request's. */
   reask: Reask;
-  /** An `ask` type's rows as last sent, so a re-ask sends only what differs. */
+  /**
+   * Each delivered row as this subscription last sent it (trimmed): an upsert that changes nothing the viewer sees (a
+   * hidden field moved, one they didn't ask for) isn't sent, so no frame says that something hidden changed.
+   */
   sent: Map<string, string>;
 }
 
@@ -263,7 +266,7 @@ export async function attach(household: () => Household, env: () => NodeJS.Proce
     // The same subscription, read further: the same type and shape, in the same history.
     if (existing.type !== q.type || existing.provider !== p.name || JSON.stringify([existing.query.where, existing.query.order]) !== JSON.stringify([q.where, q.order])) return { error: 'bad-query', why: 'a later page names its own subscription\'s id and query' };
     if (existing.epoch !== row.epoch) { reset(s, existing, 'epoch'); return { error: 'unavailable' }; }
-    for (const r of admitted) { existing.delivered.set(`${p.name}/${q.type}/${id(r)}`, orderKey(r, id(r), q)); existing.byVals.set(`${p.name}/${q.type}/${id(r)}`, byOf(r)); }
+    for (const r of admitted) { const k = `${p.name}/${q.type}/${id(r)}`; existing.delivered.set(k, orderKey(r, id(r), q)); existing.byVals.set(k, byOf(r)); existing.sent.set(k, sentOf(existing, viewer, k, r)); }
     existing.boundary = answer.next === null ? null : last ? orderKey(last, id(last), q) : existing.boundary;
     trim(existing);
     return { at: s.port.seq(), scope: s.scope };
@@ -281,6 +284,7 @@ export async function attach(household: () => Household, env: () => NodeJS.Proce
       ? 'core' : 'none',
     aggs: answer.aggregates, frame: emptyFrame(), reask, sent: new Map(),
   };
+  for (const r of admitted) sub.sent.set(`${p.name}/${q.type}/${id(r)}`, sentOf(sub, viewer, `${p.name}/${q.type}/${id(r)}`, r));
   if (sub.aggMode === 'core') sub.aggs = coreAggs(sub);
   s.subs.set(q.id, sub);
   ensureRunning(h);
@@ -309,7 +313,7 @@ function coreAggs(sub: Sub): Aggs {
 function trim(sub: Sub): void {
   if (sub.delivered.size <= MAX_WINDOW) return;
   const sorted = [...sub.delivered].sort((a, b) => cmpKeys(a[1], b[1], sub.query));
-  for (const [key] of sorted.slice(MAX_WINDOW)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.frame.upserts.delete(key); sub.frame.leaves.add(key); }
+  for (const [key] of sorted.slice(MAX_WINDOW)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.upserts.delete(key); sub.frame.leaves.add(key); }
   sub.boundary = sorted[MAX_WINDOW - 1][1];
   sub.partial = true;
   if (sub.aggMode === 'core') sub.aggMode = 'none', sub.aggs = undefined;
@@ -326,13 +330,19 @@ function trimmed(sub: Sub, key: string, record: Record<string, unknown>, audienc
   return out;
 }
 
+/** A provider's row as this subscription would send it, as text (sub.sent). */
+function sentOf(sub: Sub, viewer: Viewer, key: string, raw: Record<string, unknown>): string {
+  const t = typeof raw.expires === 'number' ? raw.expires : typeof raw.expires === 'string' ? Date.parse(raw.expires) : Number.NaN;
+  return JSON.stringify(trimmed(sub, key, raw, isHouseholdOwner(viewer) ? parseAudience(raw.audience) : undefined, Number.isFinite(t) ? t : null));
+}
+
 /** One log row, for one subscription and its viewer. */
 function apply(sub: Sub, viewer: Viewer, r: LogRow, now: number): void {
   const prefix = `${sub.provider}/${sub.type}/`;
   if (!r.key.startsWith(prefix)) return;
   const id = r.key.slice(prefix.length);
   if (r.op === 'delete') {
-    if (sub.delivered.has(r.key)) { sub.delivered.delete(r.key); sub.byVals.delete(r.key); sub.frame.upserts.delete(r.key); sub.frame.leaves.delete(r.key); sub.frame.deletes.add(r.key); }
+    if (sub.delivered.has(r.key)) { sub.delivered.delete(r.key); sub.byVals.delete(r.key); sub.sent.delete(r.key); sub.frame.upserts.delete(r.key); sub.frame.leaves.delete(r.key); sub.frame.deletes.add(r.key); }
     return;
   }
   let record: Record<string, unknown> = {};
@@ -347,10 +357,14 @@ function apply(sub: Sub, viewer: Viewer, r: LogRow, now: number): void {
     const by: Record<string, string> = {};
     for (const a of sub.query.aggregates) by[a] = (sub.decl.aggregates?.[a]?.by ?? []).map((f) => String(record[f] ?? '')).join('/');
     sub.byVals.set(r.key, by);
+    const out = trimmed(sub, r.key, record, isHouseholdOwner(viewer) ? audience : undefined, r.expires);
+    const text = JSON.stringify(out);
+    if (sub.sent.get(r.key) === text && !sub.frame.leaves.has(r.key)) return;
+    sub.sent.set(r.key, text);
     sub.frame.leaves.delete(r.key);
-    sub.frame.upserts.set(r.key, trimmed(sub, r.key, record, isHouseholdOwner(viewer) ? audience : undefined, r.expires));
+    sub.frame.upserts.set(r.key, out);
   } else if (sub.delivered.has(r.key)) {
-    sub.delivered.delete(r.key); sub.byVals.delete(r.key);
+    sub.delivered.delete(r.key); sub.byVals.delete(r.key); sub.sent.delete(r.key);
     sub.frame.upserts.delete(r.key);
     sub.frame.leaves.add(r.key);
   }
@@ -471,7 +485,7 @@ function reaskSoon(reask: Reask, s: Stream, sub: Sub, p: Provider): void {
     got.admitted.forEach((r, i) => {
       const key = `${sub.provider}/${sub.type}/${r.id as string}`;
       now.add(key);
-      const text = JSON.stringify(got.rows[i]);
+      const text = sentOf(sub, v, key, r);
       if (sub.sent.get(key) === text) return;
       sub.sent.set(key, text);
       sub.delivered.set(key, orderKey(r, r.id as string, sub.query));

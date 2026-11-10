@@ -258,6 +258,20 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     expect(rowsFrames(loren.ev)).toEqual([]);
   });
 
+  it('a change to a field the viewer can\'t see, on a record they hold, sends nothing', async () => {
+    const loren = await live(tok.loren, { fields: ['title'] });
+    // status isn't in loren's fields: the record moved, but nothing she sees did.
+    commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'pond two', status: 'closed' }, audience: { ownersOf: ['pond-bot'] } }]);
+    await sync();
+    await new Promise((r) => setTimeout(r, 300));
+    await deliverNow(h.home);
+    expect(rowsFrames(loren.ev)).toEqual([]);
+    commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'pond two, renamed', status: 'closed' }, audience: { ownersOf: ['pond-bot'] } }]);
+    await sync();
+    await until(() => rowsFrames(loren.ev).length >= 1);
+    expect(rowsFrames(loren.ev)[0].data).toMatchObject({ upserts: [{ key: 'tasks/task/t-2', title: 'pond two, renamed' }] });
+  });
+
   it('a stream is opened only from loom\'s own page', async () => {
     const r = await fetch(`${base}/events`, { headers: { authorization: `Bearer ${tok.jonathan}`, accept: 'text/event-stream', origin: 'http://evil.example', 'sec-fetch-site': 'same-site' } });
     expect(r.status).toBe(403);
@@ -276,9 +290,11 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     expect(loren.answer.rows).toEqual([{ key: 'tasks/task/t-2', title: 'pond two', status: 'open', agent: 'pond-bot' }]);
     commit([{ op: 'upsert', id: 't-2', record: { agent: 'pond-bot', title: 'pond two', status: 'open' }, audience: { owners: true } }]);
     await sync();
-    await until(() => rowsFrames(loren.ev).length >= 1 && rowsFrames(jon.ev).length >= 1);
+    await until(() => rowsFrames(loren.ev).length >= 1);
     expect(rowsFrames(loren.ev)[0].data).toMatchObject({ sub: 'q', leaves: ['tasks/task/t-2'] });
-    expect(rowsFrames(jon.ev)[0].data).toMatchObject({ sub: 'q', upserts: [{ key: 'tasks/task/t-2' }] });
+    // Jonathan still holds it, and nothing he sees of it changed (he didn't ask for its audience): no frame.
+    await deliverNow(h.home);
+    expect(rowsFrames(jon.ev)).toEqual([]);
   });
 
   it('a change committed between the query and its answer is delivered once, after the answer\'s at', async () => {
