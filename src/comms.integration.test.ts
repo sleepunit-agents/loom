@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { conversationSteps, COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, adapterCall, wordsHash, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
+import { onBump, seqsOf, conversationSteps, COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, adapterCall, wordsHash, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { knowledgeWrite } from './tools/knowledge-write.js';
@@ -830,36 +830,53 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
     it('sends {seq} on the thread\'s stream, and the shared stream\'s change only to its member', async () => {
       const t = await open();
       const ac = new AbortController();
-      const r = await fetch(`${base}/comms/${t.id}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
-      expect(r.status).toBe(200);
-      const shared = (token: string) => fetch(`${base}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${token}` }, signal: ac.signal });
-      const mine = await shared(tok.jonathan);
-      const sams = await shared(tok.sam);
-      const read = async (res: Response, until: RegExp, ms: number): Promise<string> => {
-        const reader = res.body!.getReader();
-        let got = '';
-        const end = Date.now() + ms;
-        while (Date.now() < end && !until.test(got)) {
-          const chunk = await Promise.race([reader.read(), new Promise<{ done: true; value: undefined }>((res2) => setTimeout(() => res2({ done: true, value: undefined }), Math.max(1, end - Date.now())))]);
-          if (chunk.done) break;
-          got += new TextDecoder().decode(chunk.value);
-        }
-        reader.releaseLock();
-        return got;
-      };
-      await new Promise((res2) => setTimeout(res2, 200));
-      const posted = Date.now();
-      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'live one' });
-      const got = await read(r, /event: message\ndata: \{"seq":\d+\}/, 3000);
-      expect(got).toMatch(/event: message\ndata: \{"seq":\d+\}\n/);
-      expect(Date.now() - posted).toBeLessThan(400);
-      expect(got).not.toMatch(/live one/);
-      expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
-      // Readonly resolver opens can report unchanged memory WALs. They are no shared change,
-      // even for another member who owns the same agent. Keep the production timer enabled.
-      await resolveNeeds(h, pieceCheckers(process.env));
-      expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
-      ac.abort();
+      const initialSeq = seqsOf(h.home, t.id).last;
+      const expected = initialSeq + 1;
+      // Time from the thread's commit notification, before the production push listener runs. Encryption and HTTP
+      // admission precede that notification; counting them made a fast push fail on a slow worker (550ms vs 400ms).
+      stopCommsWatch();
+      let notifiedAt: number | undefined;
+      const off = onBump(() => {
+        if (notifiedAt === undefined && seqsOf(h.home, t.id).last >= expected) notifiedAt = performance.now();
+      });
+      try {
+        const r = await fetch(`${base}/comms/${t.id}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
+        expect(r.status).toBe(200);
+        const shared = (token: string) => fetch(`${base}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${token}` }, signal: ac.signal });
+        const mine = await shared(tok.jonathan);
+        const sams = await shared(tok.sam);
+        const read = async (res: Response, until: RegExp, ms: number): Promise<string> => {
+          const reader = res.body!.getReader();
+          let got = '';
+          const end = Date.now() + ms;
+          while (Date.now() < end && !until.test(got)) {
+            const chunk = await Promise.race([reader.read(), new Promise<{ done: true; value: undefined }>((res2) => setTimeout(() => res2({ done: true, value: undefined }), Math.max(1, end - Date.now())))]);
+            if (chunk.done) break;
+            got += new TextDecoder().decode(chunk.value);
+          }
+          reader.releaseLock();
+          return got;
+        };
+        // The opening frame is the readiness barrier, not proof that the reply was pushed.
+        const initialFrame = new RegExp(`event: message\\ndata: \\{"seq":${initialSeq}\\}`);
+        expect(await read(r, initialFrame, 3000)).toMatch(initialFrame);
+        const replyFrame = new RegExp(`event: message\\ndata: \\{"seq":${expected}\\}\\n`);
+        // Observe receipt while the POST is in flight; waiting for its response would time an unrelated HTTP path.
+        const pushed = read(r, replyFrame, 3000).then((got) => ({ got, receivedAt: performance.now() }));
+        const [{ got, receivedAt }, posted] = await Promise.all([
+          pushed, api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'live one' }),
+        ]);
+        expect(posted.status).toBe(200);
+        expect(got).toMatch(replyFrame);
+        expect(notifiedAt).toBeDefined();
+        expect(receivedAt - notifiedAt!).toBeLessThan(400);
+        expect(got).not.toMatch(/live one/);
+        expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
+        // Readonly resolver opens can report unchanged memory WALs. They are no shared change,
+        // even for another member who owns the same agent. Keep the production timer enabled.
+        await resolveNeeds(h, pieceCheckers(process.env));
+        expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
+      } finally { off(); ac.abort(); }
     });
   });
 
