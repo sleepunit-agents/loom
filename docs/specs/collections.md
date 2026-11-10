@@ -795,8 +795,14 @@ along with the listeners. The adapter is the only code that imports the client l
   or a change it shows does (`changes/change`, by its `ref`), not every 60 s; it keeps the 60 s read only while the
   tasks aren't live, or it shows a change and the changes aren't.
 - **Admitted task chips** (`task-ref-cards.ts`, t-2027) join those same records by task id: their title changes even while the popover is open, without another refs read or piece call.
-  Status words and tones stay the feed's: generic task records lack its configured owner for viewer-specific waiting
-  labels, so live status joins remain to migrate. The member-scoped refs resolver still decides admission and navigation; null never becomes a
+  tasks/task 1.2 adds `refState`: `{status, tone, owner, ownerStatus}`, made by taskstore's existing `stateOf` feed
+  formatter. `status` names the waiting owner, `ownerStatus` says "you" for that exact configured `owner` slug;
+  the client selects that wording using the signed-in Comms member, never an inferred assignee or household slug.
+  `tone` is null when absent, so moving to Open or Cancelled clears an old warning. Both wordings are household
+  data, the same for every shared snapshot; no viewer-specific copy enters core's cache. Chips use this field for
+  live state, retaining the resolver state if it is absent or malformed. Upgrade the Tasks piece with core: older
+  declarations reject the new requested field, so the existing page/refs fallback stays until the piece updates.
+  The member-scoped refs resolver still decides admission and navigation; null never becomes a
   chip from a collection row alone. Only the canonical Tasks destination joins `tasks/task`. A missing historical
   row leaves the resolver's card alone. A stale or cleared set drops the derived copy; a late chip consumer requests
   the warm snapshot explicitly, without causing other consumers to re-read their pages.

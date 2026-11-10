@@ -891,10 +891,11 @@ export function hubConversations(contextDir: string, slug: string, since: string
 
 export interface TapeDigest { at: string; venue: string; label: string | null; place: string; summary: string }
 
-/** Digests written in [since, now], oldest first, for the boot tape. */
-export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string): TapeDigest[] {
+/** Digests written in [since, now], oldest first, for the boot tape; with `only`, that conversation's alone (t-2118). */
+export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string, only?: string): TapeDigest[] {
   return withReadonly(contextDir, [], (db) => db.prepare(`SELECT d.at, c.venue, c.label, c.place, d.summary FROM conversation_digests d
-      JOIN conversations c ON c.id = d.conversation WHERE d.at >= ? AND d.at <= ? ORDER BY d.at`).all(sinceIso, nowIso) as TapeDigest[]);
+      JOIN conversations c ON c.id = d.conversation WHERE d.at >= ? AND d.at <= ?${only !== undefined ? ' AND d.conversation = ?' : ''} ORDER BY d.at`)
+    .all(...(only !== undefined ? [sinceIso, nowIso, only] : [sinceIso, nowIso])) as TapeDigest[]);
 }
 
 // ─── Retention ──────────────────────────────────────────────────────────────

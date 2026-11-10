@@ -120,6 +120,8 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
       expect(threadFor(h, jonathan(), sibling.id).title).toBeNull();
       // Nor from a house the runtime named nothing for.
       expect(String((await call(mine.conversation, 'x', 'art', { house: 'h-2' })).body.error)).toMatch(/h-2 holds no conversation/);
+      // A service's house (a chat bridge) titles none (t-2118).
+      expect(String((await call(mine.conversation, 'x', 'art', { house: 'h-3', service: 'discord' })).body.error)).toMatch(/h-3 holds no conversation/);
       // Its own, from its own house.
       expect((await call(mine.conversation, 'Its own', 'art', { house: 'h-1' })).body).toMatchObject({ ok: true, title: 'Its own' });
     });
