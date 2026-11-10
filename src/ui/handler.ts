@@ -947,8 +947,9 @@ function needsCount(h: Household, agent: string): number {
  * Only the agent's own approval: an ask can't take another agent's card under its words. Allow and Deny still post
  * to the approvals piece, as the card's would.
  */
-export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAsk[] {
-  if (asks.some((a) => a.waitsOnTask)) {
+export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv, { tasks: foldTasks = true }: { tasks?: boolean } = {}): HomeAsk[] {
+  // An agent's own views (its Today and its count) don't fold tasks: the tasks piece's card names no agent (t-2098).
+  if (foldTasks && asks.some((a) => a.waitsOnTask)) {
     const tasks = pieceWithRole(env, 'tasks')?.name;
     if (tasks) asks = foldTaskAsks(asks, pieceSource(tasks).id);
   }
@@ -1004,7 +1005,10 @@ export function foldTaskAsks(asks: HomeAsk[], tasksSource: string): HomeAsk[] {
 /** How many approvals cards a Needs you absorbed (of one agent's, or all): the counts that add asks up take them off once. */
 function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, agent?: string): number {
   const all = [...conversationAsks(agent ? { ...h, agents: [agent] } : h), ...pieceAsks(pieces, env)];
-  return all.length - absorbApprovals(all, env).length;
+  // What the counts lose: the counted asks before less those after, so a quiet task card a counted ask folded into
+  // (and was lifted by, t-2098) still counts once, as its Inbox row does.
+  const counted = (xs: HomeAsk[]) => xs.filter((x) => x.attention !== false).length;
+  return counted(all) - counted(absorbApprovals(all, env, { tasks: !agent }));
 }
 
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
@@ -2564,7 +2568,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             id: agent, today: t.items.length,
             waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts() },
-          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
+          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env, { tasks: false }),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...(() => { const lastWake = tapeRows(agentDir(hh, agent), 24 * 7, nowMs).find((r) => r.where.split(':')[0] === 'wake');
               return scoped.filter((p) => p.manifest.tile).map((p) => agentTile(p, agent, lastWake, nowMs)); })()],

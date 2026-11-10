@@ -13,7 +13,7 @@
 import { answerNeeds, ConversationError, openNeeds } from './backends/conversations.js';
 import type { WaitsOn } from './backends/needs.js';
 import { findPiece } from './cli/pieces.js';
-import { managedPieces } from './cli/pieces-managed.js';
+import { managedPieces, readSettings } from './cli/pieces-managed.js';
 import { agentDir, type Household } from './household.js';
 import { pieceApi } from './ui/pieces.js';
 import { sameAskWords } from './ui/ask-words.js';
@@ -136,9 +136,11 @@ export function pieceCheckers(env: NodeJS.ProcessEnv): WaitCheckers {
       if (r.status !== 200 || !b || typeof b.stdout !== 'string') return undefined;
       let out: { ok?: boolean; task?: { comments?: unknown } | null };
       try { out = JSON.parse(b.stdout); } catch { return undefined; }
-      const comments = Array.isArray(out.task?.comments) ? out.task!.comments as { at?: unknown; text?: unknown }[] : undefined;
-      if (out.ok === false || !comments) return undefined;
-      return comments.some((c) => typeof c.at === 'string' && typeof c.text === 'string' && c.at >= since
+      const comments = Array.isArray(out.task?.comments) ? out.task!.comments as { actor?: unknown; at?: unknown; text?: unknown }[] : undefined;
+      // Only the owner's answer, as the tasks page writes it (its comment as TASKSTORE_OWNER): no owner set, no asks there.
+      const owner = readSettings(env, p.name).TASKSTORE_OWNER?.trim();
+      if (out.ok === false || !comments || !owner) return undefined;
+      return comments.some((c) => c.actor === owner && typeof c.at === 'string' && typeof c.text === 'string' && c.at >= since
         && sameAskWords(answeredAsk(c.text) ?? '', ask));
     },
   };
