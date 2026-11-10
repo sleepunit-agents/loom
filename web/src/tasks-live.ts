@@ -101,7 +101,7 @@ function group(specs: () => QuerySpec[]) {
     }
     // Just live: everything is news to what's shown (a page drawn before the set came may be older than it).
     const keys = was ? movedKeys(was, now) : new Set(now.keys());
-    if (keys.size) for (const f of [...hearers]) f(keys, now);
+    for (const f of [...hearers]) if (keys.size || (!was && snapshots.has(f))) f(keys, now);
   };
   return {
     /** Hear them move (the keys that moved, and every record held), keeping them live while heard. */
@@ -142,6 +142,13 @@ const changes = group(() => [OPEN_CHANGES, recentChanges()]);
 export const watchChanges = (csrf: string, f: Moved): (() => void) => changes.watch(csrf, f);
 /** Whether the changes are live and whole now. */
 export const changesLive = (): boolean => changes.live();
+
+/** The Projects directory, including paused/done cards. Only a whole live set can replace page membership. */
+export const PROJECTS_SPEC: QuerySpec = { type: 'loom/project@^1', order: [['activity', 'desc']], limit: 500,
+  fields: ['agent', 'slug', 'name', 'status', 'links', 'activity'] };
+const projects = group(() => [PROJECTS_SPEC]);
+export const watchProjects = (csrf: string, f: Moved): (() => void) => projects.watch(csrf, f, true);
+export const projectsLive = (): boolean => projects.live();
 
 /** A quiet live page is drawn again this often all the same: what it says depends on the day too ("Done in the last 7
  * days", a time that was today), which no record's move would tell it. */

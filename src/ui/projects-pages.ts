@@ -238,7 +238,7 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
     }
   }
   if (!rows.length) {
-    return { page: { title: 'Projects', sections: [{ id: 'none', blocks: [{ type: 'text', tone: 'muted',
+    return { cards: { active: [], quiet: [], waiting: 0 }, page: { title: 'Projects', sections: [{ id: 'none', blocks: [{ type: 'text', tone: 'muted',
       text: 'No projects yet. A project is an ongoing body of work with a goal (a product, a client, a season); an agent makes one with project_write, and its page here collects everything filed under it.' }] }] } };
   }
   const live = rows.filter((r) => r.p.status === 'active');
