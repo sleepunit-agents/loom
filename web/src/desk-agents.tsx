@@ -8,7 +8,7 @@
 // thread, unread replies and the first one's line; read state is the member's alone).
 //
 // In the desk's own chunk (tiling/tiles.tsx imports it): a phone never fetches it.
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, EnvContext, Nothing, useEnv, type Mark, type MarkState } from './blocks';
 import { guardedEnv, LIVE_SAYS, useAskLive } from './ask-open';
@@ -16,6 +16,7 @@ import { As, type InboxItem } from './views';
 import { askerOf, plain } from './plain';
 import { markColor } from './look';
 import { onLive } from './page';
+import { onThreads, threadsNow } from './threads-live';
 import { newId } from './comms-id';
 import type { Shell } from './loom';
 import './desk-agents.css';
@@ -120,6 +121,13 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
  */
 export function useAgentComms(on: boolean): Record<string, AgentComms> | null {
   const [v, setV] = useState<Record<string, AgentComms> | null>(null);
+  // The member's threads, live (threads-live.ts, t-2027), once App has the set going: then the summary is asked again
+  // only when a thread's unread or newest message moves, never on loom's bare "something changed" or a timer, and each
+  // card's count is of threads (the owner's decision: unread is counted in threads everywhere).
+  const live = useSyncExternalStore(onThreads, threadsNow, () => null);
+  const isLive = !!live;
+  const moved = live?.moved;
+  const getRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!on) { setV(null); return; }
     let alive = true;
@@ -135,17 +143,22 @@ export function useAgentComms(on: boolean): Record<string, AgentComms> | null {
           setV((was) => (JSON.stringify(was) === JSON.stringify(next) ? was : next));
         });
     };
+    getRef.current = get;
     // A burst of changes asks once.
     const soon = () => { clearTimeout(t); t = window.setTimeout(get, 200); };
     get();
-    const off = onLive(soon);
-    const every = setInterval(get, 60_000);
     const back = () => { if (document.visibilityState === 'visible') soon(); };
     addEventListener('loom-comms-read', soon);
     document.addEventListener('visibilitychange', back);
+    // Not live: as before, on every bare change and every minute.
+    const off = isLive ? () => {} : onLive(soon);
+    const every = isLive ? undefined : setInterval(get, 60_000);
     return () => { alive = false; clearTimeout(t); off(); clearInterval(every); removeEventListener('loom-comms-read', soon); document.removeEventListener('visibilitychange', back); };
-  }, [on]);
-  return v;
+  }, [on, isLive]);
+  // Live: asked again when the threads move (its first line, and the thread a card opens, are words the set never holds).
+  const first = useRef(true);
+  useEffect(() => { if (first.current) { first.current = false; return; } if (on && moved !== undefined) getRef.current(); }, [moved, on]);
+  return useMemo(() => (v && live ? Object.fromEntries(Object.entries(v).map(([a, k]) => [a, { ...k, unread: live.byAgent[a] ?? 0, ...(live.byAgent[a] ? {} : { first: undefined }) }])) : v), [v, live]);
 }
 
 // ---- Needs you ----------------------------------------------------------------------------------------------------

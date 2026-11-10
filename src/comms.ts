@@ -541,15 +541,44 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
   // Keep it reachable by its link and in Background work until they actually write in it.
   const visible = listed.filter((t) => {
     if (opts.background === 'include') return true;
-    const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
-      && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
-    const background = spawned && !withMessages(h.home, (db) => db.prepare(
-      "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
-    ).get(t.id, t.member));
+    const background = isBackground(h, t);
     return opts.background === 'only' ? background : !background;
   });
   return visible.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
+
+/** A job's thread its member hasn't written in (a spawn assigned to them for access): Background work, not their list. */
+export function isBackground(h: Household, t: Thread): boolean {
+  const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id)
+    && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+  return spawned && !withMessages(h.home, (db) => db.prepare(
+    "SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'message' AND sender = ? LIMIT 1",
+  ).get(t.id, t.member));
+}
+
+/**
+ * threadRowState for many threads at once: one grouped read of comms.db for every thread's seqs and whether its member
+ * wrote in it, and the agent's store read only for a thread whose conversation isn't its own Comms one (a spawn's).
+ * What a snapshot of every thread uses (core-types.ts): a few queries, however many threads.
+ */
+export function threadRowStates(h: Household, threads: readonly Thread[]): Map<string, { unread: boolean; working: boolean; background: boolean; last_seq: number }> {
+  const seqs = new Map<string, { last: number; reply: number }>();
+  const wrote = new Set<string>();
+  if (threads.length && existsSync(join(h.home, COMMS_DB))) withMessages(h.home, (db) => {
+    for (const r of db.prepare("SELECT thread, MAX(seq) AS last, MAX(CASE WHEN kind = 'reply' THEN seq END) AS reply FROM comms_messages GROUP BY thread").all() as Array<{ thread: string; last: number | null; reply: number | null }>) {
+      seqs.set(r.thread, { last: r.last ?? 0, reply: r.reply ?? 0 });
+    }
+    for (const r of db.prepare("SELECT DISTINCT m.thread AS thread, m.sender AS sender FROM comms_messages m WHERE m.kind = 'message'").all() as Array<{ thread: string; sender: string }>) wrote.add(`${r.thread}\0${r.sender}`);
+  });
+  const out = new Map<string, { unread: boolean; working: boolean; background: boolean; last_seq: number }>();
+  for (const t of threads) {
+    const s = seqs.get(t.id) ?? { last: 0, reply: 0 };
+    const spawned = t.conversation !== conversationId(t.agent, COMMS_VENUE, t.id) && getConversation(agentDir(h, t.agent), t.conversation)?.venue === 'spawn';
+    out.set(t.id, { unread: s.reply > t.read_seq, working: t.working_since !== null, background: spawned && !wrote.has(`${t.id}\0${t.member}`), last_seq: s.last });
+  }
+  return out;
+}
+
 
 /** The most of a first unread reply's words that a desktop card carries (one line of it, docs/specs/agent-desk.md). */
 export const FIRST_LINE_MAX = 160;
@@ -596,7 +625,8 @@ export async function agentsComms(h: Household, env: NodeJS.ProcessEnv, member: 
     const newest = [...mine].sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
     const counts = haveMessages ? withMessages(h.home, (db) => newest.map((t) => (t.unread
       ? (db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ? AND kind = 'reply' AND seq > ?").get(t.id, t.read_seq) as { n: number }).n : 0))) : [];
-    const unread = counts.reduce((n, c) => n + c, 0);
+    // Threads with something unread, as everywhere (collections.md, owner decision 3); a thread says its own count.
+    const unread = counts.filter((c) => c > 0).length;
     const a: AgentComms = { agent, unread };
     const last = newest[0];
     if (last) a.last = { thread: last.id, title: last.title, at: last.last };
