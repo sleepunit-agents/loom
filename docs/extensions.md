@@ -268,7 +268,7 @@ own schema:
   and each has a pool of its own, apart from the page's pieces and from each
   other: `mcp_tools` four at once and sixteen waiting, `delivery` eight at
   once and thirty-two waiting (more than one calling piece's share, so one
-  piece at its cap leaves room for the rest). `grants` has 2 s. A non-zero exit keeps its
+  piece at its cap leaves room for the rest). `grants` has 10 s. A non-zero exit keeps its
   code and its stdout, so an offer can say why it failed.
 - **Only a managed piece offers.** A piece found on `PATH` has no package for
   loom to read, so it is never run as an offer. piece.json keeps a copy of the

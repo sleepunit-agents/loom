@@ -354,7 +354,7 @@ These are core changes this doc depends on, each small:
      started. Each has a name, a description and a JSON
      schema, plus the argv that runs it with the arguments on stdin. Core calls it as the session's agent. The
      runtime offers `relay` and `house`. A name another piece or core already uses is refused at install.
-   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 2 s to
+   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 10 s to
      answer `{allow: true}` or `{allow: false, reason}`.
      - **Fail closed:** when the authority times out, errors, or is uninstalled while a call is in flight, the call is
        refused with `503` and the reason. Owner calls never ask it.

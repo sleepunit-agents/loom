@@ -58,13 +58,13 @@ export function deliveryPiece(env: NodeJS.ProcessEnv): { piece: string; argv: st
  * Each offer kind's limits (docs/extensions.md, "Offers"): the section feed's 3 s for a feed or
  * a venue's render, and the mcp_tools limits (agent-runtime.md, "Seams", 2: 120 s, an answer of
  * at most 64 KB) for `delivery` and `mcp_tools`, each in a pool of its own (src/ui/pieces.ts).
- * `grants` has 2 s.
+ * `grants` has 10 s.
  */
 export interface OfferLimits { timeoutMs: number; maxBytes: number; pool: OfferPool }
 export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   sections: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
   venues: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
-  grants: { timeoutMs: 2_000, maxBytes: 4 * 1024, pool: 'grants' },
+  grants: { timeoutMs: 10_000, maxBytes: 4 * 1024, pool: 'grants' },
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
 };

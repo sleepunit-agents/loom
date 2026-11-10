@@ -83,11 +83,12 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
 const AUTHORITY_BIN = `#!${process.execPath}
 const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
-let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
+let s = ''; process.stdin.on('data', (d) => s += d).on('end', async () => {
   const ask = JSON.parse(s);
   fs.appendFileSync(home + '/asked', s + '\\n');
   const mode = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : '';
-  if (mode === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+  if (mode === 'slow') return setTimeout(() => console.log('{"allow":true}'), 11000);
+  if (mode === 'loaded') await new Promise(resolve => setTimeout(resolve, 2300));
   if (mode === 'fail') process.exit(1);
   if (mode === 'bad') return console.log('{"allow":"yes"}');
   if (mode === 'remove') { fs.rmSync(home + '/pieces/authority', { recursive: true, force: true }); return console.log('{"allow":true}'); }
@@ -196,6 +197,15 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
       expect(ran()).toHaveLength(2);
     });
 
+    it('waits for cold authority startup under load and still enforces its refusal', async () => {
+      mode('loaded');
+      grants({ art: ['thing/x'] });
+      expect((await call('/api/thing/x', tok.art)).status).toBe(200);
+      grants({});
+      expect((await call('/api/thing/x', tok.art)).status).toBe(403);
+      expect(ran()).toHaveLength(1);
+    }, 15_000);
+
     it('fails closed: a slow authority, one that errors, or answers off-contract is a 503 with the reason; the piece never runs', async () => {
       mode('slow');
       const slow = await call('/api/thing/x', tok.art);
@@ -211,7 +221,7 @@ describe('agent grants: core asks the grants authority before an agent\'s piece 
       // ...and owner calls still work while it's down.
       mode('slow');
       expect((await call('/api/thing/x', tok.owner)).status).toBe(200);
-    });
+    }, 15_000);
 
     it('an authority removed while it was asked: 503, even though it said yes', async () => {
       mode('remove');

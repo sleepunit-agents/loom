@@ -5,7 +5,7 @@
  * With one installed piece offering `grants` (the runtime), core asks it before an agent's call
  * to any piece (`/api/<piece>/…`, `/api/<piece>/run`, an offered MCP tool: src/offered-tools.ts) and
  * before forwarding a delivery for an agent (src/delivery.ts). The ask is the offer's argv with
- * `{agent, piece, path}` on stdin, in a pool of its own, with 2 s to answer `{allow: true}` or
+ * `{agent, piece, path}` on stdin, in a pool of its own, with 10 s to answer `{allow: true}` or
  * `{allow: false, reason}`.
  *
  *  - **Fail closed:** a timeout, an error, an answer that isn't the contract's, or the authority
