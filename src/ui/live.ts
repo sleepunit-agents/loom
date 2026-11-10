@@ -50,6 +50,8 @@ let ticked = 0;
 let tickRunning: Promise<void> | undefined;
 // What the next round asks, once the one under way is done: false nothing, true every piece, a set just those paths.
 let tickAgain: boolean | Set<string> = false;
+// The regular round came due while another ran: it runs next.
+let roundAgain = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
 
@@ -103,6 +105,8 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
     tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
     return tickRunning;
   }
+  // The regular round, due while one piece's round runs: it comes straight after, never skipped.
+  if (!now && tickRunning && Date.now() - ticked >= TICK_MIN_MS) { roundAgain = true; return tickRunning; }
   if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
   // A round of every piece resets the clock; one piece's word doesn't, so the round every WATCH_MS still comes.
   if (!only) ticked = Date.now();
@@ -118,14 +122,17 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
       let moved = false;
       if (before) for (const [path, print] of now) if (before.get(path) !== print) { clearPiecePages(path); moved = true; }
       // Only what was asked replaces what was seen: the others' last answers stay the ones to compare with.
-      seen.set(scope, only && before ? new Map([...before, ...now]) : now);
+      // A round of some pieces is no first look at a scope: the next full round is (else every other piece "moved").
+      if (only && !before) continue;
+      seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
     }
   })().finally(() => {
     tickRunning = undefined;
-    const again = tickAgain;
-    tickAgain = false;
+    const again = tickAgain, round = roundAgain;
+    tickAgain = false; roundAgain = false;
     if (again) void tick(true, again === true ? undefined : again);
+    else if (round) void tick();
   });
   return tickRunning;
 }

@@ -51,6 +51,7 @@ import { spawnBackupTick } from '../backup-tick.js';
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
+import { stopPieceServers } from '../ui/piece-server.js';
 import { findPiece, listPieces, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
@@ -1109,6 +1110,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
       if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
+      stopPieceServers();
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

@@ -230,10 +230,12 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       resolve(r);
     };
     const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
-    child.stdout?.on('data', (d: Buffer) => {
-      bytes += d.length;
+    // Decoded as a stream, so a character split across two chunks stays whole.
+    child.stdout?.setEncoding('utf-8');
+    child.stdout?.on('data', (d: string) => {
+      bytes += Buffer.byteLength(d);
       if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
-      out += d.toString('utf-8');
+      out += d;
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));
     if (opts.stdin !== undefined && child.stdin) {

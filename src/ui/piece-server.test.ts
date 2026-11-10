@@ -85,3 +85,29 @@ describe('piece API servers (t-2065)', () => {
     expect(pieceServerCount('/nonexistent/loom-none')).toBe(0);
   });
 });
+
+describe('piece API servers, after review (t-2065)', () => {
+  it('a server that fails sends its calls the one-shot way for a while, instead of starting another each call', async () => {
+    const p = bin();
+    const env = { PATH: process.env.PATH, MODE: 'junk' };
+    expect(await serveCall(p, 'v1', env, undefined, { path: 'x' }, opts)).toMatchObject({ ok: false });
+    expect(serveCall(p, 'v1', env, undefined, { path: 'x' }, opts)).toBeUndefined();
+  });
+
+  it('a character split across chunks stays whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'piece-server-utf8-'));
+    const p = join(dir, 'loom-wide');
+    // An answer of 200k characters, each 3 bytes, written in small pieces so chunk edges fall mid-character.
+    writeFileSync(p, `#!${process.execPath}
+require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
+  const m = JSON.parse(l);
+  const line = Buffer.from(JSON.stringify({ id: m.id, exit: 0, stdout: JSON.stringify({ body: '€'.repeat(200000) }) + '\\n' }) + '\\n');
+  let i = 0; const step = () => { if (i >= line.length) return; process.stdout.write(line.subarray(i, i += 4099), step); }; step();
+});
+`);
+    chmodSync(p, 0o755);
+    const r = await serveCall(p, 'v1', { PATH: process.env.PATH }, undefined, { path: 'x' }, opts);
+    if (!r || !r.ok) throw Error(JSON.stringify(r));
+    expect(JSON.parse(r.stdout).body).toBe('€'.repeat(200000));
+  });
+});

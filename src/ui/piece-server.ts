@@ -7,7 +7,8 @@
  *
  * The same bounds as a one-shot call: the API's pool, its time limit and answer size (a server that runs over either
  * is killed with its process group, and the call fails as a one-shot's would). One request in flight per server, at
- * most SERVERS_PER_KEY per piece version and environment; with all of them busy, a call runs the one-shot way.
+ * most SERVERS_PER_KEY per piece version and environment; with all of them busy, or for FAIL_MS after one of them
+ * failed, a call runs the one-shot way.
  *
  * The store grant core mints for a call travels in that request's line, never in the server's environment: a server
  * starts with none. A server is for one piece version and one environment (the key: the bin as it resolves now and
@@ -20,6 +21,8 @@ import { createHash } from 'node:crypto';
 export const IDLE_MS = 60_000;
 export const LIFETIME_MS = 10 * 60_000;
 export const SERVERS_PER_KEY = 2;
+/** After a server of a key fails (dies, times out, answers out of turn), its calls run the one-shot way this long. */
+export const FAIL_MS = 60_000;
 
 export type Served = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null };
 
@@ -31,10 +34,12 @@ interface Server {
   dead: boolean;
   idle?: NodeJS.Timeout;
   buf: string;
+  bytes: number;
   pending?: { id: number; done: (r: Served) => void; maxBytes: number; timer: NodeJS.Timeout };
 }
 
 const servers = new Map<string, Server[]>();
+const failed = new Map<string, number>();
 let nextId = 1;
 
 /** The key: the bin as it resolves now (`resolved`, path and mtime) and the env the server would start with. */
@@ -43,9 +48,10 @@ export function serverKey(path: string, resolved: string, env: NodeJS.ProcessEnv
   return `${path}\0${resolved}\0${h}`;
 }
 
-function killServer(s: Server): void {
+function killServer(s: Server, failure = true): void {
   if (s.dead) return;
   s.dead = true;
+  if (failure) failed.set(s.key, Date.now());
   if (s.idle) clearTimeout(s.idle);
   const list = servers.get(s.key);
   if (list) { const i = list.indexOf(s); if (i >= 0) list.splice(i, 1); if (!list.length) servers.delete(s.key); }
@@ -57,27 +63,32 @@ function killServer(s: Server): void {
 
 function armIdle(s: Server): void {
   if (s.idle) clearTimeout(s.idle);
-  s.idle = setTimeout(() => killServer(s), IDLE_MS);
+  s.idle = setTimeout(() => killServer(s, false), IDLE_MS);
   s.idle.unref?.();
 }
 
 function startServer(key: string, path: string, env: NodeJS.ProcessEnv): Server {
   // Its own process group, as a one-shot's: killed, it takes whatever it started with it.
   const child = spawn(path, ['api', '--serve'], { env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
-  const s: Server = { key, child, started: Date.now(), busy: false, dead: false, buf: '' };
+  const s: Server = { key, child, started: Date.now(), busy: false, dead: false, buf: '', bytes: 0 };
   child.on('error', () => killServer(s));
   child.on('exit', () => killServer(s));
   child.stdin?.on('error', () => killServer(s));
-  child.stdout?.on('data', (d: Buffer) => {
+  // Decoded as a stream, so a character split across two chunks stays whole.
+  child.stdout?.setEncoding('utf-8');
+  child.stdout?.on('data', (d: string) => {
     const p = s.pending;
     if (!p) { killServer(s); return; }   // an answer nobody asked for: it's not speaking the protocol
-    s.buf += d.toString('utf-8');
-    if (Buffer.byteLength(s.buf) > p.maxBytes + 4096) { s.pending = undefined; clearTimeout(p.timer); p.done({ ok: false, reason: 'answer too large' }); killServer(s); return; }
+    s.buf += d;
+    s.bytes += Buffer.byteLength(d);
+    // The answer is JSON inside JSON: escaping can double it. Its own size is checked once it's read.
+    if (s.bytes > 2 * p.maxBytes + 4096) { s.pending = undefined; clearTimeout(p.timer); p.done({ ok: false, reason: 'answer too large' }); killServer(s); return; }
     const nl = s.buf.indexOf('\n');
     if (nl < 0) return;
     const line = s.buf.slice(0, nl);
     const rest = s.buf.slice(nl + 1);
     s.buf = '';
+    s.bytes = 0;
     s.pending = undefined;
     clearTimeout(p.timer);
     let m: { id?: unknown; exit?: unknown; stdout?: unknown } | undefined;
@@ -92,7 +103,7 @@ function startServer(key: string, path: string, env: NodeJS.ProcessEnv): Server 
     else if (m.exit === 0) p.done({ ok: false, reason: typeof m.stdout === 'string' ? 'answer too large' : 'the piece\'s server answered without its output' });
     else p.done({ ok: false, reason: 'no ui', code: m.exit });
     s.busy = false;
-    if (Date.now() - s.started >= LIFETIME_MS) killServer(s); else armIdle(s);
+    if (Date.now() - s.started >= LIFETIME_MS) killServer(s, false); else armIdle(s);
   });
   armIdle(s);
   return s;
@@ -106,7 +117,11 @@ export function serveCall(path: string, resolved: string, env: NodeJS.ProcessEnv
   opts: { timeoutMs: number; maxBytes: number }): Promise<Served> | undefined {
   const key = serverKey(path, resolved, env);
   // Servers of this path for a version or an env that's no longer the current one: gone once idle.
-  for (const [k, list] of servers) if (k !== key && k.startsWith(`${path}\0`)) for (const s of [...list]) if (!s.busy) killServer(s);
+  for (const [k, list] of servers) if (k !== key && k.startsWith(`${path}\0`)) for (const s of [...list]) if (!s.busy) killServer(s, false);
+  const at = failed.get(key);
+  if (at !== undefined && Date.now() - at < FAIL_MS) return undefined;
+  // One past its lifetime and idle goes now, not at its idle timer: it would hold a place it can't be given.
+  for (const x of [...(servers.get(key) ?? [])]) if (!x.busy && Date.now() - x.started >= LIFETIME_MS) killServer(x, false);
   const list = servers.get(key) ?? [];
   let s = list.find((x) => !x.busy && !x.dead && Date.now() - x.started < LIFETIME_MS);
   if (!s) {
@@ -134,7 +149,8 @@ export function serveCall(path: string, resolved: string, env: NodeJS.ProcessEnv
 
 /** Every server ended (tests; a daemon shutting down). */
 export function stopPieceServers(): void {
-  for (const list of [...servers.values()]) for (const s of [...list]) killServer(s);
+  for (const list of [...servers.values()]) for (const s of [...list]) killServer(s, false);
+  failed.clear();
 }
 
 /** How many servers are up for `path` (tests). */
