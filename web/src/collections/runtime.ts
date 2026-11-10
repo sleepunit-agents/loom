@@ -1,0 +1,385 @@
+/**
+ * The shared collection runtime (docs/specs/collections.md, "The client runtime, in one paragraph"; t-2023).
+ *
+ * One per signed-in tab. It holds, for the windows open in it:
+ *  - one record store per record type (`provider/type@major`), each record once, whichever views show it;
+ *  - one subscription per distinct live query, shared by every view that asks the same thing, with its membership
+ *    (which keys are in it, in order), coverage, counts and freshness;
+ *  - one request in flight per identical query, batched (up to 32 a POST), and one stream: the page's own /events.
+ *
+ * Frames that arrive before their subscription's answer are held, then those after its `at` applied. A frame or an
+ * answer from an older scope epoch is dropped. A record no subscription holds is dropped; a view nobody has read for
+ * LINGER_MS is closed (so a window reopened soon after is warm); a type nobody has read for IDLE_MS is dropped; past
+ * MAX_RECORDS the least recently read types go first. Sign-out, a 401 or 403, or a new scope clears what it affected.
+ * Nothing is written to disk. No library is imported here: adapter.ts is the only code that does.
+ */
+
+export type Scalar = string | number | boolean | null;
+export type Clause = [string, string, Scalar | Scalar[]] | [string, 'has'];
+export interface QuerySpec {
+  type: string;
+  where?: Clause[];
+  order?: Array<[string, 'asc' | 'desc']>;
+  limit?: number;
+  fields?: string[];
+  aggregates?: string[];
+}
+export type Rec = { key: string; [field: string]: unknown };
+export type Aggs = Record<string, { n: number; exact: boolean; by?: Record<string, number> }>;
+export interface Coverage { complete: boolean; total?: { n: number; exact: boolean } }
+
+export type Status = 'loading' | 'live' | 'stale' | 'unavailable' | 'denied' | 'error';
+export interface ViewState {
+  keys: readonly string[];
+  coverage?: Coverage;
+  aggregates?: Aggs;
+  withheld: readonly string[];
+  status: Status;
+  error?: string;
+  /** Another page can be loaded (more()). */
+  more: boolean;
+}
+
+/** What the runtime needs of the page: a way to ask, and its one stream. */
+export interface Transport {
+  /** POST /collections/query with the body (the page's anti-forgery token added by the transport). */
+  post(body: Record<string, unknown>, signal?: AbortSignal): Promise<{ status: number; json: unknown }>;
+  /** The stream's frames, by event name; answers a function that stops listening. */
+  on(event: 'hello' | 'rows' | 'reset' | 'open' | 'error', f: (data: Record<string, unknown>) => void): () => void;
+}
+
+/** Hears the record stores move: the adapter mirrors them into the client library's collections. */
+export interface StoreHook {
+  upsert(type: string, recs: readonly Rec[]): void;
+  remove(type: string, keys: readonly string[]): void;
+  drop(type: string): void;
+}
+
+export const MAX_BATCH = 32;
+export const LINGER_MS = 30_000;
+export const IDLE_MS = 5 * 60_000;
+export const MAX_RECORDS = 20_000;
+
+interface Sub {
+  id: string;
+  spec: QuerySpec;
+  specKey: string;
+  type: string;
+  keys: string[];
+  coverage?: Coverage;
+  aggregates?: Aggs;
+  withheld: string[];
+  status: Status;
+  error?: string;
+  next: string | null;
+  /** The stream seq this subscription's frames follow; null until its answer is in. */
+  at: number | null;
+  held: Array<Record<string, unknown>>;
+  listeners: Set<() => void>;
+  inflight?: AbortController;
+  linger?: ReturnType<typeof setTimeout>;
+  /** Asked on this stream (a reconnect asks again). */
+  stream?: string;
+  state: ViewState;
+}
+
+interface TypeStore { records: Map<string, Rec>; read: number }
+
+let counter = 0;
+const key = (spec: QuerySpec) => JSON.stringify([spec.type, spec.where ?? [], spec.order ?? [], spec.limit ?? null, spec.fields ?? null, spec.aggregates ?? []]);
+
+const rank = (v: unknown) => (v === undefined || v === null ? 0 : typeof v === 'boolean' ? 1 : typeof v === 'number' ? 2 : 3);
+function cmp(a: unknown, b: unknown): number {
+  const ra = rank(a), rb = rank(b);
+  if (ra !== rb) return ra - rb;
+  if (ra === 0) return 0;
+  if (typeof a === 'string') return a < (b as string) ? -1 : a > (b as string) ? 1 : 0;
+  return (a as number) - (b as number);
+}
+
+export class CollectionRuntime {
+  private stores = new Map<string, TypeStore>();
+  private subs = new Map<string, Sub>();
+  private bySpec = new Map<string, string>();
+  private stream: string | null = null;
+  private scope = 0;
+  private queue: Sub[] = [];
+  private flushing = false;
+  private offs: Array<() => void> = [];
+  private sweeper: ReturnType<typeof setInterval> | undefined;
+  private cleared = false;
+
+  constructor(private readonly t: Transport, private readonly hook?: StoreHook, private readonly now: () => number = Date.now) {
+    this.offs.push(
+      t.on('hello', (d) => this.hello(d)),
+      t.on('rows', (d) => this.frame(d)),
+      t.on('reset', (d) => this.reset(d)),
+      t.on('error', () => this.markAll('stale')),
+    );
+    this.sweeper = setInterval(() => this.sweep(), 60_000);
+    (this.sweeper as { unref?: () => void }).unref?.();
+  }
+
+  /** Records of a type the views read (the adapter's source). */
+  records(type: string): ReadonlyMap<string, Rec> {
+    const s = this.stores.get(type);
+    if (s) s.read = this.now();
+    return s?.records ?? new Map();
+  }
+
+  /**
+   * A live view of `spec`: `onChange` hears it move; answers its state now, `more()` for the next page, and `close()`.
+   * Two views of the same query share one subscription and one request.
+   */
+  view(spec: QuerySpec, onChange: () => void): { state: () => ViewState; more: () => void; close: () => void } {
+    if (this.cleared) throw new Error('this runtime was cleared (signed out): make a new one');
+    const sk = key(spec);
+    let sub = this.subs.get(this.bySpec.get(sk) ?? '');
+    if (!sub) {
+      const id = `v${++counter}`;
+      sub = { id, spec, specKey: sk, type: spec.type, keys: [], withheld: [], status: 'loading', next: null, at: null, held: [], listeners: new Set(), state: { keys: [], withheld: [], status: 'loading', more: false } };
+      this.subs.set(id, sub);
+      this.bySpec.set(sk, id);
+      this.ask(sub);
+    }
+    const s = sub;
+    clearTimeout(s.linger); s.linger = undefined;
+    s.listeners.add(onChange);
+    this.touch(s.type);
+    return {
+      state: () => { this.touch(s.type); return s.state; },
+      more: () => this.more(s),
+      close: () => {
+        s.listeners.delete(onChange);
+        if (!s.listeners.size) s.linger = setTimeout(() => this.closeSub(s), LINGER_MS);
+      },
+    };
+  }
+
+  /** Sign-out, a revoked session: every record and subscription goes, and nothing more is asked. */
+  clear(): void {
+    this.cleared = true;
+    for (const s of this.subs.values()) { s.inflight?.abort(); clearTimeout(s.linger); }
+    for (const type of this.stores.keys()) this.hook?.drop(type);
+    this.stores.clear();
+    const all = [...this.subs.values()];
+    this.subs.clear(); this.bySpec.clear(); this.queue = [];
+    for (const s of all) { s.keys = []; s.status = 'denied'; this.publish(s); }
+    for (const off of this.offs) off();
+    clearInterval(this.sweeper);
+  }
+
+  /** How many records the stores hold (tests, and the memory bound). */
+  size(): number { let n = 0; for (const s of this.stores.values()) n += s.records.size; return n; }
+  subscriptions(): number { return this.subs.size; }
+
+  private touch(type: string): void {
+    let s = this.stores.get(type);
+    if (!s) { s = { records: new Map(), read: this.now() }; this.stores.set(type, s); }
+    s.read = this.now();
+  }
+
+  private hello(d: Record<string, unknown>): void {
+    if (typeof d.stream !== 'string') return;
+    const fresh = d.stream !== this.stream;
+    this.stream = d.stream;
+    if (typeof d.scope === 'number') this.scope = d.scope;
+    // A new stream (a reconnect, another listener) is a new snapshot: every subscription is asked again.
+    if (fresh) for (const s of this.subs.values()) { s.at = null; s.held = []; if (s.status === 'live') s.status = 'stale'; this.ask(s); }
+  }
+
+  private ask(s: Sub, after: string | null = null): void {
+    if (!this.stream) { this.publish(s); return; }
+    s.inflight?.abort();
+    s.inflight = new AbortController();
+    s.stream = this.stream;
+    (s as Sub & { after?: string | null }).after = after;
+    if (!this.queue.includes(s)) this.queue.push(s);
+    if (!this.flushing) { this.flushing = true; queueMicrotask(() => void this.flush()); }
+  }
+
+  /** The queued asks, up to MAX_BATCH a request: one POST for every view a window opens at once. */
+  private async flush(): Promise<void> {
+    this.flushing = false;
+    while (this.queue.length) {
+      const batch = this.queue.splice(0, MAX_BATCH);
+      const stream = this.stream!;
+      const scope = this.scope;
+      const queries = batch.map((s) => ({ id: s.id, ...s.spec, subscribe: true, stream, ...((s as Sub & { after?: string | null }).after ? { after: (s as Sub & { after?: string | null }).after } : {}) }));
+      const ac = new AbortController();
+      for (const s of batch) s.inflight?.signal.addEventListener('abort', () => { if (batch.every((x) => x.inflight?.signal.aborted)) ac.abort(); });
+      let r: { status: number; json: unknown };
+      try { r = await this.t.post({ queries }, ac.signal); } catch { for (const s of batch) if (!s.inflight?.signal.aborted) { s.status = s.keys.length ? 'stale' : 'unavailable'; this.publish(s); } continue; }
+      if (this.cleared) return;
+      if (r.status === 401 || r.status === 403) { this.clear(); return; }
+      const answers = Array.isArray((r.json as { answers?: unknown })?.answers) ? (r.json as { answers: Array<Record<string, unknown>> }).answers : [];
+      for (const s of batch) {
+        if (s.inflight?.signal.aborted || this.subs.get(s.id) !== s) continue;
+        // Asked on a stream that's gone, or under an older scope: its answer is no one's now; it's asked again.
+        if (this.stream !== stream || this.scope !== scope) { this.ask(s); continue; }
+        const a = answers.find((x) => x.id === s.id);
+        this.answer(s, a);
+      }
+    }
+  }
+
+  private answer(s: Sub, a: Record<string, unknown> | undefined): void {
+    const extending = (s as Sub & { after?: string | null }).after != null;
+    if (!a || typeof a.error === 'string') {
+      const e = (a?.error as string | undefined) ?? 'unavailable';
+      // Kept, marked stale: what it held is still what was last known.
+      s.status = e === 'denied' ? 'denied' : e === 'unavailable' ? (s.keys.length ? 'stale' : 'unavailable') : 'error';
+      s.error = e === 'unavailable' || e === 'denied' ? undefined : `${e}${typeof a?.why === 'string' ? `: ${a.why}` : ''}`;
+      this.publish(s);
+      return;
+    }
+    if (typeof a.scope === 'number' && a.scope < this.scope) { this.ask(s); return; }
+    const rows = Array.isArray(a.rows) ? (a.rows as Rec[]) : [];
+    const before = new Set(s.keys);
+    this.write(s.type, rows);
+    s.keys = extending ? [...s.keys, ...rows.map((r) => r.key).filter((k) => !before.has(k))] : rows.map((r) => r.key);
+    if (!extending) { const now = new Set(s.keys); this.evict(s.type, [...before].filter((k) => !now.has(k))); }
+    s.coverage = a.coverage as Coverage | undefined;
+    s.aggregates = a.aggregates as Aggs | undefined;
+    s.withheld = Array.isArray(a.withheld) ? (a.withheld as string[]) : [];
+    s.next = typeof a.next === 'string' ? a.next : null;
+    s.status = 'live';
+    s.error = undefined;
+    const at = typeof a.at === 'number' ? a.at : 0;
+    // Frames that came first: those after this answer's `at` apply on top of it.
+    if (!extending) { s.at = at; const held = s.held; s.held = []; for (const f of held) if ((f.seq as number) > at) this.apply(s, f); }
+    else this.sortKeys(s);
+    this.publish(s);
+  }
+
+  private more(s: Sub): void {
+    if (s.next) this.ask(s, s.next);
+  }
+
+  private frame(d: Record<string, unknown>): void {
+    if (typeof d.scope === 'number' && d.scope < this.scope) return;
+    const s = this.subs.get(d.sub as string);
+    if (!s) return;
+    if (s.at === null) { s.held.push(d); return; }
+    if ((d.seq as number) <= s.at) return;
+    this.apply(s, d);
+    this.publish(s);
+  }
+
+  private apply(s: Sub, d: Record<string, unknown>): void {
+    const ups = Array.isArray(d.upserts) ? (d.upserts as Rec[]) : [];
+    const leaves = Array.isArray(d.leaves) ? (d.leaves as string[]) : [];
+    const deletes = Array.isArray(d.deletes) ? (d.deletes as string[]) : [];
+    this.write(s.type, ups);
+    const gone = new Set([...leaves, ...deletes]);
+    const keys = s.keys.filter((k) => !gone.has(k));
+    const have = new Set(keys);
+    for (const u of ups) if (!have.has(u.key)) { keys.push(u.key); have.add(u.key); }
+    s.keys = keys;
+    this.sortKeys(s);
+    if (d.aggregates && typeof d.aggregates === 'object') s.aggregates = d.aggregates as Aggs;
+    // A delete is the record gone, everywhere; a leave only takes it out of this subscription.
+    const store = this.stores.get(s.type);
+    if (deletes.length && store) { for (const k of deletes) store.records.delete(k); this.hook?.remove(s.type, deletes); }
+    this.evict(s.type, leaves);
+    if (typeof d.seq === 'number') s.at = d.seq;
+  }
+
+  private reset(d: Record<string, unknown>): void {
+    const s = this.subs.get(d.sub as string);
+    if (!s) return;
+    // The scope moved (the viewer's authority changed): everything from before it goes, not just this view's.
+    if (d.reason === 'scope') {
+      // The stream's new scope epoch, as the server says it.
+      if (typeof d.scope === 'number' && d.scope > this.scope) this.scope = d.scope;
+      for (const x of this.subs.values()) { const k = x.keys; x.keys = []; this.evict(x.type, k); x.status = 'loading'; x.at = null; x.held = []; this.publish(x); this.ask(x); }
+      return;
+    }
+    const k = s.keys;
+    s.keys = []; s.at = null; s.held = [];
+    if (d.reason === 'provider-gone' || d.reason === 'epoch' || d.reason === 'version') {
+      // That domain's records are another history now: dropped wherever they are.
+      const store = this.stores.get(s.type);
+      if (store) { this.hook?.remove(s.type, [...store.records.keys()]); store.records.clear(); }
+      for (const x of this.subs.values()) if (x !== s && x.type === s.type) { x.keys = []; x.at = null; x.held = []; x.status = 'loading'; this.publish(x); this.ask(x); }
+    } else this.evict(s.type, k);
+    s.status = 'loading';
+    this.publish(s);
+    this.ask(s);
+  }
+
+  /** Records in, merged: a field an upsert leaves out is unknown, not gone (a projection, a hidden field). */
+  private write(type: string, rows: readonly Rec[]): void {
+    if (!rows.length) return;
+    this.touch(type);
+    const store = this.stores.get(type)!;
+    const merged = rows.map((r) => { const m = { ...(store.records.get(r.key) ?? {}), ...r } as Rec; store.records.set(r.key, m); return m; });
+    this.hook?.upsert(type, merged);
+    this.bound();
+  }
+
+  /** Records no subscription holds any more go. */
+  private evict(type: string, keys: readonly string[]): void {
+    if (!keys.length) return;
+    const held = new Set<string>();
+    for (const s of this.subs.values()) if (s.type === type) for (const k of s.keys) held.add(k);
+    const store = this.stores.get(type);
+    if (!store) return;
+    const gone = keys.filter((k) => !held.has(k) && store.records.has(k));
+    for (const k of gone) store.records.delete(k);
+    if (gone.length) this.hook?.remove(type, gone);
+  }
+
+  private sortKeys(s: Sub): void {
+    const order = s.spec.order ?? [];
+    const recs = this.stores.get(s.type)?.records;
+    if (!recs) return;
+    s.keys.sort((a, b) => {
+      const ra = recs.get(a), rb = recs.get(b);
+      for (const [f, dir] of order) { const c = cmp(ra?.[f], rb?.[f]); if (c) return dir === 'desc' ? -c : c; }
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+  }
+
+  private closeSub(s: Sub): void {
+    if (s.listeners.size) return;
+    s.inflight?.abort();
+    this.subs.delete(s.id);
+    this.bySpec.delete(s.specKey);
+    this.evict(s.type, s.keys);
+    if (this.stream) void this.t.post({ close: { stream: this.stream, ids: [s.id] } }).catch(() => {});
+  }
+
+  /** Types nobody has read for IDLE_MS go, with any lingering views of them. */
+  sweep(): void {
+    const now = this.now();
+    for (const [type, store] of this.stores) {
+      if (now - store.read < IDLE_MS) continue;
+      if ([...this.subs.values()].some((s) => s.type === type && s.listeners.size)) continue;
+      for (const s of [...this.subs.values()]) if (s.type === type) this.closeSub(s);
+      this.stores.delete(type);
+      this.hook?.drop(type);
+    }
+  }
+
+  /** Past MAX_RECORDS, the least recently read types without a view open go first. */
+  private bound(): void {
+    if (this.size() <= MAX_RECORDS) return;
+    const idle = [...this.stores].filter(([type]) => ![...this.subs.values()].some((s) => s.type === type && s.listeners.size)).sort((a, b) => a[1].read - b[1].read);
+    for (const [type] of idle) {
+      if (this.size() <= MAX_RECORDS) break;
+      for (const s of [...this.subs.values()]) if (s.type === type) this.closeSub(s);
+      this.stores.delete(type);
+      this.hook?.drop(type);
+    }
+  }
+
+  private markAll(status: Status): void {
+    for (const s of this.subs.values()) if (s.status === 'live') { s.status = status; this.publish(s); }
+  }
+
+  private publish(s: Sub): void {
+    s.state = { keys: [...s.keys], ...(s.coverage ? { coverage: s.coverage } : {}), ...(s.aggregates ? { aggregates: s.aggregates } : {}), withheld: s.withheld, status: s.status, ...(s.error ? { error: s.error } : {}), more: s.next !== null };
+    for (const f of s.listeners) f();
+  }
+}

@@ -75,6 +75,22 @@ function listen(h: { change: () => void; open: (on: boolean) => void }): () => v
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
 
+/**
+ * Hear one of the stream's own events (the shared collections' `hello`, `rows`, `reset`: src/collections/transport.ts),
+ * keeping the one stream open while anyone listens. `open` and `error` are the stream's own state.
+ */
+export function onStreamEvent(event: string, f: (data: Record<string, unknown>) => void): () => void {
+  let off: (() => void) | undefined;
+  const handler = (e: Event) => { try { f(JSON.parse((e as MessageEvent).data as string)); } catch { /* not a frame */ } };
+  const stop = listen({ change: () => {}, open: (on) => {
+    if (event === 'open' && on) f({});
+    if (event === 'error' && !on) f({});
+    if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
+  } });
+  if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
+  return () => { off?.(); stop(); };
+}
+
 export interface PageState {
   url: string;
   data: View | null;
