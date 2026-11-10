@@ -838,9 +838,20 @@ along with the listeners. The adapter is the only code that imports the client l
   its agent is working, and why), Home's list is every card's (`handler.ts`, the same on its page), and a window draws it
   from the live cards. Home itself is still asked again on a bare change: its chrome isn't records yet (the ticker's
   activity, "last active", the tiles' stats, the backup and Boxes alerts), and holding it back would freeze those.
+- **The bar's ticker and "active N ago" ride on the cards too** (third slice, agent-status 1.2): each card carries
+  `activity` (`tickerActivityOf` over the member's own pieces, after `atWorkFor`: its newest fresh observation, never an
+  excerpt) and `activityUnavailable`. The window gives the shell's agents their state, ticker and "active 4m ago" (from
+  `seen.at`, `lastActive`'s rule) from the live cards on every page (`agents-live.ts` `shellAgentOf`); an activity past
+  its expiry is gone, as the bar would say. Parity (`agent-status.integration.test.ts`): each record's ticker is the page
+  shell's, member for member; another owner of the same agent never gets a member's thread's step.
+- **Home is off the bare change**: while the cards and what needs you are live (and it isn't showing its first-run card),
+  Home isn't asked again on loom's bare change (`page.ts` `liveOnChange`); its timer still asks, every 60 s while the
+  stream is open, for its chrome (the tiles' stats, the backup and Boxes alerts), so nothing on it freezes. In a real
+  browser (`home-live.integration.test.ts`, 1440 and 390 wide, all three looks), a job and its step starting and ending
+  reached an open Home with no ask for its page (before: 19 in the same run).
 - **Still to move**: the clock's wakes and schedules as their own records (they need a stable job id: wake ids churn),
-  boxes, houses and services health, models and accounts, a Comms thread's harness choice, the ticker's activity
-  (`tickerActivityOf`) and "last active"; then Home need not be asked again on a bare change. The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
+  boxes, houses and services health (then the Boxes alerts and tile stats needn't wait for Home's timer), models and
+  accounts, a Comms thread's harness choice. The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
   way (`live.ts` `tick`): up to 15 s, the same for the old bare change.
 
 ## What stays on its own transport (exceptions)

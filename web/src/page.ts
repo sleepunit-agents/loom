@@ -99,6 +99,14 @@ export function collectionsRuntime(csrf: () => string): NonNullable<typeof colle
 const liveSayers: Array<(view: string) => boolean> = [];
 const readLive = (view: string, url: string): boolean => liveSayers.some((f) => f(view)) || (tasksPageKind(url) === 'live' && !!tasksPulse?.live());
 export function liveViews(f: (view: string) => boolean): void { liveSayers.push(f); }
+/**
+ * Views whose own content is live but whose chrome isn't yet (Home, t-2028: its cards and what needs you are, the tiles'
+ * stats and the backup and Boxes alerts aren't): not asked again on a bare change, still on their timer (60 s while the
+ * stream is open), so nothing they show is frozen.
+ */
+const changeSayers: Array<(view: string) => boolean> = [];
+const changeLive = (view: string, url: string): boolean => readLive(view, url) || changeSayers.some((f) => f(view));
+export function liveOnChange(f: (view: string) => boolean): void { changeSayers.push(f); }
 
 /**
  * Piece pages stay piece-rendered (docs/specs/collections.md); what they show moves with their piece's records. The
@@ -222,10 +230,11 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const shownView = useRef('');
   useEffect(() => {
     // Revalidate in the background without making a confirmed page look like a cached copy.
-    const again = () => { if (!document.hidden && !readLive(shownView.current, showing.current)) { void load(showing.current, false, true); } };
-    const stop = listen({ change: again, open: setLive });
-    document.addEventListener('visibilitychange', again);
-    return () => { stop(); document.removeEventListener('visibilitychange', again); };
+    const again = (live: (view: string, url: string) => boolean) => () => { if (!document.hidden && !live(shownView.current, showing.current)) { void load(showing.current, false, true); } };
+    const onChange = again(changeLive), onShown = again(readLive);
+    const stop = listen({ change: onChange, open: setLive });
+    document.addEventListener('visibilitychange', onShown);
+    return () => { stop(); document.removeEventListener('visibilitychange', onShown); };
   }, [load]);
 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a

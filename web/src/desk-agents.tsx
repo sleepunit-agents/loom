@@ -19,7 +19,7 @@ import { markColor } from './look';
 import { onLive } from './page';
 import { onThreads, threadsNow } from './threads-live';
 import { newId } from './comms-id';
-import type { Shell } from './loom';
+import type { Shell, TickerActivity } from './loom';
 import './desk-agents.css';
 const CardAsk = lazy(() => import('./inbox').then((m) => ({ default: m.CardAsk })));
 
@@ -34,7 +34,9 @@ type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
   jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[];
-  moving?: { agent: string; text: string; meta?: string }[] };
+  moving?: { agent: string; text: string; meta?: string }[];
+  /** The system bar's ticker (agent-status 1.2; the live record's, not Home's card). */
+  activity?: TickerActivity | null; activityUnavailable?: boolean };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 /** The member's own Comms, per agent (src/comms.ts agentsComms). */
 export type AgentComms = { agent: string; unread: number; first?: { thread: string; text: string | null };
