@@ -35,7 +35,8 @@ const DrawnFace = lazy(() => import('./face'));
 
 // ---- what loom answers ---------------------------------------------------------------------------
 
-type ThreadState = { working: boolean; working_since: string | null; queued: boolean; failed: boolean };
+/** A thread's state; while it works, its body's last sign of life and tokens (t-2109). */
+type ThreadState = { working: boolean; working_since: string | null; queued: boolean; failed: boolean; beat?: string; alive_at?: string; tokens?: number };
 export type Thread = {
   id: string; agent: string; title: string | null; titled_by: string | null; project: string | null; pinned: boolean; archived: string | null;
   opened: string; last: string; read_seq: number; channel: number; conversation: string; state: ThreadState; unread?: boolean; last_seq?: number;
@@ -64,7 +65,8 @@ export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrom
 /** A message's id: 16 characters of RFC 4648 base32, lowercased (comms.md, "The message id"). */
 export { newId } from './comms-id';
 import { newId } from './comms-id';
-import { folded, groupLabel, isPlan, stepOf } from './steps';
+import { aliveOf, folded, groupLabel, isPlan, stepOf, took, tokensWord, type WorkCard } from './steps';
+import { WorkSteps } from './work-steps';
 
 async function post(path: string, csrf: string, body: Record<string, unknown> = {}): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   try {
@@ -620,17 +622,20 @@ const asStep = (c: Msg, owner?: string): AgentChatStep => ({ id: String(c.seq), 
  * A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list: a `now:` line on
  * top (the newest step, and the plan's item when it keeps one), like steps in a row folded into one line (t-1944).
  */
-function Steps({ cards: all, owner }: { cards: Msg[]; owner?: string }) {
-  const [open, setOpen] = useState(false);
+function Steps({ cards: all, owner, watch, now }: { cards: Msg[]; owner?: string; watch?: boolean; now: number }) {
+  // Watching a job, its work is open (t-2109); in a chat, one line until opened. Opened: the Claude app's rows.
+  const [open, setOpen] = useState(!!watch);
   const plan = all.filter(isPlan).at(-1);
-  const cards = all.filter((c) => !isPlan(c));
-  const newest = cards.at(-1) ?? plan!;
+  const cards = all.filter((c) => !isPlan(c) && String(c.card?.tool ?? '') !== 'text');
+  const newest = cards.at(-1) ?? plan ?? all.at(-1)!;
+  const rich = all.some((c) => c.card && ('step' in c.card || 't0' in c.card));
   return (
-    <div className="comms-steps" data-open={open || undefined}>
+    <div className="comms-steps" data-open={open || undefined} data-rich={rich || undefined}>
       <button type="button" className="comms-steps__line loom-data" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? '▾' : '▸'} {cards.length} step{cards.length === 1 ? '' : 's'} · {newest.text ?? 'a step'}
       </button>
-      {open && <>
+      {open && rich && <WorkSteps cards={all as unknown as WorkCard[]} now={now} />}
+      {open && !rich && <>
         <p className="comms-steps__now loom-data">now: <RefText text={(cards.findLast((c) => stepOf(c) === 'current') ?? newest).text ?? 'a step'} owner={owner} />{plan?.text ? <><br /><RefText text={plan.text} owner={owner} /></> : null}</p>
         {folded(cards).map((g) => ('few' in g
           ? <AgentChatProgress key={g.few[0].seq} steps={g.few.map((c) => asStep(c, owner))} />
@@ -883,6 +888,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const face = faceOf({ failed: thread.state.failed, asking: asks.some((a) => a.state === 'open'), talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
+  // Working, quiet or stuck (t-2109): the system says so itself, from the body's last sign of life and its steps.
+  const alive = aliveOf(thread.state, messages.filter((m) => m.kind === 'card') as unknown as WorkCard[], now);
   // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
   const running = (() => {
     const cards = messages.filter((m) => m.kind === 'card' && !isPlan(m) && (!lastMine || m.seq > lastMine.seq));
@@ -960,7 +967,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             ) : null}
             {withAsks(grouped(messages), asksRead ? asks : []).map((g) => g.ask ? (
               <ThreadAskCard key={`ask:${g.ask.ref}`} a={g.ask} who={mark.label} member={member} csrf={csrf} owner={github} onAnswered={() => void pull()} />
-            ) : g.cards ? <Steps key={g.key} cards={g.cards} owner={github} /> : (
+            ) : g.cards ? <Steps key={g.key} cards={g.cards} owner={github} watch={watching} now={now} /> : (
               <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} conversation={thread.conversation} />
             ))}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
@@ -974,10 +981,12 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             )}
             {/* The working line (t-1918): what the agent is on as it happens, the newest step and how long, under the thread. */}
             {(face === 'working' || face === 'thinking') && (
-              <div className="comms-live loom-data" role="status" data-face={face}>
-                <i aria-hidden />{face === 'working'
-                  ? <>{mark.label} is working{running ? <> · <span className="comms-live__step">{running}</span></> : null} · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</>
-                  : <>{mark.label} is thinking…</>}
+              <div className="comms-live loom-data" role="status" data-face={face} data-alive={face === 'working' ? alive.face : undefined}>
+                <i aria-hidden /><span className="comms-live__text">{face !== 'working' ? <>{mark.label} is thinking…</>
+                  : alive.face === 'working'
+                    ? <>{mark.label} is working{running ? <> · <span className="comms-live__step">{running}</span></> : null} · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}{alive.tokens !== null ? <> · ↓ {tokensWord(alive.tokens)} tokens</> : null}</>
+                    : <>{alive.over && alive.step ? <><span className="comms-live__step">{alive.step.text ?? 'A step'}</span> has run {took(alive.running)}, past its limit</> : <>Quiet for {took(alive.quiet)}</>}
+                      {alive.face === 'stuck' ? ' — it may be stuck' : ` — ${mark.label} is still running`}{alive.step && !alive.over ? <> · on <span className="comms-live__step">{alive.step.text ?? 'a step'}</span> for {took(alive.running)}</> : null}</>}</span>
               </div>
             )}
             <div ref={bottom} className="comms-end" />

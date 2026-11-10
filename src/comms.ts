@@ -105,6 +105,9 @@ export interface Thread {
   working_since: string | null;
   /** When the runtime last said the thread's body is at work (its status or its activity), ms. */
   working_beat: number | null;
+  /** When its body's record last moved (ms), and its tokens so far, as the runtime last said (t-2109). */
+  alive_at?: number | null;
+  alive_tokens?: number | null;
   queued_since: string | null;
   last_failed: boolean;
   /** When an app of its member last had it in front (its read calls), ms; null for never. */
@@ -377,7 +380,11 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS conversation_steps (
 const threadsReady = new Set<string>();
 function withThreads<T>(home: string, f: (db: Database) => T): T {
   return withHouseholdDb(home, (db) => {
-    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); addColumn(db, 'comms_threads', 'about_key', 'TEXT'); addColumn(db, 'comms_deleted', 'conversation', 'TEXT'); threadsReady.add(home); }
+    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); addColumn(db, 'comms_threads', 'about_key', 'TEXT'); addColumn(db, 'comms_deleted', 'conversation', 'TEXT');
+      // Its body's last sign of life (t-2109): when its record last moved (ms), its tokens so far.
+      addColumn(db, 'comms_threads', 'alive_at', 'INTEGER'); addColumn(db, 'comms_threads', 'alive_tokens', 'INTEGER');
+      threadsReady.add(home);
+    }
     return f(db);
   });
 }
@@ -395,6 +402,8 @@ function openMessages(home: string): Database {
   db.exec(MESSAGES_SCHEMA);
   addColumn(db, 'comms_messages', 'sending_at', 'INTEGER');
   addColumn(db, 'comms_messages', 'delivery_json', 'TEXT');
+  // A card's words beyond its label (t-2109): its command, output or diff, result line, plan items; sealed, swept.
+  addColumn(db, 'comms_messages', 'step', 'BLOB');
   return db;
 }
 
@@ -411,13 +420,13 @@ function withMessages<T>(home: string, f: (db: Database) => T): T {
 interface ThreadRow {
   id: string; agent: string; member: string; conversation: string; title: string | null; titled_by: string | null; project: string | null;
   pinned: number; archived: string | null; opened: string; last: string; read_seq: number; channel: number; first_id: string; first_hash: string;
-  working_since: string | null; working_beat: number | null; queued_since: string | null; last_failed: number; stop: number; in_front: number | null; updated: number;
+  working_since: string | null; working_beat: number | null; alive_at?: number | null; alive_tokens?: number | null; queued_since: string | null; last_failed: number; stop: number; in_front: number | null; updated: number;
 }
 const threadOf = (r: ThreadRow): Thread => ({
   id: r.id, agent: r.agent, member: r.member, conversation: r.conversation, title: r.title,
   titled_by: r.titled_by === 'agent' || r.titled_by === 'member' ? r.titled_by : null, project: r.project, pinned: r.pinned === 1,
   archived: r.archived, opened: r.opened, last: r.last, read_seq: r.read_seq, channel: r.channel,
-  working_since: r.working_since, working_beat: r.working_beat ?? null, queued_since: r.queued_since, last_failed: r.last_failed === 1, in_front: r.in_front,
+  working_since: r.working_since, working_beat: r.working_beat ?? null, alive_at: r.alive_at ?? null, alive_tokens: r.alive_tokens ?? null, queued_since: r.queued_since, last_failed: r.last_failed === 1, in_front: r.in_front,
 });
 
 // ─── Who may ───────────────────────────────────────────────────────────────────
@@ -451,7 +460,7 @@ export function stillSees(h: Household, person: string, id: string): boolean {
 
 // ─── Reading ───────────────────────────────────────────────────────────────────
 
-interface MsgRow { seq: number; at: string; kind: string; sender: string; id: string; text: Buffer | null; card_json: string | null; run: string | null; delivered: number | null }
+interface MsgRow { seq: number; at: string; kind: string; sender: string; id: string; text: Buffer | null; card_json: string | null; run: string | null; delivered: number | null; step?: Buffer | null }
 
 const deliveryOf = (delivered: number | null): Delivery => (delivered === 1 ? 'delivered' : delivered === 0 ? 'failed' : 'sending');
 
@@ -498,6 +507,11 @@ async function messageOf(o: Opener | null, agent: string, thread: string, r: Msg
   let text: string | null = null;
   if (r.kind === 'error') text = cardWords(card, agent);
   else if (r.text && o) text = await decrypt(o, r.text, `${thread} #${r.seq}`);
+  // A card's words beyond its label (t-2109), opened with its label: `card.step`.
+  if (r.kind === 'card' && card && r.step && o) {
+    const w = await decrypt(o, r.step, `${thread} #${r.seq} step`);
+    if (w) { try { card.step = JSON.parse(w) as unknown; } catch { /* unreadable: left out */ } }
+  }
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
     ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
 }
@@ -536,7 +550,7 @@ export function messageRecords(home: string, threads: readonly Thread[]): Messag
 }
 
 function messageRevision(r: MsgRow): string {
-  return createHash('sha256').update(r.text ?? '').update(JSON.stringify([r.at, r.kind, r.sender, r.id, r.card_json, r.run, r.delivered])).digest('hex');
+  return createHash('sha256').update(r.text ?? '').update(r.step ?? '').update(JSON.stringify([r.at, r.kind, r.sender, r.id, r.card_json, r.run, r.delivered])).digest('hex');
 }
 
 /** Only the selected page's encrypted revisions. A snapshot selects every metadata record once, never decrypts any. */
@@ -743,8 +757,9 @@ const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
 export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
 
-function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean; expiresAt?: number }, now: Date): number {
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending'; deduplicate?: boolean; expiresAt?: number; step?: string }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
+  const stepBlob = m.step !== undefined ? encrypt(home, env, m.step) : null;
   let inserted = false;
   const result = withMessages(home, (db) => db.transaction(() => {
     // Check under the same writer transaction as insertion: two listeners must
@@ -757,9 +772,9 @@ function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind:
       if (m.expiresAt === undefined || clock.now >= m.expiresAt) return { problem: 'continuation deadline reached' };
     }
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
-    db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at, step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
-      m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
+      m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null, stepBlob);
     inserted = true;
     return { seq };
   }).immediate());
@@ -1360,8 +1375,54 @@ const RUN_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 export const HARNESS_WORD = /^[A-Za-z][A-Za-z0-9.-]{0,23}$/;
 const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
 
+/** A card's keys (comms.md, section 3): its base, and the parts the owner's Watching view shows (t-2109). */
+const CARD_KEYS = ['id', 'at', 'tool', 'summary', 'state', 'detail', 'body', 'result', 'exit', 'limit', 'end', 'parent', 'items'];
+const CARD_ID = /^[A-Za-z0-9_.:\-]{1,80}$/;
+const SHELL_TOOLS = new Set(['Bash', 'command_execution', 'BashOutput', 'exec_command', 'shell']);
+export const MAX_DETAIL = 4000;
+export const MAX_BODY = 32_000;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+/** Shown text: line breaks and tabs, and colour codes (ANSI SGR) only; no other control or line separator. */
+const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b-\x1f\x7f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
+type StepWords = { detail?: string; body?: string; result?: string; items?: Array<{ text: string; state: 'done' | 'now' | 'todo' }> };
+type StepPlain = { exit?: number; limit?: number; t0?: string; t1?: string; parent?: string };
+
+/** A card's further parts, checked: its words (sealed like its label) and its plain numbers, times and parent. */
+function stepOfCard(o: Record<string, unknown>, i: number): { words: StepWords | null; plain: StepPlain } {
+  const words: StepWords = {}, plain: StepPlain = {};
+  const bad = (k: string, why: string): never => fail(`bad-input: card ${i}'s ${k} ${why}`);
+  if (o.detail !== undefined) { if (typeof o.detail !== 'string' || o.detail.length > MAX_DETAIL || o.detail.includes('\x1b') || !SHOWN_TEXT.test(o.detail)) bad('detail', `is text of at most ${MAX_DETAIL}`); words.detail = o.detail as string; }
+  // A shell step's output is never kept (t-2109; on demand, unstored, is t-2112): a body on one is dropped.
+  if (o.body !== undefined) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); if (!SHELL_TOOLS.has(String(o.tool))) words.body = o.body as string; }
+  if (o.result !== undefined) { if (typeof o.result !== 'string' || o.result.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.result)) bad('result', 'is one printable line'); words.result = o.result as string; }
+  if (o.items !== undefined) {
+    if (!Array.isArray(o.items) || o.items.length > 20) bad('items', 'is a list of at most 20');
+    words.items = (o.items as unknown[]).map((x) => {
+      const it = x as Record<string, unknown>;
+      if (!it || typeof it.text !== 'string' || !it.text || it.text.length > 100 || !PRINTABLE_LINE.test(it.text) || !['done', 'now', 'todo'].includes(String(it.state))) return bad('items', 'are {text, state: done|now|todo}');
+      return { text: it.text, state: it.state as 'done' | 'now' | 'todo' };
+    });
+  }
+  if (o.exit !== undefined) { if (!Number.isInteger(o.exit) || Math.abs(o.exit as number) > 999_999) bad('exit', 'is a whole number'); plain.exit = o.exit as number; }
+  if (o.limit !== undefined) { if (!Number.isInteger(o.limit) || (o.limit as number) < 1 || (o.limit as number) > 86_400) bad('limit', 'is 1-86400 seconds'); plain.limit = o.limit as number; }
+  if (o.parent !== undefined) { if (typeof o.parent !== 'string' || !CARD_ID.test(o.parent)) bad('parent', 'is a card id'); plain.parent = o.parent as string; }
+  if (o.end !== undefined) { if (typeof o.end !== 'string' || !ISO.test(o.end)) bad('end', 'is an ISO time'); plain.t1 = o.end as string; }
+  // Its own start, when it says one that's a time (a house's word is only kept as a time).
+  if (typeof o.at === 'string' && ISO.test(o.at)) plain.t0 = o.at;
+  return { words: Object.keys(words).length ? words : null, plain };
+}
+
+/** A body's last sign of life (t-2109): `{at, tokens?}`, checked; null when it isn't one. */
+function aliveOf(v: unknown): { at: number; tokens?: number } | null {
+  if (!v || typeof v !== 'object') return null;
+  const a = v as Record<string, unknown>;
+  if (typeof a.at !== 'string' || !ISO.test(a.at) || !Number.isFinite(Date.parse(a.at))) return null;
+  if (a.tokens !== undefined && (!Number.isInteger(a.tokens) || (a.tokens as number) < 0 || (a.tokens as number) > 1e12)) return null;
+  return { at: Date.parse(a.at), ...(a.tokens !== undefined ? { tokens: a.tokens as number } : {}) };
+}
+
 /**
- * POST /api/loom/comms/activity {conversation, run, cards}: the runtime's tool cards for a `loom` conversation's live
+ * POST /api/loom/comms/activity {conversation, run, cards, alive?}: the runtime's tool cards for a `loom` conversation's live
  * thread. A card's id the thread already has updates its state and its label; a new one is a message. Refused whole on any
  * bad card.
  */
@@ -1369,17 +1430,19 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   const { conversation, run, cards } = raw;
   if (typeof conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(conversation)) return fail('bad-input: conversation is a cv- id');
   if (typeof run !== 'string' || !run || run.length > 128) return fail('bad-input: run is the body run');
-  if (!Array.isArray(cards) || cards.length < 1 || cards.length > MAX_CARDS) return fail(`bad-input: cards is a list of 1-${MAX_CARDS}`);
+  const alive = aliveOf(raw.alive);
+  if (raw.alive !== undefined && !alive) return fail('bad-input: alive is {at: an ISO time, tokens?: a whole number}');
+  if (!Array.isArray(cards) || cards.length < (alive ? 0 : 1) || cards.length > MAX_CARDS) return fail(`bad-input: cards is a list of 1-${MAX_CARDS}`);
   const checked = cards.map((c, i) => {
     const o = c as Record<string, unknown>;
     if (!o || typeof o !== 'object') return fail(`bad-input: card ${i} isn't an object`);
-    const keys = Object.keys(o).filter((k) => !['id', 'at', 'tool', 'summary', 'state'].includes(k));
+    const keys = Object.keys(o).filter((k) => !CARD_KEYS.includes(k));
     if (keys.length) return fail(`bad-input: card ${i} has unknown keys: ${keys.join(', ')}`);
-    if (typeof o.id !== 'string' || !/^[A-Za-z0-9_.:\-]{1,80}$/.test(o.id)) return fail(`bad-input: card ${i}'s id`);
+    if (typeof o.id !== 'string' || !CARD_ID.test(o.id)) return fail(`bad-input: card ${i}'s id`);
     if (typeof o.tool !== 'string' || !TOOL.test(o.tool)) return fail(`bad-input: card ${i}'s tool`);
     if (typeof o.summary !== 'string' || o.summary.length < 1 || o.summary.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.summary)) return fail(`bad-input: card ${i}'s summary is 1-${MAX_SUMMARY} printable characters on one line`);
     if (o.state !== 'running' && o.state !== 'done' && o.state !== 'failed') return fail(`bad-input: card ${i}'s state is running, done or failed`);
-    return { id: o.id, tool: o.tool, summary: o.summary, state: o.state as CardState };
+    return { id: o.id, tool: o.tool, summary: o.summary, state: o.state as CardState, ...stepOfCard(o, i) };
   });
   const r = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE conversation = ?').get(conversation) as ThreadRow | undefined);
   if (!r) {
@@ -1407,19 +1470,33 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   for (const c of checked) {
     const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json, text IS NOT NULL AS kept FROM comms_messages WHERE thread = ? AND kind = 'card' AND id = ?").get(r.id, c.id) as { seq: number; card_json: string; kept: number } | undefined);
     if (prior) {
-      const card = { ...JSON.parse(prior.card_json) as Record<string, unknown>, state: c.state };
+      const was = JSON.parse(prior.card_json) as Record<string, unknown>;
+      // When it left running, by its own word or core's clock (t-2109: how long a step took).
+      const ended = c.state !== 'running' ? (c.plain.t1 ?? (typeof was.t1 === 'string' ? was.t1 : was.state === 'running' ? nowIso(now) : undefined)) : undefined;
+      const card = { ...was, ...c.plain, state: c.state, ...(ended ? { t1: ended } : {}) };
+      if (c.state === 'running') delete card.t1;
       withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(card), r.id, prior.seq));
       // Its label moves with it (t-1944: a failed step says why, a plan says where it's got to), sealed like the first
-      // one; a label already swept stays swept.
-      if (prior.kept) { const blob = encrypt(h.home, env, c.summary); withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = ? WHERE thread = ? AND seq = ?').run(blob, r.id, prior.seq)); }
+      // one; a label already swept stays swept. Its words (t-2109) the same.
+      if (prior.kept) {
+        const blob = encrypt(h.home, env, c.summary);
+        const words = c.words ? encrypt(h.home, env, JSON.stringify(c.words)) : undefined;
+        withMessages(h.home, (db) => (words
+          ? db.prepare('UPDATE comms_messages SET text = ?, step = ? WHERE thread = ? AND seq = ?').run(blob, words, r.id, prior.seq)
+          : db.prepare('UPDATE comms_messages SET text = ? WHERE thread = ? AND seq = ?').run(blob, r.id, prior.seq)));
+      }
       updated++;
     } else {
-      append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state }, run }, now);
+      // Done when first heard of: ended when it says, else when it started (a plan, its words), else now.
+      const t1 = c.state !== 'running' ? (c.plain.t1 ?? c.plain.t0 ?? nowIso(now)) : undefined;
+      append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state, ...c.plain, ...(t1 ? { t1 } : {}) }, run, ...(c.words ? { step: JSON.stringify(c.words) } : {}) }, now);
       added++;
     }
   }
   settleStarts(h.home, r.id);
-  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null }, now));
+  // A sign of life alone (t-2109) keeps the beat and the working line, as a card does.
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null,
+    ...(alive ? { alive_at: alive.at, ...(alive.tokens !== undefined ? { alive_tokens: alive.tokens } : {}) } : {}) }, now));
   return { ok: true, added, updated };
 }
 
@@ -1455,6 +1532,7 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
       // By when core first kept it (its own clock), never the piece's `at`, which could be any time.
       db.prepare('DELETE FROM conversation_steps WHERE at < ?').run(cut);
       db.prepare('UPDATE comms_asks SET words = NULL WHERE words IS NOT NULL AND seen < ?').run(cut);
+      db.prepare('UPDATE comms_messages SET step = NULL WHERE step IS NOT NULL AND at < ?').run(cut);
       return db.prepare('UPDATE comms_messages SET text = NULL WHERE text IS NOT NULL AND at < ?').run(cut).changes;
     });
   }
@@ -1604,6 +1682,12 @@ export function movedSince(home: string, ms: number): Array<{ id: string; member
 }
 
 /** A thread's state for the app: is the body working, did the last delivery fail, is it queued. */
-export function stateOf(t: Thread): { working: boolean; working_since: string | null; queued: boolean; failed: boolean } {
-  return { working: t.working_since !== null, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed };
+export function stateOf(t: Thread): { working: boolean; working_since: string | null; queued: boolean; failed: boolean; beat?: string; alive_at?: string; tokens?: number } {
+  // While it works: when the runtime last said its body is up (`beat`), and its body's last sign of life and tokens
+  // (t-2109), so the app can tell working from quiet from stuck.
+  const working = t.working_since !== null;
+  return { working, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed,
+    ...(working && t.working_beat ? { beat: new Date(t.working_beat).toISOString() } : {}),
+    ...(working && t.alive_at ? { alive_at: new Date(t.alive_at).toISOString() } : {}),
+    ...(working && typeof t.alive_tokens === 'number' ? { tokens: t.alive_tokens } : {}) };
 }

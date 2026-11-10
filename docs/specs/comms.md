@@ -321,19 +321,33 @@ So the activity cards need a new capture:
     token-like runs. Its tests are loom-box `test/redact.test.mjs`.
   - A card's `summary` is stored like a message's words: an age blob in `text`, swept with them. Only `tool` and
     `state` are plain.
+- **The Watching view's parts (t-2109; Jonathan, 2026-11-10: his work shown, other people's words kept out).** A card
+  may also carry `detail` (the step's whole command, or a file's shown name, a search's pattern: redacted, at most
+  4000), `result` (one line of fixed phrases: `Read 120 lines`, `3 additions, 1 removal`, `exit 1: 11 passed, 1
+  failed`), `body` (an edit's diff of a file that isn't private, each line redacted, colour codes kept, at most 32000;
+  or a `text` card's words), `exit`, `limit` (the step's own timeout, seconds), `end` (when it finished), `parent` (the
+  helper step it ran under) and, on a plan, `items` (`{text, state: done|now|todo}`, at most 20). A card of tool
+  `text` is the body's own words between steps; the runtime sends it, and any card's `detail`, `body` or `items`, only
+  for a conversation that works for the owner alone (its principal now). **A shell step's output is never kept or
+  sent**: core drops a `body` on one. Showing it on demand, unstored, is t-2112.
+  - Core keeps `detail`, `body`, `result` and `items` sealed like the label (an age blob in `step`, swept with it), and
+    `exit`, `limit`, `parent` and the step's times (`t0` its start, `t1` its end, else when core saw it end) plain.
+  - The post may carry `alive: {at, tokens?}`, the body's last sign of life (when its record last moved, its output
+    tokens so far), with or without cards. The thread's state carries it (`alive_at`, `tokens`) while it works, and the
+    app says working (something in the last 2 minutes), quiet (nothing for 2 minutes, its body still up) or stuck
+    (nothing for 12, or a step past its own limit).
 - **How it travels.** In a house, the body host adds new cards to its `body-sync` report (every 2 s). For a local
   body, the runtime tails the files itself. Either way, it posts them to core: `POST /api/loom/comms/activity
-  {conversation, run, cards: [1–50]}` (role `runtime`).
+  {conversation, run, cards: [1–50], alive?}` (role `runtime`; no cards at all only beside `alive`).
   - Core accepts them only for a `loom` conversation whose thread is live (not archived or deleted). Otherwise it
     answers `409`.
   - A post of more than 50 cards, or with any card breaking the shape above (a non-printable character in `summary`
     included), is refused whole (`400`).
   - A card whose `id` the thread already has updates that card's `state` and its label (sealed again, unless its words
     were already swept). It doesn't add a second one.
-- **Only `tool_use` entries and tool items become cards.** A Claude `text` or `thinking` entry, a Codex
-  `agent_message` or `reasoning` item, and every result are skipped whole.
-- **The agent's own text between tools** isn't shown. In a venue body, that text is the body thinking aloud, and
-  nobody was ever meant to read it: the reply is what it sends.
+- **Tool steps, and the body's own words.** A Claude `tool_use` entry or a Codex tool item makes a step card; a Claude
+  `text` entry makes a `text` card (t-2109), shown only where the conversation works for the owner alone (above).
+  Thinking, a Codex `reasoning` item, and every tool result's own text are never sent.
 
 ### 4. Streaming: what "the reply streaming in" means here
 

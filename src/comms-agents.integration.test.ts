@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, agentsComms, firstLine, FIRST_LINE_MAX, markRead, openThread, postActivity, setArchived, threadFor, threadsOf, type AgentComms } from './comms.js';
+import { adapterCall, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadsOf, type AgentComms } from './comms.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 import { closeAllBackends } from './backends/index.js';
 
@@ -168,6 +168,41 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     expect(mark.unread).toBe(1);
     expect(mark.first).toEqual({ thread: t.id, text: 'the one reply' });
     markRead(h, threadFor(h, member('jonathan'), t.id), 99);
+  });
+
+  it('keeps a step\'s further parts sealed with its label, its times and exit plain, and its body\'s sign of life on the thread (t-2109)', async () => {
+    const t = thread('jonathan', 'mark', 'parts check');
+    const card = { id: 'p1', at: '2026-11-10T10:00:00.000Z', tool: 'Bash', summary: 'Ran the tests', state: 'running', detail: 'npm test -- comms', limit: 120, parent: 'h:0123456789abcdef' };
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [card], alive: { at: '2026-11-10T10:00:01.000Z', tokens: 4100 } }).added).toBe(1);
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, state: 'failed', result: 'exit 1: 3 passed, 1 failed', body: 'OUTPUT-NEVER-KEPT', exit: 1, end: '2026-11-10T10:00:09.000Z' }] }).updated).toBe(1);
+    // An edit's diff is kept, sealed, with its colours.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts', body: '\x1b[32m+ok\x1b[0m' }] }).added).toBe(1);
+    const tt = threadFor(h, member('jonathan'), t.id);
+    const step = (await messagesOf(h, process.env, tt)).find((m) => m.kind === 'card' && m.id === 'p1')!;
+    expect(step.card).toMatchObject({ tool: 'Bash', state: 'failed', exit: 1, limit: 120, parent: 'h:0123456789abcdef', t0: '2026-11-10T10:00:00.000Z', t1: '2026-11-10T10:00:09.000Z',
+      step: { detail: 'npm test -- comms', result: 'exit 1: 3 passed, 1 failed' } });
+    // A shell step's output is never kept (t-2109), in its words or anywhere in the store.
+    expect((step.card?.step as Record<string, unknown>).body).toBeUndefined();
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts', body: '\x1b[32m+ok\x1b[0m' });
+    // Its words are sealed: never plain in the store.
+    const raw = new BetterSqlite3(join(h.home, 'comms.db'), { readonly: true });
+    const row = raw.prepare("SELECT card_json, step FROM comms_messages WHERE id = 'p1'").get() as { card_json: string; step: Buffer };
+    raw.close();
+    expect(row.card_json).not.toContain('npm test');
+    expect(row.step.toString('latin1')).not.toContain('npm test');
+    expect(stateOf(tt)).toMatchObject({ working: true, alive_at: '2026-11-10T10:00:01.000Z', tokens: 4100 });
+    // A sign of life alone is taken; a bad part refuses the post whole.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: '2026-11-10T10:00:30.000Z' } })).toMatchObject({ ok: true, added: 0 });
+    for (const bad of [{ body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
+      expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...bad }] })).toThrow(/bad-input/);
+    }
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [] })).toThrow(/bad-input/);
+    // Swept with its label.
+    sweepComms({ ...h, commsDays: 0 }, new Date(Date.now() + 60_000));
+    const gone = (await messagesOf(h, process.env, tt)).find((m) => m.id === 'p1')!;
+    expect(gone.text).toBeNull();
+    expect(gone.card?.step).toBeUndefined();
+    markRead(h, tt, 99);
   });
 
   it('refuses no member at all, whatever the route does', async () => {
