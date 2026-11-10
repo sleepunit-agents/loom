@@ -4,8 +4,6 @@
 // on every page, not only while Home is the main one. Null while it isn't live and whole: each view reads its page's
 // copy then.
 import { liveSet } from './live-set';
-import { liveViews } from './page';
-import { attentionNow } from './attention';
 import type { Card, DeskHomeData } from './desk-agents';
 import type { Attention } from './attention';
 import type { QuerySpec, Rec, ViewState } from './collections/runtime';
@@ -37,12 +35,6 @@ export function cardsOf(state: ViewState, records: ReadonlyMap<string, Rec>): Ca
 }
 
 const set = liveSet<Card[]>(SPEC, cardsOf);
-
-// Home (house-home) shows the cards, what's moving (each card's own) and what needs you: all live once both sets are, so
-// it isn't asked again on loom's bare "something changed" or a timer (page.ts liveViews). Not while it shows its
-// first-run card (no pieces yet: a piece installed elsewhere is what would move it).
-let firstRun = false;
-liveViews((view) => view === 'house-home' && !firstRun && set.current() !== null && attentionNow() !== null);
 export const useAgentCards = (csrf: string | undefined): Card[] | null => set.use(csrf);
 export const agentCardsNow = (): Card[] | null => set.current();
 
@@ -86,7 +78,6 @@ export function withAgentCards<V extends { view: string; chrome?: { shell?: { ag
     }) } } };
   }
   if (data.view === 'house-home' && data.home && typeof data.home === 'object') {
-    firstRun = !!(data.home as { firstRun?: unknown }).firstRun;
     out = { ...out, home: { ...(data.home as object), cards: live.map((c) => freshCard(c)), headline: headlineOf(live), moving: live.flatMap((c) => c.moving ?? []) } };
   }
   return out;

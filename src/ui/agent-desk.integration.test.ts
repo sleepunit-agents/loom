@@ -178,34 +178,6 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     await p.context().close();
   }, 90_000);
 
-  it('Home open: a job that starts shows on its card, and Home isn\'t asked again while its sets are live (t-2028)', async () => {
-    const p = await screen(1440, 900, '/');
-    await card(p, 'nova').waitFor();
-    await p.waitForFunction(() => document.documentElement.dataset.attention === 'live');
-    // Both sets live: the cards (and what's moving, each card's own) and what needs you. Give the cards a moment.
-    await new Promise((r) => setTimeout(r, 1_500));
-    const asked: number[] = [];
-    p.on('request', (r) => { if (new URL(r.url()).pathname === '/' && r.resourceType() === 'fetch') asked.push(Date.now()); });
-    const now = new Date().toISOString();
-    d.report({
-      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
-      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
-      nova: { jobs: [{ id: 'job-nova-home', text: 'Filing the receipts', kind: 'lane', status: 'running', where: 'wake', since: now }] },
-    });
-    await d.changed();
-    await expect.poll(() => card(p, 'nova').textContent(), { timeout: 30_000 }).toContain('Filing the receipts');
-    // Before (Home carried `moving` only on its page): every bare change asked GET / again.
-    expect(asked).toEqual([]);
-    d.report({
-      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
-      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
-    });
-    await d.changed();
-    await expect.poll(() => card(p, 'nova').textContent(), { timeout: 30_000 }).not.toContain('Filing the receipts');
-    expect(asked).toEqual([]);
-    await p.context().close();
-  }, 90_000);
-
   it('only the viewer\'s own agents: Sam owns Mark, so Mark alone, and only Sam\'s unread', async () => {
     const p = await screen(1440, 900, '/', { who: 'sam' });
     await card(p, 'mark').waitFor();
