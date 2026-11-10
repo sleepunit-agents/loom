@@ -1385,7 +1385,7 @@ export const MAX_DETAIL = 4000;
 export const MAX_BODY = 32_000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 /** Shown text: line breaks and tabs, and colour codes (ANSI SGR) only; no other control or line separator. */
-const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b-\x1f\x7f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
+const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
 type StepWords = { detail?: string; body?: string; result?: string; items?: Array<{ text: string; state: 'done' | 'now' | 'todo' }> };
 type StepPlain = { exit?: number; limit?: number; t0?: string; t1?: string; parent?: string };
 
@@ -1657,7 +1657,8 @@ export async function agentThreadRead(home: string, env: NodeJS.ProcessEnv, agen
   const all = existsSync(join(home, COMMS_DB)) ? await messagesOf(h, env, t, before !== undefined ? { before } : {}) : [];
   // The word rule at read time too: the sweep runs on the daemon's clock, and a stdio server reads with no daemon up.
   const cutoff = Date.now() - (h.commsDays ?? COMMS_DAYS_DEFAULT) * DAY_MS;
-  const kept = all.slice(-limit).map((m) => (m.kind !== 'error' && m.text !== null && Date.parse(m.at) < cutoff ? { ...m, text: null } : m));
+  // Past the thread's words' time, a card's words (t-2109) go with its label.
+  const kept = all.slice(-limit).map((m) => (m.kind !== 'error' && m.text !== null && Date.parse(m.at) < cutoff ? { ...m, text: null, ...(m.card && 'step' in m.card ? { card: (({ step: _s, ...rest }) => rest)(m.card) } : {}) } : m));
   return { thread: { id: t.id, title: t.title, archived: t.archived, state: stateOf(t) }, messages: kept };
 }
 
@@ -1689,7 +1690,8 @@ export function stateOf(t: Thread): { working: boolean; working_since: string | 
   // (t-2109), so the app can tell working from quiet from stuck.
   const working = t.working_since !== null;
   // A sign of life from before this spell of work is a past run's: not this one's.
-  const fresh = working && !!t.alive_at && t.alive_at >= (Date.parse(t.working_since ?? '') || 0) - 60_000;
+  // Nor one from the future (a clock that runs ahead would keep it "working" for good).
+  const fresh = working && !!t.alive_at && t.alive_at >= (Date.parse(t.working_since ?? '') || 0) - 60_000 && t.alive_at <= Date.now() + 60_000;
   return { working, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed,
     ...(working && t.working_beat ? { beat: new Date(t.working_beat).toISOString() } : {}),
     ...(fresh ? { alive_at: new Date(t.alive_at!).toISOString() } : {}),

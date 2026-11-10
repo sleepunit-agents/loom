@@ -88,17 +88,21 @@ export type Alive = { face: 'working' | 'quiet' | 'stuck'; quiet: number; step: 
  */
 export function aliveOf(state: { alive_at?: string; tokens?: number; working_since?: string | null }, cards: WorkCard[], now: number): Alive {
   // With nothing else heard, since it started working: a body that never says anything is quiet, then stuck.
-  let last = Math.max(Number.isFinite(ms(state.alive_at)) ? ms(state.alive_at) : 0, Number.isFinite(ms(state.working_since)) ? ms(state.working_since) : 0);
-  let step: WorkCard | null = null;
+  // A time ahead of now (a clock that runs ahead) counts as now, never as later.
+  const seen = (t: number) => (Number.isFinite(t) ? Math.min(t, now) : 0);
+  let last = Math.max(seen(ms(state.alive_at)), seen(ms(state.working_since)));
+  let step: WorkCard | null = null, late: WorkCard | null = null;
+  const pastLimit = (c: WorkCard) => Number.isInteger(c.card?.limit) && now - spanOf(c).start > (c.card!.limit as number) * 1000 + 30_000;
   for (const c of cards) {
     const s = spanOf(c);
-    last = Math.max(last, s.end ?? s.start);
-    if (s.end === null && !isPlan(c)) step = c;
+    last = Math.max(last, seen(s.end ?? s.start));
+    if (s.end === null && !isPlan(c)) { step = c; if (!late && pastLimit(c)) late = c; }
   }
+  // Any step still running past its own limit, not only the newest (a helper's, while its child runs).
+  if (late) step = late;
   const quiet = last ? Math.max(0, now - last) : 0;
   const running = step ? Math.max(0, now - spanOf(step).start) : 0;
-  const limit = step && Number.isInteger(step.card?.limit) ? (step.card!.limit as number) * 1000 : null;
-  const over = limit !== null && running > limit + 30_000;
+  const over = !!late;
   const face = over || quiet >= STUCK_MS ? 'stuck' : quiet >= QUIET_MS ? 'quiet' : 'working';
   return { face, quiet, step, running, tokens: typeof state.tokens === 'number' ? state.tokens : null, over };
 }

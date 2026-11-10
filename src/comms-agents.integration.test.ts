@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadsOf, type AgentComms } from './comms.js';
+import { adapterCall, agentThreadRead, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadsOf, type AgentComms } from './comms.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 import { closeAllBackends } from './backends/index.js';
 
@@ -175,6 +175,8 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     const card = { id: 'p1', at: '2026-11-10T10:00:00.000Z', tool: 'Bash', summary: 'Ran the tests', state: 'running', detail: 'npm test -- comms', limit: 120, parent: 'h:0123456789abcdef' };
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [card], alive: { at: '2026-11-10T10:00:01.000Z', tokens: 4100 } }).added).toBe(1);
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, state: 'failed', result: 'exit 1: 3 passed, 1 failed', body: 'OUTPUT-NEVER-KEPT', exit: 1, end: '2026-11-10T10:00:09.000Z' }] }).updated).toBe(1);
+    // A diff from a file with CRLF line ends is taken.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd0', tool: 'Edit', summary: 'Edited b.ts', state: 'done', detail: 'b.ts', body: '+a\r\n+b' }] }).added).toBe(1);
     // An edit's diff is kept, sealed, with its colours.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts', body: '\x1b[32m+ok\x1b[0m' }] }).added).toBe(1);
     const tt = threadFor(h, member('jonathan'), t.id);
@@ -193,6 +195,9 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // A sign of life from before this spell of work isn't this run's.
     expect(stateOf(tt)).toMatchObject({ working: true });
     expect(stateOf(tt).alive_at).toBeUndefined();
+    // A sign of life from the future isn't taken as this run's either.
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: new Date(Date.now() + 3_600_000).toISOString() } });
+    expect(stateOf(threadFor(h, member('jonathan'), t.id)).alive_at).toBeUndefined();
     const fresh = new Date(Date.now() + 1000).toISOString();
     postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: fresh, tokens: 4100 } });
     expect(stateOf(threadFor(h, member('jonathan'), t.id))).toMatchObject({ working: true, alive_at: fresh, tokens: 4100 });
@@ -218,6 +223,11 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
       const bytes = readFileSync(join(h.home, f));
       for (const never of ['OUTPUT-NEVER-KEPT', 'FILE-CONTENTS-NEVER-KEPT']) expect(bytes.includes(Buffer.from(never))).toBe(false);
     }
+    // An agent reading its own thread past the words' time, before the sweep has run: no label and no words.
+    { const db = new BetterSqlite3(join(h.home, 'comms.db')); db.prepare("UPDATE comms_messages SET at = '2026-01-01T00:00:00.000Z' WHERE thread = ? AND id = 'd0'").run(tt.id); db.close(); }
+    const asAgent = (await agentThreadRead(h.home, process.env, 'mark', { thread: tt.id })).messages.find((m) => m.id === 'd0')!;
+    expect(asAgent.text).toBeNull();
+    expect(asAgent.card?.step).toBeUndefined();
     // Swept with its label: the sealed words go from the row itself.
     sweepComms({ ...h, commsDays: 0 }, new Date(Date.now() + 60_000));
     const gone = (await messagesOf(h, process.env, tt)).find((m) => m.id === 'p1')!;

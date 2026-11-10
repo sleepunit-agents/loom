@@ -45,6 +45,13 @@ describe('the working line', () => {
     expect(aliveOf({ alive_at: iso(1000) }, [quiet], T0 + 1000 + QUIET_MS).face).toBe('quiet');
     expect(aliveOf({ alive_at: iso(1000) }, [quiet], T0 + 1000 + STUCK_MS).face).toBe('stuck');
   });
+  it('a helper running past its own limit is stuck though its newest child step is fresh; a clock ahead counts as now', () => {
+    const helper = card('h', 'Agent', 'running', { t0: iso(0), limit: 600 }, 'Started a helper');
+    const child = card('k', 'Bash', 'running', { t0: iso(2_390_000), parent: 'h' }, 'Ran ls');
+    expect(aliveOf({ alive_at: iso(2_399_000) }, [helper, child], T0 + 2_400_000)).toMatchObject({ face: 'stuck', over: true });
+    expect(aliveOf({ alive_at: iso(3_600_000 * 5) }, [], T0 + STUCK_MS + 1000).face).toBe('working');
+    expect(aliveOf({ alive_at: iso(3_600_000 * 5), working_since: iso(0) }, [], T0 + 3_600_000 * 5 + STUCK_MS + 1000).face).toBe('stuck');
+  });
   it('a body that says nothing at all is quiet, then stuck, counted from when it started working', () => {
     expect(aliveOf({ working_since: iso(0) }, [], T0 + 30_000).face).toBe('working');
     expect(aliveOf({ working_since: iso(0) }, [], T0 + QUIET_MS + 1000).face).toBe('quiet');
