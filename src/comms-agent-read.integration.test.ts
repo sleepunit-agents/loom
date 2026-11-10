@@ -16,6 +16,7 @@ import { agentDir, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
 import { adapterCall, COMMS_DB, openThread, recordDelivery, sweepComms, threadFor } from './comms.js';
 import { isCoreMcpTool } from './offers.js';
+import { bindHouseConversation } from './household-store.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 const at = () => new Date().toISOString();
@@ -45,8 +46,8 @@ describe.skipIf(!hasAge)('Comms: an agent reads its own threads', () => {
     recordTurn(agentDir(h, agent), agent, { venue: 'loom', place: o.thread.id, at: at(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message', label: 'New thread' } as never, 'runtime:runtime');
     return o.thread;
   };
-  const read = async (agent: string, conversation: string | null, args: Record<string, unknown> = {}) => {
-    const { server } = createLoomServer({ contextDir: agentDir(h, agent) });
+  const read = async (agent: string, conversation: string | null, args: Record<string, unknown> = {}, caller?: { house?: string; service?: string }) => {
+    const { server } = createLoomServer({ contextDir: agentDir(h, agent), ...(caller ? { caller } : {}) });
     const client = new Client({ name: 'comms-thread-test', version: '1' });
     const [c, s] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(s), client.connect(c)]);
@@ -88,6 +89,27 @@ describe.skipIf(!hasAge)('Comms: an agent reads its own threads', () => {
       }
       // No identity and no thread: it says what it needs.
       expect(String((await read('art', null)).body.error)).toMatch(/identity/);
+    });
+
+    it('from a body\'s house, only the thread of the conversation that house holds (t-2061)', async () => {
+      const mine = thread(4, 'art', 'mine: is it green?');
+      const sibling = thread(5, 'art', 'the sibling\'s private words');
+      bindHouseConversation(h.home, { agent: 'art', house: 'h-1', conversation: mine.conversation });
+      // Its own thread, unnamed or by id.
+      expect((await read('art', mine.conversation, {}, { house: 'h-1' })).error).toBe(false);
+      expect((await read('art', null, { thread: mine.id }, { house: 'h-1' })).error).toBe(false);
+      // A sibling's: by id, or by naming its conversation at identity. Refused, no words.
+      for (const r of [await read('art', null, { thread: sibling.id }, { house: 'h-1' }), await read('art', sibling.conversation, {}, { house: 'h-1' })]) {
+        if (!r.error) expect(JSON.stringify(r.body)).not.toMatch(/private words/);
+      }
+      const byId = await read('art', null, { thread: sibling.id }, { house: 'h-1' });
+      expect(byId.error).toBe(true);
+      expect(String(byId.body.error)).toMatch(/h-1 reads only the thread of the conversation it holds/);
+      // A house the runtime named nothing for reads none.
+      expect((await read('art', mine.conversation, {}, { house: 'h-2' })).error).toBe(true);
+      // A service's house and a session with no house: as before.
+      expect((await read('art', null, { thread: sibling.id }, { house: 'h-3', service: 'discord' })).error).toBe(false);
+      expect((await read('art', null, { thread: sibling.id })).error).toBe(false);
     });
 
     it('keeps the 14-day rule: swept words are gone, the message stays', async () => {

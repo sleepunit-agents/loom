@@ -12,6 +12,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLoomServer } from './server.js';
+import { bindHouseConversation } from './household-store.js';
 import { agentDir, loadHousehold, type Household } from './household.js';
 import { conversationId, createConversationTables, getConversation, recordTurn, writeDigest } from './backends/conversations.js';
 import { openThread, setTitle, threadFor } from './comms.js';
@@ -53,8 +54,8 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
     recordTurn(agentDir(h, agent), agent, { venue: 'loom', place: o.thread.id, at: at(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message', label: 'New thread' } as never, 'runtime:runtime');
     return o.thread;
   };
-  const call = async (conversation: string | null, title: unknown, agent = 'art') => {
-    const { server } = createLoomServer({ contextDir: agentDir(h, agent) });
+  const call = async (conversation: string | null, title: unknown, agent = 'art', caller?: { house?: string; service?: string }) => {
+    const { server } = createLoomServer({ contextDir: agentDir(h, agent), ...(caller ? { caller } : {}) });
     const client = new Client({ name: 'comms-title-test', version: '1' });
     const [c, s] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(s), client.connect(c)]);
@@ -106,6 +107,21 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
       expect((await call(marks.conversation, 'Mark\'s own', 'mark')).body).toMatchObject({ ok: true, title: 'Mark\'s own' });
       // and art's own body, its own.
       expect((await call(arts.conversation, 'Art\'s own')).body).toMatchObject({ ok: true, title: 'Art\'s own' });
+    });
+
+    it('from a body\'s house, only the thread of the conversation that house holds (t-2061)', async () => {
+      const mine = thread(8);
+      const sibling = thread(9);
+      bindHouseConversation(h.home, { agent: 'art', house: 'h-1', conversation: mine.conversation });
+      // A sibling's real conversation id, named from this house: refused, its thread keeps no title.
+      const posed = await call(sibling.conversation, 'Renamed by a sibling', 'art', { house: 'h-1' });
+      expect(posed.error).toBe(true);
+      expect(String(posed.body.error)).toMatch(/h-1 holds cv-[0-9a-f]{12}: it writes for that conversation only/);
+      expect(threadFor(h, jonathan(), sibling.id).title).toBeNull();
+      // Nor from a house the runtime named nothing for.
+      expect(String((await call(mine.conversation, 'x', 'art', { house: 'h-2' })).body.error)).toMatch(/h-2 holds no conversation/);
+      // Its own, from its own house.
+      expect((await call(mine.conversation, 'Its own', 'art', { house: 'h-1' })).body).toMatchObject({ ok: true, title: 'Its own' });
     });
 
     it('is a core tool name, so no piece may offer one by it', () => {
