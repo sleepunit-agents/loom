@@ -50,7 +50,7 @@ import { spawnBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
-import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
+import { forgetPiecePages, pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { stopPieceServers } from '../ui/piece-server.js';
 import { findPiece, listPieces, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
@@ -60,6 +60,7 @@ import { askGrant } from '../grants.js';
 import { grantsAuthority } from '../offers-registry.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_NUDGE_ROUTE, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { nudge as collectionsNudge } from '../collections/pull.js';
+import { pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
@@ -965,6 +966,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     const gone = new AbortController();
     res.on('close', () => { if (!res.writableEnded) gone.abort(); });
     const out = await pieceApi(path, { caller, path: subpath, body }, process.env, gone.signal);
+    // The piece said it wrote: its shared collections are pulled soon, so open windows hear it at once (t-2029).
+    // Not on a stranger's word: a tokenless call can't make loom pull (a pull it caused would cost the household, not it).
+    if (out.changed && live && caller.kind !== 'stranger') {
+      forgetPiecePages(path);
+      try { pullPieceSoon(live().home, process.env, piece); } catch { /* a hint; the 15 s pull still runs */ }
+    }
     if (gone.signal.aborted) return;
     res.writeHead(out.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(out.body));

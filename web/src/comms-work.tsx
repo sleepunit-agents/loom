@@ -3,8 +3,11 @@
 //
 // Desktop, with the comm screen in the right column: a framed panel under the comm screen and YOU. Anywhere else (a
 // phone, or a desktop pane under 760 px, where the comm screen sits at the top): a strip, "Work (N)", folded until
-// tapped. Read when the thread opens, 5 s after each new reply, and every 60 s while the page is visible.
+// tapped. Read when the thread opens, 5 s after each new reply, and when a task it shows (or one made in it) moves:
+// the tasks' own records, live (tasks-live.ts, t-2029). Every 60 s while the page is visible only while those aren't
+// live, or while it shows a change (Changes has no shared records of its own yet).
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { tasksLive, watchTasks } from './tasks-live';
 import './comms-work.css';
 
 export interface WorkItem { title: string; ref: string; status: string; tone?: 'bad' | 'warn' | 'ok'; when?: string; url?: string; made?: true; from: string }
@@ -46,8 +49,17 @@ function Row({ it }: { it: WorkItem }) {
   );
 }
 
-export function WorkPanel({ thread, replySeq }: { thread: string; replySeq: number }) {
+/** Whether these moved tasks concern the panel: one it shows, or one made in its conversation. */
+export function concerns(keys: ReadonlySet<string>, records: ReadonlyMap<string, Record<string, unknown>>, shown: readonly WorkItem[], conversation: string): boolean {
+  const refs = new Set(shown.map((i) => `tasks/task/${i.ref}`));
+  for (const k of keys) if (refs.has(k) || records.get(k)?.source === `conversation:${conversation}`) return true;
+  return false;
+}
+
+export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: string; conversation: string; csrf: string; replySeq: number }) {
   const [work, setWork] = useState<Work | null>(null);
+  const shown = useRef<WorkItem[]>([]);
+  shown.current = work?.items ?? [];
   const [open, setOpen] = useState(false);
   const alive = useRef(true);
   const load = useCallback(async () => {
@@ -59,9 +71,22 @@ export function WorkPanel({ thread, replySeq }: { thread: string; replySeq: numb
   useEffect(() => {
     alive.current = true;
     void load();
-    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 60_000);
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible' && (!tasksLive() || shown.current.some((i) => i.ref.startsWith('github:')))) void load();
+    }, 60_000);
     return () => { alive.current = false; clearInterval(t); };
   }, [load]);
+  // A task it shows, or one made here, moved: read again (a moment later, so a burst of moves is one read).
+  useEffect(() => {
+    if (!csrf) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const off = watchTasks(csrf, (keys, records) => {
+      if (!concerns(keys, records, shown.current, conversation)) return;
+      clearTimeout(t);
+      t = setTimeout(() => void load(), 250);
+    });
+    return () => { clearTimeout(t); off(); };
+  }, [csrf, conversation, load]);
   // A new reply may have made or named work: read again 5 s after it, once the pieces have seen it.
   const first = useRef(true);
   useEffect(() => {

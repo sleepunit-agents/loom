@@ -19,7 +19,8 @@ import { randomBytes } from 'node:crypto';
 import { readRecord } from '../cli/pieces-managed.js';
 import type { Household } from '../household.js';
 import { runOffer } from '../offers-registry.js';
-import { Pool } from '../ui/pieces.js';
+import { forgetPiecePages, Pool } from '../ui/pieces.js';
+import { findPiece } from '../cli/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, type TypeDecl } from './contract.js';
 import { coreAnswers } from './core-types.js';
 import type { ProviderQuery } from './memory.js';
@@ -179,8 +180,14 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     }
   }
   withLog(home, (db) => prune(db, now()));
-  if (wrote) tick(home);
+  if (wrote) { tick(home); pagesMoved(ctx, p); }
   return 'pulled';
+}
+
+/** A piece's records moved: its kept pages go (pieces.ts forgetPiecePages), so a page asked again is drawn again. */
+function pagesMoved(ctx: PullContext, p: Provider): void {
+  if (!p.piece) return;
+  try { const path = findPiece(p.piece, ctx.env); if (path) forgetPiecePages(path); } catch { /* a page kept 5 s more */ }
 }
 
 /**
@@ -249,6 +256,7 @@ async function bridge(ctx: PullContext, p: Provider, domain: string, types: read
   if (diffs.length) {
     withLog(home, (db) => writeTxn(db, domain, epoch, diffs, (c) => ({ key: (c as Change & { key: string }).key, type: (c as Change & { type: string }).type }), now()));
     tick(home);
+    pagesMoved(ctx, p);
   }
   withLog(home, (db) => prune(db, now()));
   return 'bridged';

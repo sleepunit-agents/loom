@@ -737,6 +737,11 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   a box can never starve the page's pieces. A caller that hangs up while
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
+- **A call that wrote says so**: `{"status": 200, "body": {...}, "changed": true}`.
+  loom then pulls the piece's shared collections soon ([specs/collections.md](specs/collections.md), coalesced, never
+  awaited), so a house's write reaches open windows at once rather than on the next 15 s pull. Only `true` is read,
+  it never reaches the caller, and a stranger's call can't cause a pull. The tasks piece says it beside a write verb
+  that succeeded.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
 - **Served, where a piece says** (t-2065). A path its `loom` block lists in
   `api_serve` (at most 8, fixed when it's installed) goes to a long-lived

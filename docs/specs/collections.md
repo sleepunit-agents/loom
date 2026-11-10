@@ -763,9 +763,27 @@ along with the listeners. The adapter is the only code that imports the client l
   a `changes` verb is owed before then.
 - **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
   store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.
-- **Still to move**: the consumers. That means the Tasks pages' lists, the ready and blocked queues, a Comms thread's
-  work panel (its 60 s poll), project feeds and counts, and Changes (PRs, checks, merge state), which needs its own
-  provider in loom-changes.
+- **The queues are a filter** (tasks/task 1.1): `ready` (the `taskstore ready` rule: open, not an epic, no open blocker),
+  `blocked` and `blockers` (the open blockers' ids), and `closeReason`. So the ready queue is `ready eq true` ordered by
+  priority then created, and the blocked queue `blocked eq true`; parity with `taskstore ready` is taskstore's test.
+- **A write says so** (second slice): a piece API call that wrote answers `changed: true` (extensions.md, "The API"), and
+  core pulls the piece's domains soon (`subs.ts` `pullPieceSoon`) and drops its kept pages. Any pull that logs a change
+  drops them too (`pull.ts` `pagesMoved`), so a page asked again after its records moved is drawn again, never served
+  from the 5 s copy. A write on loom's machine that doesn't go through the API still arrives on the 15 s pull.
+- **The Tasks pages read them** (pages stay piece-rendered): `web/src/tasks-live.ts`, its own chunk, holds every open or
+  started task and every task that moved in the last eight days, read whole (every page), while a page that reads tasks
+  is shown (`tasks-pages.ts`: the work page, a task's page, a project's). When one moves, that page is asked again (one
+  ask, 250 ms after the burst), and the work page is no longer asked on the bare change or its timer while the records
+  are live, only every 10 minutes all the same (what it says depends on the day too: "Done in the last 7 days"). A task's page and a project's are asked on both (they show what the records here don't: comments, other
+  pieces' work). A household owner of only some agents is refused the set, and their pages work as before. In a real
+  browser (`tasks-live.integration.test.ts`): a task closed through the API left an open Tasks page in 0.88 s with one
+  page ask, and nothing asked again while idle (before: 5.9 s, and a page ask every 1.5 s from the bare change).
+- **A thread's work panel** asks `/comms/<t>/work` again when a task it shows, or one made in its conversation, moves,
+  not every 60 s; it keeps the 60 s read only while it shows a change (Changes has no records yet) or the tasks aren't
+  live.
+- **Still to move**: project feeds and counts as records (project pages are only asked again on a task's move), the
+  agent cards' backlog jobs, a `changes` verb (owed before ~10,000 tasks), and Changes (PRs, checks, merge state), which
+  needs its own provider in loom-changes.
 
 ## As built: each agent's card (t-2028, first slice)
 
