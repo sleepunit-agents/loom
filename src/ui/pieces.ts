@@ -352,12 +352,31 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number; onLine?: (line: string) => 'go' | 'stop' } = {},
+  opts: { serve?: string[]; stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number; onLine?: (line: string) => 'go' | 'stop' } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
-  const r = opts.pool && opts.pool !== 'page'
-    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs, onLine: opts.onLine }))
-    : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
+  const execute = async (): Promise<Answer> => {
+    if (opts.serve && opts.stdin !== undefined) {
+      const { LOOM_STORE_GRANT: grant, ...rest } = env1;
+      let request: unknown;
+      try { request = JSON.parse(opts.stdin); } catch { return { ok: false, reason: 'invalid request' }; }
+      const pending = serveCall(path, resolved(path), pieceEnvFor(path, pieceEnv(rest)), grant, request,
+        { argv: opts.serve, timeoutMs: opts.timeoutMs ?? PIECE_TIMEOUT_MS, maxBytes: opts.maxBytes ?? PIECE_MAX_BYTES });
+      if (pending) {
+        const answer = await pending;
+        if (!answer.ok || !opts.onLine) return answer;
+        // The same row parser and admission checks as the one-shot path. Answers are never reused between calls.
+        for (const line of answer.stdout.split('\n')) {
+          if (!line.trim()) continue;
+          if (Buffer.byteLength(line) > (opts.maxBytes ?? PIECE_MAX_BYTES)) return { ok: false, reason: 'line too long' };
+          if (opts.onLine(line) === 'stop') return { ok: false, reason: 'stopped' };
+        }
+        return { ok: true, stdout: '' };
+      }
+    }
+    return run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs, onLine: opts.onLine });
+  };
+  const r = await (opts.pool && opts.pool !== 'page' ? offerPools[opts.pool] : pagePool).run(execute);
   if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;
   if (r.reason !== 'no ui') return { ok: false, reason: r.reason };

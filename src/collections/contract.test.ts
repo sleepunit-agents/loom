@@ -33,6 +33,11 @@ const offer = (types: Record<string, unknown> = { task: TASK }, extra: Record<st
 const decl = (): TypeDecl => parseTypeDecl('task', TASK) as TypeDecl;
 
 describe('the collections offer: checked at install', () => {
+  it('accepts persistent query opt-in only as true', () => {
+    expect(parseCollectionsOffer(offer(undefined, { query_serve: true }), argv)).toMatchObject({ query_serve: true });
+    expect(parseCollectionsOffer(offer(undefined, { query_serve: false }), argv)).toMatch(/query_serve/);
+  });
+
   it('accepts the spec\'s shape, with core\'s defaults filled in', () => {
     const o = parseCollectionsOffer(offer(undefined, { owners: 2 }), argv) as CollectionsOffer;
     expect(o.owners).toBe(2);

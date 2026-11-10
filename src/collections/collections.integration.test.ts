@@ -39,7 +39,8 @@ const RECORDS = [
 const PROVIDER_BIN = (name: string) => `#!${process.execPath}
 const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
-let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
+fs.appendFileSync(home + '/${name}-starts', String(process.pid) + '\\n');
+const respond = (s) => {
   const ask = JSON.parse(s);
   fs.appendFileSync(home + '/${name}-ran', JSON.stringify({ viewer: ask.viewer, ids: ask.queries.map((q) => q.id), scope: process.env.LOOM_OWNER_SCOPE || null }) + '\\n');
   const mode = fs.existsSync(home + '/${name}-mode') ? fs.readFileSync(home + '/${name}-mode', 'utf-8').trim() : '';
@@ -82,8 +83,16 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     for (const r of a.rows) out.push(JSON.stringify({ id: a.id, row: r }));
     if (a.more !== undefined) out.push(JSON.stringify({ id: a.id, more: a.more }));
   }
-  process.stdout.write(out.join('\\n') + '\\n');
-});
+  return out.join('\\n') + '\\n';
+};
+if (process.argv.includes('--serve')) {
+  require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
+    const m = JSON.parse(l);
+    process.stdout.write(JSON.stringify({ id: m.id, exit: 0, stdout: respond(JSON.stringify(m.request)) }) + '\\n');
+  });
+} else {
+  let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => process.stdout.write(respond(s)));
+}
 `;
 
 const AUTHORITY_BIN = `#!${process.execPath}
@@ -165,7 +174,7 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
     })())!;
     process.env.LOOM_HOME = h.home;
     writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS));
-    piece(h.home, 'taskstore', { role: 'tasks', collections: { owners: 2, query: ['loom-taskstore', 'q'], types: { task: TASK } } }, PROVIDER_BIN('tasks'));
+    piece(h.home, 'taskstore', { role: 'tasks', collections: { owners: 2, query_serve: true, query: ['loom-taskstore', 'q'], types: { task: TASK } } }, PROVIDER_BIN('tasks'));
     piece(h.home, 'notes', { collections: { query: ['loom-notes', 'q'], types: { task: TASK } } }, PROVIDER_BIN('notes'));
     piece(h.home, 'broken', { collections: { owners: 2, query: ['loom-broken', 'q'], types: { task: TASK } } }, PROVIDER_BIN('broken'));
     tok.jonathan = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
@@ -200,6 +209,19 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
     clearPieceCache();
     clearGrantAnswers();
     clearOutOfContract();
+  });
+
+  it('successive household queries use one provider process and answer each request afresh', async () => {
+    const before = existsSync(join(h.home, 'tasks-starts')) ? readFileSync(join(h.home, 'tasks-starts'), 'utf8').trim().split('\n').length : 0;
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) {
+      const a = await one(tok.jonathan, { where: [['status', 'eq', i % 2 ? 'closed' : 'open']] });
+      expect(a.rows).toBeDefined();
+    }
+    const starts = readFileSync(join(h.home, 'tasks-starts'), 'utf8').trim().split('\n').length - before;
+    console.log(`10 collection queries: ${Math.round(performance.now() - start)} ms; provider starts ${starts}`);
+    expect(starts).toBeLessThanOrEqual(1);
+    expect(runs('tasks')).toHaveLength(10);
   });
 
   describe('viewer authority', () => {
