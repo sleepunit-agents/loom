@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`). A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`); what needs you (t-2025: core's `attention` type, below). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -645,6 +645,42 @@ along with the listeners. The adapter is the only code that imports the client l
   window, and the budget is that, not more.
 - A view nobody reads is kept 30 s (a window reopened in that time is warm, with no request), a type nobody reads
   5 minutes; past 20,000 records the least recently read types without an open view go first.
+
+## As built: what needs you (t-2025)
+
+- **One record type, `loom/attention`** (core's, `src/collections/core-types.ts`): one Inbox item each, keyed by the
+  Inbox's own item key (`askKey`, a hash of source, text and page). Provider ids on asks (Inventory, "Before any domain
+  moves", 1) are still owed by the pieces; until they come, a reworded ask is a new record, as it's a new Inbox item
+  today. The key reaches no one the item doesn't (delivered keys).
+- **Made for each viewer by the Inbox's own code** (`handler.ts` `memberInbox`: their agents, `forOwner`, their scope's
+  manifests, their read state and their own outcomes), so what a member gets is exactly their Inbox page's items: the
+  parity test (`attention.integration.test.ts`) holds both to it, for a household owner and an owner of one agent.
+  The type is `audience: "ask"` (a viewer's rows are re-asked as them when anything moves), and each row's audience is
+  `members: [viewer]`: core's agent rule still applies on top of it.
+- **The core viewer's snapshot** (the bridge) is every member's items once each, with no one's read state and an
+  owner-class `reads` (how many members opened it), so a read moves the record and the member's subscriptions are
+  asked again. What moves it: every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read`, and
+  everything that says loom's bare "something changed" (`live.ts` `onChanged`), plus the 15 s pull.
+- **A re-ask is leading-edge**: at once when the subscription wasn't asked in the last 1.5 s, else when the gap is up
+  (`subs.ts` `reaskSoon`). Measured (`attention.bench.integration.test.ts`, 10 asks, median of 7): an Allow reached
+  another window in 0.26 s (was 1.3 s: the bare change, then the Inbox's and Home's pages again); a read reached the
+  member's other windows in 0.13 s (was their next timed refetch, 20 to 60 s); the first load is one 6 ms, 4.9 KB
+  answer (was the Inbox's page, 12 ms and 6.9 KB, and Home's, 12 ms and 4.6 KB, each carrying its own copy).
+- **`GET /inbox?i=` no longer marks read**; the app posts `/inbox/read` for the item it opens.
+- **The manifest cache key now includes `LOOM_OWNER_SCOPE`** (`pieces.ts` `scopeKey`): the parity test found a
+  household owner's Inbox missing another agent's ask after an agent owner's request had cached its narrowed answer.
+- **In the window** (`web/src/attention.ts`): one subscription per tab, read by `withAttention` into every page view
+  (the shell's total and per-agent badges, Home's `needs`/`need`/`stack`, an agent window's `waiting`, the Inbox's
+  `items`), and by `ask-open.ts` to show whether a card is open (loom is still asked right before a send). Until the
+  set is live and complete, each view reads its page's own copy, as before. Once it's live, the Inbox isn't asked
+  again on a bare change or on its timer (`page.ts` `liveViews`). `document.documentElement.dataset.attention` says
+  `live` or `page`.
+- **Counts now agree**: the badge total, Needs you, the Inbox's folders and From counts and each agent's badge all
+  count the same records. Two formulas changed as a result: an agent's badge counts one item for its memory
+  proposals (as the Inbox shows one), not each proposal (owner decision 2, one record per proposal, is still to do),
+  and absorbed approval cards are no longer subtracted twice.
+- **Still to move** (later in t-2025's line): the push watch (`yourCall`) and Needs auto-resolve reading the records as
+  the core viewer; a Comms thread's own asks (`threadAsks`) as a filtered view of this set; project "waiting".
 
 ## What stays on its own transport (exceptions)
 

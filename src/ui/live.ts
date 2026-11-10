@@ -63,8 +63,17 @@ const seen = new Map<string, Map<string, string>>();
 /** Whether an app whose owner sees `sees` may hear of a change to `about`. */
 const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && about.some((a) => sees.includes(a)));
 
+/**
+ * What else hears "something changed", by household home: the shared collections, whose attention records are made
+ * from everything a change can move (t-2025: subs.ts nudges `loom/attention`, which costs at most one pull per GAP_MS).
+ */
+const changeHooks = new Map<string, () => void>();
+export function onChanged(home: string, f: () => void): void { changeHooks.set(home, f); }
+function hooks(): void { for (const f of changeHooks.values()) { try { f(); } catch { /* a hint; the poll still pulls */ } } }
+
 /** Tell the open apps that may see it that something changed (soon, and once for a burst). */
 export function changed(about: Sees = '*'): void {
+  hooks();
   for (const c of clients) if (hears(c.sees, about)) nudge(c);
 }
 
@@ -73,6 +82,7 @@ export function changed(about: Sees = '*'): void {
  * (docs/specs/comms.md, rule 4), so another owner of the same agent never hears of it, not even as a bare change.
  */
 export function changedFor(member: string): void {
+  hooks();
   for (const c of clients) if (c.member === member) nudge(c);
 }
 

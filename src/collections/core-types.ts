@@ -15,6 +15,20 @@ import { parseTypeDecl, type TypeDecl } from './contract.js';
 import { answerFrom, type MemRecord, type ProviderAnswer, type ProviderQuery } from './memory.js';
 import type { Viewer } from './viewer.js';
 
+/**
+ * Where a core type's records come from when they aren't core's own files to read here: the attention items are built
+ * by the Inbox's own code (src/ui/handler.ts, inboxItems: every piece's manifest, the conversations' asks, the
+ * member's read state), which registers itself for the household it serves. Answers the records that viewer gets, the
+ * viewer's own choice already made (as any provider decides first); none registered: no records.
+ */
+export type CoreSource = (viewer: Viewer, now: number) => Promise<MemRecord[]>;
+const sources = new Map<string, Map<string, CoreSource>>();
+export function registerCoreSource(home: string, type: string, f: CoreSource): void {
+  let m = sources.get(home);
+  if (!m) sources.set(home, (m = new Map()));
+  m.set(type, f);
+}
+
 const declare = (name: string, raw: unknown): TypeDecl => {
   const d = parseTypeDecl(name, raw, `loom.${name}`);
   if (typeof d === 'string') throw new Error(`core's collection type ${name}: ${d}`);
@@ -51,6 +65,49 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     max_page: 200,
     aggregates: { count: {} },
   }),
+  // One Inbox item (t-2025): an ask, a notice, an answered one, an FYI, as this member's Inbox files it. Its id is the
+  // Inbox's own item key, so Home, the Inbox, the badges, an agent card and a thread's ask card name the same record.
+  // What a viewer gets is decided for them by the Inbox's own code (their agents, their pieces, their read state), so
+  // it's an `ask` type: when anything in it moves, each subscription is asked again as its viewer.
+  attention: declare('attention', {
+    version: '1.0',
+    schema: { type: 'object', properties: { kind: { type: 'string' }, box: { type: 'string' }, attention: { type: 'boolean' }, text: { type: 'string' } } },
+    agent: 'agent',
+    fields: {
+      agent: { class: 'member', filter: ['eq', 'in', 'has'] },
+      kind: { class: 'member', filter: ['eq', 'in'] },
+      box: { class: 'member', filter: ['eq', 'in'] },
+      attention: { class: 'member', filter: ['eq'] },
+      unread: { class: 'member', filter: ['eq'] },
+      seen: { class: 'member' },
+      sort: { class: 'member', order: true },
+      at: { class: 'member' },
+      text: { class: 'member' },
+      meta: { class: 'member' },
+      outcome: { class: 'member' },
+      source: { class: 'member' },
+      sourceLabel: { class: 'member' },
+      page: { class: 'member' },
+      label: { class: 'member' },
+      href: { class: 'member' },
+      actions: { class: 'member' },
+      reply: { class: 'member' },
+      needs: { class: 'member' },
+      approval: { class: 'member' },
+      waitsOnApproval: { class: 'member', filter: ['eq'] },
+      fine: { class: 'member' },
+      relayedFrom: { class: 'member' },
+      conversation: { class: 'member', filter: ['eq'] },
+      // How many members have opened it: what the core viewer's snapshot holds instead of anyone's own read state, so
+      // a read moves the record and every subscription is asked again. Household owners' only, and never asked for.
+      reads: { class: 'owner' },
+    },
+    default_fields: ['agent', 'kind', 'box', 'attention', 'unread', 'seen', 'sort', 'at', 'text', 'meta', 'outcome', 'source', 'sourceLabel', 'page', 'label', 'href',
+      'actions', 'reply', 'needs', 'approval', 'waitsOnApproval', 'fine', 'relayedFrom', 'conversation'],
+    max_page: 500,
+    aggregates: { count: {} },
+    audience: 'ask',
+  }),
 };
 
 /** Core's records of `type` that core, as the provider, answers this viewer: it decides first, as any provider does. */
@@ -69,12 +126,20 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
 }
 
 /** Core's answer to a batch of queries for one viewer, in the shape a piece's provider answers. */
-export function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now()): ProviderAnswer[] {
-  const held = new Map<string, MemRecord[]>();
-  return queries.map((q) => {
+export async function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now()): Promise<ProviderAnswer[]> {
+  const held = new Map<string, MemRecord[] | 'unavailable'>();
+  const out: ProviderAnswer[] = [];
+  for (const q of queries) {
     const decl = CORE_TYPES[q.type];
-    if (!decl) return { id: q.id, rows: [], more: false, error: 'unsupported-version' };
-    if (!held.has(q.type)) held.set(q.type, recordsFor(h, q.type, viewer));
-    return answerFrom(held.get(q.type)!, q, decl, now);
-  });
+    if (!decl) { out.push({ id: q.id, rows: [], more: false, error: 'unsupported-version' }); continue; }
+    if (!held.has(q.type)) {
+      const src = sources.get(h.home)?.get(q.type);
+      // A source that fails says unavailable for this answer, never "none" (which would read as everything gone).
+      held.set(q.type, src ? await src(viewer, now).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
+        : recordsFor(h, q.type, viewer));
+    }
+    const recs = held.get(q.type)!;
+    out.push(recs === 'unavailable' ? { id: q.id, rows: [], more: false, error: 'unavailable' } : answerFrom(recs, q, decl, now));
+  }
+  return out;
 }

@@ -90,6 +90,13 @@ export function collectionsRuntime(csrf: () => string): NonNullable<typeof colle
   return collections;
 }
 
+/**
+ * Views read live from shared collections (attention.ts says the Inbox, once its set is live): a page showing one isn't
+ * asked again on a bare change or on a timer, since what changes on it arrives on its own (t-2025).
+ */
+let readLive: (view: string) => boolean = () => false;
+export function liveViews(f: (view: string) => boolean): void { readLive = f; }
+
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
 
@@ -202,9 +209,10 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   }, [say]);
 
   const [live, setLive] = useState(false);
+  const shownView = useRef('');
   useEffect(() => {
     // Revalidate in the background without making a confirmed page look like a cached copy.
-    const again = () => { if (!document.hidden) { void load(showing.current, false, true); } };
+    const again = () => { if (!document.hidden && !readLive(shownView.current)) { void load(showing.current, false, true); } };
     const stop = listen({ change: again, open: setLive });
     document.addEventListener('visibilitychange', again);
     return () => { stop(); document.removeEventListener('visibilitychange', again); };
@@ -213,9 +221,11 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
   // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
   const every = refreshEvery(data as Showing | null, live);
+  shownView.current = (data as Showing | null)?.view ?? '';
   useEffect(() => {
     if (!every) return;
     const t = setInterval(() => {
+      if (readLive(shownView.current)) return;
       const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
       if (!busy) void load(navNow.current.here(), false, true);
     }, every * 1000);

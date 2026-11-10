@@ -321,11 +321,18 @@ function resolved(path: string): string {
   }
 }
 
+/**
+ * The scope a piece answers for, as a cache key: the agent it's narrowed to (LOOM_SCOPE) and the agents an agent
+ * owner owns (LOOM_OWNER_SCOPE, owners.md). Both: a piece that understands agent owners answers them differently, so
+ * one viewer's answer is never another's (collections.md, "Before any domain moves", 5).
+ */
+const scopeKey = (env: NodeJS.ProcessEnv): string => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
+
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
   // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately. And per the file
   // the path resolves to now: an install points pieces/bin/loom-<name> at a new version, which is a new
   // answer at once, not 45s later (t-1584).
-  const key = `${path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(path)}`;
+  const key = `${path}\0${scopeKey(env)}\0${resolved(path)}`;
   const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
@@ -365,7 +372,7 @@ export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: Reado
   const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
-    const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
+    const key = `${p.path}\0${scopeKey(env)}\0${resolved(p.path)}`;
     const generation = manifestGeneration;
     const before = cache.get(key);
     const result = fetchManifest(p.name, p.path, env);
@@ -438,7 +445,7 @@ export async function piecePage(
       process.stderr.write(`loom: piece ${info.piece} page "${path}": cut short ${cut.join('; ')}\n`);
     });
   };
-  const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
+  const key = `${info.path}\0${scopeKey(env)}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);
   if (hit && now - hit.at < (hit.live ? PAGE_LIVE_MS : PAGE_FRESH_MS)) return hit.result;
   if (hit && !hit.live && now - hit.at < PAGE_STALE_MS) {

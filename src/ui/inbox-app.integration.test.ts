@@ -89,7 +89,7 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
   /** Screenshots for a PR's evidence, when LOOM_SHOTS names a directory. */
   const shot = async (p: Page, name: string) => { if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `${name}.png`) }); };
 
-  it('an open ask keeps its computed colours and enabled buttons through repeated events and rechecks', async () => {
+  it('an open ask keeps its computed colours and enabled buttons through repeated events and rechecks, with no page asked again', async () => {
     ask('Keep these answer buttons steady?');
     const p = await screen(1280, 800, '/inbox?t=*inbox');
     await row(p, 'Keep these answer buttons steady?').click();
@@ -118,17 +118,19 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     await p.route('**/inbox/open?*', async (r) => {
       checks++; await new Promise((resolve) => setTimeout(resolve, 250)); await r.continue();
     });
+    // What needs you is read live (web/src/attention.ts, t-2025): loom's bare "something changed" no longer asks the
+    // Inbox's page again, nor each card whether it's open; the live set says so as it moves.
+    await expect.poll(() => p.evaluate(() => document.documentElement.dataset.attention)).toBe('live');
     for (let n = 0; n < 3; n++) {
-      const before = pages;
       changed();
-      await expect.poll(() => pages).toBeGreaterThan(before);
-      await p.waitForTimeout(350);
+      await p.waitForTimeout(1_800);
     }
-    // Picking the same ask is another background check, not a reason to remove its buttons.
+    expect(pages).toBe(0);
+    // Picking the same ask is another check (of the live set), not a reason to remove its buttons.
     await row(p, 'Keep these answer buttons steady?').click();
     await p.waitForTimeout(350);
     expect(await p.evaluate(() => (window as unknown as { samples: string[] }).samples)).toEqual([]);
-    expect(checks).toBeGreaterThanOrEqual(4);
+    expect(checks).toBe(0);
     for (const b of await buttons.all()) expect(await b.isEnabled()).toBe(true);
     await p.context().close();
   });

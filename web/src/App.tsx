@@ -1,5 +1,6 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
+import { useAttention, withAttention } from './attention';
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
@@ -218,7 +219,10 @@ export default function App() {
     replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
   }), []);
   const mainPage = usePage(location.pathname + location.search, say, appNav);
-  const { url, data, error, waiting, pending, savedAt, showing, load } = mainPage;
+  const { url, error, waiting, pending, savedAt, showing, load } = mainPage;
+  // What needs you, live (attention.ts; t-2025): the badges, Home's Needs you and the Inbox read one set once it's in.
+  const attention = useAttention(mainPage.data?.chrome?.csrf);
+  const data = useMemo(() => withAttention(mainPage.data, attention), [mainPage.data, attention]);
   const tilesApi = useRef<import('./tiling/tiles').TilesApi | null>(null);
   // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
   const [D, setD] = useState(desk$);
@@ -479,7 +483,7 @@ export default function App() {
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
   const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
-    const data = pg.data;
+    const data = withAttention(pg.data, attention);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
     const inAgent = !!agentHead?.id && !!data?.chrome?.shell?.household;

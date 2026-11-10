@@ -303,7 +303,7 @@ async function reask(ctx: ServeContext, p: Provider, viewer: Viewer, q: Query, s
  * it didn't filter would tell a viewer choosing the queries that hidden records matched.
  */
 async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], asks: ProviderQuery[], share: number, now: number): Promise<{ answers: Map<string, ProviderAnswer>; at?: unknown } | string | typeof OUT_OF_CONTRACT> {
-  if (!p.piece) return { answers: new Map(coreAnswers(ctx.household, viewer, asks, now).map((a) => [a.id, a])) };
+  if (!p.piece) return { answers: new Map((await coreAnswers(ctx.household, viewer, asks, now)).map((a) => [a.id, a])) };
   const piece = p.piece;
   // The scope a page's piece gets (owners.md), and never one inherited from loom's own environment.
   const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...env0 } = ctx.env;

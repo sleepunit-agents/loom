@@ -199,7 +199,7 @@ async function snapshot(ctx: PullContext, p: Provider, types: readonly string[])
     for (;;) {
       const q: ProviderQuery = { id: 'bridge', type, version: Number(decl.version.split('.')[0]), where: [], order: [], limit: decl.max_page, after, fields, aggregates: [] };
       let answer;
-      if (!p.piece) answer = coreAnswers(ctx.household, { kind: 'core' }, [q], now())[0];
+      if (!p.piece) answer = (await coreAnswers(ctx.household, { kind: 'core' }, [q], now()))[0];
       else {
         const stdin = JSON.stringify({ viewer: { kind: 'core' }, now: new Date(now()).toISOString(), queries: [q] });
         // As the core viewer every row is admitted; it's read the same way as anyone's answer.
