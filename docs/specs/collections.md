@@ -154,10 +154,15 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
   in commit order, each **as of its own revision** (the next section).
 - **`search`**: optional. It gets one viewer, the field classes that viewer may see, and a query text, and answers
   references and snippets (below).
-- **Their limits are their own** (`OFFER_LIMITS`): 15 s; 1 MB an answer, with each query in a batch given its own
-  share (a query that would overflow its share answers `too-big` alone and the others still answer), and each
-  `changes` page bounded by bytes as well as by count; and a pool apart from the page's pieces (four running,
-  sixteen waiting per provider), so live data can't starve page loads or the other way round.
+- **A `query` answer is JSON lines**, read as they come: `{"id": q, "row": {…}}` for each row, then
+  `{"id": q, "more": true|false}`, or `{"id": q, "error": "unavailable"}` instead; and `{"at": {…}}` once. Core checks
+  each row for its viewer the moment it arrives (a row the viewer may not have stops the run, out of contract), and
+  only rows it admitted count against a query's share of the answer: so a provider's size, like its counts, never
+  says hidden records matched. `too-big` is core's to say; a provider saying it is out of contract.
+- **Their limits are their own** (`OFFER_LIMITS`): 15 s; 1 MB an answer of admitted rows, with each query in a batch
+  given its own share (a query that would overflow its share answers `too-big` alone and the others still answer),
+  64 MB printed at most; each `changes` page bounded by bytes as well as by count; and a pool apart from the page's
+  pieces (four running, sixteen waiting per provider), so live data can't starve page loads or the other way round.
 - **`owners: 2`**, declared here and fixed at install: the gate [owners.md](owners.md) already has for pages.
   **A provider that doesn't declare it answers only household owners**, and core refuses any other viewer's query
   before running it. It's read from the installed declaration, never from a cached manifest, so it can't flap when a
@@ -270,7 +275,7 @@ The answer, per query:
   `members` alone is counted only for the members it names. Core can't recount, so it does what it can: when it
   drops any row of an answer (the provider answered a row this viewer may not have), it drops that answer's
   provider totals and aggregates too. Until the conformance suite exists (t-2026), install refuses `scoped_counts`
-  and `scoped_search`.
+  and `scoped_search`, and core passes no provider's counts on at all (above).
 - **`at`** is the point on the window's stream this answer is consistent with: frames after it apply on top of it.
 - **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `too-big`, `denied` (the viewer
   or the consumer may not read this type), `unavailable` (the provider timed out or failed). One provider's failure

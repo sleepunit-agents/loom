@@ -25,7 +25,7 @@ import { CORE_PROVIDER, RECORD_ID, providerName, type CollectionsOffer, type Typ
 import { CORE_TYPES, coreAnswers } from './core-types.js';
 import type { ProviderAnswer, ProviderQuery } from './memory.js';
 import { checkQuery, MAX_PROVIDER_CURSOR, MAX_QUERIES, queryShape, sealerFor, typeRef, validQueryId, type Query, type QueryError, type QueryIn } from './query.js';
-import { admits, classesOf, isHouseholdOwner, parseAudience, presented, providerAdmits, viewerId, type Viewer } from './viewer.js';
+import { admits, classesOf, isHouseholdOwner, parseAudience, presented, providerAdmits, viewerId, type Audience, type Viewer } from './viewer.js';
 
 /** Where a batch is asked: POST /collections/query (the page) and POST /api/loom/<this> (tokens). */
 export const COLLECTIONS_QUERY_ROUTE = 'collections/query';
@@ -164,8 +164,9 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     const asks: ProviderQuery[] = list.map((q) => ({ id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit + 1, after: q.after,
       fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...q.order.map(([f]) => f), ...(p.types[q.type].agent ? [p.types[q.type].agent!] : [])])], aggregates: q.aggregates }));
     const broken = () => p.install !== undefined && outOfContract.has(p.install);
-    const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, asks, share, now);
+    const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, list, asks, share, now);
     const checked = list.map((q) => {
+      if (got === OUT_OF_CONTRACT) return OUT_OF_CONTRACT;
       const a = typeof got === 'string' ? undefined : got.get(q.id);
       if (!a) return { id: q.id, error: 'unavailable' } as QueryError;
       return checkAnswer(viewer, p, q, a, share, now, (c) => sealer.seal(c, vid, queryShape({ provider: q.provider, type: q.type, major: q.major }, q.where, q.order), now));
@@ -183,51 +184,100 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
   return { status: 200, body: { answers: (qs as QueryIn[]).map((q) => answers.get(q.id)!) } };
 }
 
-/** One provider's answers to its share of the batch, by query id; a string when it failed as a whole. */
-async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, asks: ProviderQuery[], share: number, now: number): Promise<Map<string, ProviderAnswer> | string> {
+/**
+ * One provider's answers to its share of the batch, by query id; a string when it failed as a whole, OUT_OF_CONTRACT
+ * when a row it sent was one its viewer may not have.
+ *
+ * A provider answers in JSON lines, read as they come (readAnswers), and every row is checked for its viewer the moment
+ * it arrives. A row the viewer may not have stops the run there. Only the rows core admits count against each query's
+ * share of the answer's bytes, and only core says a query is `too-big`: a provider's own size, error or count over rows
+ * it didn't filter would tell a viewer choosing the queries that hidden records matched.
+ */
+async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], asks: ProviderQuery[], share: number, now: number): Promise<Map<string, ProviderAnswer> | string | typeof OUT_OF_CONTRACT> {
   if (!p.piece) return new Map(coreAnswers(ctx.household, viewer, asks, now).map((a) => [a.id, a]));
   const piece = p.piece;
   // The scope a page's piece gets (owners.md), and never one inherited from loom's own environment.
   const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...env0 } = ctx.env;
   const env: NodeJS.ProcessEnv = viewer.kind === 'member' && !viewer.household ? { ...env0, LOOM_OWNER_SCOPE: viewer.agents.join(',') } : env0;
-  const stdin = JSON.stringify({ viewer: presented(viewer), now: new Date(now).toISOString(), share, queries: asks });
-  const r = await poolOf(p.name).run(() => runOffer(env, piece, p.query!, { kind: 'collections', stdin, caller: callerOf(viewer), parse: parseProviderAnswers }));
+  const stdin = JSON.stringify({ viewer: presented(viewer), now: new Date(now).toISOString(), queries: asks });
+  const reading = readAnswers(asks, share, (q, row) => admission(viewer, p.types[q.type], row) !== undefined);
+  const r = await poolOf(p.name).run(() => runOffer(env, piece, p.query!, { kind: 'collections', stdin, caller: callerOf(viewer), parse: (v) => v, onLine: reading.onLine }));
+  if (reading.tripped()) return OUT_OF_CONTRACT;
   if (r === null) return 'busy';
   if (!r.ok) {
     process.stderr.write(`loom: collections provider ${p.name} (${piece}) failed: ${r.error}\n`);
     return r.error;
   }
-  return new Map(r.value.map((a) => [a.id, a]));
+  void list;
+  return reading.answers();
 }
 
-const PROVIDER_ERRORS = ['too-big', 'bad-query', 'unsupported-version', 'unavailable'];
-
-/** A provider's answer, in shape only (core checks every row of it against the viewer after). */
-export function parseProviderAnswers(v: unknown): ProviderAnswer[] | string {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return 'not a JSON object';
-  const answers = (v as { answers?: unknown }).answers;
-  if (!Array.isArray(answers)) return 'answers is a list';
-  const out: ProviderAnswer[] = [];
-  for (const a of answers) {
-    if (!a || typeof a !== 'object' || Array.isArray(a) || typeof a.id !== 'string') return 'an answer is {id, rows, more, …}';
-    if (a.error !== undefined) {
-      if (!PROVIDER_ERRORS.includes(a.error)) return `an answer's error is one of ${PROVIDER_ERRORS.join(', ')}`;
-      out.push({ id: a.id, rows: [], more: false, error: a.error });
-      continue;
+/**
+ * Reading a provider's answer, a line at a time: `{"id": q, "row": {...}}` for each row, `{"id": q, "more": bool}` to
+ * end a query's rows, `{"id": q, "error": "unavailable" | "bad-query" | "unsupported-version"}` instead, and
+ * `{"at": {...}}` once. `admit` says whether a row is one its viewer may have; one that isn't, more rows than a
+ * query asked for, a `too-big` (core's to say), or a line that isn't one of these stops the run.
+ */
+export function readAnswers(asks: readonly ProviderQuery[], share: number, admit: (q: ProviderQuery, row: unknown) => boolean): {
+  onLine: (line: string) => 'go' | 'stop'; tripped: () => boolean; answers: () => Map<string, ProviderAnswer>; at: () => unknown;
+} {
+  const st = new Map(asks.map((q) => [q.id, { q, rows: [] as unknown[], bytes: 0, count: 0, big: false, more: undefined as boolean | undefined, error: undefined as string | undefined }]));
+  let tripped = false;
+  let broken = false;
+  let at: unknown;
+  const onLine = (line: string): 'go' | 'stop' => {
+    let v: Record<string, unknown>;
+    try { v = JSON.parse(line); } catch { broken = true; return 'stop'; }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) { broken = true; return 'stop'; }
+    if (v.id === undefined && v.at !== undefined) { at = v.at; return 'go'; }
+    const q = typeof v.id === 'string' ? st.get(v.id) : undefined;
+    if (!q || q.more !== undefined || q.error !== undefined) { broken = true; return 'stop'; }
+    if (Object.hasOwn(v, 'row')) {
+      if (++q.count > q.q.limit || !admit(q.q, v.row)) { tripped = true; return 'stop'; }
+      q.bytes += Buffer.byteLength(line);
+      // Past its share: core's own too-big, from rows it admitted. The rest are still read, and checked.
+      if (q.bytes > share) q.big = true;
+      else q.rows.push(v.row);
+      return 'go';
     }
-    if (!Array.isArray(a.rows)) return 'an answer\'s rows is a list';
-    if (typeof a.more !== 'boolean') return 'an answer says whether more rows match (more: true or false)';
-    out.push({ id: a.id, rows: a.rows, more: a.more, ...(a.total !== undefined ? { total: a.total } : {}), ...(a.aggregates !== undefined ? { aggregates: a.aggregates } : {}) });
-  }
-  return out;
+    if (typeof v.more === 'boolean') { q.more = v.more; return 'go'; }
+    if (v.error === 'too-big') { tripped = true; return 'stop'; }
+    if (v.error === 'unavailable' || v.error === 'bad-query' || v.error === 'unsupported-version') { q.error = 'unavailable'; return 'go'; }
+    broken = true;
+    return 'stop';
+  };
+  return {
+    onLine,
+    tripped: () => tripped,
+    at: () => at,
+    answers: () => new Map<string, ProviderAnswer>([...st].map(([id, x]) => [id, broken || (x.more === undefined && x.error === undefined) ? { id, rows: [], more: false, error: 'unavailable' }
+      : x.error ? { id, rows: [], more: false, error: x.error } : x.big ? { id, rows: [], more: false, error: 'too-big' } : { id, rows: x.rows as Record<string, unknown>[], more: x.more! }])),
+  };
 }
-
 
 /** Expiry as the provider says it: ms since the epoch, or an ISO time. NaN when it's neither. */
 function expiresAt(v: unknown): number {
   const t = typeof v === 'number' ? v : typeof v === 'string' && v.length <= 40 ? Date.parse(v) : Number.NaN;
   // A Date's own range: past it, a time can't be said (toISOString throws), so it's no time.
   return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : Number.NaN;
+}
+
+/**
+ * Whose a row is: its audience and agent, if this viewer may have it. Undefined when it isn't a row core can place, or
+ * one the viewer may not have (either takes the provider out of contract).
+ */
+export function admission(viewer: Viewer, decl: TypeDecl, raw: unknown): { audience: Audience; agent: string | undefined } | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const audience = parseAudience(r.audience);
+  if (!audience) return undefined;
+  let agent: string | undefined;
+  if (decl.agent !== undefined) {
+    const v = Object.hasOwn(r, decl.agent) ? r[decl.agent] : undefined;
+    if (v !== undefined && v !== null && typeof v !== 'string') return undefined;
+    agent = typeof v === 'string' ? v : undefined;
+  }
+  return admits(viewer, audience, agent, decl) ? { audience, agent } : undefined;
 }
 
 /** What checkAnswer answers when the provider answered a row it shouldn't have (see outOfContract). */
@@ -253,17 +303,10 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   for (const [index, raw] of (a.rows as unknown[]).entries()) {
     // Whose a row is comes first: one core can't place, or one this viewer may not have, takes the provider out of
     // contract, since anything else core did about it would show the viewer a hidden record.
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return OUT_OF_CONTRACT;
+    const placed = admission(viewer, decl, raw);
+    if (!placed) return OUT_OF_CONTRACT;
     const r = raw as Record<string, unknown>;
-    const audience = parseAudience(r.audience);
-    if (!audience) return OUT_OF_CONTRACT;
-    let agent: string | undefined;
-    if (decl.agent !== undefined) {
-      const v = Object.hasOwn(r, decl.agent) ? r[decl.agent] : undefined;
-      if (v !== undefined && v !== null && typeof v !== 'string') return OUT_OF_CONTRACT;
-      agent = typeof v === 'string' ? v : undefined;
-    }
-    if (!admits(viewer, audience, agent, decl)) return OUT_OF_CONTRACT;
+    const { audience } = placed;
     // The row past the page: checked like the rest, never sent.
     if (index >= q.limit) { if (typeof r.id !== 'string' || !RECORD_ID.test(r.id)) unusable ??= 'unavailable'; continue; }
     if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) { unusable ??= 'unavailable'; continue; }

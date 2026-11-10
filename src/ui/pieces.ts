@@ -208,7 +208,11 @@ async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
-function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number }): Promise<Answer> {
+/**
+ * `onLine`: the answer read as it comes, a line at a time (collections, src/collections/serve.ts): nothing is kept, and
+ * `stop` ends the piece there (`stopped`).
+ */
+function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number; onLine?: (line: string) => 'go' | 'stop' }): Promise<Answer> {
   return new Promise((resolve) => {
     // Its own process group, so a timeout takes the piece's children with it.
     const child = spawn(path, args, {
@@ -238,6 +242,13 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       bytes += Buffer.byteLength(d);
       if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
       out += d;
+      if (!opts.onLine) return;
+      let i;
+      while ((i = out.indexOf('\n')) >= 0) {
+        const line = out.slice(0, i);
+        out = out.slice(i + 1);
+        if (line.trim() && opts.onLine(line) === 'stop') { killGroup(child.pid); finish({ ok: false, reason: 'stopped' }); return; }
+      }
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));
     if (opts.stdin !== undefined && child.stdin) {
@@ -248,7 +259,11 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
-      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+      const done = () => {
+        // The last line, unterminated.
+        if (opts.onLine && out.trim() && !settled) { const line = out; out = ''; if (opts.onLine(line) === 'stop') return finish({ ok: false, reason: 'stopped' }); }
+        finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+      };
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
       drain = setTimeout(done, DRAIN_MS);
@@ -268,11 +283,11 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number } = {},
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number; onLine?: (line: string) => 'go' | 'stop' } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
   const r = opts.pool && opts.pool !== 'page'
-    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
+    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs, onLine: opts.onLine }))
     : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
   if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;

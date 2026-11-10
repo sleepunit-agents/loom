@@ -41,7 +41,7 @@ const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
 let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   const ask = JSON.parse(s);
-  fs.appendFileSync(home + '/${name}-ran', JSON.stringify({ viewer: ask.viewer, ids: ask.queries.map((q) => q.id), share: ask.share, scope: process.env.LOOM_OWNER_SCOPE || null }) + '\\n');
+  fs.appendFileSync(home + '/${name}-ran', JSON.stringify({ viewer: ask.viewer, ids: ask.queries.map((q) => q.id), scope: process.env.LOOM_OWNER_SCOPE || null }) + '\\n');
   const mode = fs.existsSync(home + '/${name}-mode') ? fs.readFileSync(home + '/${name}-mode', 'utf-8').trim() : '';
   if (mode === 'fail') process.exit(1);
   const all = JSON.parse(fs.readFileSync(home + '/records.json', 'utf-8'));
@@ -62,7 +62,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     return (a.agents || []).includes(v.agent);
   };
   const answers = ask.queries.map((q) => {
-    if (mode === 'big' && q.id === 'big') return { id: q.id, rows: [{ id: 'x', audience: { owners: true }, title: 'y'.repeat(q.limit * 20000) }], more: false };
+    if (mode === 'big' && q.id === 'big') return { id: q.id, rows: [{ id: 'x', audience: { owners: true }, title: 'y'.repeat(60000) }], more: false };
     let rs = all.filter(mine).filter((r) => q.where.every(([f, op, val]) => op === 'eq' ? r[f] === val : op === 'in' ? val.includes(r[f]) : true));
     rs.sort((a, b) => a.id < b.id ? -1 : 1);
     const total = rs.length;
@@ -76,7 +76,13 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     return { id: q.id, rows: page.map((r) => { const o = { id: r.id, audience: r.audience }; if (r.expires) o.expires = r.expires; for (const f of q.fields) if (f in r) o[f] = r[f]; return o; }),
       ...(unsaid ? {} : { more }), total: { n: total, exact: true }, aggregates: q.aggregates.includes('count') ? { count: { n: total, exact: true, by } } : undefined };
   });
-  console.log(JSON.stringify({ answers }));
+  // JSON lines: each row as it's read, then whether there's more.
+  const out = [];
+  for (const a of answers) {
+    for (const r of a.rows) out.push(JSON.stringify({ id: a.id, row: r }));
+    if (a.more !== undefined) out.push(JSON.stringify({ id: a.id, more: a.more }));
+  }
+  process.stdout.write(out.join('\\n') + '\\n');
 });
 `;
 
@@ -126,7 +132,7 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
   const tok: Record<string, string> = {};
   const saved = process.env.LOOM_HOME;
 
-  const runs = (name: string): Array<{ viewer: Record<string, unknown>; ids: string[]; share: number; scope: string | null }> => {
+  const runs = (name: string): Array<{ viewer: Record<string, unknown>; ids: string[]; scope: string | null }> => {
     const f = join(h.home, `${name}-ran`);
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
@@ -367,7 +373,7 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(r.status).toBe(200);
       expect(r.body.answers.map((a) => a.error ?? 'ok')).toEqual(['ok', 'ok', 'unavailable', 'ok']);
       expect(runs('tasks')).toHaveLength(1);
-      expect(runs('tasks')[0]).toMatchObject({ ids: ['a', 'b'], share: 512 * 1024 });
+      expect(runs('tasks')[0]).toMatchObject({ ids: ['a', 'b'] });
     });
 
     it('an expiry out of a date\'s range is out of contract for that provider, and never fails the batch', async () => {
@@ -377,6 +383,19 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
         expect(r.status).toBe(200);
         expect(r.body.answers[0]).toEqual({ id: 'q', error: 'unavailable' });
         expect(r.body.answers[1]).toHaveProperty('rows');
+      } finally { writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS)); }
+    });
+
+    it('a batch padded to the edge of the answer\'s size learns nothing from a hidden row: rows are checked as they come, and only admitted ones count', async () => {
+      mode('tasks', 'leaky');
+      // loren's padding (her own records, large) and a probe that only a hidden record matches.
+      writeFileSync(join(h.home, 'records.json'), JSON.stringify([...RECORDS, ...Array.from({ length: 9 }, (_, i) => ({ id: `p-${i}`, agent: 'pond-bot', title: 'z'.repeat(100_000), status: 'pad', audience: { ownersOf: ['pond-bot'] } }))]));
+      try {
+        const r = await query(tok.loren, [{ id: 'pad', type: 'tasks/task@^1', where: [['status', 'eq', 'pad']] }, { id: 'probe', type: 'tasks/task@^1', where: [['agent', 'eq', 'mark']], limit: 1 }]);
+        // Not a size failure that says something matched: the hidden row was seen, and the provider is out of contract.
+        expect(r.body.answers).toEqual([{ id: 'pad', error: 'unavailable' }, { id: 'probe', error: 'unavailable' }]);
+        mode('tasks', '');
+        expect(await one(tok.jonathan, {})).toEqual({ id: 'q', error: 'unavailable' });
       } finally { writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS)); }
     });
 
