@@ -621,6 +621,20 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('late')] })).status).toBe(409);
       expect(await conversationSteps(h.home, process.env, t.conversation)).toEqual([]);
     });
+    it('takes a post of up to 1 MB of steps\' words, and refuses a larger one whole with 413 (t-2109)', async () => {
+      const t = await open();
+      // Each card's words are capped (a body at MAX_BODY): the post is capped at 1 MB, well over an older core's 64 KB.
+      const words = (n: number, p: string) => Array.from({ length: n }, (_, i) => card(`${p}${i}`, { tool: 'text', state: 'done', body: 'w'.repeat(32_000) }));
+      const under = await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: words(30, 'under') });
+      expect(JSON.stringify({ cards: words(30, 'under') }).length).toBeGreaterThan(900 * 1024);
+      expect(under.status).toBe(200);
+      expect(under.body).toMatchObject({ ok: true, added: 30 });
+      const over = await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: words(34, 'over') });
+      expect(over.status).toBe(413);
+      expect(JSON.stringify(over.body)).toContain('oversized');
+      const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}/since/0`)).body.messages as Array<{ kind: string; id: string }>;
+      expect(msgs.filter((m) => m.kind === 'card').map((m) => m.id).some((id) => id.startsWith('over'))).toBe(false);
+    });
     it('takes cards for a live thread, updates by id, and keeps the summary encrypted', async () => {
       const t = await open();
       expect((await api(tok.runtime, 'comms/activity', { conversation: 'cv-000000000000', run: 'r1', cards: [card('c1')] })).status).toBe(409);

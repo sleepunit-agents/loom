@@ -330,6 +330,14 @@ So the activity cards need a new capture:
   `text` is the body's own words between steps; the runtime sends it, and any card's `detail`, `body` or `items`, only
   for a conversation that works for the owner alone (its principal now). **A shell step's output is never kept or
   sent**: core drops a `body` on one. Showing it on demand, unstored, is t-2112.
+  - **Whose word is trusted (coordinator, 2026-11-10).** A job running in a house reports its own cards; a step's
+    command line (`detail`) and the body's own words (a `text` card's `body`) pass the runtime's gate on their shape
+    alone, so a house could put any text there. That's trusted only where the conversation is the owner's alone
+    (principalOf: the owner, no person, nothing unknown), where the body could already post the same text in its own
+    thread as a message: it adds no capability. Where anyone else is in the conversation, the runtime on loom's machine
+    sends each card's fixed label only (made where the card was made and checked against fixed shapes, else "Did a
+    step"), with no `detail`, `body` or `items`: that line protects other people, and it's drawn on loom's side, never
+    left to the house.
   - Core keeps `detail`, `body`, `result` and `items` sealed like the label (an age blob in `step`, swept with it), and
     `exit`, `limit`, `parent` and the step's times (`t0` its start, `t1` its end, else when core saw it end) plain.
   - The post may carry `alive: {at, tokens?}`, the body's last sign of life (when its record last moved, its output

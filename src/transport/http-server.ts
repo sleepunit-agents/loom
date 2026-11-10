@@ -842,6 +842,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const cap = bodyCap(subpath);
+    // A declared length over the cap is refused before reading (as deliverApi does), so the caller gets the 413, not a
+    // reset (t-2109: the runtime reads a 413 as a post too large and sends it smaller).
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > cap) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     const raw = await collectBody(req, cap);
     if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     let body: unknown = {};
