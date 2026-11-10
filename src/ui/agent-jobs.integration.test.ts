@@ -34,9 +34,18 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
     d.report({ art: { jobs: rows } }); clearPieceCache(); await d.changed();
     const ctx = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
     await ctx.addInitScript(() => { sessionStorage.setItem('loom-booted', '1'); sessionStorage.setItem('loom-arrived', '1'); });
+    // A decoration can remain in flight while the app is ready. Navigation must wait for
+    // the DOM and the actual jobs heading, not the window's unrelated resource load.
+    await ctx.route('**/__ci_slow_decoration.svg', () => {});
+    await ctx.addInitScript(() => {
+      window.addEventListener('DOMContentLoaded', () => {
+        const image = document.createElement('img');
+        image.hidden = true; image.src = '/__ci_slow_decoration.svg'; document.body.append(image);
+      }, { once: true });
+    });
     const p = await ctx.newPage(); p.setDefaultTimeout(5000);
     try {
-      await ctx.request.post(d.base + '/login', { form: { token: d.tok.jonathan }, maxRedirects: 0 }); await p.goto(d.base + '/');
+      await ctx.request.post(d.base + '/login', { form: { token: d.tok.jonathan }, maxRedirects: 0 }); await p.goto(d.base + '/', { waitUntil: 'domcontentloaded' });
       const card = p.locator('.loom-bigcard[data-agent="art"]');
       await card.getByRole('heading', { name: 'All jobs · 16' }).waitFor();
       expect(await card.locator('.loom-jobs li').count()).toBe(16);
@@ -46,10 +55,10 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       if (process.env.LOOM_JOB_SHOTS) { mkdirSync(process.env.LOOM_JOB_SHOTS, { recursive: true }); await p.screenshot({ path: `${process.env.LOOM_JOB_SHOTS}/jobs-${width}.png`, fullPage: true }); }
       d.report({ art: { jobs: rows.filter((j) => j.status !== 'running' && j.id !== 't-1') } }); clearPieceCache(); await d.changed();
-      await p.reload(); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
+      await p.reload({ waitUntil: 'domcontentloaded' }); await card.getByRole('heading', { name: 'All jobs · 14' }).waitFor();
       expect(await card.getByText('First active session').count()).toBe(0);
       if (width === 1600) {
-        await p.goto(d.base + '/people');
+        await p.goto(d.base + '/people', { waitUntil: 'domcontentloaded' });
         const compact = p.locator('.loom-rcard-wrap').filter({ has: p.locator('[data-agent="art"]') });
         await compact.locator('summary').click();
         expect(await compact.locator('.loom-jobs li').count()).toBe(14);
