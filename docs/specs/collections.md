@@ -733,7 +733,7 @@ along with the listeners. The adapter is the only code that imports the client l
   `GET /comms`'s, field for field and in order; in a real browser (`comms-app.integration.test.ts`) a thread renamed
   elsewhere moves in an open list with no `/comms` request (before: one).
 - **Another process's thread write arrives at once**: the subscriptions watch `comms.tick` (written by every thread
-  write, `comms.ts` `bump`; the same-process bump only where the file can't be watched, so one write is one pull), so a reply the runtime posts through another listener,
+  write, `comms.ts` `bump`; a tick still holding this process's own stamp is its echo, so one write is one pull), so a reply the runtime posts through another listener,
   or a CLI's write, is pulled within `GAP_MS`, not on the next 15 s pull (the test fails without it).
 - **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
   refs and previews, the conversation page, and a thread's asks as a view of the attention set.
