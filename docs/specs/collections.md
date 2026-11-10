@@ -735,6 +735,10 @@ along with the listeners. The adapter is the only code that imports the client l
 - **Another process's thread write arrives at once**: the subscriptions watch `comms.tick` (written by every thread
   write, `comms.ts` `bump`; a tick still holding this process's own stamp is its echo, so one write is one pull), so a reply the runtime posts through another listener,
   or a CLI's write, is pulled within `GAP_MS`, not on the next 15 s pull (the test fails without it).
+- **A read that reads nothing new doesn't bump** (the app's 30 s read while a thread is in front): it records only
+  that the thread was in front (push reads that), so no list row moves and no listener pulls every thread for it.
+- **Known edges**: a view of more than 200 threads isn't whole, so it reads `GET /comms` once and isn't kept current
+  (archived lists that long); two threads with the same newest time can sort differently from `GET /comms`.
 - **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
   refs and previews, the conversation page, and a thread's asks as a view of the attention set.
 

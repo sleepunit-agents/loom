@@ -939,7 +939,11 @@ export function setArchived(h: Household, t: Thread, archived: boolean, now: Dat
 /** The member read up to `seq` (never backwards), with the thread in front now. */
 export function markRead(h: Household, t: Thread, seq: unknown, now: Date = new Date()): void {
   if (!Number.isSafeInteger(seq) || (seq as number) < 0) fail('bad-input: seq is a whole number');
-  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
+  const read = Math.max(t.read_seq, seq as number);
+  // Nothing newly read (the app's 30 s read while a thread is in front): only when it was in front (push reads that),
+  // and no bump: no list row moved, so no stream or live set is told, nor every thread pulled again for it.
+  if (read === t.read_seq) { withThreadsAt(h.home, (db) => db.prepare('UPDATE comms_threads SET in_front = ? WHERE id = ?').run(now.getTime(), t.id)); return; }
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: read, in_front: now.getTime() }, now));
 }
 
 export function askStop(h: Household, t: Thread, now: Date = new Date()): void {

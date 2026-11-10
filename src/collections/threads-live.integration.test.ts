@@ -19,7 +19,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn } from '../backends/conversations.js';
-import { adapterCall, markRead, openThread, setArchived, setPinned, setTitle, threadFor } from '../comms.js';
+import { adapterCall, allThreads, markRead, openThread, setArchived, setPinned, setTitle, threadFor } from '../comms.js';
 import { listOf, SPEC as APP_SPEC } from '../../web/src/thread-rows.js';
 import type { Rec, ViewState } from '../../web/src/collections/runtime.js';
 import { stopCommsWatch } from '../ui/comms-live.js';
@@ -168,6 +168,11 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
     const samGone = thread('sam', 'art', 'sam archived'); setArchived(h, threadFor(h, member('sam'), samGone.id), true);
     const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'live-bg', label: 'A job', at: at(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime');
     const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'A brief' }) as { id: string };
+    // And an archived job, so the fourth view (archived Background work) isn't empty.
+    const cv2 = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'live-bg-2', label: 'An old job', at: at(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime');
+    const old = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv2.conversation, text: 'An old brief' }) as { id: string };
+    const oldMember = h.members.find((m) => m.person === allThreads(h.home).find((t) => t.id === old.id)!.member)!;
+    setArchived(h, threadFor(h, oldMember, old.id), true);
     const views: Array<[string, Array<[string, string, unknown?]>]> = [
       ['', [['archived', 'eq', null], ['background', 'eq', false]]],
       ['?archived=1', [['archived', 'has'], ['background', 'eq', false]]],
@@ -175,6 +180,7 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
       ['?archived=1&background=1', [['archived', 'has'], ['background', 'eq', true]]],
     ];
     let sawJob = false;
+    let sawBoth = false;
     for (const who of ['jonathan', 'sam']) {
       for (const [qs, where] of views) {
         const l = await list(who, qs);
@@ -183,9 +189,11 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
         expect(drawn(a), `${who} ${qs}`).toEqual(served(l));
         // The job's thread is its assigned member's Background work (whichever owner the runtime gave it to).
         if (qs === '?background=1') sawJob ||= (l.threads as Data[]).some((t) => t.id === job.id);
+        if (qs === '?archived=1&background=1') sawBoth ||= (l.threads as Data[]).some((t) => t.id === old.id);
       }
     }
     expect(sawJob).toBe(true);
+    expect(sawBoth).toBe(true);
     expect(JSON.stringify((await ask('sam', { where: views[1][1] })).rows)).not.toContain(gone.id);
   });
 
