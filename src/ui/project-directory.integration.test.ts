@@ -1,5 +1,5 @@
-/** CI browser proof: the Projects index follows directory records without another page/feed request. */
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+/** CI browser proof: directory rows update independently of page revalidation; cached page replacement stays coherent. */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -20,7 +20,7 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
     const s = openProjectsStore(agentDir(h, 'art'))!;
     try { s.write({ slug, name, status, summary: 'The project summary', links: { repos: ['github:acme/app'] } }); } finally { s.close(); }
   };
-  beforeAll(async () => {
+  beforeEach(async () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-project-directory-ui-'));
     mkdirSync(join(home, 'agents', 'art'), { recursive: true });
     writeFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), '# Art\n');
@@ -31,13 +31,13 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   });
-  afterAll(async () => { await browser?.close(); stopCommsWatch(); await handle?.close(); if (h) rmSync(h.home, { recursive: true, force: true }); });
-  it('adds the first project to an empty page, renames, pauses and archives it over shared rows', async () => {
+  afterEach(async () => { await browser?.close(); stopCommsWatch(); await handle?.close(); if (h) rmSync(h.home, { recursive: true, force: true }); });
+  it('adds, renames, pauses and archives over shared rows while all page copies stay empty', async () => {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
     try {
       await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
       const page = await ctx.newPage();
-      const asked: string[] = [], sets: string[] = [];
+      const sets: string[] = [];
       const emptyDelivered = page.waitForResponse(async (r) => {
         if (!r.url().includes('/collections/query')) return false;
         try {
@@ -46,18 +46,24 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
           const body = await r.json() as { answers: Array<{ id: string; rows?: unknown[]; error?: string; at?: number }> };
           return body.answers.some((a) => ids.has(a.id) && !a.error && a.rows?.length === 0 && typeof a.at === 'number');
         } catch { return false; }
-      });
+      }).catch(() => null);
       page.on('request', (r) => {
         const u = new URL(r.url());
-        if (u.pathname === '/projects' && r.resourceType() === 'fetch') asked.push(u.pathname);
         if (u.pathname === '/collections/query') sets.push(r.postData() ?? '');
       });
       await page.goto(`${base}/projects`);
       await page.getByText(/^No projects yet/).waitFor();
       await expect.poll(() => sets.some((s) => s.includes('loom/project@^1'))).toBe(true);
       // Creation must follow the empty answer, rather than racing the initial directory query.
-      await emptyDelivered;
-      const before = asked.length;
+      expect(await emptyDelivered).not.toBeNull();
+      // Existing bare-change revalidation still serves feed gists. Freeze those page copies empty:
+      // the displayed project can then only have come from the shared directory, even if a write revalidates.
+      const frozen = await (await ctx.request.get(`${base}/projects`, { headers: { accept: 'application/json' } })).json();
+      expect(frozen.projects).toEqual({ active: [], quiet: [], waiting: 0 });
+      await page.route('**/projects', async (route) => {
+        if (route.request().resourceType() !== 'fetch') return route.continue();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(frozen) });
+      });
       write('new', 'First project'); await pullNow(h.home, 'loom/project');
       const card = page.locator('.pj-card[data-slug="new"]');
       await card.getByText('First project', { exact: true }).waitFor();
@@ -72,7 +78,8 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       await pullNow(h.home, 'loom/project');
       await card.waitFor({ state: 'detached' });
       await page.getByText(/^No projects yet/).waitFor();
-      expect(asked.length).toBe(before);
+      // Revalidated pages never supplied a project; every visible directory transition came from rows.
+      expect(frozen.projects.active).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally { await ctx.close(); }
   });
