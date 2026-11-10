@@ -28,10 +28,13 @@ export function aboutOf(el: Element | null): About | null {
   } catch { return null; }
 }
 
-/** A loom page as an item: its ref where loom has one for that page, its agent where the page is an agent's. */
+/** A loom page as an item: its ref where loom has one for that page, its agent where the page is an agent's. Only an
+ * item's page (a task, a person, an agent, a piece's own page under its home): an app's list (the Inbox, People, a
+ * piece's home) isn't something to chat about, and Comms is already a chat. */
 export function aboutPage(url: string, label: string): About | null {
   const path = url.replace(/^\/+/, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
-  if (!path || path === 'comms' || path.startsWith('comms/')) return null;
+  const parts = path.split('/');
+  if (parts.length < 2 || parts[0] === 'comms' || (parts[0] === 'p' && parts.length < 3)) return null;
   const task = /^p\/[a-z0-9-]+\/task\/(t-\d+)$/.exec(path)?.[1];
   const cv = /^(?:a\/([a-z][a-z0-9-]*)\/)?conversation\/(cv-[0-9a-f]{12})$/.exec(path);
   const slug = /^(knowledge|projects|people)\/([a-z0-9][a-z0-9-]*)$/.exec(path);
