@@ -71,8 +71,18 @@ function listen(h: { change: () => void; open: (on: boolean) => void }): () => v
   h.open(streamOpen);
   return () => {
     hearers.delete(h);
-    if (!hearers.size && stream) { stream.close(); stream = null; streamOpen = false; }
+    if (!hearers.size && stream) { stream.close(); stream = null; streamOpen = false; lastHello = null; }
   };
+}
+
+/**
+ * The tab's shared collection runtime (web/src/collections; docs/specs/collections.md), made the first time a window
+ * asks for it: one per tab, on this page's one stream. Loaded as its own chunk, so the app carries none of it until
+ * then.
+ */
+let collections: Promise<{ runtime: import('./collections/runtime').CollectionRuntime; stores: import('./collections/adapter').LibraryStores }> | undefined;
+export function collectionsRuntime(csrf: () => string): NonNullable<typeof collections> {
+  return collections ??= Promise.all([import('./collections/adapter'), import('./collections/transport')]).then(([a, t]) => a.makeRuntime(t.pageTransport(csrf)));
 }
 
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */

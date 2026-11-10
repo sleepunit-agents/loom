@@ -7,7 +7,7 @@ import type { Transport } from './runtime';
 export function pageTransport(csrf: () => string): Transport {
   return {
     post: async (body, signal) => {
-      const r = await fetch('/collections/query', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: csrf(), ...body }), signal, credentials: 'same-origin' });
+      const r = await fetch('/collections/query', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: csrf(), ...body }), signal, credentials: 'same-origin', redirect: 'error' });
       let json: unknown = null;
       try { json = await r.json(); } catch { /* not JSON: the status says enough */ }
       return { status: r.status, json };
@@ -24,7 +24,7 @@ export function actCommand(act: string, fields: Record<string, string>, csrf: ()
   // Only loom's own action paths: the page's token never goes anywhere else.
   if (new URL(act, location.origin).origin !== location.origin) throw new Error('an action is one of loom\'s own paths');
   return async (op) => {
-    const r = await fetch(act, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, credentials: 'same-origin',
+    const r = await fetch(act, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, credentials: 'same-origin', redirect: 'error',
       body: new URLSearchParams({ ...fields, _csrf: csrf(), _op: op }).toString() });
     let json: unknown = null;
     try { json = await r.json(); } catch { /* not JSON */ }

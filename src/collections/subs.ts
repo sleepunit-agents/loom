@@ -431,7 +431,8 @@ async function passOnce(h: HomeState): Promise<void> {
       // The gates its answer passed, again: the provider still answers this viewer, and its declaration (field classes,
       // filters, audience mode) is the one the query was checked against. Only members' sessions subscribe, so there's
       // no grant to ask again.
-      if (!providerAdmits(v, p.owners2)) { reset(s, sub, 'scope'); continue; }
+      // Not this viewer's any more (the stream stays: only this provider's records go).
+      if (!providerAdmits(v, p.owners2)) { reset(s, sub, 'provider-gone'); continue; }
       // A provider taken out of contract answers no one, live data included.
       if (outOfContract(p)) { reset(s, sub, 'provider-gone'); continue; }
       if (JSON.stringify(p.types[sub.type]) !== JSON.stringify(sub.decl)) { reset(s, sub, 'version'); continue; }

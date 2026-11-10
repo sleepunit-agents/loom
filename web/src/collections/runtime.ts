@@ -77,6 +77,7 @@ export const MAX_BATCH = 32;
 export const LINGER_MS = 30_000;
 export const IDLE_MS = 5 * 60_000;
 export const MAX_RECORDS = 20_000;
+export const GONE_CHECK_MS = 30_000;
 
 interface Sub {
   id: string;
@@ -143,7 +144,7 @@ export class CollectionRuntime {
       t.on('rows', (d) => this.frame(d)),
       t.on('reset', (d) => this.reset(d)),
       // A stream that gave up for good (signed out, revoked: its reconnect was refused) clears everything.
-      t.on('error', (d) => { this.markAll('stale'); if (d.closed) void this.confirmGone(); }),
+      t.on('error', (d) => { this.markAll('stale'); if (d.closed) this.watchGone(); }),
     );
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     (this.sweeper as { unref?: () => void }).unref?.();
@@ -189,11 +190,21 @@ export class CollectionRuntime {
    * The stream gave up for good, which a proxy's outage does too: ask once whether the session is still there, and clear
    * only if it isn't (signed out, revoked).
    */
-  private async confirmGone(): Promise<void> {
+  private async confirmGone(): Promise<boolean> {
     try {
       const r = await this.t.post({ close: { stream: this.stream ?? 'e-none', ids: [] } });
-      if (r.status === 401 || r.status === 403) this.clear();
+      if (r.status === 401 || r.status === 403) { this.clear(); return true; }
     } catch { /* unreachable: what's shown stays, stale */ }
+    return false;
+  }
+
+  /** Asked now, and every GONE_CHECK_MS while the stream stays down, until it's back or the session is gone. */
+  private goneTimer: ReturnType<typeof setInterval> | undefined;
+  private watchGone(): void {
+    void this.confirmGone();
+    if (this.goneTimer) return;
+    this.goneTimer = setInterval(() => { if (this.cleared) { clearInterval(this.goneTimer); return; } void this.confirmGone(); }, GONE_CHECK_MS);
+    (this.goneTimer as { unref?: () => void }).unref?.();
   }
 
   /** Every record goes, and every view is asked again (from the next hello): another viewer, a new scope. */
@@ -214,6 +225,7 @@ export class CollectionRuntime {
     for (const s of all) { s.keys = []; s.status = 'denied'; this.publish(s); }
     for (const off of this.offs) off();
     clearInterval(this.sweeper);
+    clearInterval(this.goneTimer);
   }
 
   /**
@@ -309,7 +321,8 @@ export class CollectionRuntime {
     this.viewer = tag;
     const fresh = d.stream !== this.stream;
     this.stream = d.stream;
-    if (typeof d.scope === 'number') this.scope = d.scope;
+    if (typeof d.scope === 'number' && d.scope > this.scope) this.scope = d.scope;
+    if (this.goneTimer) { clearInterval(this.goneTimer); this.goneTimer = undefined; }
     // A new stream (a reconnect, another listener) is a new snapshot: every subscription is asked again.
     if (fresh) for (const s of this.subs.values()) { s.at = null; s.held = []; s.next = null; if (s.status === 'live') s.status = 'stale'; this.ask(s); }
   }
@@ -355,6 +368,8 @@ export class CollectionRuntime {
     const extending = (s as Sub & { after?: string | null }).after != null;
     if (!a || typeof a.error === 'string') {
       const e = (a?.error as string | undefined) ?? 'unavailable';
+      // Refused, or not served any more: what it held isn't theirs to see (or isn't there); it goes.
+      if (e === 'denied' || e === 'unsupported-version') { const k = s.keys; s.keys = []; s.next = null; this.evict(s.type, k); }
       // Kept, marked stale: what it held is still what was last known.
       s.status = e === 'denied' ? 'denied' : e === 'unavailable' ? (s.keys.length ? 'stale' : 'unavailable') : 'error';
       s.error = e === 'unavailable' || e === 'denied' ? undefined : `${e}${typeof a?.why === 'string' ? `: ${a.why}` : ''}`;
@@ -414,9 +429,8 @@ export class CollectionRuntime {
   }
 
   private reset(d: Record<string, unknown>): void {
-    const s = this.subs.get(d.sub as string);
-    if (!s) return;
-    // The scope moved (the viewer's authority changed): everything from before it goes, not just this view's.
+    // The scope moved (the viewer's authority changed): everything from before it goes, not just this view's, whichever
+    // subscription it names.
     if (d.reason === 'scope') {
       // The stream's new scope epoch, as the server says it; it closes this stream, so the views are asked again on the
       // next one's hello, never on this one.
@@ -425,6 +439,8 @@ export class CollectionRuntime {
       this.stream = null;
       return;
     }
+    const s = this.subs.get(d.sub as string);
+    if (!s) return;
     const k = s.keys;
     s.keys = []; s.at = null; s.held = []; s.next = null;
     if (d.reason === 'provider-gone' || d.reason === 'epoch' || d.reason === 'version') {

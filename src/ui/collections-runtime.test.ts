@@ -393,3 +393,35 @@ describe('whose records: another viewer, revocation, a closed stream', () => {
     expect(stores.held('tasks/task@^1')).toBe(0);
   });
 });
+
+describe('a refused re-ask, and a stream that stays down', () => {
+  it('a view whose re-ask is denied (or whose provider is gone) drops what it held', async () => {
+    let n = 0;
+    const f = fake(() => (++n === 1 ? answerOf([row('t-1')]) : { error: 'denied' }));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    f.emit('hello', { stream: 'e-2', scope: 1, seq: 0 });
+    await settle();
+    expect(v.state()).toMatchObject({ keys: [], status: 'denied' });
+    expect(rt.size()).toBe(0);
+  });
+
+  it('while the stream stays down, the session is asked again until it\'s gone', async () => {
+    vi.useFakeTimers();
+    const f = fake(() => answerOf([row('t-1')]));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    f.emit('error', { closed: true });
+    await settle();
+    expect(rt.size()).toBe(1);
+    f.setStatus(401);
+    vi.advanceTimersByTime(30_001);
+    await settle();
+    expect(rt.size()).toBe(0);
+    vi.useRealTimers();
+  });
+});
