@@ -234,7 +234,8 @@ export class CollectionRuntime {
           await wait(500 * tries);
           continue;
         }
-        if (r.status === 401) { this.clear(); return this.settle(op, { op, state: 'failed', why: 'signed out' }, undo); }
+        // Signed out: after a try that dropped, the first may still have run, so unknown; else it never ran.
+        if (r.status === 401) { this.clear(); return this.settle(op, dropped ? { op, state: 'unknown' } : { op, state: 'failed', why: 'signed out' }, undo); }
         const j = (r.json ?? {}) as { ok?: boolean; message?: string; receipt?: { state?: string; why?: string } };
         // After a try that dropped, only a receipt says how it went: the first try may have run (an approval spent), so
         // anything else is unknown, never failed (which would invite pressing again under a new id).
