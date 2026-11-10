@@ -7,7 +7,7 @@
 // Alive (Jonathan, 2026-11-04: "should feel more alive"): it breathes at rest, blinks and looks around now and then,
 // bobs and scans while working, sways while thinking (face.css). CSS transforms only, each face on its own phase so
 // a list never blinks in unison; only while it's on screen and the page is visible; none with reduced motion.
-import { motion, useInView } from 'motion/react';
+import { m, useInView } from 'motion/react';
 import { useEffect, useId, useRef, useState } from 'react';
 import './face.css';
 import { useChoreography } from '@/lib/cojeev-motion/choreography';
@@ -95,7 +95,7 @@ export default function Face({ bg, shape = 'pebble', eyes = 'dot', state = 'idle
       data-tier={size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card'} style={{ '--face-phase': `${-phaseOf(id)}s`, '--mk': mk } as React.CSSProperties}
       className="loom-face loom-face--rim shrink-0 overflow-visible">
       <g className="loom-face__field">
-        <motion.path initial={false} d={body.d} animate={loop} transition={loopT} style={{ fill: `color-mix(in srgb, ${mk} 16%, var(--v-canvas, #07070C))`, stroke: mk }} strokeWidth={RIM[size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card']} />
+        <m.path initial={false} d={body.d} animate={loop} transition={loopT} style={{ fill: `color-mix(in srgb, ${mk} 16%, var(--v-canvas, #07070C))`, stroke: mk }} strokeWidth={RIM[size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card']} />
         <g transform={`translate(${90 + ox} ${80 + oy}) scale(${k}) translate(-90 -80)`}>
           <g className="loom-face__eyes">{eyesParts.map(part)}</g>
           {rest.map(part)}
