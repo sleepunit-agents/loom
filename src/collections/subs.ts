@@ -554,6 +554,10 @@ export function pullNow(home: string, domain: string): Promise<unknown> {
 export const PULL_WAIT_MS = 3_000;
 /** Core's attention records are made from every piece's asks (t-2025): any action may move them. */
 export const ATTENTION_DOMAIN = 'loom/attention';
+/** Core's agent-status records are each agent's card from every piece's reports (t-2028): any action may move them too. */
+export const AGENT_STATUS_DOMAIN = 'loom/agent-status';
+/** Built again from every piece for every member: pulled soon after an action, never awaited by its answer. */
+const SOON = [ATTENTION_DOMAIN, AGENT_STATUS_DOMAIN];
 export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piece: string): Promise<void> {
   let domains: string[];
   try {
@@ -561,8 +565,8 @@ export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piec
   } catch { return; }
   // The attention records are every member's Inbox, built again: pulled soon (coalesced, one per GAP_MS), never
   // awaited, so a run of actions can't make each one rebuild them all. The acting piece's own domains are awaited.
-  pullSoon(home, [ATTENTION_DOMAIN]);
-  await pullNowAll(home, domains.filter((d) => d !== ATTENTION_DOMAIN));
+  pullSoon(home, SOON);
+  await pullNowAll(home, domains.filter((d) => !SOON.includes(d)));
 }
 
 /** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a

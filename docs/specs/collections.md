@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`); what needs you (t-2025: core's `attention` type, below). A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`); what needs you (t-2025: core's `attention` type, below); each agent's card (t-2028: `agent-status`, below). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -759,6 +759,39 @@ along with the listeners. The adapter is the only code that imports the client l
 - **Still to move**: the consumers. That means the Tasks pages' lists, the ready and blocked queues, a Comms thread's
   work panel (its 60 s poll), project feeds and counts, and Changes (PRs, checks, merge state), which needs its own
   provider in loom-changes.
+
+## As built: each agent's card (t-2028, first slice)
+
+- **One record type, `loom/agent-status`** (core's, `audience: "ask"`): one record per agent, its id the agent, which is
+  Home's own card for it as `handler.ts` `agentCards` makes it for this member, over their pieces (`forOwner`, their
+  `LOOM_OWNER_SCOPE`) and `atWorkFor`. That covers its state and why, what it has going (`doing`), every job a piece
+  reports (`jobs`: running, waiting, scheduled, backlog; `agentJobs` dedupes), how many run now (`running`), what's
+  wrong, its readings (the clock's `Next` among them) and its last steps. A job in a member's Comms thread is that
+  member's alone, so each row's audience is `members: [viewer]`. The core viewer's snapshot is each agent once, its
+  audience the members who own it, carrying no one's card: only an owner-class `copies` digest of every member's copy,
+  so the log and index never hold a member's thread jobs under a wider audience. The digest leaves out "Last seen N
+  min ago", which would otherwise ask every viewer again each minute with nothing else moving: the window says it
+  again from the card's `seen.at` whenever it draws (`agents-live.ts` `freshCard`).
+- **What moves it**: whatever moves loom's bare "something changed" (`live.ts` `onChanged`: a piece's manifest moving,
+  an action, a thread), coalesced to one nudge per `GAP_MS` (`handler.ts` `nudgeLive`), the 15 s pull, and after an action
+  a pull soon (never awaited: `subs.ts` `SOON`). Builds are one per viewer at a time, one queued (attention's rule).
+- **Parity** (`agent-status.integration.test.ts`): for a household owner and an owner of one agent, the records are
+  exactly Home's `cards`, field for field. Another owner of the same agent never gets a member's thread job or its thread.
+  An agent owner never gets another agent's card. A job that starts reaches a live subscription as its agent's change.
+- **In the window** (`web/src/agents-live.ts`): one subscription per tab. Home's cards and headline, the shell's agents
+  at work (`working`, the same rule as a card's state), and the desktop's cards and rail read it. On any page, not only
+  while Home is the main one: the desk's data is made from the live cards and the attention set when Home's page isn't
+  to hand (`deskHomeOf`). In a real browser (`agent-desk.integration.test.ts`), with Home's page refused after load, a
+  job that starts and stops shows on the rail (before: it never did).
+- **For the rail's boxes of running jobs (t-2077)**: each record's `jobs` already holds every job with its `id`,
+  `text`, `where`, `since`, `href` (a thread, for its member), `status`, and `running` counts the running ones. A
+  job's latest step is the producer's `doing[].activity.action` (fresh for 30 s). So t-2077 is a view over
+  `useAgentCards()`, with no new data.
+- **Still to move**: the clock's wakes and schedules as their own records (they need a stable job id: wake ids churn),
+  boxes, houses and services health, models and accounts, a Comms thread's harness choice, and the ticker's activity
+  (`tickerActivityOf`). Home's page is still asked again on a bare change (it carries `moving` and `firstRun`, not yet
+  records). The runtime's "my manifest moved" is heard at the next pieces round when another scope's round is under
+  way (`live.ts` `tick`): up to 15 s, the same for the old bare change.
 
 ## What stays on its own transport (exceptions)
 
