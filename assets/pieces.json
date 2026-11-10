@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "407c46333285d89899a5b0ae1d6cbf97ffcd0277",
+      "commit": "ae0e6ff9bc230083d723e7113b0d0c81ee8360ee",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -52,7 +52,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "d3ca90b2f96ee0354c0144ffebfe1b6b6ce2bb6d",
+      "commit": "86377923703572712dcdb0c21b1254a1c40e95a0",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
