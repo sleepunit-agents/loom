@@ -1,3 +1,5 @@
+import { aboutAttr, aboutPage, validAbout } from './about';
+import { pageHref } from './loom';
 // A panel block: settings as an app's panel (Jonathan, 2026-11-03: "app panels, not web forms"). Each row says what the
 // setting is now, in words, and holds one control: a switch that applies at once, a segmented control that applies at
 // once, an edit that opens a sheet with a few fields, a sheet of detail, a link, or a button. Its own chunk.
@@ -71,9 +73,10 @@ function RowChoice({ r }: { r: PanelRow }) {
 }
 
 function Row({ r }: { r: PanelRow }) {
-  const { wide } = useEnv();
+  const { wide, ctx } = useEnv();
   const [open, setOpen] = useState(false);
   const taps = !!(r.edit || r.sheet);
+  const about = r.ref ? validAbout({ ref: r.ref, label: r.label, agent: r.agent }) : r.page ? aboutPage(pageHref(r.page, ctx.source), r.label) : null;
   // The row's words: its label, its value in a sentence, a line of detail. Never cut: a value wraps.
   const words = (
     <span className="grid min-w-0 flex-1 gap-0.5 text-left">
@@ -108,7 +111,7 @@ function Row({ r }: { r: PanelRow }) {
     );
   }
   return (
-    <li className="min-w-0">
+    <li {...(about ? aboutAttr(about) : {})} className="min-w-0">
       {body}
       {r.edit && (
         <Sheet open={open} set={setOpen} title={r.edit.title ?? r.label} note={r.edit.note}>
