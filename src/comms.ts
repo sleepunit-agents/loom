@@ -1199,8 +1199,13 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
       if (prior) return { ok: true, id: String(prior.seq) };
     }
     const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(continuation ? { hash, deduplicate: true, expiresAt } : {}), ...(run ? { run } : {}), ...(on ? { card: { on } } : {}) }, now);
-    settleStarts(h.home, r.id);
-    withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    // A continuation report is another run's follow-up, not the holder's answer: it moves the thread's last, but
+    // leaves what the current holder still owes (its queued messages, its start cards, a failure) as it was.
+    if (continuation) withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now) }, now));
+    else {
+      settleStarts(h.home, r.id);
+      withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    }
     return { ok: true, id: String(seq) };
   }
   if (op === 'describe') {

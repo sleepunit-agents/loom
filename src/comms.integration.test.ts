@@ -1296,6 +1296,15 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       const notice = (t: { id: string }, body: Record<string, unknown>) => api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', ...body });
       const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
 
+      it("a continuation report from another run leaves the holder's queued message waiting (review of loom#682)", async () => {
+        const { t } = await queued();
+        expect(row(t).queued_since).not.toBeNull();
+        const report = { op: 'post', agent: 'art', place: t.id, text: 'Follow-up from an earlier run', expiresAt: Date.now() + 60000, run: 'run-0123456789ab', ref: `continuation-${'9'.repeat(64)}` };
+        expect((await api(tok.runtime, 'comms/adapter', report)).body).toMatchObject({ ok: true });
+        expect(row(t).queued_since).not.toBeNull(); // the busy line can still follow
+        expect((await api(tok.runtime, 'comms/adapter', { op: 'post', agent: 'art', place: t.id, text: 'The answer' })).body).toMatchObject({ ok: true });
+        expect(row(t).queued_since).toBeNull();
+      });
       it('says it is retrying, one line per message moved on by later attempts, and a start-failed of the same attempt still lands', async () => {
         const { t, delivery } = await queued();
         expect(row(t).queued_since).not.toBeNull();
