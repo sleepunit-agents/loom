@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Run each piece's manifest once for every window that sees the same answer, and less often while it doesn't
+  move: the runtime's ran once per open agent window on every round and every word (t-2110). A manifest that runs
+  past a page's 3 s wait shows its last good answer instead of dropping off the page, and its late answer is kept
+  (t-2064).
 - Keep runtime job threads in Comms' Background work until their owner writes in them,
   exclude them from personal unread counts and notifications, and attribute agent job briefs correctly.
 

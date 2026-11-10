@@ -207,7 +207,11 @@ export const FIT_LEAST = { w: 320, h: 240 };
 const FIT_MOST = 10000;
 
 export interface Manifest {
-  /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
+  /**
+   * The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. `scope`
+   * and `owners` are said the same whatever the caller: loom shares one run of a manifest between every window whose
+   * scopes it doesn't read (pieces.ts, t-2110).
+   */
   scope?: boolean;
   /**
    * 2: the piece understands agent owners (docs/specs/owners.md): it reads the caller's

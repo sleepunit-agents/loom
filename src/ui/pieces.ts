@@ -37,8 +37,27 @@ export const PIECE_TIMEOUT_MS = 3_000;
 export const PAGE_TIMEOUT_MS = 15_000;
 export const ACT_TIMEOUT_MS = 15_000;
 export const PIECE_MAX_BYTES = 512 * 1024;
-/** Longer than the page's 30s refresh, so an open tab doesn't re-run every piece each time. */
-export const CACHE_MS = 45_000;
+/**
+ * Longer than the page's 30s refresh, so an open tab doesn't re-run every piece each time; as long as the open apps'
+ * round waits on a piece that hasn't moved (ROUND_MAX_MS), so a page load never runs what the round would have.
+ */
+export const CACHE_MS = 60_000;
+/**
+ * The open apps' round (live.ts) asks each piece every ROUND_MS, and one that answered the same as before less often:
+ * twice the wait for each round in a row it didn't move, up to ROUND_MAX_MS (t-2110: every piece every 15 s per open
+ * scope kept loom's machine at load 10-12). Its own word that it moved, an action on it, or its records moving asks it
+ * at the next round again. An answer younger than SHARE_MS is everyone's: a round over four scopes, a page load
+ * just after a piece's word, and the next scope's round all get the one run.
+ */
+export const ROUND_MS = 15_000;
+export const ROUND_MAX_MS = 60_000;
+export const SHARE_MS = 5_000;
+/**
+ * A manifest run nobody is waiting on may take this long (t-2064: under load, the runtime's took 3.3-10.7 s, so at 3 s
+ * it timed out and dropped off the page). A page load waits at most PIECE_TIMEOUT_MS for it, then shows the last good
+ * answer (or, with none, skips the piece); the run goes on and keeps its answer for the next look.
+ */
+export const MANIFEST_RUN_MS = 12_000;
 /**
  * Past CACHE_MS a page still gets the last answer at once while a fresh one runs behind it (stale while
  * revalidating): a page never waits on every piece because a window ran out (Jonathan, 2026-10-29: "this site is
@@ -84,19 +103,30 @@ export interface PieceSkip {
 /** A non-zero exit keeps what the piece printed (`stdout`): an offer may say why it failed there. */
 type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null; stdout?: string };
 type ManifestResult = PieceInfo | PieceSkip;
-interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
+/**
+ * `expired`: the piece said it moved, so the next look asks it again, keeping this answer for a run that fails or is
+ * slow (t-2064). `print` is the answer as the round compares it, `same` how many rounds in a row it came back the same.
+ */
+interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
 const cache = new Map<string, CacheEntry>();
 let manifestGeneration = 0;
+/** The runs under way, by cache key: whoever asks while one runs shares it (unless a piece's word came since). */
+const running = new Map<string, { generation: number; result: Promise<ManifestResult> }>();
+/**
+ * What a piece's answer turns on, from its last good answer, by path and version: LOOM_SCOPE only with `scope`, the
+ * owner scope only with `owners: 2` (vocab.ts). A piece that declares neither answers one manifest for every window,
+ * so one run is everyone's (t-2110: the runtime's ran once per open agent window, every round and every word).
+ */
+const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
 
 /**
  * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
- * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
- * `path`: that piece's alone, in every scope (t-2065).
+ * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old. The
+ * answer stays as the one to show if the next run fails or runs long. `path`: that piece's alone, in every scope (t-2065).
  */
 export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
-  if (path === undefined) { cache.clear(); return; }
-  for (const k of [...cache.keys()]) if (k.startsWith(`${path}\0`)) cache.delete(k);
+  for (const [k, e] of cache) if (path === undefined || k.startsWith(`${path}\0`)) e.expired = true;
 }
 
 export function clearPieceCache(path?: string): void {
@@ -113,6 +143,8 @@ export function clearPieceCache(path?: string): void {
  */
 export function forgetPiecePages(path: string): void {
   for (const k of [...pages.keys()]) if (k.startsWith(`${path}\0`)) pages.delete(k);
+  // Its manifest likely moved with them (a count on its tile): the next round asks it, however long it was quiet.
+  for (const [k, e] of cache) if (k.startsWith(`${path}\0`)) e.same = 0;
 }
 
 /**
@@ -312,7 +344,7 @@ function json(stdout: string): unknown {
 }
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
-  const r = await ask(path, ['ui', '--json'], env);
+  const r = await ask(path, ['ui', '--json'], env, { timeoutMs: MANIFEST_RUN_MS });
   if (!r.ok) return { piece, reason: r.reason };
   const parsed = json(r.stdout);
   if (parsed === undefined) return { piece, reason: 'invalid: not JSON' };
@@ -330,36 +362,100 @@ function resolved(path: string): string {
   }
 }
 
-/**
- * The scope a piece answers for, as a cache key: the agent it's narrowed to (LOOM_SCOPE) and the agents an agent
- * owner owns (LOOM_OWNER_SCOPE, owners.md). Both: a piece that understands agent owners answers them differently, so
- * one viewer's answer is never another's (collections.md, "Before any domain moves", 5).
- */
+/** The scope a piece's page answers for, as part of its key: both scopes, always (a page is a viewer's). */
 const scopeKey = (env: NodeJS.ProcessEnv): string => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
-function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
-  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately. And per the file
-  // the path resolves to now: an install points pieces/bin/loom-<name> at a new version, which is a new
-  // answer at once, not 45s later (t-1584).
-  const key = `${path}\0${scopeKey(env)}\0${resolved(path)}`;
-  const hit = cache.get(key);
-  if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
-  if (hit && nowMs - hit.at < STALE_MAX_MS) {
-    if (!hit.refreshing) {
-      hit.refreshing = true;
-      const next = fetchManifest(piece, path, env);
-      void Promise.all([next, hit.result]).then(([fresh, last]) => {
-        // A piece that fails this once keeps its last good answer (until that's too old); it's asked again next time.
-        if ('manifest' in fresh || !('manifest' in last)) { if (cache.get(key) === hit) cache.set(key, { at: Date.now(), result: next }); }
-        else hit.refreshing = false;
-      });
-    }
-    return hit.result;
-  }
-  // Cache the promise itself: concurrent page loads share one run.
-  const result = fetchManifest(piece, path, env);
-  cache.set(key, { at: nowMs, result });
+/**
+ * The cache key for a piece's answer to `env`: its path, the scope it answers for, and the file the path resolves to
+ * now (an install points pieces/bin/loom-<name> at a new version, which is a new answer at once, not a minute later,
+ * t-1584). The scope is the agent it's narrowed to (LOOM_SCOPE) and the agents an agent owner owns (LOOM_OWNER_SCOPE,
+ * owners.md), each only when the piece's manifest says it reads it; a piece not heard from yet is keyed by both, so
+ * one viewer's answer is never another's (collections.md, "Before any domain moves", 5).
+ */
+interface Keyed { key: string; version: string; on?: { scope: boolean; owners: boolean } }
+function keyOf(path: string, env: NodeJS.ProcessEnv): Keyed {
+  const version = resolved(path);
+  const on = turnsOn.get(`${path}\0${version}`);
+  const scope = !on || on.scope ? env.LOOM_SCOPE ?? '' : '';
+  const owners = !on || on.owners ? env.LOOM_OWNER_SCOPE ?? '' : '';
+  return { key: `${path}\0${scope}\0${owners}\0${version}`, version, ...(on ? { on } : {}) };
+}
+
+/**
+ * One run of a piece's manifest for `k.key`, shared by everyone who asks while it runs. A run under a shared key whose
+ * answer now says it reads a scope it didn't (a piece edited in place) is nobody's: it was made for one viewer and
+ * may be shared with others, so it counts as failed, and the next look is keyed by what the piece says now.
+ */
+function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Keyed): Promise<ManifestResult> {
+  const { key, version, on } = k;
+  const under = running.get(key);
+  if (under && under.generation === manifestGeneration) return under.result;
+  const result = fetchManifest(piece, path, env).then((r): ManifestResult => {
+    if (!('manifest' in r)) return r;
+    const now = { scope: r.manifest.scope === true, owners: r.manifest.owners === 2 };
+    turnsOn.set(`${path}\0${version}`, now);
+    if (on && ((now.scope && !on.scope) || (now.owners && !on.owners))) return { piece, reason: 'reads a new scope' };
+    return r;
+  }).finally(() => { if (running.get(key)?.result === result) running.delete(key); });
+  running.set(key, { generation: manifestGeneration, result });
   return result;
+}
+
+/** `fresh`, or `last` once `ms` has passed (the run goes on, and its answer is kept for the next look). */
+function within(fresh: Promise<ManifestResult>, last: Promise<ManifestResult> | ManifestResult, ms: number): Promise<ManifestResult> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<ManifestResult>((resolve) => { timer = setTimeout(() => resolve(last), ms); });
+  return Promise.race([fresh, late]).finally(() => clearTimeout(timer));
+}
+
+const printOf = (r: ManifestResult) => ('manifest' in r ? JSON.stringify(r.manifest) : '');
+
+/**
+ * Keep a run's answer as `key`'s, if nothing newer came first: a piece's word or an action since it started (the
+ * generation), or another answer. One that fails keeps the last good answer (until that's too old) and is asked again
+ * next time. A round counts the answers in a row that came back the same.
+ */
+function keep(key: string, before: CacheEntry | undefined, generation: number, result: Promise<ManifestResult>, r: ManifestResult): void {
+  if (generation !== manifestGeneration || cache.get(key) !== before) return;
+  if (!('manifest' in r)) {
+    // A failure is no answer to compare: no print, so the round asks it again. The last good answer keeps its age, so
+    // a piece that keeps failing still ages out (STALE_MAX_MS).
+    if (!before) { cache.set(key, { at: Date.now(), result }); return; }
+    void before.result.then((last) => {
+      if (cache.get(key) !== before || generation !== manifestGeneration) return;
+      if ('manifest' in last) { before.refreshing = undefined; before.expired = false; before.same = 0; }
+      else cache.set(key, { at: Date.now(), result });
+    });
+    return;
+  }
+  const print = printOf(r);
+  cache.set(key, { at: Date.now(), result, print, same: before?.print === print ? (before.same ?? 0) + 1 : 0 });
+}
+
+function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
+  const k = keyOf(path, env);
+  const { key } = k;
+  const hit = cache.get(key);
+  if (hit && !hit.expired && nowMs - hit.at < CACHE_MS) return hit.result;
+  const generation = manifestGeneration;
+  if (hit && nowMs - hit.at < STALE_MAX_MS) {
+    // Past its window, the last answer at once while a fresh one runs behind it. Said to have moved, the fresh one,
+    // unless it's slower than a manifest's limit: then the last one, and the fresh one is there for the next look.
+    const next = runManifest(piece, path, env, k);
+    // One keeper per generation: a word that came since the last one started makes a new run, and it's this one's.
+    if (hit.refreshing !== generation) {
+      hit.refreshing = generation;
+      void next.then((r) => keep(key, hit, generation, next, r));
+    }
+    if (!hit.expired) return hit.result;
+    return within(next, hit.result, PIECE_TIMEOUT_MS).then((r) => ('manifest' in r ? r : hit.result));
+  }
+  // Cache the run itself: concurrent page loads share it, and one that outlasts the page's wait is the next look's.
+  const result = runManifest(piece, path, env, k);
+  const entry: CacheEntry = { at: nowMs, result };
+  cache.set(key, entry);
+  void result.then((r) => { if ('manifest' in r) entry.print = printOf(r); });
+  return within(result, { piece, reason: 'timed out' }, PIECE_TIMEOUT_MS);
 }
 
 /**
@@ -371,26 +467,37 @@ function shownPieces(env: NodeJS.ProcessEnv): Array<{ name: string; path: string
   return listPieces(env).filter((p) => p.name !== 'loom' && resolvePieceName(env, p.name) === p.name);
 }
 
+/** How long a round leaves a piece's answer be: SHARE_MS once it moved, else longer for each round it didn't. */
+function roundWait(e: CacheEntry): number {
+  const same = e.same ?? 0;
+  return same === 0 ? SHARE_MS : Math.min(ROUND_MS * 2 ** same, ROUND_MAX_MS) - SHARE_MS;
+}
+
 /**
- * Ask every piece for its manifest now, whatever the cache holds, and keep the answers (src/ui/live.ts runs
- * this while an app is open). Returns each piece's answer as a fingerprint, so a caller can tell which changed;
- * a piece that changed has its kept pages dropped, so the next look at them is fresh.
+ * Ask every piece for its manifest again and keep the answers (src/ui/live.ts runs this while an app is open), except
+ * one whose answer is still due no new look: younger than SHARE_MS (another scope's round, or a word just now, ran it),
+ * or quiet for rounds in a row (roundWait). A piece said to have moved is always asked. Returns each piece's answer
+ * as a fingerprint, so a caller can tell which changed; a piece that changed has its kept pages dropped, so the next
+ * look at them is fresh.
  */
 export async function refreshPieceManifests(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Promise<Map<string, string>> {
   // `only`: just these pieces' paths (the one that said it moved, t-2065); the others keep their last answers.
   const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
-    const key = `${p.path}\0${scopeKey(env)}\0${resolved(p.path)}`;
+    const k = keyOf(p.path, env);
+    const { key } = k;
     const generation = manifestGeneration;
     const before = cache.get(key);
-    const result = fetchManifest(p.name, p.path, env);
+    if (before && !before.expired && before.print !== undefined && Date.now() - before.at < roundWait(before)) {
+      out.set(p.path, before.print);
+      return;
+    }
+    const result = runManifest(p.name, p.path, env, k);
     const r = await result;
-    // A piece that failed this once keeps its last good answer, as a page load would.
-    // Invalidation or a newer page load wins over a refresh started before it.
-    if (generation === manifestGeneration && cache.get(key) === before && ('manifest' in r || !before))
-      cache.set(key, { at: Date.now(), result });
-    out.set(p.path, 'manifest' in r ? JSON.stringify(r.manifest) : '');
+    keep(key, before, generation, result, r);
+    // What it showed before when this run failed: a piece that failed once hasn't moved.
+    out.set(p.path, 'manifest' in r || !before?.print ? printOf(r) : before.print);
   }));
   return out;
 }

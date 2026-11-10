@@ -450,6 +450,12 @@ A provider never pushes records to core. Core **pulls** them with the provider's
   directly by an agent, which has no token of its own, can still say it wrote.
 - **Today's 15 s manifest round stays**, per scope, for every piece whose pages or manifest fields are still read
   (it is what sends `page` frames, below), and shrinks as each piece's fields move.
+  Since t-2110 one run serves every scope the piece reads: a piece reads LOOM_SCOPE only with `scope`, and the owner
+  scope only with `owners: 2`, so the runtime's manifest runs once for every household window, not once per open agent
+  window. A piece that answers the same round after round is asked less often (15, 30, then every 60 s); its own word,
+  an action on it or its records moving puts it back on the 15 s round. Runs are shared: one under way, or one younger
+  than 5 s, is everyone's. A run a page waits on longer than 3 s gives way to the last good answer and is kept when it
+  lands (t-2064), so a slow piece no longer drops off the page.
 - **Expiry**: a record with a natural end (an ask that expires, a reading's `observedAt` plus its lifetime) carries
   `expires`, which core keeps in its index. When it passes, core logs a delete as a row of its own (next in its row
   sequence), and only if the record is still at the revision that carried that `expires`; a renewal (a later
