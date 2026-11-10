@@ -7,14 +7,15 @@ import MoreMenu from './more-menu';
 type Tab = { label: string; href: string; current: boolean; count?: number };
 type Agent = { id: string; label: string; bg: string; fg: string; href: string; asks?: number };
 
-export default function MoreSheet({ open, onOpenChange, here, pages, agents, icon, go }: {
+export default function MoreSheet({ open, onOpenChange, here, pages, agents, icon, go, chat }: {
   open: boolean; onOpenChange: (o: boolean) => void; here?: string; pages: Tab[]; agents: Agent[]; icon: (label: string) => string; go: (href: string) => void;
+  chat?: () => void;
 }) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
         <DrawerHeader><DrawerTitle>More</DrawerTitle>{here && <DrawerDescription>{here}'s other pages</DrawerDescription>}</DrawerHeader>
-        {open && <MoreMenu pages={pages} agents={agents} here={here} icon={icon} go={go} />}
+        {open && <MoreMenu pages={pages} agents={agents} here={here} icon={icon} go={go} chat={chat} />}
       </DrawerContent>
     </Drawer>
   );

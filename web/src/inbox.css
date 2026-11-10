@@ -42,3 +42,4 @@
 .loom-inbox__trail .loom-data { font-size: 11.5px; color: var(--v-text-3); }
 .loom-inbox__details { font-size: 13px; color: var(--v-text-3); overflow-wrap: anywhere; }
 @media (prefers-contrast: more) { .loom-inbox__sub, .loom-inbox__why { color: var(--v-text); } }
+.loom-inbox__chat { margin: 12px 0 0; }

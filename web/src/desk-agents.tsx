@@ -8,6 +8,7 @@
 // thread, unread replies and the first one's line; read state is the member's alone).
 //
 // In the desk's own chunk (tiling/tiles.tsx imports it): a phone never fetches it.
+import { aboutAttr, type About } from './about';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, EnvContext, Nothing, useEnv, type Mark, type MarkState } from './blocks';
@@ -353,16 +354,22 @@ function Running({ a }: { a: DeskAgent }) {
       {running.slice(0, RUNNING_MAX).map((j) => {
         const inner = <><b className="loom-doing__who loom-data">{a.label.split(' ')[0]} is doing</b><span className="loom-doing__what">{j.text}</span>
           <small className="loom-doing__meta loom-data">{[j.where, ran(j.since), step(j)].filter(Boolean).join(' · ')}</small></>;
-        return <li key={j.id}>{j.href ? <Go href={j.href} className="loom-doing__box">{inner}</Go> : <span className="loom-doing__box">{inner}</span>}</li>;
+        return <li key={j.id} {...aboutAttr(jobAbout(a, j))}>{j.href ? <Go href={j.href} className="loom-doing__box">{inner}</Go> : <span className="loom-doing__box">{inner}</span>}</li>;
       })}
       {running.length > RUNNING_MAX && <li className="loom-doing__more loom-data">+{running.length - RUNNING_MAX} more</li>}
     </ul>
   );
 }
 
+/** A job as Chat about this attaches it (about.ts): the runtime's job, its page unless that's its own thread, its agent. */
+const jobAbout = (a: DeskAgent, j: Job): About => {
+  const page = j.href && !j.href.startsWith('/comms') && /^\/[\w./~-]+$/.test(j.href) ? j.href.slice(1) : undefined;
+  return { label: j.text.slice(0, 120), ref: `runtime:job/${j.id.replace(/[^A-Za-z0-9._@/#:-]/g, '-').slice(0, 150)}`, ...(page ? { page } : {}), agent: a.id };
+};
+
 function Jobs({ a, compact }: { a: DeskAgent; compact?: boolean }) {
   if (!a.jobs.length) return null;
-  const list = <ul className="loom-jobs">{a.jobs.map((j) => <li key={j.id} data-job-status={j.status}>
+  const list = <ul className="loom-jobs">{a.jobs.map((j) => <li key={j.id} data-job-status={j.status} {...aboutAttr(jobAbout(a, j))}>
     <small>{({ running: 'Running', waiting: 'Waiting', scheduled: 'Scheduled', backlog: 'Backlog' })[j.status]}</small>
     {j.href ? <Go href={j.href}>{j.text}</Go> : <span>{j.text}</span>}{j.at && <small>{when(j.at)}</small>}
   </li>)}</ul>;

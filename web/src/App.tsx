@@ -30,6 +30,8 @@ import { usePage, hasKept, screenNav, type PageNav, type PageState } from './pag
 import { nameOf as tileName } from './tiling/name';
 // The toasts load with the first one (toasts.tsx).
 const Toasts = lazy(() => import('./toasts'));
+// Chat about this (about.ts): its sheet's own chunk, the first time something asks.
+const ChatAbout = lazy(() => import('./chat-about'));
 import type { Note } from './toasts';
 import { act, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
@@ -75,6 +77,7 @@ import { canMove, moveTo, scrub, type Move } from './transitions';
 import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
+import { aboutPage, chatAbout, CHAT_ABOUT, type About } from './about';
 import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
 import { keep, LOOKS, lookOf, markColor, modeOf, oneWindowKept, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
@@ -139,6 +142,13 @@ export default function App() {
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
+  // Chat about this (about.ts): undefined until something first asks (its chunk isn't loaded before), null when closed.
+  const [about, setAbout] = useState<(About & { seen: string }) | null | undefined>(undefined);
+  useEffect(() => {
+    const f = (e: Event) => setAbout((e as CustomEvent<About & { seen: string }>).detail);
+    addEventListener(CHAT_ABOUT, f);
+    return () => removeEventListener(CHAT_ABOUT, f);
+  }, []);
   // The launcher (launcher.tsx), a desktop's: open, and whether it has opened yet (its chunk stays for its next time).
   const [launching, setLaunchingState] = useState(false);
   const [launchAsked, setLaunchAsked] = useState(false);
@@ -440,6 +450,9 @@ export default function App() {
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'activity' ? 'Activity' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
+  // Chat about this page (about.ts): a phone's page-name sheet and More offer it; a desktop's window menu does.
+  const pageAbout = aboutPage(url, title || head?.label || 'This page');
+  const pageChat = pageAbout ? () => chatAbout(pageAbout) : undefined;
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
   const placeAt = (at: string) => shellPlaces.find((p) => at === p.href) ?? shellPlaces.find((p) => p.href !== '/' && at.startsWith(`${p.href}/`));
   // Which app a page is in, as a tile (tiling/tiles.tsx): keyed as the dock keys it (trail.ts keys the same), an agent's
@@ -663,7 +676,7 @@ export default function App() {
                 <PhoneBar clock={desk ? <SysClock clock={{ text: chrome.clock, tz: chrome.tz }} /> : undefined}
                   status={desk ? <SysIcons shell={chrome.shell} offline={!!savedAt} go={go} /> : undefined} title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={tiled && tileFocus ? `${tileFocus.key}\0${tileFocus.title}` : url}
                   info={tiled ? { more: tileFocus?.intro } : { line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
-                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
+                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} chat={desk ? undefined : pageChat} />
               </div>
             </header>
           ) : (
@@ -725,6 +738,7 @@ export default function App() {
       }} />}
 
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
+        chat={pageChat ? () => { setMore(false); pageChat(); } : undefined}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}
 
       {launchAsked && desk && chrome?.shell && <Suspense fallback={null}><Launcher open={launching} onOpenChange={setLaunching} shell={chrome.shell} icon={icon}
@@ -732,6 +746,9 @@ export default function App() {
         launch={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
       {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
+
+      {about !== undefined && chrome && <Suspense fallback={null}><ChatAbout about={about} csrf={chrome.csrf} agents={chrome.shell?.agents ?? []} onClose={() => setAbout(null)}
+        go={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}

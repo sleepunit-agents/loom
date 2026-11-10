@@ -20,6 +20,7 @@ import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
 import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
 import { Split, type SplitFolder } from './split';
+import { aboutAttr, chatAbout, validAbout, type About } from './about';
 import './inbox.css';
 
 const useEnv = () => useContext(EnvContext)!;
@@ -131,6 +132,17 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
   );
 }
 
+/** An item as Chat about this attaches it (about.ts): its approval, else the pull request it's about, else the piece's own
+ * item; its page where it has a plain one; its agent, whose it is. */
+function inboxAbout(i: InboxItem, title: string): About {
+  const approval = [...(i.actions ?? []), ...(i.approval?.actions ?? [])].map((b) => b.fields?.id).find((x): x is string => typeof x === 'string' && /^a-[0-9a-f]{8}$/.test(x));
+  const pr = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(?:pull|issues)\/(\d+)$/.exec(i.href ?? '');
+  const piece = /^[a-z][a-z0-9-]{0,39}$/.test(i.source.id) ? `${i.source.id}:${i.key.replace(/[^A-Za-z0-9._@/#:-]/g, '-').slice(0, 160)}` : undefined;
+  const page = i.page && /^[\w./~-]+$/.test(i.page) && !i.page.split('/').includes('..') ? `${i.source.base}${i.page}`.replace(/^\/+/, '') : undefined;
+  return { label: title.slice(0, 120), ...(approval ? { ref: approval } : pr ? { ref: `github:${pr[1]}#${pr[2]}` } : piece ? { ref: piece } : {}),
+    ...(page ? { page } : {}), ...(i.agent ? { agent: i.agent } : {}) };
+}
+
 /** A row: what it is (its folder's mark), its words, when; unread is bold with a dot. */
 function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; current: boolean; onPick: (i: InboxItem) => void;
   /** Mark done, from the desktop's right-click (tiling/tiles.tsx data-row-menu): there when the item has a plain Done. */
@@ -151,7 +163,7 @@ function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: strin
     // What's new arrives (arrive.tsx; docs/specs/ui-app.md): a row that wasn't there at the last answer glows once.
     <Arrive k={`in:${i.key}\0${i.kind}`}>
       <button ref={el} type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}
-        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)}>
+        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)} {...aboutAttr(inboxAbout(i, p.title))}>
         {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
         {/* Who asks, by their face (pixel or drawn), with what it is as a badge on it; nobody's is its kind alone. */}
         {mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>
@@ -247,6 +259,8 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks, replyId, 
         </EnvContext.Provider>
       )}
       <Fine text={i.fine} className="loom-inbox__fine" />
+      {/* Chat about this (about.ts): a thread about the item, never an answer to it. */}
+      {validAbout(inboxAbout(i, p.title)) && <div className="loom-inbox__chat"><Button size="sm" variant="outline" onClick={() => chatAbout(inboxAbout(i, p.title))}>Chat about this</Button></div>}
       <div className="loom-inbox__meta">
         {(own || i.href || refs.length > 0) && (
           <section aria-label="Where it lives">
