@@ -387,10 +387,11 @@ describe('criterion 3: digests (conversation_digest)', () => {
     const marks = await mcp(art, { house: 'h-4' });
     await marks.call('identity', { conversation: conv, run: 'run-1' });
     expect((await marks.call('conversation_digest', { summary: 'x' })).error).toBe(true);
-    // A service's house (a bridge runs many conversations) and no house at all (loom's machine): as before.
+    // A service's house (a chat bridge people other than the owner steer) holds no conversation the runtime named, so it
+    // writes none (t-2118). No house at all (loom's machine): as before.
     const bridge = await mcp(art, { house: 'h-5', service: 'discord' });
     await bridge.call('identity', { conversation: other, run: 'run-9' });
-    expect((await bridge.call('conversation_digest', { summary: 'bridge' })).error).toBe(false);
+    expect(String((await bridge.call('conversation_digest', { summary: 'bridge' })).body.error)).toMatch(/h-5 holds no conversation the runtime named/);
     const local = await mcp(art);
     await local.call('identity', { conversation: other, run: 'run-8' });
     expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);

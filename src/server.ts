@@ -130,17 +130,14 @@ export interface LoomServerInstance {
 }
 
 /**
- * Why a session from `caller`'s house may not write for `conversation` (a digest, a Comms title), or null when it may (t-2061). No house
- * (loom's machine, an owner's session) or a service's house (a bridge runs many conversations): as before. A body's
- * house: only the conversation the runtime said it holds, and nothing at all when it said none (fail closed).
- */
-/**
- * The conversation a body's house holds (t-2061): undefined when the caller is no body's house (no house, a service's),
- * null when it is one the runtime named nothing for (or another agent's), else that conversation.
+ * The conversation a house holds (t-2061): undefined when the caller is in no house (loom's machine, an owner's session),
+ * null when it is one the runtime named nothing for (or another agent's), else that conversation. A service's house (a
+ * chat bridge, a jobs house: people other than the owner may steer one) is held to the same rule (t-2118): the runtime
+ * names no conversation for one, so it writes and reads none.
  */
 export function bodyHouseConversation(contextDir: string, caller: LoomServerConfig['caller']): string | null | undefined {
   const house = caller?.house;
-  if (!house || caller?.service) return undefined;
+  if (!house) return undefined;
   const home = homeFor(contextDir);
   const self = householdOf(contextDir)?.agent;
   let held: { agent: string; conversation: string } | null = null;
@@ -148,6 +145,11 @@ export function bodyHouseConversation(contextDir: string, caller: LoomServerConf
   return held && held.agent === self ? held.conversation : null;
 }
 
+/**
+ * Why a session from `caller`'s house may not write for `conversation` (a digest, a Comms title), or null when it may
+ * (t-2061): no house (loom's machine, an owner's session), as before; any house, only the conversation the runtime said
+ * it holds, and nothing at all when it said none (fail closed), a service's too (t-2118).
+ */
 export function houseWriteProblem(contextDir: string, caller: LoomServerConfig['caller'], conversation: string | undefined): string | null {
   const held = bodyHouseConversation(contextDir, caller);
   if (held === undefined) return null;

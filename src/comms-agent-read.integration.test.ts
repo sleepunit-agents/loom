@@ -107,8 +107,10 @@ describe.skipIf(!hasAge)('Comms: an agent reads its own threads', () => {
       expect(String(byId.body.error)).toMatch(/h-1 reads only the thread of the conversation it holds/);
       // A house the runtime named nothing for reads none.
       expect((await read('art', mine.conversation, {}, { house: 'h-2' })).error).toBe(true);
-      // A service's house and a session with no house: as before.
-      expect((await read('art', null, { thread: sibling.id }, { house: 'h-3', service: 'discord' })).error).toBe(false);
+      // A service's house reads none (t-2118); a session with no house: as before.
+      const svc = await read('art', null, { thread: sibling.id }, { house: 'h-3', service: 'discord' });
+      expect(svc.error).toBe(true);
+      expect(JSON.stringify(svc.body)).not.toMatch(/private words/);
       expect((await read('art', null, { thread: sibling.id })).error).toBe(false);
     });
 

@@ -435,7 +435,8 @@ their fixed words. That's how a body checks whether its reply showed, or what th
   of it. A body can name another of its own agent's threads: they're one agent's, and the words were said to it.
   Except from a body's house (t-2061): there it reads only the thread of the one conversation that house holds (as
   the runtime said, `house_conversations`), and none from a house it named nothing for. A sibling body (or a guest's
-  house) never reads another conversation's words. A service's house and a session with no house read as above.
+  house) never reads another conversation's words. A service's house (a chat bridge) reads none (t-2118): the runtime
+  names no conversation for one. A session with no house reads as above.
 - **What.** Words past `comms_days` are dropped at read time too, not only by the sweep. The newest `limit` (30 by default, at most 100) messages, or those before `before`, oldest first, and the
   thread's state. Never a write.
 
