@@ -9,8 +9,9 @@
  * - an agent's memory, knowledge or people, or the household file, written (a watch on loom's data folder; not
  *   the sessions file or SQLite's read index, which a page load itself touches, or a piece's store, which its
  *   own page load may write);
- * - a piece's manifest answering differently (asked every WATCH_MS while an app is open, per scope that's open,
- *   and at once when a piece says it moved: POST /api/loom/pieces/changed writes PIECES_TICK, t-1945);
+ * - a piece's manifest answering differently (asked every WATCH_MS while an app is open, per scope that's open, one
+ *   run shared by the scopes it doesn't read and less often while it doesn't move (pieces.ts, t-2110), and at once
+ *   when a piece says it moved: POST /api/loom/pieces/changed writes PIECES_TICK, t-1945);
  *   its kept pages are dropped then too;
  * - any action, through loom (`changed()`, from the handler).
  * Changes close together go out as one, at most every GAP_MS. A comment every BEAT_MS keeps proxies from
@@ -27,9 +28,9 @@ import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dataChanges } from './live-files.js';
 import { basename, join } from 'node:path';
 import type { ServerResponse } from 'node:http';
-import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
+import { ROUND_MS, clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
 
-export const WATCH_MS = 15_000;
+export const WATCH_MS = ROUND_MS;
 const BEAT_MS = 25_000;
 const GAP_MS = 1_500;
 const TICK_MIN_MS = 5_000;
@@ -192,12 +193,19 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
   return tickRunning;
 }
 
-/** The piece paths a tick file names (one per line after its time), or undefined: every piece. */
-function tickPaths(home: string): Set<string> | undefined {
+/**
+ * What a tick file says: its time, and the piece paths it names (one per line after its time), or none: every piece.
+ * One write is often two or three watch events; each word is heard once (t-2110: each event ran the piece again).
+ */
+let lastWord = '';
+function tickWord(home: string): { fresh: boolean; paths?: Set<string> } {
   try {
-    const [, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
-    return paths.length ? new Set(paths) : undefined;
-  } catch { return undefined; }
+    const [at, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
+    const word = [at, ...paths].join('\n');
+    const fresh = word !== lastWord;
+    lastWord = word;
+    return { fresh, ...(paths.length ? { paths: new Set(paths) } : {}) };
+  } catch { return { fresh: true }; }
 }
 
 /**
@@ -223,7 +231,7 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => {
-        if (String(file) === PIECES_TICK) void tick(true, tickPaths(home));
+        if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) void tick(true, w.paths); }
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
         else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));

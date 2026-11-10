@@ -14,7 +14,7 @@ import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { parseActResult, parseManifest, parsePage, splitPage, validPath } from './vocab.js';
 import { listening } from './live.js';
-import { clearPieceCache } from './pieces.js';
+import { MANIFEST_RUN_MS, clearPieceCache } from './pieces.js';
 import { esc, pageHref, pieceSource } from './render.js';
 
 const TOKEN = 'ui-test-token';
@@ -873,9 +873,10 @@ esac`);
     await piece(bin, 'hangs', `sleep 30 & echo $! > '${pidFile}'; wait`);
     await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
     const pid = Number((await readFile(pidFile, 'utf-8')).trim());
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(pid, 0)).toThrow();
-  }, 10000);
+    // The page stopped waiting at 3 s; the run itself is allowed MANIFEST_RUN_MS (t-2064), and its group goes then.
+    await expect.poll(() => { try { process.kill(pid, 0); return 'alive'; } catch { return 'gone'; } },
+      { timeout: MANIFEST_RUN_MS, interval: 200 }).toBe('gone');
+  }, MANIFEST_RUN_MS + 8000);
 
   it('pieces never see loom\'s bearer token; a piece named loom is ignored', async () => {
     const seen = join(bin, 'seen');
