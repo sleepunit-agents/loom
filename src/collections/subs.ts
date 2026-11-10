@@ -89,6 +89,8 @@ interface Sub {
   sent: Map<string, string>;
   /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
   retry?: boolean;
+  /** A refused core message payload read was reported; recovery must be said even if rows are unchanged. */
+  unavailable?: boolean;
   /** When it was last asked again (reaskSoon): the next waits out AGG_GAP_MS from then, never from the change. */
   askedAt?: number;
 }
@@ -106,7 +108,7 @@ interface Stream { port: StreamPort; viewer: Viewer; vid: string; scope: number;
  * Asking a provider again for a subscription, as its viewer, through serve.ts's checks: for a count it can't keep
  * itself, or a type whose audience the provider decides per viewer. Undefined when the provider didn't answer.
  */
-export type Reask = (viewer: Viewer, p: Provider, q: Query) => Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: Aggs } | undefined>;
+export type Reask = (viewer: Viewer, p: Provider, q: Query) => Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: Aggs } | { error: 'unavailable' } | undefined>;
 
 interface HomeState {
   household: () => Household;
@@ -396,12 +398,13 @@ function reset(s: Stream, sub: Sub, reason: 'gap' | 'scope' | 'provider-gone' | 
   s.port.frame('reset', { sub: sub.id, reason, scope: s.scope });
 }
 
-function send(s: Stream, sub: Sub): void {
+function send(s: Stream, sub: Sub, status?: 'live'): void {
   const f = sub.frame;
-  if (!f.upserts.size && !f.leaves.size && !f.deletes.size) return;
+  if (!status && !f.upserts.size && !f.leaves.size && !f.deletes.size) return;
   if (sub.aggMode === 'core') sub.aggs = coreAggs(sub);
   s.port.frame('rows', {
     sub: sub.id, scope: s.scope,
+    ...(status ? { status } : {}),
     ...(f.upserts.size ? { upserts: [...f.upserts.values()] } : {}),
     ...(f.leaves.size ? { leaves: [...f.leaves] } : {}),
     ...(f.deletes.size ? { deletes: [...f.deletes] } : {}),
@@ -537,6 +540,14 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something), and
     // it's asked again on the next pass.
     if (!got) { sub.retry = true; return; }
+    if ('error' in got) {
+      sub.retry = true;
+      if (!sub.unavailable) s.port.frame('rows', { sub: sub.id, scope: s.scope, status: 'unavailable' });
+      sub.unavailable = true;
+      return;
+    }
+    const recovered = sub.unavailable;
+    sub.unavailable = false;
     // Only what differs from what this subscription was sent.
     const now = new Set<string>();
     got.admitted.forEach((r, i) => {
@@ -549,7 +560,8 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
       sub.frame.upserts.set(key, got.rows[i]);
     });
     for (const key of [...sub.delivered.keys()]) if (!now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.leaves.add(key); }
-    send(s, sub);
+    // Recovery and any changed rows arrive atomically; an unchanged recovery still sends its status.
+    send(s, sub, recovered ? 'live' : undefined);
   })();
 }
 

@@ -293,9 +293,12 @@ async function runChecked(ctx: ServeContext, p: Provider, viewer: Viewer, list: 
 }
 
 /** A live query asked again for its subscription (subs.ts): its first page, as its viewer, through the same checks. */
-async function reask(ctx: ServeContext, p: Provider, viewer: Viewer, q: Query, sealer: Sealer): Promise<{ rows: Record<string, unknown>[]; admitted: Record<string, unknown>[]; aggregates?: ClientAnswer['aggregates'] } | undefined> {
+async function reask(ctx: ServeContext, p: Provider, viewer: Viewer, q: Query, sealer: Sealer): ReturnType<Reask> {
   const again: Query = { ...q, after: null, subscribe: false, ...(p.types[q.type].audience === 'ask' ? {} : { limit: 1 }) };
   const r = (await runChecked(ctx, p, viewer, [again], Date.now(), sealer, viewerId(viewer))).get(q.id);
+  // Core message payload refusal is the same viewer-scoped failure as an ordinary bounded read.
+  // Keep piece failures' existing silent retry: their timing can depend on records this viewer may not see.
+  if (r && 'error' in r.answer && r.answer.error === 'unavailable' && !p.piece && q.type === 'message' && q.fields.includes('message')) return { error: 'unavailable' };
   if (!r || !('rows' in r.answer)) return undefined;
   return { rows: r.answer.rows, admitted: r.admitted, ...(r.answer.aggregates ? { aggregates: r.answer.aggregates } : {}) };
 }

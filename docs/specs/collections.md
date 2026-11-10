@@ -545,6 +545,13 @@ data: { "seq": 1210, "piece": "clock" }
   above): core adds and subtracts as records enter and leave, using the index for a record's prior state, and asks
   the provider again when it can't (an `ask` type, an invalidated domain, a total that wasn't exact, a key with no
   index row).
+- **A refused live message payload read**: when core explicitly answers `unavailable` to a member's bounded
+  `loom/message` query that includes `message`, its subscription sends a `rows` frame with `status: "unavailable"`
+  and no row mutations. The client marks that view stale (or unavailable if empty), retaining its previously shown
+  rows. Core retries on its existing bounded pass, says the refusal once, and sends `status: "live"` on recovery
+  even if the projected rows have not changed. Both frames use the subscription's scope and stream sequence;
+  they carry no failure details, words or other subscriptions' state. Piece failures retain silent retries: their
+  failure timing may depend on records the viewer cannot see. This status is a read result, never a reset or deletion.
 - **Back-pressure**: a window more than 256 frames behind is sent `reset: gap` for its biggest subscriptions
   instead of more frames.
 - **Reconnecting is a new snapshot.** Subscriptions, delivered keys and boundaries live in one listener's memory, so
