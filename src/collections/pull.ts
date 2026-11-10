@@ -12,8 +12,10 @@
  *    transaction is bigger than a page (`more: true`), which core holds until its last change arrives.
  *
  * Core's own types have no log yet, so they always take the bridge. Pulls happen when nudged (coalesced to one per
- * domain per GAP_MS), and every POLL_MS for a domain with an open subscription. One listener at a time holds a
- * domain's lease.
+ * domain per GAP_MS, BRIDGE_GAP_MS for a piece core snapshots), and on the POLL_MS round for a domain with an open
+ * subscription: every round while it moves, less often while a piece's pulls find nothing (QUIET_MS; t-2110). A word
+ * that it moved (a nudge, an action, its API saying it wrote) puts it back on every round. One listener at a time holds
+ * a domain's lease.
  */
 import { randomBytes } from 'node:crypto';
 import { readRecord } from '../cli/pieces-managed.js';
@@ -30,6 +32,17 @@ import { parseAudience } from './viewer.js';
 
 export const GAP_MS = 1_500;
 export const POLL_MS = 15_000;
+/**
+ * A piece core keeps current by snapshot (no `changes` verb: every page of every record, each a process) is pulled at
+ * most once per BRIDGE_GAP_MS for words: a burst of its writes is one snapshot per 3 s, not one per 1.5 s. A word after
+ * a quiet spell is still pulled at once.
+ */
+export const BRIDGE_GAP_MS = 3_000;
+/**
+ * How often a piece's domain is polled after 0, 1 and 2+ pulls in a row that found nothing (t-2110, as pieces.ts does a
+ * manifest): 15, 30, then every 60 s. Core's own types are read in-process and stay on every round.
+ */
+export const QUIET_MS = [POLL_MS, 2 * POLL_MS, 4 * POLL_MS] as const;
 /** A change page: at most this many changes, and the offer's byte limit. */
 export const PAGE_MAX = 1000;
 /** Pages read in one pull before core lets others have the provider. */
@@ -75,7 +88,8 @@ const expiresOf = (v: unknown): number | undefined => {
   return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : undefined;
 };
 
-export type PullOutcome = 'pulled' | 'busy' | 'reset' | 'bridged' | 'failed' | 'gone';
+/** `quiet`: the pull read the provider and nothing had moved. */
+export type PullOutcome = 'pulled' | 'busy' | 'reset' | 'bridged' | 'quiet' | 'failed' | 'gone';
 
 const pools = new Map<string, Pool>();
 const poolOf = (provider: string): Pool => {
@@ -122,6 +136,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
   let cursor = { rev: row.rev, txn: row.txn };
   let held: Array<Change & { type: string }> = [];
   let wrote = 0;
+  let started = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     const stdin = JSON.stringify({ [domain]: { rev: cursor.rev, txn: cursor.txn }, limit: PAGE_MAX });
     const r = await poolOf(p.name).run(() => runOffer(ctx.env, p.piece!, p.changes!, { kind: 'collections', stdin, caller: { kind: 'owner' }, parse: (v) => v }));
@@ -142,6 +157,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     // A first pull starts at the provider's head: windows get what's there now by snapshot, and changes from here.
     if (cursor.rev === null) {
       if (typeof a.txn !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(a.txn)) return 'failed';
+      started = true;
       withLog(home, (db) => setCursor(db, domain, row.epoch, a.head as number, a.txn as string));
       // What's there already reaches the index by snapshot (its expiry is kept from it); changes from the head on.
       const snap = await snapshot(ctx, p, types);
@@ -181,7 +197,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
   }
   withLog(home, (db) => prune(db, now()));
   if (wrote) { tick(home); pagesMoved(ctx, p); }
-  return 'pulled';
+  return wrote || started ? 'pulled' : 'quiet';
 }
 
 /** A piece's records moved: its kept pages go (pieces.ts forgetPiecePages), so a page asked again is drawn again. */
@@ -268,16 +284,24 @@ async function bridge(ctx: PullContext, p: Provider, domain: string, types: read
     pagesMoved(ctx, p);
   }
   withLog(home, (db) => prune(db, now()));
-  return 'bridged';
+  return diffs.length ? 'bridged' : 'quiet';
 }
 
 /**
- * Pulls for one listener: a domain with an open subscription here every POLL_MS, and at once (coalesced to one per
- * GAP_MS) when it's nudged. `wanted` says which domains this listener's subscriptions read.
+ * Pulls for one listener: a domain with an open subscription here on the POLL_MS round (less often while a piece's
+ * pulls find nothing: QUIET_MS), and at once (coalesced to one per GAP_MS, or BRIDGE_GAP_MS) when it's nudged.
+ * `wanted` says which domains this listener's subscriptions read.
  */
 export class Puller {
   private timers = new Map<string, NodeJS.Timeout>();
+  /** When each domain's last pull started (its provider read after that). */
   private last = new Map<string, number>();
+  /** The start of the last pull that read its provider (not busy, not failed). */
+  private read = new Map<string, number>();
+  /** Pulls in a row that found nothing, for a piece's domain. */
+  private quiet = new Map<string, number>();
+  /** A piece core snapshots (no `changes`): its pulls are a process a page. */
+  private costly = new Set<string>();
   private running = new Map<string, Promise<PullOutcome>>();
   private poll: NodeJS.Timeout | undefined;
 
@@ -299,28 +323,64 @@ export class Puller {
     this.after.clear();
   }
 
-  /** Every wanted domain, and the expiry pass. */
+  /** Every wanted domain that's due, and the expiry pass. */
   round(): void {
     const c = this.ctx();
     try { if (withLog(c.household.home, (db) => expire(db))) tick(c.household.home); } catch (e) { process.stderr.write(`loom: collections expiry failed: ${(e as Error).message}\n`); }
-    for (const d of this.wanted()) this.soon(d);
+    const wanted = this.wanted();
+    // A domain nobody reads here any more starts again at every round when it's next read.
+    for (const d of this.quiet.keys()) if (!wanted.has(d)) this.quiet.delete(d);
+    for (const d of wanted) if (this.due(d)) this.queue(d);
   }
 
-  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS, else when that's up. One at a time per domain.
-   * Answers when that pull is done (a caller may deliver right after it). */
+  /**
+   * Whether the round pulls `domain`: core's own types always; a piece's once its quiet interval is up since its last
+   * pull started. Half a round's slack: the round's timer and a pull's start are a moment apart.
+   */
+  private due(domain: string): boolean {
+    if (domain.startsWith(`${CORE_PROVIDER}/`)) return true;
+    const q = this.quiet.get(domain) ?? 0;
+    if (!q) return true;
+    return Date.now() - (this.last.get(domain) ?? 0) >= QUIET_MS[Math.min(q, QUIET_MS.length - 1)] - POLL_MS / 2;
+  }
+
+  /** Pull `domain` soon: at once if it hasn't been pulled for GAP_MS (BRIDGE_GAP_MS for a piece core snapshots), else
+   * when that's up. One at a time per domain. Answers when that pull is done (a caller may deliver right after it). A
+   * word that it moved: it's back on every round. */
   soon(domain: string): Promise<PullOutcome | undefined> {
+    this.quiet.delete(domain);
+    return this.queue(domain);
+  }
+
+  /**
+   * A nudge marked at `at` (another listener's, or this one's own heard back from the tick file): pulled soon, unless
+   * it's a piece's and a pull that started since then is under way or read the provider. Its provider reads after it
+   * started, and whoever nudged had written before nudging, so that pull has the write (one word, one snapshot). Core's
+   * own types are read in-process and some of their writes land just after their word (an action's outcome, noted once
+   * it answers): they're pulled again on it, as before.
+   */
+  nudged(domain: string, at: number): void {
+    const started = this.last.get(domain);
+    if (!domain.startsWith(`${CORE_PROVIDER}/`) && started !== undefined && started >= at && (this.running.has(domain) || this.read.get(domain) === started)) {
+      this.quiet.delete(domain);
+      return;
+    }
+    void this.soon(domain);
+  }
+
+  private queue(domain: string): Promise<PullOutcome | undefined> {
     const waiting = this.after.get(domain);
     if (this.timers.has(domain) && waiting) return waiting.promise;
     let resolve!: (v: PullOutcome | undefined) => void;
     const promise = new Promise<PullOutcome | undefined>((r) => { resolve = r; });
     this.after.set(domain, { promise, resolve });
-    const wait = Math.max(0, (this.last.get(domain) ?? 0) + GAP_MS - Date.now());
+    const wait = Math.max(0, (this.last.get(domain) ?? 0) + (this.costly.has(domain) ? BRIDGE_GAP_MS : GAP_MS) - Date.now());
     const t = setTimeout(() => {
       this.timers.delete(domain);
       this.after.delete(domain);
       // A pull already under way may have read before what this one was asked for: this one runs after it, never joins it.
       const on = this.running.get(domain);
-      (on ? on.catch(() => undefined).then(() => (this.stopped ? undefined : this.now(domain))) : this.now(domain)).then(resolve, () => resolve(undefined));
+      (on ? on.catch(() => undefined).then(() => (this.stopped ? undefined : this.run(domain))) : this.run(domain)).then(resolve, () => resolve(undefined));
     }, wait);
     t.unref?.();
     this.timers.set(domain, t);
@@ -328,18 +388,40 @@ export class Puller {
   }
   private after = new Map<string, { promise: Promise<PullOutcome | undefined>; resolve: (v: PullOutcome | undefined) => void }>();
 
-  /** Pull `domain` now (or join the pull under way). */
+  /** Every pull asked for so far, done (tests: a round's pulls). */
+  async settle(): Promise<void> {
+    for (;;) {
+      const pending = [...[...this.after.values()].map((w) => w.promise), ...this.running.values()];
+      if (!pending.length) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  /** Pull `domain` now (or join the pull under way): an action's, a first read's. It's back on every round. */
   now(domain: string): Promise<PullOutcome> {
+    this.quiet.delete(domain);
+    return this.run(domain);
+  }
+
+  private run(domain: string): Promise<PullOutcome> {
     const on = this.running.get(domain);
     if (on) return on;
-    this.last.set(domain, Date.now());
+    const started = Date.now();
+    this.last.set(domain, started);
     const c = this.ctx();
     const [prov] = domain.split('/');
     const p = providers(c.env).get(prov);
+    if (p?.piece && !p.changes) this.costly.add(domain); else this.costly.delete(domain);
     const run = (async (): Promise<PullOutcome> => {
       if (!p || !domainsOf(p).has(domain)) return 'gone';
       try { return await pullDomain(c, p, domain); } catch (e) { process.stderr.write(`loom: collections pull of ${domain} failed: ${(e as Error).message}\n`); return 'failed'; }
-    })().finally(() => this.running.delete(domain));
+    })().then((out) => {
+      if (out === 'quiet' || out === 'pulled' || out === 'bridged' || out === 'reset') this.read.set(domain, started);
+      // Found nothing: polled less often. Anything else that read moved it: every round again. Busy or failed: as it was.
+      if (out === 'quiet') this.quiet.set(domain, (this.quiet.get(domain) ?? 0) + 1);
+      else if (out === 'pulled' || out === 'bridged' || out === 'reset') this.quiet.delete(domain);
+      return out;
+    }).finally(() => this.running.delete(domain));
     this.running.set(domain, run);
     return run;
   }
