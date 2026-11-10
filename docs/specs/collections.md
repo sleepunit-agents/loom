@@ -158,10 +158,11 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
   `{"id": q, "more": true|false}`, or `{"id": q, "error": "unavailable"}` instead; and `{"at": {…}}` once. Core checks
   each row for its viewer the moment it arrives (a row the viewer may not have stops the run, out of contract), and
   only rows it admitted count against a query's share of the answer: so a provider's size, like its counts, never
-  says hidden records matched. `too-big` is core's to say; a provider saying it is out of contract.
+  says hidden records matched. `too-big` is core's to say, from the rows as the viewer would get them; a provider
+  saying it, a line that isn't one of these, a row out of its place, or one line over 4 MB is out of contract.
 - **Their limits are their own** (`OFFER_LIMITS`): 15 s; 1 MB an answer of admitted rows, with each query in a batch
   given its own share (a query that would overflow its share answers `too-big` alone and the others still answer),
-  64 MB printed at most; each `changes` page bounded by bytes as well as by count; and a pool apart from the page's
+  4 MB a line; each `changes` page bounded by bytes as well as by count; and a pool apart from the page's
   pieces (four running, sixteen waiting per provider), so live data can't starve page loads or the other way round.
 - **`owners: 2`**, declared here and fixed at install: the gate [owners.md](owners.md) already has for pages.
   **A provider that doesn't declare it answers only household owners**, and core refuses any other viewer's query

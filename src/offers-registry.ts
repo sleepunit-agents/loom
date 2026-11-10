@@ -68,9 +68,9 @@ export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
   // docs/specs/collections.md ("Their limits are their own"): 15 s; the pool is per provider (src/collections/serve.ts),
-  // apart from the page's. The answer is read a row at a time and checked as it comes, and only the rows core admits
-  // count against its 1 MB; this is the hard stop on what a run may print at all.
-  collections: { timeoutMs: 15_000, maxBytes: 64 * 1024 * 1024, pool: 'collections' },
+  // apart from the page's. The answer is read a line at a time and each row checked as it comes; only the rows core
+  // admits count against its 1 MB. This is the most one line (one row) may be.
+  collections: { timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024, pool: 'collections' },
 };
 
 /**

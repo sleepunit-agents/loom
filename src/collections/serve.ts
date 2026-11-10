@@ -200,41 +200,54 @@ async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list:
   const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...env0 } = ctx.env;
   const env: NodeJS.ProcessEnv = viewer.kind === 'member' && !viewer.household ? { ...env0, LOOM_OWNER_SCOPE: viewer.agents.join(',') } : env0;
   const stdin = JSON.stringify({ viewer: presented(viewer), now: new Date(now).toISOString(), queries: asks });
-  const reading = readAnswers(asks, share, (q, row) => admission(viewer, p.types[q.type], row) !== undefined);
+  // A row counts against its query's share as the viewer would get it (cut to their fields), never as the provider
+  // printed it: a careless provider's extra fields would otherwise show their size.
+  const asked = new Map(list.map((q) => [q.id, q]));
+  const reading = readAnswers(asks, share, (q, row) => {
+    const placed = admission(viewer, p.types[q.type], row);
+    if (!placed) return undefined;
+    const r = row as Record<string, unknown>;
+    const out: Record<string, unknown> = { key: `${p.name}/${q.type}/${String(r.id)}` };
+    for (const f of asked.get(q.id)?.fields ?? []) { if (f === 'audience') out.audience = placed.audience; else if (Object.hasOwn(r, f)) out[f] = r[f]; }
+    return Buffer.byteLength(JSON.stringify(out));
+  });
   const r = await poolOf(p.name).run(() => runOffer(env, piece, p.query!, { kind: 'collections', stdin, caller: callerOf(viewer), parse: (v) => v, onLine: reading.onLine }));
-  if (reading.tripped()) return OUT_OF_CONTRACT;
+  // A hidden row, a broken line, a row out of its place, or one longer than a row may be: out of contract.
+  if (reading.tripped() || (r !== null && !r.ok && r.error === 'line too long')) return OUT_OF_CONTRACT;
   if (r === null) return 'busy';
   if (!r.ok) {
     process.stderr.write(`loom: collections provider ${p.name} (${piece}) failed: ${r.error}\n`);
     return r.error;
   }
-  void list;
   return reading.answers();
 }
 
 /**
  * Reading a provider's answer, a line at a time: `{"id": q, "row": {...}}` for each row, `{"id": q, "more": bool}` to
  * end a query's rows, `{"id": q, "error": "unavailable" | "bad-query" | "unsupported-version"}` instead, and
- * `{"at": {...}}` once. `admit` says whether a row is one its viewer may have; one that isn't, more rows than a
- * query asked for, a `too-big` (core's to say), or a line that isn't one of these stops the run.
+ * `{"at": {...}}` once. `admit` answers a row's size as its viewer would get it, or undefined when it's not one they
+ * may have; such a row, more rows than a query asked for, a `too-big` (core's to say), or a line that isn't one of
+ * these stops the run as out of contract.
  */
-export function readAnswers(asks: readonly ProviderQuery[], share: number, admit: (q: ProviderQuery, row: unknown) => boolean): {
+export function readAnswers(asks: readonly ProviderQuery[], share: number, admit: (q: ProviderQuery, row: unknown) => number | undefined): {
   onLine: (line: string) => 'go' | 'stop'; tripped: () => boolean; answers: () => Map<string, ProviderAnswer>; at: () => unknown;
 } {
   const st = new Map(asks.map((q) => [q.id, { q, rows: [] as unknown[], bytes: 0, count: 0, big: false, more: undefined as boolean | undefined, error: undefined as string | undefined }]));
+  // Any line that isn't the contract's stops the run as out of contract: what core does about a broken answer must not
+  // depend on what the provider was reading when it broke.
   let tripped = false;
-  let broken = false;
   let at: unknown;
   const onLine = (line: string): 'go' | 'stop' => {
     let v: Record<string, unknown>;
-    try { v = JSON.parse(line); } catch { broken = true; return 'stop'; }
-    if (!v || typeof v !== 'object' || Array.isArray(v)) { broken = true; return 'stop'; }
+    try { v = JSON.parse(line); } catch { tripped = true; return 'stop'; }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) { tripped = true; return 'stop'; }
     if (v.id === undefined && v.at !== undefined) { at = v.at; return 'go'; }
     const q = typeof v.id === 'string' ? st.get(v.id) : undefined;
-    if (!q || q.more !== undefined || q.error !== undefined) { broken = true; return 'stop'; }
+    if (!q || q.more !== undefined || q.error !== undefined) { tripped = true; return 'stop'; }
     if (Object.hasOwn(v, 'row')) {
-      if (++q.count > q.q.limit || !admit(q.q, v.row)) { tripped = true; return 'stop'; }
-      q.bytes += Buffer.byteLength(line);
+      const size = ++q.count > q.q.limit ? undefined : admit(q.q, v.row);
+      if (size === undefined) { tripped = true; return 'stop'; }
+      q.bytes += size;
       // Past its share: core's own too-big, from rows it admitted. The rest are still read, and checked.
       if (q.bytes > share) q.big = true;
       else q.rows.push(v.row);
@@ -243,14 +256,14 @@ export function readAnswers(asks: readonly ProviderQuery[], share: number, admit
     if (typeof v.more === 'boolean') { q.more = v.more; return 'go'; }
     if (v.error === 'too-big') { tripped = true; return 'stop'; }
     if (v.error === 'unavailable' || v.error === 'bad-query' || v.error === 'unsupported-version') { q.error = 'unavailable'; return 'go'; }
-    broken = true;
+    tripped = true;
     return 'stop';
   };
   return {
     onLine,
     tripped: () => tripped,
     at: () => at,
-    answers: () => new Map<string, ProviderAnswer>([...st].map(([id, x]) => [id, broken || (x.more === undefined && x.error === undefined) ? { id, rows: [], more: false, error: 'unavailable' }
+    answers: () => new Map<string, ProviderAnswer>([...st].map(([id, x]) => [id, x.more === undefined && x.error === undefined ? { id, rows: [], more: false, error: 'unavailable' }
       : x.error ? { id, rows: [], more: false, error: x.error } : x.big ? { id, rows: [], more: false, error: 'too-big' } : { id, rows: x.rows as Record<string, unknown>[], more: x.more! }])),
   };
 }

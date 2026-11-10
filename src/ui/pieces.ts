@@ -240,9 +240,12 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (d: string) => {
       bytes += Buffer.byteLength(d);
-      if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
+      // Read a line at a time, only the line still coming is held, and the cap is on it: every line before it was
+      // already read (and checked) by the caller, so no limit here turns on what an unread line held.
+      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
       out += d;
       if (!opts.onLine) return;
+      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { killGroup(child.pid); finish({ ok: false, reason: 'line too long' }); return; }
       let i;
       while ((i = out.indexOf('\n')) >= 0) {
         const line = out.slice(0, i);
