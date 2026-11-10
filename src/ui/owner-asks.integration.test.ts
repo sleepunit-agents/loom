@@ -35,7 +35,7 @@ process.stdin.on('end', () => {
   const s = read();
   if (a[0] === 'ui' && a.length === 1) {
     return console.log(JSON.stringify({ v: 2, tab: { label: 'Approvals', kind: 'setting' }, asks: Object.entries(s).filter(([, x]) => x.state === 'pending').map(([id, x]) => ({
-      text: x.text, kind: 'permission', agent: x.agent, page: '', ...(x.details ? { details: x.details } : {}), ...(['grant', 'vouch-wake', 'principal-reset'].includes(x.kind) ? { lead: true, if_yes: 'They fire as your work.', if_no: 'Nothing changes.' } : {}),
+      text: x.text, kind: 'permission', agent: x.agent, page: '', ...(x.details ? { details: x.details } : {}), ...(['grant', 'vouch-wake', 'principal-reset', 'box-write-off'].includes(x.kind) ? { lead: true, if_yes: 'They fire as your work.', if_no: 'Nothing changes.' } : {}),
       actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })) }));
   }
   if (a[0] === 'ui' && a[1] === 'act') {
@@ -43,7 +43,7 @@ process.stdin.on('end', () => {
     const x = s[req.fields.id];
     if (!x || x.state !== 'pending') return console.log(JSON.stringify({ ok: false, message: 'not pending' }));
     const c = req.caller || {};
-    if (['grant', 'vouch-wake', 'principal-reset'].includes(x.kind) && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
+    if (['grant', 'vouch-wake', 'principal-reset', 'box-write-off'].includes(x.kind) && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
     x.state = req.action === 'allow' ? 'allowed' : 'denied';
     fs.writeFileSync(f, JSON.stringify(s));
     return console.log(JSON.stringify({ ok: true, message: (req.action === 'allow' ? 'Allowed: ' : 'Denied: ') + x.text.replace(/\\?$/, '.') }));
@@ -53,7 +53,7 @@ process.stdin.on('end', () => {
     if (fs.existsSync(process.env.LOOM_HOME + '/state-broken')) return console.log(JSON.stringify({ status: 503, body: { error: 'busy' } }));
     if (req.path !== 'state' || req.caller.kind !== 'owner') return console.log(JSON.stringify({ status: 403, body: { error: 'no' } }));
     const out = {};
-    for (const id of req.body.ids) if (s[id]) out[id] = { state: s[id].state, agent: s[id].agent, kind: s[id].kind, ...(['grant', 'vouch-wake', 'principal-reset'].includes(s[id].kind) ? { target: s[id].target } : {}) };
+    for (const id of req.body.ids) if (s[id]) out[id] = { state: s[id].state, agent: s[id].agent, kind: s[id].kind, ...(['grant', 'vouch-wake', 'principal-reset', 'box-write-off'].includes(s[id].kind) ? { target: s[id].target } : {}) };
     return console.log(JSON.stringify({ body: { approvals: out } }));
   }
   process.exit(2);
@@ -129,6 +129,10 @@ type Data = any;
 
 const IDS = 'art:w-0f0cfb,w-3c68fa,w-55e1c0,w-59e199,w-840b4e';
 let ART_CV = '';
+const WRITE_OFF = {
+  'a-0000d00d': { state: 'pending', agent: 'art', kind: 'box-write-off', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c', text: 'The box “one” has been silent for 12 minutes. Carry on Art\'s conversation from there on another box?',
+    details: 'Box 7f9310-0a1b2c-3d4e5f-6a7b8c, last heard 2026-11-09T20:00:00Z.' },
+};
 const CARDS = {
   'a-0000beef': { state: 'pending', agent: 'art', kind: 'vouch-wake', target: IDS, text: 'Count these 5 scheduled jobs as your work?',
     details: '- w-0f0cfb, fires Tomorrow 6:26 AM: t-1382 nudge-watch round 20 · runs: check the PR' },
@@ -247,6 +251,14 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
     expect(r).toMatchObject({ ok: true, message: 'Daily planning counts as your work now: Art starts afresh there.' });
     expect(acts()).toMatchObject([{ piece: 'Boxes', action: 'reset-approved', fields: { id: 'a-0000cafe', agent: 'art', target: `art:${ART_CV}` } }]);
     expect(state('a-0000cafe')).toBe('used');
+  });
+
+  it('Allow on work held on a silent box has the runtime write it off, as the owner (t-2057)', async () => {
+    approvals({ ...CARDS, ...WRITE_OFF });
+    const cookie = await login('jonathan');
+    await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000d00d', target: 'mark:elsewhere', agent: 'mark' });
+    expect(acts()).toMatchObject([{ piece: 'Boxes', action: 'writeoff-approved', fields: { id: 'a-0000d00d', agent: 'art', target: 'art:7f9310-0a1b2c-3d4e5f-6a7b8c' },
+      caller: { kind: 'owner', who: 'jonathan', agents: '*' } }]);
   });
 
   it('Deny records no and asks no piece anything', async () => {

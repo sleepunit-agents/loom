@@ -20,7 +20,7 @@ import { pieceApi } from './ui/pieces.js';
 /** An approval as the approvals piece tells core: its state, and whose it is. */
 export interface ApprovalState { state: string; agent?: string; kind?: string;
   /** An owner-applied one's target only (a `grant`'s `<piece>:<agent>[:<paths>]`, t-1970; a `vouch-wake`'s or a
-   * `principal-reset`'s, t-1975): what the owner's Allow does, for the piece that applies it. */
+   * `principal-reset`'s, t-1975; a `box-write-off`'s, t-2057): what the owner's Allow does, for the piece that applies it. */
   target?: string }
 
 /** How core learns whether what an ask waits on is resolved. Undefined: couldn't tell (the piece is absent, or failed). */
