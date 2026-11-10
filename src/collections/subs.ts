@@ -21,6 +21,7 @@
  *
  * Subscriptions live in one listener's memory: a reconnect is a new snapshot.
  */
+import { createHash } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { Household } from '../household.js';
@@ -82,7 +83,7 @@ interface Sub {
   /** Asking its provider again, as it was asked (serve.ts): its own, never another request's. */
   reask: Reask;
   /**
-   * Each delivered row as this subscription last sent it (trimmed): an upsert that changes nothing the viewer sees (a
+   * A digest of each delivered row as this subscription last sent it (trimmed): an upsert that changes nothing the viewer sees (a
    * hidden field moved, one they didn't ask for) isn't sent, so no frame says that something hidden changed.
    */
   sent: Map<string, string>;
@@ -168,10 +169,11 @@ function ensureRunning(h: HomeState): void {
   // Core's own threads move through comms.ts: their domain is pulled when they do, here (onBump) and in any other
   // process (a reply the runtime posts through another listener, a CLI), by the tick file every write leaves (comms.ts
   // bump). A tick that still holds this process's own stamp is that bump's echo: one write, one pull.
-  h.offBump ??= onBump(() => { void h.puller.soon('loom/thread'); });
+  const commsMoved = () => { void h.puller.soon('loom/thread'); if (wantedOf(h).has('loom/message')) void h.puller.soon('loom/message'); };
+  h.offBump ??= onBump(commsMoved);
   if (!h.commsWatcher) {
     try {
-      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick' && !isOwnTick(home)) void h.puller.soon('loom/thread'); });
+      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick' && !isOwnTick(home)) commsMoved(); });
       h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; });
       h.commsWatcher.unref?.();
     } catch { /* the poll still runs */ }
@@ -346,10 +348,13 @@ function trimmed(sub: Sub, key: string, record: Record<string, unknown>, audienc
   return out;
 }
 
-/** A provider's row as this subscription would send it, as text (sub.sent). */
+/** A comparison copy, never a decrypted payload retained between requests (t-2027). */
+export const sentDigest = (record: Record<string, unknown>): string => createHash('sha256').update(JSON.stringify(record)).digest('hex');
+
+/** A digest of a provider's row as this subscription would send it. No words survive in sub.sent. */
 function sentOf(sub: Sub, viewer: Viewer, key: string, raw: Record<string, unknown>): string {
   const t = typeof raw.expires === 'number' ? raw.expires : typeof raw.expires === 'string' ? Date.parse(raw.expires) : Number.NaN;
-  return JSON.stringify(trimmed(sub, key, raw, isHouseholdOwner(viewer) ? parseAudience(raw.audience) : undefined, Number.isFinite(t) ? t : null));
+  return sentDigest(trimmed(sub, key, raw, isHouseholdOwner(viewer) ? parseAudience(raw.audience) : undefined, Number.isFinite(t) ? t : null));
 }
 
 /** One log row, for one subscription and its viewer. */
@@ -374,7 +379,7 @@ function apply(sub: Sub, viewer: Viewer, r: LogRow, now: number): void {
     for (const a of sub.query.aggregates) by[a] = (sub.decl.aggregates?.[a]?.by ?? []).map((f) => String(record[f] ?? '')).join('/');
     sub.byVals.set(r.key, by);
     const out = trimmed(sub, r.key, record, isHouseholdOwner(viewer) ? audience : undefined, r.expires);
-    const text = JSON.stringify(out);
+    const text = sentDigest(out);
     if (sub.sent.get(r.key) === text && !sub.frame.leaves.has(r.key)) return;
     sub.sent.set(r.key, text);
     sub.frame.leaves.delete(r.key);

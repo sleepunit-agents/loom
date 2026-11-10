@@ -9,7 +9,7 @@
  * tasks (t-2025 onward) add the rest.
  */
 import { agentDir, type Household } from '../household.js';
-import { allThreads, threadRowStates } from '../comms.js';
+import { allThreads, threadRowStates, messageRecords, messageRevisions, messagesBySeq } from '../comms.js';
 import { agentName } from '../ui/core.js';
 import { parseTypeDecl, type TypeDecl } from './contract.js';
 import { answerFrom, type MemRecord, type ProviderAnswer, type ProviderQuery } from './memory.js';
@@ -80,6 +80,27 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     default_fields: ['agent', 'title', 'updated', 'pinned'],
     max_page: 200,
     aggregates: { count: {} },
+  }),
+  // Message words never enter the bridge/index/log. `message` is opened only for a member's bounded page; the
+  // encrypted revision is enough to re-ask its live window (including retention, edits and delivery outcomes).
+  message: declare('message', {
+    version: '1.0',
+    schema: { type: 'object', properties: { thread: { type: 'string' }, seq: { type: 'number' } } },
+    agent: 'agent', audience: 'ask',
+    fields: {
+      agent: { class: 'member', filter: ['eq', 'in'] },
+      thread: { class: 'member', filter: ['eq', 'in'] },
+      seq: { class: 'member', filter: ['lt', 'lte', 'gt', 'gte', 'eq'], order: true },
+      at: { class: 'member' },
+      kind: { class: 'member' },
+      from: { class: 'member' },
+      run: { class: 'member' },
+      delivered: { class: 'member' },
+      revision: { class: 'member' },
+      message: { class: 'member', heavy: true, kept: false },
+    },
+    default_fields: ['agent', 'thread', 'seq', 'at', 'kind', 'from', 'run', 'delivered', 'revision'],
+    max_page: 500,
   }),
   // One Inbox item (t-2025): an ask, a notice, an answered one, an FYI, as this member's Inbox files it. Its id is the
   // Inbox's own item key, so Home, the Inbox, the badges, an agent card and a thread's ask card name the same record.
@@ -172,10 +193,11 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
     const mine = viewer.kind === 'core' ? h.agents : viewer.kind === 'member' ? h.agents.filter((a) => viewer.agents.includes(a)) : h.agents.filter((a) => a === viewer.agent);
     return mine.map((a) => ({ id: a, agent: a, name: agentName(agentDir(h, a)), audience: { ownersOf: [a], agents: [a] } }));
   }
-  if (type === 'thread') {
+  if (type === 'thread' || type === 'message') {
     if (viewer.kind === 'agent') return [];
     const mine = allThreads(h.home)
       .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
+    if (type === 'message') return messageRecords(h.home, mine);
     const state = threadRowStates(h, mine);
     return mine.map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project,
         channel: t.channel, titled_by: t.titled_by, read_seq: t.read_seq, conversation: t.conversation, working_since: t.working_since,
@@ -185,7 +207,7 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
 }
 
 /** Core's answer to a batch of queries for one viewer, in the shape a piece's provider answers. */
-export async function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now()): Promise<ProviderAnswer[]> {
+export async function coreAnswers(h: Household, viewer: Viewer, queries: readonly ProviderQuery[], now = Date.now(), env: NodeJS.ProcessEnv = process.env): Promise<ProviderAnswer[]> {
   const held = new Map<string, MemRecord[] | 'unavailable'>();
   const out: ProviderAnswer[] = [];
   for (const q of queries) {
@@ -200,7 +222,43 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
         : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer));
     }
     const recs = held.get(q.type)!;
+    if (q.type === 'message' && recs !== 'unavailable') {
+      const answer = answerFrom(recs, { ...q, fields: [...new Set([...q.fields, 'thread', 'seq'])] }, decl, now);
+      if (!q.fields.includes('message') || viewer.kind !== 'member') {
+        const revisions = messageRevisions(h.home, answer.rows as Array<{ thread: string; seq: number }>);
+        answer.rows.forEach((r, i) => { r.revision = revisions[i]; });
+        out.push(answer); continue;
+      }
+      try {
+        const threads = new Map(allThreads(h.home).filter((t) => t.member === viewer.person && viewer.agents.includes(t.agent) && h.agents.includes(t.agent)).map((t) => [t.id, t]));
+        for (const tid of new Set(answer.rows.map((r) => String(r.thread)))) {
+          const t = threads.get(tid);
+          if (!t) continue;
+          const rows = answer.rows.filter((r) => r.thread === tid);
+          const messages = await messagesBySeq(h, env, t, rows.map((r) => Number(r.seq)));
+          const bySeq = new Map(messages.map((m) => [m.message.seq, m]));
+          for (const r of rows) {
+            const opened = bySeq.get(Number(r.seq));
+            if (!opened) throw new Error('message moved during page read');
+            r.message = opened.message;
+            r.revision = opened.revision;
+            // Mutable metadata and its words come from the same selected row, even when another listener wrote
+            // between the metadata scan and this bounded payload read.
+            for (const f of ['at', 'kind', 'from', 'run', 'delivered'] as const) if (q.fields.includes(f)) r[f] = opened.message[f];
+          }
+        }
+        out.push(answer);
+      } catch { out.push({ id: q.id, rows: [], more: false, error: 'unavailable' }); }
+      continue;
+    }
     out.push(recs === 'unavailable' ? { id: q.id, rows: [], more: false, error: 'unavailable' } : answerFrom(recs, q, decl, now));
   }
   return out;
+}
+
+/** All message metadata for the bridge, once per pull. History is not capped at the generic bridge's fixed prefix. */
+export async function coreMessageSnapshot(h: Household): Promise<MemRecord[]> {
+  const records = recordsFor(h, 'message', { kind: 'core' });
+  const revisions = messageRevisions(h.home, records as Array<MemRecord & { thread: string; seq: number }>);
+  return records.map((r, i) => ({ ...r, revision: revisions[i] }));
 }
