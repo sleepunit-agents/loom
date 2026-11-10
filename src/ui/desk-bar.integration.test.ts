@@ -182,6 +182,19 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await open(p, '/members');
     const about = p.getByRole('button', { name: 'About Members' });
     expect(await about.count()).toBe(1);
+    // The explanation's dialog code is absent until requested; the title and shell already painted.
+    const drawerLoads = () => p.evaluate(() => performance.getEntriesByType('resource').filter(r => /page-info-drawer-[^/]+\.js/.test(r.name)).length);
+    expect(await drawerLoads()).toBe(0);
+    await about.click();
+    await p.getByRole('dialog').waitFor();
+    expect(await drawerLoads()).toBe(1);
+    await p.getByRole('button', { name: 'Close', exact: true }).click();
+    await p.getByRole('dialog').waitFor({ state: 'hidden' });
+    await about.click();
+    await p.getByRole('dialog').waitFor();
+    expect(await drawerLoads()).toBe(1);
+    await p.keyboard.press('Escape');
+    await p.getByRole('dialog').waitFor({ state: 'hidden' });
     expect(await p.locator('.loom-pbar__title').evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
     expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
     await p.context().close();

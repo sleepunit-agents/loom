@@ -8,9 +8,8 @@
 // The ticker (his rules): only its middle moves, the needs-you count never scrolls away; it moves only when its words
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands
 // still, cut short with an ellipsis.
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { lazy, Suspense, Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+const PageInfoDrawer = lazy(() => import('./page-info-drawer'));
 import { buzz, HapticLabel, useHaptics } from './haptic';
 import { loomNow, type Shell } from './loom';
 import { placeWords } from './system-bar';
@@ -117,6 +116,7 @@ export type PageInfo = { line?: string; more?: string };
 function PageName({ title, info, where }: { title: string; info?: PageInfo; where: string }) {
   const haptics = useHaptics();
   const [open, setOpen] = useState(false);
+  const [used, setUsed] = useState(false);
   useEffect(() => setOpen(false), [where]);
   const line = info?.line?.trim() || undefined;
   // The intro past its line: a page's line is often its intro's first sentence, said once.
@@ -127,21 +127,12 @@ function PageName({ title, info, where }: { title: string; info?: PageInfo; wher
     <>
       <h1>
         <button type="button" className="loom-pbar__info relative" aria-label={`About ${title}`} aria-haspopup="dialog" aria-expanded={open}
-          onClick={() => { buzz(haptics, true); setOpen(true); }}>
+          onClick={() => { buzz(haptics, true); setUsed(true); setOpen(true); }}>
           <span className="loom-pbar__title">{title}</span>
           <HapticLabel on={haptics} />
         </button>
       </h1>
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent className="loom-page-info">
-          <DrawerHeader className="flex-col items-stretch gap-2">
-            <DrawerTitle className="mb-0 break-words text-left leading-snug">{title}</DrawerTitle>
-            {line && <DrawerDescription className="break-words text-left">{line}</DrawerDescription>}
-            {more && <p className="loom-page-info__more max-w-prose break-words text-left text-sm leading-relaxed opacity-80">{more}</p>}
-          </DrawerHeader>
-          <DrawerFooter><DrawerClose asChild><Button variant="outline">Close</Button></DrawerClose></DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+      {used && <Suspense fallback={null}><PageInfoDrawer open={open} onOpenChange={setOpen} title={title} line={line} more={more} /></Suspense>}
     </>
   );
 }
