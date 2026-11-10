@@ -27,6 +27,8 @@
     "@radix-ui/react-toggle": "^1.2.1",
     "@radix-ui/react-toggle-group": "^1.2.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/db": "1.0.0-rc.1.4",
+    "@tanstack/react-db": "1.0.0-rc.1.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "motion": "^14.7.1",

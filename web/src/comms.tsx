@@ -294,7 +294,47 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, compact 
 
 // ---- the list ----------------------------------------------------------------------------------
 
-function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thread; marks: Record<string, Mark>; current: boolean; onOpen: () => void; onArchive: () => void; onPin: () => void }) {
+type ThreadAction = 'title' | 'pin' | 'unpin' | 'archive' | 'unarchive' | 'project' | 'stop' | 'delete';
+
+function ThreadContextMenu({ thread, at, close, act }: { thread: Thread; at: { x: number; y: number }; close: () => void; act: (action: ThreadAction) => void }) {
+  const menu = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = menu.current!;
+    const previous = document.activeElement as HTMLElement | null;
+    const bounds = el.getBoundingClientRect();
+    el.style.left = `${Math.max(8, Math.min(at.x, window.innerWidth - bounds.width - 8))}px`;
+    el.style.top = `${Math.max(8, Math.min(at.y, window.innerHeight - bounds.height - 8))}px`;
+    el.querySelector('button')?.focus();
+    const dismiss = (e: Event) => { if (!el.contains(e.target as Node)) close(); };
+    document.addEventListener('pointerdown', dismiss, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', dismiss, true);
+      previous?.focus();
+    };
+  }, [at, close]);
+  const actions: [ThreadAction, string][] = [['title', 'Rename'], [thread.pinned ? 'unpin' : 'pin', thread.pinned ? 'Unpin' : 'Pin'],
+    [thread.archived ? 'unarchive' : 'archive', thread.archived ? 'Unarchive' : 'Archive'], ['project', 'Project'],
+    ...(thread.state.working ? [['stop', 'Stop'] as [ThreadAction, string]] : []), ['delete', 'Delete']];
+  return createPortal(<div ref={menu} className="comms-menu__list comms-context-menu" role="menu" aria-label="Thread actions"
+    style={{ left: at.x, top: at.y }} onContextMenu={(e) => e.preventDefault()} onKeyDown={(e) => {
+      const buttons = Array.from(menu.current!.querySelectorAll('button'));
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); close(); }
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault();
+        buttons[e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+      }
+    }}>{actions.map(([action, label]) => <button key={action} type="button" role="menuitem" className={action === 'delete' ? 'comms-danger' : undefined}
+      onClick={() => { close(); act(action); }}>{label}</button>)}</div>, document.body);
+}
+
+function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin, onAction }: { t: Thread; marks: Record<string, Mark>; current: boolean; onOpen: () => void; onArchive: () => void; onPin: () => void; onAction: (action: ThreadAction) => void }) {
+  const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  const closeContext = useCallback(() => setContext(null), []);
   const press = useRef<number>(0);
   const touch = useRef<{ x: number; y: number } | null>(null);
   // A swipe or a long press acted already: the tap that ends it doesn't open the thread too.
@@ -302,6 +342,10 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
   const mark = marks[t.agent];
   return (
     <li className="comms-row" data-current={current || undefined} data-unread={t.unread || undefined}
+      onContextMenu={(e) => { e.preventDefault(); setContext({ x: e.clientX, y: e.clientY }); }}
+      onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+        e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setContext({ x: rect.left, y: rect.bottom });
+      } }}
       onTouchStart={(e) => { acted.current = false; touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; press.current = window.setTimeout(() => { acted.current = true; onPin(); }, 600); }}
       onTouchMove={() => clearTimeout(press.current)}
       onTouchEnd={(e) => {
@@ -321,11 +365,12 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
         {t.pinned && <span className="comms-row__pin" aria-label="pinned">▲</span>}
         {t.unread && <span className="comms-row__dot" aria-label="unread" />}
       </button>
+      {context && <ThreadContextMenu thread={t} at={context} close={closeContext} act={onAction} />}
     </li>
   );
 }
 
-function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void }) {
+function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload, onRemoved }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void; onRemoved: () => void }) {
   const [archived, setArchived] = useState<Thread[] | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showBackground, setShowBackground] = useState(false);
@@ -340,7 +385,26 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { 
     const pinned = threads.filter((t) => t.pinned), unread = threads.filter((t) => !t.pinned && t.unread), rest = threads.filter((t) => !t.pinned && !t.unread);
     return [['Pinned', pinned], ['Unread', unread], ['Threads', rest]] as const;
   }, [threads]);
-  const act = async (t: Thread, verb: string) => { await post(`/comms/${t.id}/${verb}`, csrf); reload(); };
+  const act = async (t: Thread, verb: ThreadAction) => {
+    let body: Record<string, unknown> | undefined;
+    if (verb === 'title') {
+      const title = prompt('Name this thread', t.title ?? '');
+      if (!title?.trim()) return;
+      body = { title: title.trim().slice(0, 60) };
+    } else if (verb === 'project') {
+      const project = prompt('File under which project? (its slug; empty to clear)', t.project ?? '');
+      if (project === null) return;
+      body = { project: project.trim() || null };
+    } else if (verb === 'delete' && !confirm("Delete this thread and its words? This can't be undone.")) return;
+    const result = await post(`/comms/${t.id}/${verb}`, csrf, body);
+    if (!result.ok) { alert(String(result.body.error ?? "That didn't work.").replace(/^[a-z-]+: /, '')); return; }
+    reload();
+    if (t.id === current && (verb === 'archive' || verb === 'delete')) onRemoved();
+    if (showArchived || showBackground) {
+      const result = await getJson<{ threads: Thread[] }>(`/comms?archived=${showArchived ? 1 : 0}&background=${showBackground ? 1 : 0}`);
+      setArchived(result?.threads ?? []);
+    }
+  };
   const list = showArchived || showBackground ? [[showBackground ? 'Background work' : 'Archived', archived ?? []] as const] : groups;
   return (
     <nav className="comms-list" aria-label="Threads">
@@ -352,7 +416,7 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { 
         <div key={label} className="comms-group">
           <h3 className="comms-group__label loom-data">{label.toUpperCase()}</h3>
           <ul data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
-            onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
+            onAction={(action) => void act(t, action)} onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
       {(showArchived || showBackground) && archived?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
@@ -595,6 +659,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const [refused, setRefused] = useState<string | null>(null);
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
+  const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  const closeContext = useCallback(() => setContext(null), []);
   const [compact, setCompact] = useState(false);
   // A desktop thread in a short tile (under 520 px tall): the band folds to a strip so the chat keeps its room.
   const pane = useRef<HTMLElement>(null);
@@ -770,12 +836,17 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
 
   return (
     <article ref={pane} className="comms-thread" data-wide={wide || undefined} data-short={wide && short ? '' : undefined}>
-      <header className="comms-thread__head">
+      <header className="comms-thread__head" onContextMenu={(e) => {
+        e.preventDefault(); setMenu(false); setContext({ x: e.clientX, y: e.clientY });
+      }}>
         {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
         {thread.state.working && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
+        {context && <ThreadContextMenu thread={thread} at={context} close={closeContext} act={(action) => {
+          if (action === 'title') void rename(); else if (action === 'project') void project(); else void verb(action);
+        }} />}
         {menu && (
           <div className="comms-menu__list" role="menu">
             <ThreadModelChoice thread={thread.id} csrf={csrf} />
@@ -812,10 +883,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         )}
         <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
-          {/* No living morph on the log's avatars and marks (data-motion="off", cojeev-motion category.ts): each host
-              reads computed style after the last one wrote it, and a thread of 40 messages spent seconds there
-              before its first frame on a busy machine (t-1925 F). */}
-          <AgentChatThread className="comms-msgs" jumpLabel="Latest" data-motion="off">
+          <AgentChatThread className="comms-msgs" jumpLabel="Latest">
             {swept && initial.earlier?.length ? (
               <div className="comms-earlier">
                 <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>
@@ -969,7 +1037,7 @@ export function CommsView({ data }: { data: CommsData }) {
     : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} drawer={drawer} />
     : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} drawer={drawer} />
       : null;
-  const list = <ThreadList threads={threads} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
+  const list = <ThreadList threads={threads} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} onRemoved={back} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
   // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
   // draft, its live messages), only the list comes and goes.

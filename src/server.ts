@@ -6,6 +6,7 @@
  * no chat clients. Just the tools that carry a persistent persona across
  * any MCP-compatible runtime.
  */
+import { nudge } from './collections/pull.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -1481,7 +1482,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const home = here ? homeFor(contextDir) : undefined;
       const self = householdOf(contextDir)?.agent;
       const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
-      return writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
+      const d = writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
+      // An ask raised or cleared is what needs its owner moving (t-2025): the HTTP listeners pull it now, not on their
+      // next round (a nudge names only the domain, through the household's live data).
+      const h = homeFor(contextDir);
+      if (h) nudge(h, 'loom/attention');
+      return d;
     }),
   );
 

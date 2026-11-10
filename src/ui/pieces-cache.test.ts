@@ -1,14 +1,66 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CACHE_MS, PAGE_LIVE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage } from './pieces.js';
+import { CACHE_MS, PAGE_LIVE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage, refreshPieceManifests, expirePieceManifests } from './pieces.js';
 
 // t-1584: 'loom pieces install' points pieces/bin/loom-<name> at a new version; Home showed the old one's
 // answer until the 45s cache ran out (or a restart). The cache keys on where the path resolves now.
 describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  it('an in-flight live refresh cannot restore an observation invalidated by the producer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-refresh-race-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(root, 'value'), 'old');
+    writeFileSync(join(bin, 'loom-gizmo'), `#!${process.execPath}
+const fs = require('node:fs');
+const root = ${JSON.stringify(root)};
+const value = fs.readFileSync(root + '/value', 'utf8');
+fs.writeFileSync(root + '/started', 'yes');
+const timer = setInterval(() => {
+  if (!fs.existsSync(root + '/release')) return;
+  clearInterval(timer);
+  console.log(JSON.stringify({v:2,tile:{label:'Gizmo',value}}));
+}, 10);
+`);
+    chmodSync(join(bin, 'loom-gizmo'), 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const pending = refreshPieceManifests(env);
+    await expect.poll(() => existsSync(join(root, 'started'))).toBe(true);
+    expirePieceManifests();
+    writeFileSync(join(root, 'value'), 'new');
+    writeFileSync(join(root, 'release'), 'yes');
+    await pending;
+    const value = (await pieceManifests(env)).pieces.find(p => p.piece === 'gizmo')?.manifest.tile?.value;
+    expect(value).toBe('new');
+  });
+
+  it('one piece\'s word that it moved asks it again, and no other (t-2065)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-only-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (const name of ['runtime', 'tasks']) {
+      writeFileSync(join(bin, `loom-${name}`), `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(join(root, 'asked'))}, ${JSON.stringify(name)} + '\\n');
+console.log(JSON.stringify({v:2,tile:{label:${JSON.stringify(name)},value:'x'}}));
+`);
+      chmodSync(join(bin, `loom-${name}`), 0o755);
+    }
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const asked = () => (existsSync(join(root, 'asked')) ? readFileSync(join(root, 'asked'), 'utf8').trim().split('\n') : []);
+    await pieceManifests(env);
+    expect(asked().sort()).toEqual(['runtime', 'tasks']);
+    expirePieceManifests(join(bin, 'loom-runtime'));
+    await refreshPieceManifests(env, new Set([join(bin, 'loom-runtime')]));
+    await pieceManifests(env);
+    expect(asked().sort()).toEqual(['runtime', 'runtime', 'tasks']);
+  });
 
   it('answers anew as soon as a piece points at a new version', async () => {
     const root = mkdtempSync(join(tmpdir(), 'loom-cache-'));

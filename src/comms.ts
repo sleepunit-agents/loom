@@ -524,6 +524,11 @@ export function digestsFor(h: Household, t: Thread): Array<{ at: string; summary
 
 export interface ListedThread extends Thread { unread: boolean; working: boolean; last_seq: number; last_reply: number }
 
+/** Every thread's record, of every member (collections.md: core's `loom/thread` type; core checks each one's audience). */
+export function allThreads(home: string): Thread[] {
+  return withThreads(home, (db) => db.prepare('SELECT * FROM comms_threads ORDER BY id').all() as ThreadRow[]).map(threadOf);
+}
+
 /** A member's threads with agents they own: pinned first, then by last; archived ones only when asked. */
 export function threadsOf(h: Household, member: Member, opts: { archived?: boolean; background?: 'only' | 'include' } = {}): ListedThread[] {
   const rows = withThreads(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE member = ? ORDER BY pinned DESC, last DESC').all(member.person) as ThreadRow[]);

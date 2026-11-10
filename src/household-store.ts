@@ -147,11 +147,16 @@ export function openHouseholdDb(home: string): Database {
   // A file made since (a test's fresh home, a deleted db) gets its schema again.
   const fresh = !existsSync(path);
   const db = new BetterSqlite3(path);
-  db.pragma('busy_timeout = 5000');
-  db.pragma('journal_mode = WAL');
-  if (fresh || !schemaDone.has(path)) {
-    db.exec(SCHEMA);
-    schemaDone.add(path);
+  try {
+    db.pragma('busy_timeout = 5000');
+    db.pragma('journal_mode = WAL');
+    if (fresh || !schemaDone.has(path)) {
+      db.exec(SCHEMA);
+      schemaDone.add(path);
+    }
+  } catch (error) {
+    db.close();
+    throw error;
   }
   return db;
 }

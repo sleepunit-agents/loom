@@ -173,6 +173,39 @@ describe.runIf(built && chrome && hasAge)('asks and loom things inline in Comms 
     } finally { await ctx.close(); }
   }, 120_000);
 
+  it('an Allow whose answer can\'t be read says so at once and shows what loom recorded, never a spinner that ends in nothing (t-1995)', async () => {
+    const t = thread();
+    asks([permission('a-00000105', t.conversation, new Date(Date.now() - 500).toISOString())]);
+    const { ctx, page, errors } = await open('jonathan', DESK);
+    try {
+      // The Allow reaches loom and is recorded; the answer on its way back is garbled.
+      await page.route('**/act/approvals', async (route) => { await route.fetch(); await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok": tru' }); });
+      await page.goto(`${base}/comms/${t.id}`);
+      const card = page.locator('.comms-ask');
+      const allow = page.getByRole('button', { name: 'Allow once' });
+      await expect.poll(() => allow.isEnabled(), { timeout: 10_000 }).toBe(true);
+      await allow.click();
+      await expect.poll(() => card.locator('.comms-ask__said').textContent({ timeout: 500 }).catch(() => ''), { timeout: 10_000 }).toMatch(/couldn’t be read/);
+      // Read again from loom: the card shows the decision loom recorded.
+      await expect.poll(() => card.locator('.v-agent-chat__receipt').textContent({ timeout: 500 }).catch(() => ''), { timeout: 20_000 }).toMatch(/^Allowed by you · /);
+      expect(await inboxOpen('a-00000105')).toEqual({ open: false });
+      // Nothing was recorded (the act never reached loom): it says so, and the buttons stay for a second try.
+      await page.unroute('**/act/approvals');
+      asks([permission('a-00000106', t.conversation, new Date(Date.now() - 400).toISOString())]);
+      await page.route('**/act/approvals', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '<html>' }));
+      await page.reload();
+      const second = page.locator('.comms-ask[data-state="open"]');
+      await second.waitFor();
+      const again = second.getByRole('button', { name: 'Allow once' });
+      await expect.poll(() => again.isEnabled(), { timeout: 10_000 }).toBe(true);
+      await again.click();
+      await expect.poll(() => second.locator('.comms-ask__said').textContent({ timeout: 500 }).catch(() => ''), { timeout: 10_000 }).toMatch(/couldn’t be read/);
+      expect(await inboxOpen('a-00000106')).toEqual({ open: true });
+      await expect.poll(() => again.isEnabled(), { timeout: 10_000 }).toBe(true);
+      expect(errors.filter((e) => !/Failed to load resource/.test(e))).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 120_000);
+
   it('answered in the Inbox, the thread shows the answer live, without a reload', async () => {
     const t = thread();
     asks([permission('a-00000102', t.conversation, new Date(Date.now() - 500).toISOString())]);

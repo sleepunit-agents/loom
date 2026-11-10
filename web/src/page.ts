@@ -57,23 +57,67 @@ export type Load = (to: string, push: boolean, quiet?: boolean) => Promise<void>
 const hearers = new Set<{ change: () => void; open: (on: boolean) => void }>();
 let stream: EventSource | null = null;
 let streamOpen = false;
+let lastHello: Record<string, unknown> | null = null;
 function listen(h: { change: () => void; open: (on: boolean) => void }): () => void {
   hearers.add(h);
   if (!stream && 'EventSource' in window) {
     const es = stream = new EventSource('/events');
     es.onopen = () => { streamOpen = true; for (const x of hearers) x.open(true); };
-    es.onerror = () => { streamOpen = false; for (const x of hearers) x.open(false); };
+    es.onerror = () => { streamOpen = false; lastHello = null; for (const x of hearers) x.open(false); };
+    // Who the stream is (the shared collections' hello), kept for a listener that comes later.
+    es.addEventListener('hello', (e) => { try { lastHello = JSON.parse((e as MessageEvent).data as string); } catch { /* not a frame */ } });
     es.addEventListener('change', () => { for (const x of hearers) x.change(); });
   }
   h.open(streamOpen);
   return () => {
     hearers.delete(h);
-    if (!hearers.size && stream) { stream.close(); stream = null; streamOpen = false; }
+    if (!hearers.size && stream) { stream.close(); stream = null; streamOpen = false; lastHello = null; }
   };
 }
 
+/**
+ * The tab's shared collection runtime (web/src/collections; docs/specs/collections.md), made the first time a window
+ * asks for it: one per tab, on this page's one stream. Loaded as its own chunk, so the app carries none of it until
+ * then.
+ */
+let collections: Promise<{ runtime: import('./collections/runtime').CollectionRuntime; stores: import('./collections/adapter').LibraryStores }> | undefined;
+const makeCollections = (csrf: () => string) => Promise.all([import('./collections/adapter'), import('./collections/transport')]).then(([a, t]) => a.makeRuntime(t.pageTransport(csrf)));
+export function collectionsRuntime(csrf: () => string): NonNullable<typeof collections> {
+  // One that was cleared (signed out, revoked) is never handed out again, nor a chunk that failed to load; windows asking
+  // at once share the one remade.
+  const was = collections;
+  collections = (was ? was.then((m) => (m.runtime.isCleared() ? makeCollections(csrf) : m), () => makeCollections(csrf)) : makeCollections(csrf));
+  return collections;
+}
+
+/**
+ * Views read live from shared collections (attention.ts says the Inbox, once its set is live): a page showing one isn't
+ * asked again on a bare change or on a timer, since what changes on it arrives on its own (t-2025).
+ */
+let readLive: (view: string) => boolean = () => false;
+export function liveViews(f: (view: string) => boolean): void { readLive = f; }
+
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
+
+/**
+ * Hear one of the stream's own events (the shared collections' `hello`, `rows`, `reset`: src/collections/transport.ts),
+ * keeping the one stream open while anyone listens. `open` and `error` are the stream's own state.
+ */
+export function onStreamEvent(event: string, f: (data: Record<string, unknown>) => void): () => void {
+  let off: (() => void) | undefined;
+  const handler = (e: Event) => { try { f(JSON.parse((e as MessageEvent).data as string)); } catch { /* not a frame */ } };
+  const stop = listen({ change: () => {}, open: (on) => {
+    if (event === 'open' && on) f({});
+    // closed: the stream gave up for good (signed out, revoked), not a reconnect.
+    if (event === 'error' && !on) f({ closed: stream?.readyState === 2 });
+    if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
+  } });
+  if (stream && !off && event !== 'open' && event !== 'error') { const es = stream; es.addEventListener(event, handler); off = () => es.removeEventListener(event, handler); }
+  // A listener that comes after the stream said hello (the first window to use collections) hears it now.
+  if (event === 'hello' && lastHello && stream?.readyState === 1) f(lastHello);
+  return () => { off?.(); stop(); };
+}
 
 export interface PageState {
   url: string;
@@ -165,9 +209,10 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   }, [say]);
 
   const [live, setLive] = useState(false);
+  const shownView = useRef('');
   useEffect(() => {
     // Revalidate in the background without making a confirmed page look like a cached copy.
-    const again = () => { if (!document.hidden) { void load(showing.current, false, true); } };
+    const again = () => { if (!document.hidden && !readLive(shownView.current)) { void load(showing.current, false, true); } };
     const stop = listen({ change: again, open: setLive });
     document.addEventListener('visibilitychange', again);
     return () => { stop(); document.removeEventListener('visibilitychange', again); };
@@ -176,9 +221,11 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
   // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
   const every = refreshEvery(data as Showing | null, live);
+  shownView.current = (data as Showing | null)?.view ?? '';
   useEffect(() => {
     if (!every) return;
     const t = setInterval(() => {
+      if (readLive(shownView.current)) return;
       const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
       if (!busy) void load(navNow.current.here(), false, true);
     }, every * 1000);
