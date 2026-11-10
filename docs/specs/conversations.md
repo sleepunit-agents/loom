@@ -539,8 +539,9 @@ Slice 1 settled these points the doc left open:
 - **Core venues' labels.** `session` is "Session" (`live`) and `wake` is "Wake" (`scheduled`). They live in code,
   never in the `venues` table.
 - **Session digests.** A harness passes `conversation` and `run` to `identity` the way the runtime does. The
-  conversation is the agent's `session` · `<harness>:<session id>`, and it exists from its first turn. The harness
-  writes that turn first; until then `conversation_digest` is refused.
+  conversation is the agent's `session` · `<harness>:<session id>` (from a house, in its namespace: `house:h-7 …`), and
+  it exists from its first turn. The harness writes that turn first and uses the `conversation` id it answers, never
+  one it works out from its place; until then `conversation_digest` is refused.
 - **`since` on the read tools.** It's exclusive. `conversations({since})` lists conversations whose `last` is after
   it, and `conversation_findings({since})` lists findings written after it.
 - **Turn writes.**
