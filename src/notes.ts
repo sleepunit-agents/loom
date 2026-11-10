@@ -22,7 +22,8 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { resolveKnowledgeDbPath } from './config.js';
 
 export type Lifespan = 'keep' | 'while' | 'short';
@@ -66,17 +67,22 @@ export class Notes {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = notesDbPath(dir);
     this.db = new BetterSqlite3(path);
-    chmodSync(path, 0o600);
-    this.db.pragma('journal_mode = WAL');
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS notes (path TEXT PRIMARY KEY, body TEXT NOT NULL, lifespan TEXT NOT NULL,
-        pinned INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL, updated TEXT NOT NULL, by TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS note_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL,
-        body TEXT, lifespan TEXT NOT NULL, at TEXT NOT NULL, by TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS note_revisions_path ON note_revisions (path, id);
-      CREATE TABLE IF NOT EXISTS note_files (path TEXT NOT NULL, name TEXT NOT NULL, sha256 TEXT NOT NULL,
-        bytes INTEGER NOT NULL, type TEXT, added TEXT NOT NULL, PRIMARY KEY (path, name));
-    `);
+    try {
+      chmodSync(path, 0o600);
+      this.db.pragma('journal_mode = WAL');
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS notes (path TEXT PRIMARY KEY, body TEXT NOT NULL, lifespan TEXT NOT NULL,
+          pinned INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL, updated TEXT NOT NULL, by TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS note_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL,
+          body TEXT, lifespan TEXT NOT NULL, at TEXT NOT NULL, by TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS note_revisions_path ON note_revisions (path, id);
+        CREATE TABLE IF NOT EXISTS note_files (path TEXT NOT NULL, name TEXT NOT NULL, sha256 TEXT NOT NULL,
+          bytes INTEGER NOT NULL, type TEXT, added TEXT NOT NULL, PRIMARY KEY (path, name));
+      `);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   close(): void { this.db.close(); }

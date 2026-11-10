@@ -16,7 +16,8 @@
  *
  * No `kept: false` field ever reaches either: callers strip them before writing (pull.ts).
  */
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

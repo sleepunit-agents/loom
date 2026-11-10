@@ -11,7 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import type {
   MemoryBackend,
@@ -137,14 +138,19 @@ export class SqliteVecBackend implements MemoryBackend {
   ) {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
-    this.db.pragma('journal_mode = WAL');
-    // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
-    // their own connection. A brief write-lock window (checkpoint, concurrent
-    // write) retries for up to 5s rather than failing immediately. A genuine
-    // second loom instance will still fail — it won't hold the lock that long.
-    this.db.pragma('busy_timeout = 5000');
-    sqliteVec.load(this.db);
-    this.initSchema();
+    try {
+      this.db.pragma('journal_mode = WAL');
+      // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
+      // their own connection. A brief write-lock window (checkpoint, concurrent
+      // write) retries for up to 5s rather than failing immediately. A genuine
+      // second loom instance will still fail — it won't hold the lock that long.
+      this.db.pragma('busy_timeout = 5000');
+      sqliteVec.load(this.db);
+      this.initSchema();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   // ── MemoryBackend interface ──

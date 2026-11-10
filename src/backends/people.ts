@@ -18,7 +18,8 @@
  * writes, so the transaction is what serializes concurrent bodies.
  */
 import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { MIGRATIONS } from './migrations.js';
 import {
@@ -368,20 +369,25 @@ export class PeopleStore {
   constructor(config: PeopleStoreConfig) {
     this.now = config.now ?? Date.now;
     this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    if (!config.readonly) {
-      this.db.pragma('journal_mode = WAL');
-      // Only this feature's migration: the people tables do not depend on the
-      // memories schema, and a raw store must not half-run the others.
-      for (const id of PEOPLE_MIGRATIONS) {
-        const m = MIGRATIONS.find((x) => x.id === id)!;
-        if (m.pending(this.db)) m.run(this.db);
+    try {
+      this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
+      if (!config.readonly) {
+        this.db.pragma('journal_mode = WAL');
+        // Only this feature's migration: the people tables do not depend on the
+        // memories schema, and a raw store must not half-run the others.
+        for (const id of PEOPLE_MIGRATIONS) {
+          const m = MIGRATIONS.find((x) => x.id === id)!;
+          if (m.pending(this.db)) m.run(this.db);
+        }
       }
+      this.holdsPeople = hasTable(this.db, 'people');
+      this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
+      this.holdsMerges = hasTable(this.db, 'person_merges');
+      this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
+    } catch (error) {
+      this.db.close();
+      throw error;
     }
-    this.holdsPeople = hasTable(this.db, 'people');
-    this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
-    this.holdsMerges = hasTable(this.db, 'person_merges');
-    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
   }
 
   close(): void {

@@ -16,7 +16,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { runMigrations } from './migrations.js';
 import { remember } from '../tools/remember.js';
@@ -89,8 +90,13 @@ function hasTable(db: Database, table: string): boolean {
 function openProposalsDb(contextDir: string): Database {
   const dbPath = resolveSqliteDbPath(contextDir);
   const db = new BetterSqlite3(dbPath);
-  db.pragma('busy_timeout = 5000');
-  if (!hasTable(db, 'proposals')) runMigrations(db, { strict: false });
+  try {
+    db.pragma('busy_timeout = 5000');
+    if (!hasTable(db, 'proposals')) runMigrations(db, { strict: false });
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 

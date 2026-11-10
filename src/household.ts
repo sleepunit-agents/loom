@@ -16,7 +16,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from './sqlite.js';
 import { basename, dirname, join, resolve } from 'node:path';
 
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;

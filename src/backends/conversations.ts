@@ -17,7 +17,8 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
+import type { Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
 import { MAX_NEEDS_HREF, MAX_NEEDS_STRING, needsOfRow, parseNeeds, type NeedsOwner } from './needs.js';
 
@@ -231,13 +232,18 @@ export function hasTable(db: Database, table: string): boolean {
 /** memories.db for writing, with the tables there. */
 export function openConversations(contextDir: string): Database {
   const db = new BetterSqlite3(resolveSqliteDbPath(contextDir));
-  db.pragma('busy_timeout = 5000');
-  if (!CONVERSATION_TABLES.every((t) => hasTable(db, t))) createConversationTables(db);
-  // needs_owner_href came after the table (t-1778): a store from before gets the column on its first write.
-  // And needs_owner_json after it (the ask as an object): the same way.
-  const cols = (db.prepare('PRAGMA table_info(conversation_digests)').all() as Array<{ name: string }>).map((c) => c.name);
-  if (!cols.includes('needs_owner_href')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_href TEXT');
-  if (!cols.includes('needs_owner_json')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_json TEXT');
+  try {
+    db.pragma('busy_timeout = 5000');
+    if (!CONVERSATION_TABLES.every((t) => hasTable(db, t))) createConversationTables(db);
+    // needs_owner_href came after the table (t-1778): a store from before gets the column on its first write.
+    // And needs_owner_json after it (the ask as an object): the same way.
+    const cols = (db.prepare('PRAGMA table_info(conversation_digests)').all() as Array<{ name: string }>).map((c) => c.name);
+    if (!cols.includes('needs_owner_href')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_href TEXT');
+    if (!cols.includes('needs_owner_json')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_json TEXT');
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 
@@ -246,8 +252,13 @@ export function openConversationsReadonly(contextDir: string): Database | null {
   const path = resolveSqliteDbPath(contextDir);
   if (!existsSync(path)) return null;
   const db = new BetterSqlite3(path, { readonly: true });
-  db.pragma('busy_timeout = 5000');
-  if (!hasTable(db, 'conversations')) { db.close(); return null; }
+  try {
+    db.pragma('busy_timeout = 5000');
+    if (!hasTable(db, 'conversations')) { db.close(); return null; }
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 

@@ -16,7 +16,7 @@ import { listProjects } from '../tools/project.js';
 import { listProposals } from '../backends/proposals.js';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from '../sqlite.js';
 import {
   aboutOf, setAboutAsk, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, setAbout, setMark,
   setMember, type Household, type Member,
