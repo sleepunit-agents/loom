@@ -69,6 +69,11 @@ _Avoid_: log, trace, transcript
    - a card only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset, a host step,
      a write-off) also goes to household owners, as the ones who answer it;
    - a thread whose member no longer owns its agent (left the household, or lost the agent): household owners';
+   - a card on a piece its member can't reach (one that doesn't understand agent owners, `owners` not 2, which an
+     agent owner never sees): household owners';
+   - a merge someone else says no to (the approvals piece's Deny, or Changes' Not yet, on the same target) still stops
+     the thread's card if it was already allowed: a no stops every earlier yes. A card still waiting stays its asker's
+     to answer, and their answer after it is the newer decision. Changes' Yes never answers it;
    - a spawned job the runtime couldn't open a thread for: household owners' once 10 minutes have passed (loom can't
      tell whose it is); until then, no one's, since its thread may still open.
    A deleted thread's asks stay its member's (`comms_deleted`, by its place and its conversation); a `loom`

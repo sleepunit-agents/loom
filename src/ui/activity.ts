@@ -308,7 +308,11 @@ async function openEntry(c: Ctx, env: NodeJS.ProcessEnv, id: string, shown: Acti
     const refs = refsIn([d?.summary ?? '', ...decided].join('\n'), github);
     const links: ActivityLink[] = [];
     if (thread) links.push({ label: 'The thread in Comms', href: threadPath(thread.id) });
-    if (d?.needs_owner_href) links.push({ label: 'What it needs you for', href: d.needs_owner_href });
+    // A spawned job's thread's ask is its member's alone (comms.md rule 2; t-2084): anyone else sees what it did, not what it asks.
+    let jobOf: Thread | null = null;
+    if (cv.venue === 'spawn') { try { jobOf = threadOfConversation(c.h.home, cv.id) ?? null; } catch { jobOf = null; } }
+    const theirs = !jobOf || jobOf.member === c.member?.person;
+    if (d?.needs_owner_href && theirs) links.push({ label: 'What it needs you for', href: d.needs_owner_href });
     // The steps of a Comms run (its tool cards), the labels its thread shows: its own member only (commsThread).
     let steps: ActivityOpen['steps'];
     if (thread && d?.run) {
@@ -320,7 +324,7 @@ async function openEntry(c: Ctx, env: NodeJS.ProcessEnv, id: string, shown: Acti
     const more = (db.prepare('SELECT id, at FROM conversation_digests WHERE conversation = ? AND id != ? ORDER BY at DESC LIMIT 8').all(cv.id, d?.id ?? '') as Array<{ id: string; at: string }>)
       .map((x) => ({ id: `d~${agent}~${x.id}`, at: x.at, title }));
     return { ...fallback, asked, decided, ...(d ? { story: d.summary } : {}), tasks: [...new Set([...tasks, ...refs.tasks])].map(taskLink), prs: refs.prs, links,
-      ...(d?.needs_owner ? { needs: d.needs_owner } : {}), ...(steps?.length ? { steps } : {}), more };
+      ...(d?.needs_owner && theirs ? { needs: d.needs_owner } : {}), ...(steps?.length ? { steps } : {}), more };
   } finally { db.close(); }
 }
 

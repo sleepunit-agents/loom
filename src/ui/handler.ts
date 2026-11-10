@@ -768,7 +768,8 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
     const asks = await yourCall(opts);
     // A lead card a member's Needs you absorbed is still the household owners' to give: they hear of its own card, by
     // the key their Inbox files it under (theirs doesn't absorb it), and its member hears of the Needs you.
-    const leads = hh ? (await pieceManifests(opts.env)).pieces.flatMap((p) => p.manifest.asks.filter((x) => x.lead && x.conversation && x.attention !== false)
+    // So is any card its member can't reach (a piece that doesn't understand agent owners): household owners answer it.
+    const leads = hh ? (await pieceManifests(opts.env)).pieces.flatMap((p) => p.manifest.asks.filter((x) => (x.lead || p.manifest.owners !== 2) && x.conversation && x.attention !== false)
       .map((x) => ({ ...x, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece } as HomeAsk))) : [];
     // Only one asked from a thread whose member can't give it: one of a household owner's thread is in his Needs you.
     const absorbed = leads.filter((x) => !asks.some((a) => askKey(a) === askKey(x)) && (() => {
