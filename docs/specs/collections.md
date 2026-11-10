@@ -1093,3 +1093,19 @@ The owner accepted the contract as written (2026-11-09), so each question's lean
    threads everywhere, with the message count shown only inside a thread.
 4. **Third-party widgets**: should loom allow piece widgets that aren't first-party before the sandboxed frame
    exists? Decided: no (code isolation, above).
+
+### Comms message provider (t-2027)
+
+Core publishes `loom/message@1`. Each record is `<thread>:<seq>`, with the thread's member audience and agent,
+sequence, author, time, kind, run and delivery outcome. `revision` hashes the ciphertext and stored message fields;
+it changes on a delivery outcome, step edit or retention sweep without opening the message key. `message` is a heavy,
+`kept: false` field: a member's explicit page read opens at most 50 messages (plus core's lookahead), through the same
+opener and decryption pool as Comms. Another owner of the same agent gets none of that member's records. Agent and
+house tokens get none.
+
+The bridge reads all message metadata once per pull; it does not use the generic bridge's 10,000-record prefix.
+Ordinary queries select metadata before reading the chosen page's ciphertext revisions. No message words enter the
+bridge, index or log. Subscriptions retain only hashes of sent rows for comparison, never decrypted payload copies. Live payload queries are one bounded page (`audience: ask`); history can use sealed keyset
+cursors on non-live requests. This provider is the foundation; Comms' existing routes remain its client until their
+message-page consumer migration lands. Full snapshot cost still grows with retained message identities; an incremental
+metadata journal is a future optimization, without changing this contract.

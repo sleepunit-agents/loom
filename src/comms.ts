@@ -507,6 +507,50 @@ export async function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread
   return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(o, t.agent, t.id, r));
 }
 
+export interface MessageRecord {
+  [field: string]: unknown;
+  id: string; agent: string; thread: string; seq: number; at: string; kind: string; from: string; run: string | null;
+  delivered: boolean | null; audience: { members: string[] }; revision?: string;
+}
+
+/** Metadata only: no ciphertext read until a page is chosen, no message key opened. */
+export function messageRecords(home: string, threads: readonly Thread[]): MessageRecord[] {
+  if (!threads.length || !existsSync(join(home, COMMS_DB))) return [];
+  const mine = new Map(threads.map((t) => [t.id, t]));
+  return withMessages(home, (db) => {
+    const out: MessageRecord[] = [];
+    for (const r of db.prepare('SELECT thread, seq, at, kind, sender, run, delivered FROM comms_messages ORDER BY thread, seq').iterate() as Iterable<Pick<MsgRow, 'seq' | 'at' | 'kind' | 'sender' | 'run' | 'delivered'> & { thread: string }>) {
+      const t = mine.get(r.thread);
+      if (t) out.push({ id: `${t.id}:${r.seq}`, agent: t.agent, thread: t.id, seq: r.seq, at: r.at, kind: r.kind, from: r.sender, run: r.run,
+        delivered: r.delivered === null ? null : r.delivered === 1, audience: { members: [t.member] } });
+    }
+    return out;
+  });
+}
+
+/** Only the selected page's encrypted revisions. A snapshot selects every metadata record once, never decrypts any. */
+export function messageRevisions(home: string, records: readonly { thread: string; seq: number }[]): string[] {
+  return withMessages(home, (db) => {
+    const stmt = db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq = ?');
+    return records.map((m) => {
+      const r = stmt.get(m.thread, m.seq) as MsgRow | undefined;
+      if (!r) return 'gone';
+      return createHash('sha256').update(r.text ?? '').update(JSON.stringify([r.at, r.kind, r.sender, r.id, r.card_json, r.run, r.delivered])).digest('hex');
+    });
+  });
+}
+
+/** A checked page's exact messages, at most PAGE. The caller has already chosen this member's thread. */
+export async function messagesBySeq(h: Household, env: NodeJS.ProcessEnv, t: Thread, seqs: readonly number[]): Promise<Message[]> {
+  if (seqs.length > PAGE) throw new Error('a message page is too large');
+  const rows = withMessages(h.home, (db) => seqs.flatMap((seq) => {
+    const r = db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq = ?').get(t.id, seq) as MsgRow | undefined;
+    return r ? [r] : [];
+  }));
+  const o = rows.some((r) => r.text && r.kind !== 'error') ? openerFor(h.home, env) : null;
+  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(o, t.agent, t.id, r));
+}
+
 /** The thread's newest message seq (0 with none), and its newest reply's. */
 export function seqsOf(home: string, thread: string): { last: number; reply: number } {
   if (!existsSync(join(home, COMMS_DB))) return { last: 0, reply: 0 };

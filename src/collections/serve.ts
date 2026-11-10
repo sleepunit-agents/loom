@@ -26,7 +26,7 @@ import { CORE_TYPES, coreAnswers } from './core-types.js';
 import type { ProviderAnswer, ProviderQuery } from './memory.js';
 import { checkQuery, MAX_PROVIDER_CURSOR, MAX_QUERIES, queryShape, sealerFor, typeRef, validQueryId, type Query, type QueryError, type QueryIn, type Sealer } from './query.js';
 import { domainOfType } from './pull.js';
-import { atOf, attach, prepare, streamFor, unsubscribe } from './subs.js';
+import { atOf, attach, prepare, streamFor, unsubscribe, type Reask } from './subs.js';
 import { admits, classesOf, isHouseholdOwner, parseAudience, presented, providerAdmits, viewerId, type Audience, type Viewer } from './viewer.js';
 
 /** Where a batch is asked: POST /collections/query (the page) and POST /api/loom/<this> (tokens). */
@@ -136,6 +136,14 @@ function callerOf(viewer: Viewer): ApiCaller {
   }
 }
 
+/** Stored callbacks get a fresh lexical scope, separate from answerBatch's plaintext answers. Closures created in
+ * that batch can otherwise retain shared captured slots (including its answers map), even without naming them. */
+function subscriptionSource(context: ServeContext, sealer: Sealer): { householdNow: () => Household; envNow: () => NodeJS.ProcessEnv; again: Reask } {
+  const householdNow = context.live ?? (() => context.household);
+  const envNow = () => context.env;
+  return { householdNow, envNow, again: (v, p, q) => reask({ ...context, household: householdNow(), env: envNow() }, p, v, q, sealer) };
+}
+
 /** The answers to a batch of queries (a POST body `{queries: [...]}`) for one viewer. */
 export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unknown): Promise<BatchResult> {
   const now = ctx.now ?? Date.now();
@@ -195,8 +203,7 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     byProvider.set(p.name, list);
   }
 
-  const householdNow = ctx.live ?? (() => ctx.household);
-  const envNow = () => ctx.env;
+  const { householdNow, envNow, again } = subscriptionSource(ctx, sealer);
   await Promise.all([...byProvider].map(async ([name, list]) => {
     const p = all.get(name)!;
     // A live query: its stream must be this page's own, open here; its domain is in the log before the provider runs.
@@ -219,7 +226,7 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
           const att = await attach(householdNow, envNow, { stream: q.stream!, session: ctx.page!.session }, viewer, p, q,
             { next: a.next, aggregates: a.aggregates, complete: a.coverage.complete }, r.admitted, r.last, r.at, starts.get(q.type) ?? 0,
             // Asked again later, for as long as the subscription lives: the household and env as they are then.
-            (v, pp, qq) => reask({ ...ctx, household: householdNow(), env: envNow() }, pp, v, qq, sealer));
+            again);
           if ('at' in att) { r = { ...r, answer: { ...a, at: att.at, scope: att.scope } }; break; }
           if ('error' in att) { r = { ...r, answer: { id: q.id, error: att.error, ...(att.why ? { why: att.why } : {}) } as QueryError }; break; }
           // The store's history moved under the answer: ask again (a new epoch, or a revision the log no longer holds).
@@ -303,7 +310,7 @@ async function reask(ctx: ServeContext, p: Provider, viewer: Viewer, q: Query, s
  * it didn't filter would tell a viewer choosing the queries that hidden records matched.
  */
 async function runProvider(ctx: ServeContext, p: Provider, viewer: Viewer, list: readonly Query[], asks: ProviderQuery[], share: number, now: number): Promise<{ answers: Map<string, ProviderAnswer>; at?: unknown } | string | typeof OUT_OF_CONTRACT> {
-  if (!p.piece) return { answers: new Map((await coreAnswers(ctx.household, viewer, asks, now)).map((a) => [a.id, a])) };
+  if (!p.piece) return { answers: new Map((await coreAnswers(ctx.household, viewer, asks, now, ctx.env)).map((a) => [a.id, a])) };
   const piece = p.piece;
   // The scope a page's piece gets (owners.md), and never one inherited from loom's own environment.
   const { LOOM_SCOPE: _s, LOOM_OWNER_SCOPE: _o, ...env0 } = ctx.env;

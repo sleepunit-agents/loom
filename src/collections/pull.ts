@@ -22,7 +22,7 @@ import { runOffer } from '../offers-registry.js';
 import { forgetPiecePages, Pool } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, type TypeDecl } from './contract.js';
-import { coreAnswers } from './core-types.js';
+import { coreAnswers, coreMessageSnapshot } from './core-types.js';
 import type { ProviderQuery } from './memory.js';
 import { domainOf, expire, indexOf, markNudged, prune, resetEpoch, seedIndex, setCursor, setMode, takeLease, tick, withLog, writeTxn, type Change } from './log.js';
 import { providers, readAnswers, type Provider } from './serve.js';
@@ -200,6 +200,15 @@ async function snapshot(ctx: PullContext, p: Provider, types: readonly string[])
   let complete = true;
   for (const type of types) {
     const decl = p.types[type];
+    if (!p.piece && type === 'message') {
+      // Messages keep their identities after words expire. Read the full metadata source once, rather than the
+      // generic bridge's capped prefix (which eventually leaves later threads outside live coverage).
+      for (const raw of await coreMessageSnapshot(ctx.household)) {
+        const c = parseChange({ ...raw, op: 'upsert', rev: 0, txn: 'bridge000', type, record: raw }, p, types);
+        if (c) seen.set(`${p.name}/${type}/${c.id}`, { ...c, rev: null, txn: null });
+      }
+      continue;
+    }
     const fields = Object.entries(decl.fields).filter(([, d]) => !d.heavy && d.kept !== false).map(([f]) => f);
     let after: unknown[] | null = null;
     let pages = 0;
