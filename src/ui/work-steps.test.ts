@@ -57,6 +57,11 @@ describe('the working line', () => {
     expect(aliveOf({ working_since: iso(0) }, [], T0 + QUIET_MS + 1000).face).toBe('quiet');
     expect(aliveOf({ working_since: iso(0) }, [], T0 + STUCK_MS + 1000).face).toBe('stuck');
   });
+  it('a step past its own limit gets a 30-second grace (the runtime\'s poll runs a few seconds behind)', () => {
+    const r = card('g', 'Bash', 'running', { t0: iso(0), limit: 120 }, 'x');
+    expect(aliveOf({ alive_at: iso(140_000) }, [r], T0 + 140_000).over).toBe(false);
+    expect(aliveOf({ alive_at: iso(160_000) }, [r], T0 + 160_000).over).toBe(true);
+  });
   it('stuck when a step runs past its own limit, even while the body still writes', () => {
     const a = aliveOf({ alive_at: iso(170_000) }, [running], T0 + 180_000);
     expect(a).toMatchObject({ face: 'stuck', over: true });

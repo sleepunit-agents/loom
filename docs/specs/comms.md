@@ -677,10 +677,18 @@ A real chat, with a terminal's flavour:
 - **The member's messages** are right-aligned and plain, with no avatar.
 - **Each message** has a mono timestamp line, `14:02 · art`.
 - **The composer** is a mono prompt line, `> `, in the agent's accent.
-- **Activity cards** sit between messages, grouped by `run` and collapsed by default to one line per run: "▸ N steps"
-  and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to a `now:` line (the step it's on, and
-  the plan's item when there's a plan), then its labels, each with its state; three or more like steps in a row that
-  finished well fold into one line that opens ("Ran 6 commands · Ran npm test"). A plan card isn't counted as a step.
+- **Activity cards** sit between messages, grouped by `run` and collapsed to one line per run: "▸ N steps" and the
+  newest card's summary ("▸ 6 steps · Ran the tests"); a watched job's run starts open. Opened (t-2109, the Claude
+  app's way): the plan on top as a checklist; the body's own words as prose; each step a folded row with its name, how
+  long it took (its own start and end, else when core saw it end) and how it went (exit code on a failure, "N steps"
+  on a helper), opening to its command after a `$ ` prompt or its target, its result line, an edit's diff in green and
+  red, and a helper's steps nested under it. Colour codes show as colours, never as characters. A plan card isn't a
+  step. Before t-2109 the open group was a `now:` line and labels, like steps folded into one line; that's gone.
+- **Working, quiet or stuck** (t-2109): the working line says so itself, from the body's last sign of life (its
+  `alive_at`, a step starting or ending, and the start of this spell of work; a time ahead of now counts as now):
+  working with something in the last 2 minutes (and its tokens, `↓ 4.1k tokens`, when it says them); "Quiet for 5m —
+  Art is still running · on <step> for 6m" after 2 minutes of nothing; "… — it may be stuck" after 12, or as soon as
+  any running step is past its own time limit plus a 30-second grace (the runtime's poll is a few seconds behind).
 - **The working line** is one mono line under the newest message (t-1918): `Art E Fish is working · Ran the tests ·
   0:42`, the step it's on now (the newest running card since your message, else the newest) and the time since
   `status: working` began; while your message is with it and nothing's back yet, `Art E Fish is thinking…`. It shows

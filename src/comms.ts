@@ -1385,7 +1385,9 @@ export const MAX_DETAIL = 4000;
 export const MAX_BODY = 32_000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 /** Shown text: line breaks and tabs, and colour codes (ANSI SGR) only; no other control or line separator. */
-const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
+const SHOWN_TEXT = /^(?:[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029]|\x1b\[[0-9;]{0,30}m)*$/;
+/** A step's one-line word (its result, a plan item): printable, no C1 control (NEL, 8-bit CSI) either. */
+const STEP_LINE = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]*$/;
 type StepWords = { detail?: string; body?: string; result?: string; items?: Array<{ text: string; state: 'done' | 'now' | 'todo' }> };
 type StepPlain = { exit?: number; limit?: number; t0?: string; t1?: string; parent?: string };
 
@@ -1397,12 +1399,12 @@ function stepOfCard(o: Record<string, unknown>, i: number): { words: StepWords |
   // A body is kept only for a diff or the body's words (BODY_TOOLS); a command's output never (t-2109; on demand,
   // unstored, is t-2112), nor what a tool read: on any other card it's dropped.
   if (o.body !== undefined) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); if (BODY_TOOLS.has(String(o.tool))) words.body = o.body as string; }
-  if (o.result !== undefined) { if (typeof o.result !== 'string' || o.result.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.result)) bad('result', 'is one printable line'); words.result = o.result as string; }
+  if (o.result !== undefined) { if (typeof o.result !== 'string' || o.result.length > MAX_SUMMARY || !STEP_LINE.test(o.result)) bad('result', 'is one printable line'); words.result = o.result as string; }
   if (o.items !== undefined) {
     if (!Array.isArray(o.items) || o.items.length > 20) bad('items', 'is a list of at most 20');
     words.items = (o.items as unknown[]).map((x) => {
       const it = x as Record<string, unknown>;
-      if (!it || typeof it.text !== 'string' || !it.text || it.text.length > 100 || !PRINTABLE_LINE.test(it.text) || !['done', 'now', 'todo'].includes(String(it.state))) return bad('items', 'are {text, state: done|now|todo}');
+      if (!it || typeof it.text !== 'string' || !it.text || it.text.length > 100 || !STEP_LINE.test(it.text) || !['done', 'now', 'todo'].includes(String(it.state))) return bad('items', 'are {text, state: done|now|todo}');
       return { text: it.text, state: it.state as 'done' | 'now' | 'todo' };
     });
   }
@@ -1454,7 +1456,8 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
     // Private Comms and spawned jobs never fall back to the agent-wide conversation viewer,
     // including after deletion. Their member-only thread is their sole step store.
     if (!c || c.venue === COMMS_VENUE || c.venue === 'spawn') return fail('conflict: that conversation has no live thread', 409);
-    const sealed = checked.map((c) => ({ ...c, words: encrypt(h.home, env, c.summary) }));
+    // A conversation's own page keeps a step's label only (its further words are a Comms thread's, t-2109).
+    const sealed = checked.map((c) => ({ id: c.id, tool: c.tool, state: c.state, words: encrypt(h.home, env, c.summary) }));
     return withMessages(h.home, (db) => db.transaction(() => {
       let added = 0, updated = 0;
       for (const c of sealed) {
@@ -1489,8 +1492,10 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       }
       updated++;
     } else {
-      // Done when first heard of: ended when it says, else when it started (a plan, its words), else now.
-      const t1 = c.state !== 'running' ? (c.plain.t1 ?? c.plain.t0 ?? nowIso(now)) : undefined;
+      // Done when first heard of: ended when it says; a plan or its words, when it started (they take no time); any
+      // other step, when core saw it end (comms.md: "else when core saw it end").
+      const instant = c.tool === 'text' || c.tool === 'TodoWrite' || c.tool === 'todo_list';
+      const t1 = c.state !== 'running' ? (c.plain.t1 ?? (instant ? c.plain.t0 : undefined) ?? nowIso(now)) : undefined;
       append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state, ...c.plain, ...(t1 ? { t1 } : {}) }, run, ...(c.words ? { step: JSON.stringify(c.words) } : {}) }, now);
       added++;
     }

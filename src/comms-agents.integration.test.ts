@@ -175,6 +175,11 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     const card = { id: 'p1', at: '2026-11-10T10:00:00.000Z', tool: 'Bash', summary: 'Ran the tests', state: 'running', detail: 'npm test -- comms', limit: 120, parent: 'h:0123456789abcdef' };
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [card], alive: { at: '2026-11-10T10:00:01.000Z', tokens: 4100 } }).added).toBe(1);
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, state: 'failed', result: 'exit 1: 3 passed, 1 failed', body: 'OUTPUT-NEVER-KEPT', exit: 1, end: '2026-11-10T10:00:09.000Z' }] }).updated).toBe(1);
+    // A step first heard of as done, with no end of its own, ended when core saw it end (not when it started).
+    const t0 = new Date(Date.now() - 5000).toISOString();
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'q1', at: t0, tool: 'Bash', summary: 'Ran ls', state: 'done' }] });
+    const q1 = (await messagesOf(h, process.env, threadFor(h, member('jonathan'), t.id))).find((m) => m.id === 'q1')!;
+    expect(Date.parse(String(q1.card?.t1)) - Date.parse(t0)).toBeGreaterThanOrEqual(4000);
     // A diff from a file with CRLF line ends is taken.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd0', tool: 'Edit', summary: 'Edited b.ts', state: 'done', detail: 'b.ts', body: '+a\r\n+b' }] }).added).toBe(1);
     // An edit's diff is kept, sealed, with its colours.
@@ -215,7 +220,7 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // A post of a card is the card whole: its words replace those kept.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts' }] }).updated).toBe(1);
     expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts' });
-    for (const bad of [{ body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
+    for (const bad of [{ body: 'nel\u0085line' }, { body: 'csi\u009b2J' }, { result: 'x\u0085y' }, { body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
       expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...bad }] })).toThrow(/bad-input/);
     }
     // Nothing a command printed or a file held is anywhere in the store, sealed or not.
