@@ -39,10 +39,8 @@ import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, gzipSync } from 'node:zlib';
-import { promisify } from 'node:util';
-const brotliAsync = promisify(brotliCompress);
-const gzipAsync = promisify(gzip);
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
+import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
@@ -535,7 +533,6 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  * files are compressed once, at their best, and kept (Jonathan, 2026-10-29: "this site is sloooow": its script
  * went out as 786 KB); a page's data is compressed quickly, when it's big enough to be worth it.
  */
-const packed = new Map<string, { br: Buffer; gzip: Buffer }>();
 // The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at
 // start, off the event loop (zlib's thread pool), so nothing waits on it.
 setTimeout(() => {
@@ -543,29 +540,29 @@ setTimeout(() => {
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
     const file = join(dir, f);
-    if (!/\.(js|css|svg|json)$/.test(f) || packed.has(file)) continue;
+    if (!/\.(js|css|svg|json)$/.test(f)) continue;
     const body = readFileSync(file);
-    void Promise.all([
-      brotliAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } }),
-      gzipAsync(body, { level: 9 }),
-    ]).then(([br, gzip]) => { if (!packed.has(file)) packed.set(file, { br, gzip }); }).catch(() => {});
+    void packAsset(file, body).catch(() => {});
   }
 }, 1_000).unref();
-function encoded(req: IncomingMessage, body: Buffer, keep?: string): { body: Buffer; headers: Record<string, string> } {
+function encoded(req: IncomingMessage, body: Buffer): { body: Buffer; headers: Record<string, string> } {
   const accepts = String(req.headers['accept-encoding'] ?? '');
   const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
   if ((!br && !gz) || body.length < 1024) return { body, headers: { vary: 'accept-encoding' } };
-  let both = keep ? packed.get(keep) : undefined;
-  if (!both) {
-    const quality = keep ? 11 : 4;
-    const make = (which: 'br' | 'gzip') => (which === 'br'
-      ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: quality, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } })
-      : gzipSync(body, { level: keep ? 9 : 6 }));
-    if (!keep) { const which = br ? 'br' : 'gzip'; return { body: make(which), headers: { 'content-encoding': which, vary: 'accept-encoding' } }; }
-    both = { br: make('br'), gzip: make('gzip') };
-    packed.set(keep, both);
-  }
-  return br ? { body: both.br, headers: { 'content-encoding': 'br', vary: 'accept-encoding' } } : { body: both.gzip, headers: { 'content-encoding': 'gzip', vary: 'accept-encoding' } };
+  const which = br ? 'br' : 'gzip';
+  const compressed = br
+    ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } })
+    : gzipSync(body, { level: 6 });
+  return { body: compressed, headers: { 'content-encoding': which, vary: 'accept-encoding' } };
+}
+
+async function encodedAsset(req: IncomingMessage, body: Buffer, file: string) {
+  const accepts = String(req.headers['accept-encoding'] ?? '');
+  const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
+  if ((!br && !gz) || body.length < 1024) return { body, headers: { vary: 'accept-encoding' } };
+  const which = br ? 'br' : 'gzip';
+  const both = await packAsset(file, body);
+  return { body: both[which], headers: { 'content-encoding': which, vary: 'accept-encoding' } };
 }
 
 function redirect(res: ServerResponse, to: string, extra: Record<string, string | string[]> = {}): void {
@@ -1540,7 +1537,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const immutable = pathname.startsWith('/app/assets/');
     const type = WEB_TYPES[extname(file)] ?? 'application/octet-stream';
     // Fonts and images are compressed already; the script and the stylesheet are text, packed once (their names change with them).
-    const out = /^(text|application\/(javascript|json))|svg/.test(type) ? encoded(req, readFileSync(file), immutable ? file : undefined) : { body: readFileSync(file), headers: {} };
+    const out = /^(text|application\/(javascript|json))|svg/.test(type) ? (immutable ? await encodedAsset(req, readFileSync(file), file) : encoded(req, readFileSync(file))) : { body: readFileSync(file), headers: {} };
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache', ...out.headers });
     return void res.end(req.method === 'HEAD' ? undefined : out.body);
   }
