@@ -85,16 +85,19 @@ type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?:
 type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
+let manifestGeneration = 0;
 
 /**
  * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
  * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
  */
 export function expirePieceManifests(): void {
+  manifestGeneration++;
   cache.clear();
 }
 
 export function clearPieceCache(path?: string): void {
+  manifestGeneration++;
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
   for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
@@ -337,10 +340,14 @@ export async function refreshPieceManifests(env: NodeJS.ProcessEnv): Promise<Map
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
     const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
+    const generation = manifestGeneration;
+    const before = cache.get(key);
     const result = fetchManifest(p.name, p.path, env);
     const r = await result;
     // A piece that failed this once keeps its last good answer, as a page load would.
-    if ('manifest' in r || !cache.has(key)) cache.set(key, { at: Date.now(), result });
+    // Invalidation or a newer page load wins over a refresh started before it.
+    if (generation === manifestGeneration && cache.get(key) === before && ('manifest' in r || !before))
+      cache.set(key, { at: Date.now(), result });
     out.set(p.path, 'manifest' in r ? JSON.stringify(r.manifest) : '');
   }));
   return out;

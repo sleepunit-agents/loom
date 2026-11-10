@@ -942,3 +942,18 @@ completed work on their next manifest. The complete list is on large/phone cards
 Install core support before producers: older core ignores the optional field. The normal manifest
 size limits still apply (512 KiB and at most 10,000 jobs per agent). Tasks retain their existing
 household-only visibility; adding jobs does not make the Tasks piece available to agent owners.
+
+### Current activity observations
+
+A `doing` row may carry `activity: { action, observedAt, expiresAt }`. This is separate from
+`since`, which remains a lifecycle timestamp. Both times are ISO 8601; expiry must follow the
+observation by at most 30 seconds. `action` is one of Working, Running a command, Reading a
+file, Editing a file, Writing a file, Searching files, Searching the web, Using a tool, or
+Starting a helper. Arguments, paths, chat excerpts, and activity-card summaries are excluded.
+Core applies conversation membership before putting an observation in the shell. Its ticker
+uses fixed venue categories and the authorized conversation link, and stops claiming current
+activity at expiry even when its shell is cached or offline.
+
+An agent report may instead carry `idle: { observedAt, expiresAt }` with the same time bounds,
+only when its producer actually observed that it has no body working or unknown. Missing,
+expired, and offline reports mean activity unavailable; they are not proof of idle.

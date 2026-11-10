@@ -31,7 +31,7 @@ process.stdin.on('end', () => {
 });
 `;
 
-export type AgentReport = { jobs?: import('./vocab.js').Job[]; doing?: { text: string; kind?: string; where?: string; conversation?: string; since?: string }[];
+export type AgentReport = { idle?: { observedAt: string; expiresAt: string }; jobs?: import('./vocab.js').Job[]; doing?: { activity?: import('./vocab.js').CurrentActivity; text: string; kind?: string; where?: string; conversation?: string; since?: string }[];
   readings?: { label: string; value: string; detail?: string; tone?: string }[]; state?: string; reason?: string };
 
 export type DeskHome = {
@@ -80,7 +80,7 @@ export async function deskHome(agents: Record<string, string>, members: { person
   tok.runtime = createToken(h, { role: { kind: 'runtime', piece: 'runtime' }, label: 'runtime', runtimePieces: runtimePieces(process.env) }).token;
   const report: DeskHome['report'] = (a, tile) => writeFileSync(join(home, 'runtime-manifest.json'), JSON.stringify({ v: 2, owners: 2,
     tab: { label: 'Boxes' }, ...(tile ? { tile: { label: 'Boxes', value: tile.stat ?? '', ...(tile.tone ? { tone: tile.tone } : {}) } } : {}), asks: [],
-    agents: Object.fromEntries(Object.entries(a).map(([k, r]) => [k, { readings: r.readings ?? [], ...(r.jobs ? { jobs: r.jobs } : {}), ...(r.doing ? { doing: r.doing } : {}), ...(r.state ? { state: r.state } : {}), ...(r.reason ? { reason: r.reason } : {}) }])) }));
+    agents: Object.fromEntries(Object.entries(a).map(([k, r]) => [k, { readings: r.readings ?? [], ...(r.idle ? { idle: r.idle } : {}), ...(r.jobs ? { jobs: r.jobs } : {}), ...(r.doing ? { doing: r.doing } : {}), ...(r.state ? { state: r.state } : {}), ...(r.reason ? { reason: r.reason } : {}) }])) }));
   report({});
   const handle: HttpServeHandle = await startHttpServer({ contextDir: agentDir(h, ids[0]), host: '127.0.0.1', port: 0, household: h });
   const base = `http://127.0.0.1:${handle.port}`;
