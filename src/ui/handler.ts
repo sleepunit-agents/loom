@@ -81,7 +81,8 @@ import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Agent
 import { resolveFrom } from '../comms-work.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
-import { closeStream as subsClose, openStream as subsOpen } from '../collections/subs.js';
+import { closeStream as subsClose, openStream as subsOpen, pullAfterAction } from '../collections/subs.js';
+import { beginOp, finishOp, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -1770,6 +1771,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const action = form.get('_action') ?? '';
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');
+    // An operation id (docs/specs/collections.md, "Commands"; t-2024): the window's name for this one action, so a retry
+    // (a dropped connection, another listener) gets the first one's answer and never runs it twice: a single-use
+    // approval is spent once. Only the page's own fetch sends one.
+    const op = form.get('_op');
+    const opSession = streamOwner(req, who);
+    const opHome = (opts.household?.() ?? hh)?.home;
+    if (op !== null) {
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(op) || !opHome) return send(res, 400, 'text/plain', 'bad operation id');
+      const b = withLog(opHome, (db) => beginOp(db, op, opSession));
+      if ('other' in b) return sendJson(res, 409, { error: 'that operation id is another session\'s' });
+      if ('answer' in b) return send(res, 200, 'application/json', b.answer);
+      if ('state' in b) return sendJson(res, 202, { ok: false, message: b.state === 'accepted' ? 'Still working on it.' : 'loom didn\'t hear how that went: look before trying again.', receipt: { op, state: b.state } });
+    }
     const backLink = splitPage(back) ? back : '';
     // A form has up to LIMITS.fields fields plus LIMITS.hidden hidden values.
     // More than that is refused whole, never cut short: a truncated form
@@ -1921,6 +1935,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         if (approvals) recordApprovalAnswer(hh, fields.id ?? '', { verdict: pieceVerdict!, by });
       }
     }
+    // What it changed is in the log before the answer (collections.md, "Commands"): its piece's domains (or core's) are
+    // pulled now, and the other listeners nudged, so every window hears it through its stream, this one included.
+    if (opHome) await pullAfterAction(opHome, opts.env, source.id === 'loom' ? 'loom' : source.id);
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
     // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
@@ -1939,9 +1956,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // JSON and stays where it is, unless the action lands somewhere else.
     if (req.headers['x-loom-fetch'] === '1') {
       const stay = to === pageHref(backLink, source);
-      return sendJson(res, 200, { ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
-        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }) });
+      // The receipt: done or failed, as the piece said. A grant or an approval is shown done only on this, never before.
+      const receipt = op !== null ? { receipt: { op, state: result.ok ? 'done' : 'failed', ...(result.ok ? {} : { why: result.message }) } } : {};
+      const answer = JSON.stringify({ ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
+        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }), ...receipt });
+      // A retry gets this same answer, never a second run (its one-time message, if any, is kept for it too).
+      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', answer));
+      return send(res, 200, 'application/json', answer);
     }
+    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.message, receipt: { op, state: result.ok ? 'done' : 'failed' } })));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 

@@ -15,3 +15,17 @@ export function pageTransport(csrf: () => string): Transport {
     on: (event, f) => onStreamEvent(event, f),
   };
 }
+
+/**
+ * A command for CollectionRuntime.command: an action (POST /act/…) posted as the page's script posts them, with the
+ * operation id the runtime gives it.
+ */
+export function actCommand(act: string, fields: Record<string, string>, csrf: () => string): (op: string) => Promise<{ status: number; json: unknown }> {
+  return async (op) => {
+    const r = await fetch(act, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, credentials: 'same-origin',
+      body: new URLSearchParams({ ...fields, _csrf: csrf(), _op: op }).toString() });
+    let json: unknown = null;
+    try { json = await r.json(); } catch { /* not JSON */ }
+    return { status: r.status, json };
+  };
+}

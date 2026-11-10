@@ -563,6 +563,22 @@ every window, the acting one included, through the stream, trimmed as usual. So 
 action, and none gets a record its viewer couldn't read. A window may show its own action as pending, but never
 shows a grant or an approval as done until the receipt says so. t-2024 owns the details.
 
+As built (t-2024):
+
+- **An operation id.** The page's script posts an action with `_op` (random, the window's own). Core keeps its receipt
+  in `live.db`, shared by every listener: a retry under the same id gets the first answer, and the action never runs
+  twice, so a single-use approval is spent once. Another session's id is refused (409). One still running answers
+  `accepted` (202); one that never finished answers `unknown` after two minutes, and is never run again.
+- **The answer carries the receipt** (`{op, state: done | failed, why}`), beside today's `ok` and `message`. CSRF,
+  same-origin, the caller and every grant check are unchanged: the receipt is added after them.
+- **Its changes before its answer**: the acting piece's domains (core's for `loom`) are nudged for every listener, and
+  pulled and delivered here (bounded at 3 s) before the answer goes, so the acting window hears its own change on its
+  stream like any other, and no window refetches.
+- **In the window** (`runtime.ts`, `command`): a dropped connection is retried under the same id; `accepted` is asked
+  again; an optimistic preview is allowed only for a reversible change to a record a view holds, never for a grant or
+  an approval, and a failure takes it back unless a frame has written the record since.
+- Read markers and prefs as records, and the Inbox's GET that marks read, move with the Inbox (t-2025).
+
 ## Read state and other per-viewer records
 
 What a viewer has read is a record, not a side effect of looking:

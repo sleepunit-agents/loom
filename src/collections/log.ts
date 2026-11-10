@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS idx (
   record   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_domain ON idx (domain);
+CREATE TABLE IF NOT EXISTS receipts (
+  op       TEXT PRIMARY KEY,
+  session  TEXT NOT NULL,
+  at       INTEGER NOT NULL,
+  state    TEXT NOT NULL,
+  answer   TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_expires ON idx (expires) WHERE expires IS NOT NULL;
 `;
 
@@ -295,4 +302,33 @@ export function expire(db: Database, now = Date.now()): number {
 /** Tell every listener there are new rows. */
 export function tick(home: string): void {
   try { writeFileSync(join(home, 'collections', TICK), String(Date.now())); } catch { /* the listeners' poll finds them */ }
+}
+
+// ─── Operation receipts (docs/specs/collections.md, "Commands"; t-2024) ─────
+
+export const RECEIPT_KEEP_MS = 24 * 60 * 60 * 1000;
+/** An operation still `accepted` this long after it began never finished: it's `unknown`, and never run again. */
+export const RECEIPT_STUCK_MS = 2 * 60 * 1000;
+
+export type OpBegin = { fresh: true } | { state: 'accepted' | 'unknown' } | { answer: string } | { other: true };
+
+/**
+ * An action's operation id, as it begins: fresh (run it), already running or done (its stored answer: a retry never runs
+ * an action twice), or another session's id (refused). Shared by every listener, so a retry that lands on another
+ * one is the same operation.
+ */
+export function beginOp(db: Database, op: string, session: string, now = Date.now()): OpBegin {
+  return db.transaction((): OpBegin => {
+    db.prepare('DELETE FROM receipts WHERE at < ?').run(now - RECEIPT_KEEP_MS);
+    const r = db.prepare('SELECT session, at, state, answer FROM receipts WHERE op = ?').get(op) as { session: string; at: number; state: string; answer: string | null } | undefined;
+    if (!r) { db.prepare("INSERT INTO receipts (op, session, at, state) VALUES (?, ?, ?, 'accepted')").run(op, session, now); return { fresh: true }; }
+    if (r.session !== session) return { other: true };
+    if (r.answer !== null) return { answer: r.answer };
+    return { state: now - r.at > RECEIPT_STUCK_MS ? 'unknown' : 'accepted' };
+  }).immediate();
+}
+
+/** An operation's outcome and the answer a retry gets. */
+export function finishOp(db: Database, op: string, session: string, state: 'done' | 'failed', answer: string): void {
+  db.prepare('UPDATE receipts SET state = ?, answer = ? WHERE op = ? AND session = ?').run(state, answer, op, session);
 }

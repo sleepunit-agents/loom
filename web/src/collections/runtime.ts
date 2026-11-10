@@ -40,6 +40,24 @@ export interface ViewState {
   more: boolean;
 }
 
+/**
+ * A command's receipt (collections.md, "Commands"; t-2024): `done` and `failed` are the piece's word; `accepted` is
+ * still under way; `unknown` is one loom never heard the end of (never run again: look before trying again).
+ */
+export interface Receipt { op: string; state: 'done' | 'failed' | 'accepted' | 'unknown'; why?: string; answer?: unknown }
+
+/**
+ * What a command may show before its receipt. Only a reversible change to a record the view holds, and never for a
+ * grant or an approval: those show as done only on the receipt.
+ */
+export interface CommandOptions {
+  kind?: 'grant' | 'approval' | 'other';
+  optimistic?: { type: string; rec: Rec };
+}
+
+export const COMMAND_RETRIES = 3;
+export const COMMAND_POLLS = 20;
+
 /** What the runtime needs of the page: a way to ask, and its one stream. */
 export interface Transport {
   /** POST /collections/query with the body (the page's anti-forgery token added by the transport). */
@@ -86,6 +104,14 @@ interface Sub {
 interface TypeStore { records: Map<string, Rec>; read: number }
 
 let counter = 0;
+/** An operation id: random, and the window's own (never derived from what it does). */
+function opId(): string {
+  const b = new Uint8Array(18);
+  crypto.getRandomValues(b);
+  let out = '';
+  for (const x of b) out += 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'[x & 63];
+  return `op-${out}`;
+}
 const key = (spec: QuerySpec) => JSON.stringify([spec.type, spec.where ?? [], spec.order ?? [], spec.limit ?? null, spec.fields ?? null, spec.aggregates ?? []]);
 
 const rank = (v: unknown) => (v === undefined || v === null ? 0 : typeof v === 'boolean' ? 1 : typeof v === 'number' ? 2 : 3);
@@ -167,6 +193,73 @@ export class CollectionRuntime {
     for (const s of all) { s.keys = []; s.status = 'denied'; this.publish(s); }
     for (const off of this.offs) off();
     clearInterval(this.sweeper);
+  }
+
+  /**
+   * Run a command (an action) under one operation id: `send(op)` posts it with `_op`. A dropped connection is retried
+   * with the same id, so the action runs once, whatever happens to its answers; `accepted` (another try of it still
+   * running) is asked again until it's settled. What it changed reaches the views through the stream, as any change
+   * does; nothing here writes records but an optimistic preview, which a failure takes back (unless the record has
+   * moved since). Answers its receipt.
+   */
+  async command(send: (op: string) => Promise<{ status: number; json: unknown }>, opts: CommandOptions = {}, wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<Receipt> {
+    const op = opId();
+    this.pendingOps.add(op);
+    let undo: (() => void) | undefined;
+    if (opts.optimistic && (opts.kind ?? 'other') === 'other') {
+      const { type, rec } = opts.optimistic;
+      const store = this.stores.get(type);
+      const before = store?.records.get(rec.key);
+      if (store && before) {
+        const shown = { ...before, ...rec } as Rec;
+        store.records.set(rec.key, shown);
+        this.hook?.upsert(type, [shown]);
+        this.republish(type);
+        undo = () => {
+          // Only if nothing has written the record since: a frame's newer word stands.
+          if (store.records.get(rec.key) !== shown) return;
+          store.records.set(rec.key, before);
+          this.hook?.upsert(type, [before]);
+          this.republish(type);
+        };
+      }
+    }
+    try {
+      for (let tries = 0, polls = 0; ;) {
+        let r: { status: number; json: unknown };
+        try { r = await send(op); } catch {
+          if (++tries > COMMAND_RETRIES) return this.settle(op, { op, state: 'unknown' }, undo);
+          await wait(500 * tries);
+          continue;
+        }
+        if (r.status === 401) { this.clear(); return this.settle(op, { op, state: 'failed', why: 'signed out' }, undo); }
+        const j = (r.json ?? {}) as { ok?: boolean; message?: string; receipt?: { state?: string; why?: string } };
+        const state = j.receipt?.state ?? (r.status >= 400 ? 'failed' : j.ok ? 'done' : 'failed');
+        if (state === 'accepted') {
+          if (++polls > COMMAND_POLLS) return this.settle(op, { op, state: 'unknown' }, undo);
+          await wait(1000);
+          continue;
+        }
+        const receipt: Receipt = { op, state: state as Receipt['state'], ...(state === 'failed' ? { why: j.receipt?.why ?? j.message ?? `status ${r.status}` } : {}), answer: r.json };
+        return this.settle(op, receipt, undo);
+      }
+    } finally { this.pendingOps.delete(op); }
+  }
+
+  /** Commands under way (a window may show them as pending). */
+  pending(): number { return this.pendingOps.size; }
+
+  private pendingOps = new Set<string>();
+
+  private settle(op: string, r: Receipt, undo?: () => void): Receipt {
+    if (r.state !== 'done' && undo) undo();
+    void op;
+    return r;
+  }
+
+  /** A record's views hear it moved (an optimistic preview, or its undoing). */
+  private republish(type: string): void {
+    for (const s of this.subs.values()) if (s.type === type) this.publish(s);
   }
 
   /** How many records the stores hold (tests, and the memory bound). */

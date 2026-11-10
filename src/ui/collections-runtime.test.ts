@@ -249,3 +249,62 @@ describe('the adapter: the runtime\'s stores in the pinned client library', () =
     expect(stores.held('tasks/task@^1')).toBe(0);
   });
 });
+
+describe('commands: one operation, its receipt, and an honest preview', () => {
+  const setup = async () => {
+    const f = fake(() => answerOf([row('t-1', { status: 'open' })]));
+    const rt = new CollectionRuntime(f.t);
+    f.emit('hello', { stream: 'e-1', scope: 1, seq: 0 });
+    const v = rt.view({ type: 'tasks/task@^1' }, () => {});
+    await settle();
+    return { rt, v };
+  };
+  const now = () => Promise.resolve();
+
+  it('a dropped connection is retried under the same operation id; accepted is asked again until it settles', async () => {
+    const { rt } = await setup();
+    const ops: string[] = [];
+    let n = 0;
+    const r = await rt.command(async (op) => {
+      ops.push(op);
+      n++;
+      if (n === 1) throw new Error('network');
+      if (n === 2) return { status: 202, json: { receipt: { op, state: 'accepted' } } };
+      return { status: 200, json: { ok: true, receipt: { op, state: 'done' } } };
+    }, {}, now);
+    expect(r.state).toBe('done');
+    expect(new Set(ops).size).toBe(1);
+    expect(ops[0]).toMatch(/^op-[A-Za-z0-9_-]{18}$/);
+    expect(rt.pending()).toBe(0);
+  });
+
+  it('an optimistic preview shows at once and is taken back on failure, unless the record moved since', async () => {
+    const { rt, v } = await setup();
+    const p = rt.command(async (op) => ({ status: 200, json: { ok: false, message: 'No.', receipt: { op, state: 'failed', why: 'No.' } } }),
+      { optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'closed' } } }, now);
+    expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'closed' });
+    expect(await p).toMatchObject({ state: 'failed', why: 'No.' });
+    expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'open' });
+    expect(v.state().keys).toEqual(['tasks/task/t-1']);
+  });
+
+  it('a grant or an approval is never shown done before its receipt', async () => {
+    const { rt } = await setup();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const p = rt.command(async (op) => { await gate; return { status: 200, json: { ok: true, receipt: { op, state: 'done' } } }; },
+      { kind: 'approval', optimistic: { type: 'tasks/task@^1', rec: { key: 'tasks/task/t-1', status: 'allowed' } } }, now);
+    expect(rt.records('tasks/task@^1').get('tasks/task/t-1')).toMatchObject({ status: 'open' });
+    expect(rt.pending()).toBe(1);
+    release();
+    expect((await p).state).toBe('done');
+  });
+
+  it('one never heard the end of is unknown, never sent again past its retries', async () => {
+    const { rt } = await setup();
+    let sent = 0;
+    const r = await rt.command(async () => { sent++; throw new Error('gone'); }, {}, now);
+    expect(r.state).toBe('unknown');
+    expect(sent).toBe(4);
+  });
+});

@@ -28,7 +28,7 @@ import { onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
 import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
-import { domainOfType, domainsOf, Puller, sourceOf } from './pull.js';
+import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
 import { isOutOfContract as outOfContract, providers, type Provider } from './serve.js';
@@ -508,6 +508,28 @@ export async function deliverNow(home: string): Promise<void> {
 export function pullNow(home: string, domain: string): Promise<unknown> {
   const h = homes.get(home);
   return h ? h.puller.now(domain) : Promise.resolve(undefined);
+}
+
+/**
+ * After an action (handler.ts): the acting piece's domains (core's for `loom`) are pulled before the answer, here if
+ * this listener has a subscription on them, and nudged for every other listener. Bounded: an answer waits at most
+ * PULL_WAIT_MS for it, and the stream catches up with the rest.
+ */
+export const PULL_WAIT_MS = 3_000;
+export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piece: string): Promise<void> {
+  let domains: string[];
+  try {
+    domains = [...providers(env).values()].filter((p) => (piece === 'loom' ? !p.piece : p.piece === piece)).flatMap((p) => [...domainsOf(p).keys()]);
+  } catch { return; }
+  if (!domains.length) return;
+  for (const d of domains) nudge(home, d);
+  const h = homes.get(home);
+  if (!h) return;
+  const wanted = wantedOf(h);
+  const pulls = domains.filter((d) => wanted.has(d)).map((d) => h.puller.now(d));
+  if (!pulls.length) return;
+  await Promise.race([Promise.all(pulls), new Promise((r) => setTimeout(r, PULL_WAIT_MS))]);
+  await deliverNow(home);
 }
 
 /** For tests: forget every stream and stop. */

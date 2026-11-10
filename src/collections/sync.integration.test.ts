@@ -28,6 +28,25 @@ const PROVIDER_BIN = `#!${process.execPath}
 const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
 const read = (f, d) => { try { return JSON.parse(fs.readFileSync(home + '/' + f, 'utf-8')); } catch { return d; } };
+// Its page and its one action, close: committed to its log like any write, then answered.
+if (process.argv[2] === 'ui' && process.argv[3] === '--json') { console.log(JSON.stringify({ v: 2, owners: 2, tab: { label: 'Tasks', kind: 'place' } })); process.exit(0); }
+if (process.argv[2] === 'ui' && process.argv[3] === 'act') {
+  const req = JSON.parse(fs.readFileSync(0, 'utf-8'));
+  fs.appendFileSync(home + '/acted', req.action + ' ' + (req.fields.id || '') + '\\n');
+  const all = read('records.json', []);
+  const r = all.find((x) => x.id === req.fields.id);
+  if (req.action !== 'close' || !r) { console.log(JSON.stringify({ ok: false, message: 'No such task.' })); process.exit(0); }
+  const log = read('plog.json', []);
+  const rev = (log.length ? log[log.length - 1].rev : 0) + 1;
+  const { id, audience, ...rest } = r;
+  const record = { ...rest, status: 'closed' };
+  log.push({ rev, txn: 'act' + String(rev).padStart(6, '0'), op: 'upsert', id, record, audience });
+  fs.writeFileSync(home + '/plog.json', JSON.stringify(log));
+  fs.writeFileSync(home + '/records.json', JSON.stringify(all.map((x) => x.id === id ? { id, ...record, audience } : x)));
+  console.log(JSON.stringify({ ok: true, message: 'Closed.' }));
+  process.exit(0);
+}
+if (process.argv[2] === 'ui') { console.log(JSON.stringify({ title: 'Tasks', sections: [] })); process.exit(0); }
 let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   const ask = JSON.parse(s);
   const log = read('plog.json', []);
@@ -173,6 +192,8 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     })())!;
     process.env.LOOM_HOME = h.home;
     piece(h.home, 'taskstore', { role: 'tasks', collections: { owners: 2, query: ['loom-taskstore', 'query'], changes: ['loom-taskstore', 'changes'], types: { task: TASK } } }, PROVIDER_BIN);
+    // Found as a piece of the page too (its manifest and its action), as an installed one is.
+    process.env.PATH = `${join(h.home, 'pieces', 'bin')}:${process.env.PATH}`;
     tok.jonathan = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
     tok.loren = createToken(h, { role: { kind: 'owner', member: 'loren' }, label: 'loren' }).token;
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
@@ -380,6 +401,38 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     const api = await fetch(`${base}/api/loom/collections/query`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.jonathan}` },
       body: JSON.stringify({ queries: [{ id: 'q', type: 'tasks/task@^1', subscribe: true, stream: jon.hello.stream }] }) });
     expect(((await api.json()) as { answers: unknown[] }).answers[0]).toMatchObject({ error: 'bad-query' });
+  });
+
+  describe('commands: an action answers with its receipt, and its changes are already on their way', () => {
+    const act = (token: string, fields: Record<string, string>) => fetch(`${base}/act/taskstore`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: `Bearer ${token}`, 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _path: '', ...fields }).toString(),
+    });
+    const acted = () => { try { return readFileSync(join(h.home, 'acted'), 'utf-8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    beforeEach(() => rmSync(join(h.home, 'acted'), { force: true }));
+
+    it('the change reaches every window through the stream, the acting one included, before or with the answer; a retry never runs it twice', async () => {
+      const { ev } = await live(tok.jonathan, { where: [['status', 'eq', 'open']] });
+      const op = 'op-' + 'a'.repeat(20);
+      const r = await act(tok.jonathan, { _action: 'close', id: 't-1', _op: op });
+      const body = await r.json() as Record<string, unknown>;
+      expect(body).toMatchObject({ ok: true, message: 'Closed.', receipt: { op, state: 'done' } });
+      // Pulled and delivered before the answer was sent.
+      expect(await until(() => rowsFrames(ev).length >= 1, 1500)).toBe(true);
+      expect(rowsFrames(ev)[0].data).toMatchObject({ leaves: ['tasks/task/t-1'] });
+      // A retry (the connection dropped): the same answer, and the piece isn't run again.
+      const again = await act(tok.jonathan, { _action: 'close', id: 't-1', _op: op });
+      expect(await again.json()).toEqual(body);
+      expect(acted()).toEqual(['close t-1']);
+      // Another session can't use or read it.
+      expect((await act(tok.loren, { _action: 'close', id: 't-1', _op: op })).status).toBe(409);
+      expect(acted()).toEqual(['close t-1']);
+    });
+
+    it('a failed action says so in its receipt, with why', async () => {
+      const r = await act(tok.jonathan, { _action: 'close', id: 'nope', _op: 'op-' + 'b'.repeat(20) });
+      expect(await r.json()).toMatchObject({ ok: false, receipt: { state: 'failed', why: 'No such task.' } });
+    });
   });
 
   it('a nudge says nothing back about the domain, and is held to one a second per token', async () => {
