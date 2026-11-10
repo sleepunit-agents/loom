@@ -38,11 +38,15 @@ type ThreadState = { working: boolean; working_since: string | null; queued: boo
 export type Thread = {
   id: string; agent: string; title: string | null; titled_by: string | null; project: string | null; pinned: boolean; archived: string | null;
   opened: string; last: string; read_seq: number; channel: number; conversation: string; state: ThreadState; unread?: boolean; last_seq?: number;
+  /** A spawned job's thread (t-2043): watched read-only until its member writes in it (joined). */
+  job?: { joined: boolean };
 };
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null; delivery?: Delivery };
 /** Where a message of yours is, as the server recorded it (comms.md, "Sending"): never a guess the app makes. */
 type Delivery = 'sending' | 'delivered' | 'failed';
+/** A thread's first read, and each earlier page: src/comms.ts PAGE. */
+const PAGE_SIZE = 100;
 const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
 /**
  * Whether a message can still change where it is on its own: one of yours on its way, or a step still running. The
@@ -687,6 +691,11 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   // Loom refused this thread's last read (a 503: comms.key missing or unreadable): its words, until a read works.
   const [refused, setRefused] = useState<string | null>(null);
+  // A job's thread opens to watch (t-2043): no composer and no Stop, so looking never touches the run, until Join in.
+  const [joining, setJoining] = useState(false);
+  const watching = !!thread.job && !thread.job.joined && !joining;
+  // Older messages, a page at a time, on demand: the first read is the newest page only.
+  const [earlier, setEarlier] = useState<'more' | 'loading' | 'all'>(initial.messages.length >= PAGE_SIZE ? 'more' : 'all');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
@@ -754,6 +763,18 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     }
     onChanged();
   }, [thread.id, onChanged]);
+
+  const older = useCallback(async () => {
+    const first = shown.current[0]?.seq;
+    if (!first) { setEarlier('all'); return; }
+    setEarlier('loading');
+    const got = await getRead<{ messages: Msg[] }>(`/comms/${thread.id}/before/${first}`);
+    if (!got.ok) { setEarlier('more'); const why = readRefusal(got.status, got.error); if (why) setRefused(why); return; }
+    const page = got.body.messages.filter((m) => m.seq < first);
+    shown.current = [...page, ...shown.current];
+    setMessages((ms) => [...page, ...ms.filter((m) => m.seq >= first)]);
+    setEarlier(got.body.messages.length >= PAGE_SIZE ? 'more' : 'all');
+  }, [thread.id]);
 
   // The thread's own stream: {seq} only (comms.md, "Live"); a dropped one says so and catches up when it's back.
   useEffect(() => {
@@ -872,7 +893,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
-        {thread.state.working && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
+        {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
         {context && <ThreadContextMenu thread={thread} at={context} close={closeContext} act={(action) => {
           if (action === 'title') void rename(); else if (action === 'project') void project(); else void verb(action);
@@ -914,6 +935,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
           <AgentChatThread className="comms-msgs" jumpLabel="Latest">
+            {earlier !== 'all' && <button type="button" className="comms-older" disabled={earlier === 'loading'} onClick={() => void older()}>{earlier === 'loading' ? 'Loading…' : 'Earlier messages'}</button>}
             {swept && initial.earlier?.length ? (
               <div className="comms-earlier">
                 <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>
@@ -949,7 +971,14 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         </ThreadRefs>
 
       </div>
-      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
+      {watching ? (
+        <div className="comms-watch" role="status">
+          <span className="comms-watch__what"><b>Watching</b> · {thread.state.working ? `${mark.label} keeps working when you close this.` : 'Closing this leaves the job as it is.'}</span>
+          <button type="button" className="comms-watch__join" onClick={() => setJoining(true)}>Join in</button>
+        </div>
+      ) : (
+        <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
+      )}
     </article>
   );
 }

@@ -21,7 +21,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   addMemberMessage, agentsComms, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
-  deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
+  deliveryFacts, isBackground, isJob, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { getConversation } from '../backends/conversations.js';
 import { agentDir } from '../household.js';
@@ -284,7 +284,9 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await asksOf(c, t),
+      // A spawned job's thread (t-2043): opened to watch, read-only, until its member chooses to write in it.
+      const job = isJob(h, t) ? { job: { joined: !isBackground(h, t) } } : {};
+      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: { ...view(t), ...job }, messages, asks: dir === 'before' ? undefined : await asksOf(c, t),
         ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
       return true;
     }

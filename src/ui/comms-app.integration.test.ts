@@ -158,6 +158,77 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     }
   }, 30_000);
 
+  it('opens a running job to watch, read-only, its steps arriving live, in every look at 1440 and phone width (t-2043)', async () => {
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'watch-ui', label: 'Nightly backup check',
+      at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'Check last night\'s backup' }) as { id: string };
+    const step = (id: string, summary: string, state: 'running' | 'done') => postActivity(h, process.env, { conversation: cv.conversation, run: 'run-0123456789ab', cards: [{ id, tool: 'Bash', summary, state }] });
+    step('s1', 'Listed the backup folder', 'done');
+    step('s2', 'Ran restic check', 'running');
+    let n = 0;
+    try {
+      for (const look of ['neon', 'lowlight', 'daylight']) for (const phone of [false, true]) {
+        const ctx = await browser.newContext(phone
+          ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, serviceWorkers: 'block' }
+          : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+        await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+        await ctx.addInitScript((l) => { try { localStorage.setItem('loom-look', l); } catch { /* private */ } }, look);
+        const page = await ctx.newPage();
+        const errors: string[] = [];
+        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('pageerror', (e) => errors.push(e.message));
+        try {
+          await page.goto(`${base}/comms/${job.id.slice(3)}`);
+          const bar = page.locator('.comms-watch');
+          await bar.waitFor();
+          expect(await bar.textContent()).toContain('Watching');
+          // Looking never touches the run: nothing to type into and no Stop.
+          expect(await page.locator('.comms-composer').count()).toBe(0);
+          expect(await page.locator('.comms-stop').count()).toBe(0);
+          // Its steps so far, folded to one line: how many, and the newest.
+          await page.locator('.comms-steps').filter({ hasText: n ? `Compared snapshot ${n - 1}` : 'Ran restic check' }).waitFor();
+          // A new step arrives live, without a reload.
+          step(`s${3 + n}`, `Compared snapshot ${n}`, 'running');
+          await page.locator('.comms-steps').filter({ hasText: `Compared snapshot ${n}` }).waitFor({ timeout: 10_000 });
+          n++;
+          expect(await noSideways(page)).toBe(true);
+          const box = await bar.boundingBox();
+          expect(box && box.y + box.height <= (phone ? 844 : 900) + 1).toBe(true);
+          if (process.env.LOOM_WATCH_SHOTS) await page.waitForTimeout(phone ? 2500 : 7000), await page.screenshot({ path: join(process.env.LOOM_WATCH_SHOTS, `watch-${look}-${phone ? 390 : 1440}.png`) });
+          // Join in: now it's a conversation, with its composer and Stop.
+          await page.getByRole('button', { name: 'Join in', exact: true }).click();
+          await page.locator('.comms-composer textarea').waitFor();
+          expect(await page.locator('.comms-stop').count()).toBe(1);
+          expect(errors).toEqual([]);
+        } finally { await ctx.close(); }
+      }
+    } finally {
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(job.id);
+      db.close();
+    }
+  }, 120_000);
+
+  it('opens a long thread at its newest page and loads earlier ones on demand (t-2043)', async () => {
+    const long = openThread(h, process.env, h.members[0], { agent: 'art', id: 'aaaaaaaaaaaalong', text: 'The first words' }).thread;
+    for (let i = 1; i <= 120; i++) expect(adapterCall(h, process.env, { op: 'post', place: long.id, agent: 'art', text: `Reply ${i}`, ref: `long-${i}` })).toMatchObject({ ok: true });
+    const { ctx, page, errors } = await open(false);
+    try {
+      await page.goto(`${base}/comms/${long.id.slice(3)}`);
+      await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'Reply 120' }).first().waitFor();
+      expect(await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'The first words' }).count()).toBe(0);
+      await page.getByRole('button', { name: 'Earlier messages', exact: true }).click();
+      await page.locator('.comms-msg--agent, .comms-msg--mine').filter({ hasText: 'The first words' }).first().waitFor();
+      expect(await page.locator('.comms-older').count()).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await ctx.close();
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      db.prepare('DELETE FROM comms_threads WHERE id = ?').run(long.id);
+      db.close();
+    }
+  }, 60_000);
+
   it('lets the owner choose a thread model, keeps the choice, and reports a failed save', async () => {
     const { ctx, page, errors } = await open(false);
     let selected = 'auto';

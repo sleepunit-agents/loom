@@ -269,3 +269,12 @@
 
 .comms-context-menu { --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); position: fixed; right: auto; z-index: 1000; max-height: calc(100dvh - 16px); overflow-y: auto; }
 .comms-context-menu button:focus-visible { outline: 2px solid var(--v-pink); outline-offset: -2px; }
+
+/* ---- watching a job (t-2043): read-only until Join in ---- */
+.comms-watch { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--comms-line); background: var(--v-paper); font-size: 13px; color: var(--v-text-2); }
+.comms-watch__what { flex: 1 1 auto; min-width: 0; }
+.comms-watch__what b { color: var(--v-text); font-weight: 600; }
+.comms-watch__join { flex: 0 0 auto; min-height: 44px; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--comms-line); color: var(--v-text); }
+.comms-older { align-self: center; min-height: 36px; padding: 4px 12px; font-size: 12px; color: var(--v-text-2); border: 1px dashed var(--comms-line); border-radius: 8px; }
+.comms[data-phone] .comms-watch { position: fixed; left: 0; right: 0; z-index: 25; bottom: calc(var(--dock-h) + env(safe-area-inset-bottom));
+  box-shadow: 0 var(--dock-h) 0 0 var(--v-paper); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
