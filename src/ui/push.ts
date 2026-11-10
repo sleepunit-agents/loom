@@ -95,16 +95,20 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   belongs?: (member: string | undefined) => boolean): Promise<number> {
   const w = store.takePushWatch(WATCH_S, undefined, belongs);
   if (!w) return 0;
-  const now = await asks();
-  // The first watch only records what's there (SEEDED marks that it has run).
-  const fresh = SEEDED in w.pushed ? now.filter((a) => !(a.key in w.pushed)) : [];
+  // One for a set of members is one for each of them, marked each on its own: a member it falls to later (its thread's
+  // member left, a job's thread opened late) hears of it then. None of them (in no one's Inbox yet): not marked at all.
+  const now = (await asks()).flatMap((a) => (a.members === undefined ? [{ a, mark: a.key }]
+    : a.members.map((m) => ({ a: { ...a, member: m, members: undefined }, mark: `${a.key}\0${m}` }))));
+  // The first watch only records what's there (SEEDED marks that it has run). One marked by its key alone was pushed
+  // before asks were marked per member: it isn't again.
+  const fresh = SEEDED in w.pushed ? now.filter((x) => !(x.mark in w.pushed) && !(x.a.key in w.pushed)) : [];
   // Five a minute at most; the rest wait for the next minute, unmarked, so none is dropped (a reply behind five asks).
-  const later = new Set(fresh.slice(5).map((a) => a.key));
-  store.markPushed([...now.map((a) => a.key).filter((k) => !later.has(k)), SEEDED]);
+  const later = new Set(fresh.slice(5).map((x) => x.mark));
+  store.markPushed([...now.map((x) => x.mark).filter((k) => !later.has(k)), SEEDED]);
   if (!fresh.length || !w.subs.length) return 0;
   const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
   let sent = 0;
-  for (const a of fresh.slice(0, 5)) {
+  for (const { a } of fresh.slice(0, 5)) {
     // Only what it is and who it's from, and where a tap opens: never the ask's words or a thread's title, which a
     // locked phone's screen or the push service's logs would show (t-1978 review). The page says the rest, signed in.
     const payload = JSON.stringify({ title: a.title, body: '', tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });

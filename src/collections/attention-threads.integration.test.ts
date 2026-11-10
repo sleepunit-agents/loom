@@ -453,6 +453,31 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     expect(sent.map((x) => x.to.split('/').pop())).toEqual(['sam']);
   }, 30_000);
 
+  it('one it falls to later hears of it then: a thread\'s ask pushed to its member, then to the household owner when they lose the agent', async () => {
+    const store = sessionStore(h.home);
+    const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'));
+    store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('sam'), undefined, 'sam');
+    const sent: string[] = [];
+    const minute = async () => {
+      const f = join(h.home, 'ui-sessions.json');
+      try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+      const send = async (s2: { endpoint: string }, payload: string) => { if (JSON.parse(payload).url.startsWith('/inbox')) sent.push(s2.endpoint.split('/').pop()!); return {} as never; };
+      return pushWatch({ contextDir: agentDir(h, 'art'), auth: { enabled: true, check: () => null, live: () => false }, env: process.env, household: () => h } as never, send as never);
+    };
+    await minute();
+    needs(thread('sam').conversation, 'Sam: OK to ship the comm screen?');
+    await minute();
+    expect(sent).toEqual(['sam']);
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art',
+      members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['mark'] }] }));
+    h = loadHousehold(h.home)!;
+    await minute();
+    expect(sent).toEqual(['sam', 'jon']);
+    await minute();
+    expect(sent).toEqual(['sam', 'jon']);
+  }, 30_000);
+
   it('a lead card absorbed by a member\'s Needs you is still pushed to household owners', async () => {
     const store = sessionStore(h.home);
     const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });

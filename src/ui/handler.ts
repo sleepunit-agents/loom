@@ -746,7 +746,8 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
   // A household's asks are the attention records (t-2025), read as the core viewer: each one that needs someone, to
   // exactly the members whose Inbox has it (its audience), so a push follows the Inbox's own rules (whose agents, whose
   // Comms threads, t-2084; a household owner's alone) and never decides them again. One that's in no one's Inbox yet
-  // (a job whose thread may still open) isn't announced, nor marked pushed: it's announced to whom it falls once it is.
+  // (a job whose thread may still open) isn't announced, nor marked pushed; each member is marked on their own (push.ts
+  // watch), so one it falls to later hears of it then.
   return watch(storeFor(opts), async () => {
     if (!hh) return (await yourCall(opts)).map((a) => ({ key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text }));
     const records = await attentionFor(opts, { kind: 'core' });
@@ -2018,7 +2019,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const ps = await commsPieces();
         const appr = pieceWithRole(opts.env, 'approvals')?.name;
         const recs = seen && who.member ? await attentionFor(unscoped, memberViewer(full, who.member)) : [];
-        return { items: recs.map(inboxItemOf), leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+        // Its lead cards from the same read of the pieces as the records (no LOOM_SCOPE: memberInbox's).
+        const leads = leadIds(forOwner((await pieceManifests(unscoped.env)).pieces, opts.ownerScope), opts.env);
+        return { items: recs.map(inboxItemOf), leads, householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
           ...(appr ? { approvals: pieceSource(appr).id } : {}) };
       })()) });
     return;
