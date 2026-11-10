@@ -771,9 +771,16 @@ along with the listeners. The adapter is the only code that imports the client l
   `description` (heavy). taskstore stays the authority; core keeps no copy beyond its log and index.
 - **Who**: no `owners: 2`, as with its pages, so household owners only. Its audience is `{owners: true}`, and the
   provider answers no rows to any other viewer, deciding before it pages.
-- **No change log yet**: core bridges it, with a snapshot as the core viewer on each pull (measured on the real
-  store: 2,126 tasks, five pages of 500, about 0.7 s). Past 10,000 tasks a snapshot is partial and deletes nothing, so
-  a `changes` verb is owed before then.
+- **Transactional source log** (part 11): `loom-tasks collections changes --json` answers revisions committed in
+  the same SQLite write as task state, with random transaction identities and restore-cursor proof. It includes
+  dependent records whose blocker/parent/ready state changed, and deletes. Pages hold at most 1,000 changes and
+  3 MiB of serialized UTF-8 changes (below core's 4 MiB offer limit), ending on transaction boundaries when possible.
+  Core advances a separate paging cursor while holding a partial transaction and commits it whole; a transaction
+  larger than its round budget finishes before yielding. Durable epoch/revision/transaction comparisons under the
+  write lock fence a suspended listener even after a successor's lease expires. Heavy descriptions and comment text
+  never enter the source log. `updated` remains newest activity, independent of source revision. Existing stores
+  start at a new random origin, with a snapshot for initial state; subsequent pulls no longer scan every task.
+  History is retained without pruning in this slice. A single change larger than the byte budget is unavailable.
 - **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
   store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.
 - **The queues are a filter** (tasks/task 1.1): `ready` (the `taskstore ready` rule: open, not an epic, no open blocker),
