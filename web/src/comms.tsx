@@ -948,7 +948,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             </div>
           </div>
         )}
-        <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
+        <ThreadRefs thread={thread.id} csrf={csrf} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
           <AgentChatThread className="comms-msgs" jumpLabel="Latest">
             {earlier !== 'all' && <button type="button" className="comms-older" disabled={earlier === 'loading'} onClick={() => void older()}>{earlier === 'loading' ? 'Loading…' : 'Earlier messages'}</button>}
