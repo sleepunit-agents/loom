@@ -76,7 +76,24 @@ export function watchComms(home: string): void {
 
 function ensure(home: string): void {
   if (homes.has(home)) return;
-  const tick = () => { tellMembers(home); pass(home); };
+  let busy = false;
+  const tick = () => {
+    try {
+      tellMembers(home);
+      pass(home);
+      busy = false;
+    } catch (error) {
+      // Watchers and timers have no request error boundary. A transient lock
+      // must leave the listener alive; the next poll retries the same cursor.
+      const code = (error as { code?: string } | null)?.code;
+      if (code !== 'SQLITE_BUSY' && code !== 'SQLITE_LOCKED') {
+        console.error('loom: Comms live update failed; retrying on the next poll', error);
+        return;
+      }
+      if (!busy) console.warn('loom: Comms live updates waiting for the database; retrying on the next poll');
+      busy = true;
+    }
+  };
   let watcher: FSWatcher | undefined;
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
