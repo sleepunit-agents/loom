@@ -11,7 +11,10 @@
  */
 import { watch, type FSWatcher } from 'node:fs';
 import type { ServerResponse } from 'node:http';
-import { movedSince, onBump, seqsOf, threadState } from '../comms.js';
+import { join } from 'node:path';
+import { COMMS_DB, movedSince, onBump, seqsOf, threadState } from '../comms.js';
+import { HOUSEHOLD_DB } from '../household-store.js';
+import { isSqliteBusy, waitForLocks } from '../lock-gate.js';
 import { changedFor } from './live.js';
 
 const BEAT_MS = 25_000;
@@ -76,23 +79,40 @@ export function watchComms(home: string): void {
 
 function ensure(home: string): void {
   if (homes.has(home)) return;
-  let busy = false;
+  let busy = false, running = false, again = false;
+  const waiting = () => {
+    again = false;
+    if (!busy) console.warn('loom: Comms live updates waiting for the database; retrying on the next poll');
+    busy = true;
+  };
+  // One pass at a time, after the databases can be read: a lock is waited out off the event loop (lock-gate.ts), and
+  // one still held after the wait is the next poll's. A move told meanwhile runs one more pass.
   const tick = () => {
-    try {
-      tellMembers(home);
-      pass(home);
-      busy = false;
-    } catch (error) {
-      // Watchers and timers have no request error boundary. A transient lock
-      // must leave the listener alive; the next poll retries the same cursor.
-      const code = (error as { code?: string } | null)?.code;
-      if (code !== 'SQLITE_BUSY' && code !== 'SQLITE_LOCKED') {
-        console.error('loom: Comms live update failed; retrying on the next poll', error);
-        return;
-      }
-      if (!busy) console.warn('loom: Comms live updates waiting for the database; retrying on the next poll');
-      busy = true;
-    }
+    if (running) { again = true; return; }
+    running = true;
+    void (async () => {
+      do {
+        again = false;
+        if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] })) { waiting(); return; }
+        try {
+          tellMembers(home);
+          pass(home);
+          busy = false;
+        } catch (error) {
+          // Watchers and timers have no request error boundary. A transient lock
+          // must leave the listener alive; the next poll retries the same cursor.
+          if (!isSqliteBusy(error)) {
+            console.error('loom: Comms live update failed; retrying on the next poll', error);
+            return;
+          }
+          waiting();
+          return;
+        }
+      } while (again);
+    })().finally(() => {
+      running = false;
+      if (again) tick();
+    });
   };
   let watcher: FSWatcher | undefined;
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }

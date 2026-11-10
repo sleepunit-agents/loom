@@ -25,6 +25,7 @@ import { ConversationError, parseTurn, type From } from './backends/conversation
 import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
+import { waitForLocks, WRITE_WAIT_MS } from './lock-gate.js';
 import { Pool } from './ui/pieces.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
 import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer, type OfferResult } from './offers-registry.js';
@@ -362,6 +363,9 @@ async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: Deliver
   const pending = inFlight.get(key);
   if (pending) return pending.hash === k.hash ? pending.result : conflict(d.id);
   const result = (async (): Promise<DeliverResult> => {
+    // Its kept answers, read and written once household.db is free: a lock is waited out off the event loop (lock-gate.ts).
+    const keptDb = [join(h.home, HOUSEHOLD_DB)];
+    await waitForLocks({ read: keptDb });
     const kept = replayOf(h.home, k.piece, k.id, nowMs());
     if (kept) return kept.hash === k.hash ? { status: 200, body: kept.answer } : conflict(d.id);
     if (keptCount(h.home, k.piece, nowMs()) >= DELIVERY_LIMITS.keptPerPiece) {
@@ -381,6 +385,7 @@ async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: Deliver
       if (r.error === 'timed out') return refuse(504, `timeout: the delivery piece (${target.piece}) didn't answer within ${DELIVERY_LIMITS.timeoutMs / 1000} s`);
       return refuse(502, `bad-gateway: the delivery piece (${target.piece}) failed (${r.error})`);
     }
+    await waitForLocks({ write: keptDb, budgetMs: WRITE_WAIT_MS });
     keepAnswer(h.home, k, r.value, nowMs());
     return { status: 200, body: r.value };
   })();
