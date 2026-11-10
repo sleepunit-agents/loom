@@ -41,10 +41,13 @@ jobs:
     name: build + test
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
-    # people with write access can start, or a pull request whose branch lives in this repository. A fork's
-    # pull request always gets ubuntu-latest, and so does everything while the repository variable
-    # LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the fallback when our runners are down).
-    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
+    # people with write access can start, or a pull request from a branch in this repository that a person
+    # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
+    # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, so this is
+    # not the lock: the runner group admits only this repository, and the runners' job-started hook
+    # refuses a fork's pull request, and any queue group while a fork's pull request is in the queue.
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,10 +165,13 @@ jobs:
     needs: [test, package]
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
-    # people with write access can start, or a pull request whose branch lives in this repository. A fork's
-    # pull request always gets ubuntu-latest, and so does everything while the repository variable
-    # LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the fallback when our runners are down).
-    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
+    # people with write access can start, or a pull request from a branch in this repository that a person
+    # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
+    # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
+    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, so this is
+    # not the lock: the runner group admits only this repository, and the runners' job-started hook
+    # refuses a fork's pull request, and any queue group while a fork's pull request is in the queue.
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
