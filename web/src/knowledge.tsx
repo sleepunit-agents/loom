@@ -1,3 +1,4 @@
+import { aboutAttr } from './about';
 // Knowledge, a reader with topics (t-1925, Jonathan's approved mock 2026-11-06): Recently verified and Due a check, the
 // topic tree from the domains loom stores (music/norns, ours/homelab), the list with each page's freshness as a dot,
 // and the reader: the page, when it was last verified, its sources, what cites it, and Still true / Check again.
@@ -85,7 +86,7 @@ export function KnowledgeView({ data }: { data: KnowledgeData }) {
     <Split className="loom-kn" label="Knowledge" folders={folders} folder={needle ? '' : f} onFolder={(id) => { setF(id); setQ(''); }} search={search}
       listTitle={label} listMeta={<>{`${shown.length} page${shown.length === 1 ? '' : 's'}`}{data.add && <> · <Link page={data.add.page} className="loom-kn__add">{data.add.label}</Link></>}</>}
       list={shown.length ? shown.map((r) => (
-        <button key={r.slug} type="button" data-split-row="" className="loom-kn__row" aria-current={sel === r.slug ? 'true' : undefined} onClick={() => pick(r.slug)}>
+        <button {...aboutAttr({ ref: `knowledge:${r.slug}`, page: `knowledge/${r.slug}`, label: r.title })} key={r.slug} type="button" data-split-row="" className="loom-kn__row" aria-current={sel === r.slug ? 'true' : undefined} onClick={() => pick(r.slug)}>
           <span className="loom-kn__dot" data-fresh={r.fresh} role="img" aria-label={FRESH_WORD[r.fresh]} />
           <span className="loom-split__words"><span className="loom-split__title">{r.title}</span>
             <span className="loom-kn__meta loom-data">{r.verified_at ? `verified ${date(r.verified_at)}` : `written ${date(r.updated)}`} · {leaf(r.domain)}</span></span>
