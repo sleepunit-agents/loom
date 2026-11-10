@@ -1,0 +1,38 @@
+[
+  {
+    "look": "neon",
+    "width": 1440,
+    "text": "2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  },
+  {
+    "look": "neon",
+    "width": 390,
+    "text": "live2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  },
+  {
+    "look": "lowlight",
+    "width": 1440,
+    "text": "2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  },
+  {
+    "look": "lowlight",
+    "width": 390,
+    "text": "live2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  },
+  {
+    "look": "daylight",
+    "width": 1440,
+    "text": "2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  },
+  {
+    "look": "daylight",
+    "width": 390,
+    "text": "live2 agentsArt · Activity unavailableMark · Reading a file · a wake",
+    "overflow": false
+  }
+]
