@@ -1,6 +1,6 @@
 # Collections: one shared, permissioned path for app data
 
-*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Nothing here is built yet. A design doc in
+*2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow
 loom has today with the task that moves it, or the reason it stays where it is. Four cold review rounds and a fresh
@@ -154,10 +154,25 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
   in commit order, each **as of its own revision** (the next section).
 - **`search`**: optional. It gets one viewer, the field classes that viewer may see, and a query text, and answers
   references and snippets (below).
-- **Their limits are their own** (`OFFER_LIMITS`): 15 s; 1 MB an answer, with each query in a batch given its own
-  share (a query that would overflow its share answers `too-big` alone and the others still answer), and each
-  `changes` page bounded by bytes as well as by count; and a pool apart from the page's pieces (four running,
-  sixteen waiting per provider), so live data can't starve page loads or the other way round.
+- **A `query` answer is JSON lines**, read as they come: `{"id": q, "row": {…}}` for each row, then
+  `{"id": q, "more": true|false}`, or `{"id": q, "error": "unavailable"}` instead; and `{"at": {…}}` once. Core checks
+  each row for its viewer the moment it arrives (a row the viewer may not have stops the run, out of contract), and
+  only rows it admitted count against a query's share of the answer: so a provider's size, like its counts, never
+  says hidden records matched. `too-big` is core's to say, from the rows as the viewer would get them; a provider
+  saying it, a line that isn't one of these, a row out of its place, or one line over 4 MB is out of contract.
+- **Their limits are their own** (`OFFER_LIMITS`): 15 s; 1 MB an answer of admitted rows, with each query in a batch
+  given its own share (a query that would overflow its share answers `too-big` alone and the others still answer),
+  4 MB a line; each `changes` page bounded by bytes as well as by count; and a pool apart from the page's
+  pieces (four running, sixteen waiting per provider), so live data can't starve page loads or the other way round.
+- **First-party providers only, until the conformance run (t-2026) can vouch for one.** Core checks every row, but
+  against a provider that ignores its viewer it can only take it out of contract at the first hidden row, and every
+  answer before that said no hidden record matched (t-2021's review). So a provider is trusted code, as a piece's
+  pages already are: core serves collections only from a piece installed from a repo in loom's catalog, never a local
+  or unlisted one, and its checks are the defence behind that, not the only one. What a provider owes, and t-2026's
+  run pins: it filters for its viewer before it pages; it filters and orders on a field as this viewer would see it
+  (a type that hides a field record by record never filters or sorts on the stored value); a row carries only the
+  fields asked for, the order's and the agent field. Two signals stay outside any answer: a run's time can grow with
+  data the viewer can't see, and a busy provider pool says other viewers are asking.
 - **`owners: 2`**, declared here and fixed at install: the gate [owners.md](owners.md) already has for pages.
   **A provider that doesn't declare it answers only household owners**, and core refuses any other viewer's query
   before running it. It's read from the installed declaration, never from a cached manifest, so it can't flap when a
@@ -218,8 +233,17 @@ below), and may not subscribe there: there is no stream on `/api`.
 - **Never on a hidden field.** Core refuses a query as `bad-query` when a `where`, `order` or `aggregates.by` names
   a field the viewer's class can't see, before the provider runs. Otherwise a viewer could learn a hidden value from
   which rows come back, character by character with `prefix`, or from the order.
-- **Pages are keyset pages**: `after` is an opaque cursor. Core seals every cursor (a MAC over the provider's cursor,
-  the viewer, the scope and the query), so a cursor can't be read, edited or reused by another viewer or query.
+- **Pages are keyset pages**: `after` is an opaque cursor. Core makes it itself, from the last row it sent (that row's
+  order values, then its id), and seals it (AES-GCM, bound to the viewer and the query), so a cursor can't be read,
+  edited or reused by another viewer or query. A provider is asked for **one row more than the page** and given
+  `after` as that order key: core says there's more only when the row past the page is one the viewer may have, so a
+  `next` never says that a hidden record matched (t-2021's review). The provider says `more` itself (more rows match past
+  those it sent), and only beside a full page as asked: a provider that paged before it filtered says there's more
+  beside a short page, which is out of contract (below), never a short page taken as the end. What core can't catch
+  is a provider that filters for the viewer after it fetched a page and then computes `more` from what's left: its
+  page ends early, and a viewer who knows how many of their own records match learns that hidden ones did. A provider
+  filters for its viewer **before** it pages; t-2026's conformance run holds every provider to it (a viewer with
+  `limit + 1` records of their own, hidden records between them, gets `limit + 1` back).
 - **Fields**: an answer carries the record key and only the fields named (or the type's `default_fields`), further
   cut down to what the viewer's class allows. A field the viewer may not see is **absent**, not null, and the answer
   lists which named fields were withheld, so a window shows "hidden", not "empty". A record's `audience` is sent to
@@ -246,7 +270,10 @@ The answer, per query:
   (unknown). The UI shows "20 of 214", "20 of 1000+", or "20", accordingly. A badge reads an **aggregate**, never
   `rows.length`.
 - **Counts and totals are something core can't check**: it can drop a row the viewer may not see, but it can't
-  recount a number. So a provider's `aggregates` and `coverage.total` go **to household owners only**, unless the
+  recount a number. **Until the conformance run exists (t-2026), no provider's counts go to anyone**, household owners
+  included: a careless provider's would count another member's own records and name their values in a `by` (t-2021's
+  review found it). Core counts complete answers itself, below. Once the run exists: a provider's `aggregates` and
+  `coverage.total` go **to household owners only**, unless the
   type declares `scoped_counts: true`, which it may do only once its conformance run passes the per-viewer count
   fixtures (an agent owner's count excludes other agents' records; a member's excludes others' threads). Without
   it, other viewers get `total` absent and no aggregates from the provider. **Where a subscription's coverage is
@@ -254,6 +281,11 @@ The answer, per query:
   owner's badge still counts their own ([owners.md](owners.md): "Badges count your own"). The attention types are
   small and complete, so t-2025 relies on this; a count over a partial list says "20" rather than a number it can't
   trust.
+- **A provider counts only what its viewer may see**, household owners included: a record whose audience is
+  `members` alone is counted only for the members it names. Core can't recount, so it does what it can: when it
+  drops any row of an answer (the provider answered a row this viewer may not have), it drops that answer's
+  provider totals and aggregates too. Until the conformance suite exists (t-2026), install refuses `scoped_counts`
+  and `scoped_search`, and core passes no provider's counts on at all (above).
 - **`at`** is the point on the window's stream this answer is consistent with: frames after it apply on top of it.
 - **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `too-big`, `denied` (the viewer
   or the consumer may not read this type), `unavailable` (the provider timed out or failed). One provider's failure
@@ -275,7 +307,13 @@ A record is visible to a viewer when **every one** of these holds:
    change, there's no viewer to hand it (one change goes to many), so the provider's word is the record's
    `audience`; a type whose rules an audience can't express declares `"audience": "ask"` (below).
 2. **The audience admits them** (below). Core checks this on every row of every answer and every change, whatever the
-   provider said: a provider that ignores who's asking leaks no rows.
+   provider said: a provider that ignores who's asking leaks no rows. Nor does it leak through what core does
+   about it: a shorter page, a missing `next` or an error would each tell the viewer a hidden record matched their
+   query, so a provider that answers any row its viewer may not have is **out of contract**. That answer, and every
+   answer from it after, to anyone, is `unavailable` until it's reinstalled or loom restarts (one bit, once per
+   listener). So is a page with a `next` that isn't full: a provider that paged first and filtered after would be
+   saying hidden records matched. A row of the viewer's own that core can't send (a bad id, a bad expiry) fails only
+   that answer.
 3. **The agent rule admits them.** For an owner of some agents, core admits only records whose `agent` field names
    one of their agents. A record with no agent, or of a type with no `agent` field, is household owners' only, except
    through a `members` term that names that member: their own read markers, prefs and session list are theirs. This is
@@ -752,7 +790,7 @@ The conformance suite (t-2026) runs against core's provider and every installed 
 - **Viewer authority**: for a household owner, an owner of some agents, two members sharing an agent, an agent
   token, a task house's token and a service house's token, each query, search result and change reaches exactly the
   records and fields that the provider, the audience, the agent rule and the classes allow; a withheld field is
-  absent and listed in `withheld`; a provider that ignores the viewer leaks no rows (core's own checks); a record
+  absent and listed in `withheld`; a provider that ignores the viewer leaks no rows and is taken out of contract (core's own checks); a record
   with no agent never reaches an agent owner; a provider without `owners: 2` answers only household owners; a
   member's Comms thread never reaches another owner of the same agent, and stops reaching its member the moment
   they stop owning its agent; `audience` is never sent to anyone but household owners.

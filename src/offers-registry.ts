@@ -67,6 +67,10 @@ export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   grants: { timeoutMs: 10_000, maxBytes: 4 * 1024, pool: 'grants' },
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
+  // docs/specs/collections.md ("Their limits are their own"): 15 s; the pool is per provider (src/collections/serve.ts),
+  // apart from the page's. The answer is read a line at a time and each row checked as it comes; only the rows core
+  // admits count against its 1 MB. This is the most one line (one row) may be.
+  collections: { timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024, pool: 'collections' },
 };
 
 /**
@@ -88,6 +92,11 @@ export interface RunOfferOptions<T> {
   limits?: Partial<OfferLimits>;
   /** Who the call is for: the process gets that caller's store grant (as for a piece's API). */
   caller?: ApiCaller;
+  /**
+   * The answer read a line at a time as it comes (JSON lines), instead of one value at the end: `parse` then gets
+   * null. Returning `stop` ends the run (`stopped`).
+   */
+  onLine?: (line: string) => 'go' | 'stop';
 }
 
 /**
@@ -110,7 +119,7 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
   const limits = { ...OFFER_LIMITS[opts.kind ?? 'sections'], ...opts.limits };
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
-    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller,
+    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller, onLine: opts.onLine,
   });
   if (!r.ok) {
     if (r.exit === undefined) return { ok: false, error: r.reason };
@@ -118,8 +127,8 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
     try { answer = r.stdout ? JSON.parse(r.stdout) : undefined; } catch { answer = undefined; }
     return { ok: false, error: r.reason, exit: r.exit, ...(answer !== undefined ? { answer } : {}) };
   }
-  let parsed: unknown;
-  try { parsed = JSON.parse(r.stdout); } catch { return { ok: false, error: 'invalid: not JSON' }; }
+  let parsed: unknown = null;
+  if (!opts.onLine) try { parsed = JSON.parse(r.stdout); } catch { return { ok: false, error: 'invalid: not JSON' }; }
   const v = opts.parse(parsed);
   return typeof v === 'string' ? { ok: false, error: `invalid: ${v}` } : { ok: true, value: v };
 }

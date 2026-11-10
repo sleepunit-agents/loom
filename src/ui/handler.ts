@@ -79,6 +79,8 @@ import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
+import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
+import { memberViewer } from '../collections/viewer.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -135,6 +137,8 @@ const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
   return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/inbox/open' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/passkeys/options' || pathname === '/account' || pathname === '/events'
+    // Shared collections answer for their viewer alone (docs/specs/collections.md).
+    || pathname === '/collections/query'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
@@ -269,7 +273,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/pixel-icons', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
+const PAGE_ROOTS = ['/collections', '/app', '/faces', '/pixel-icons', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -1523,6 +1527,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return a ? [a] : '*';
     };
     return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}) });
+  }
+
+  // Shared collections (docs/specs/collections.md, "Asking: queries"): a batch of bounded queries, answered for this
+  // member alone. A UI route like /act: same origin, and a session's anti-forgery token.
+  if (pathname === `/${COLLECTIONS_QUERY_ROUTE}`) {
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
+    if (!full || !who.member) return sendJson(res, 404, { error: 'shared collections are a household\'s' });
+    const body = await readJson(req, COLLECTIONS_MAX_BYTES);
+    if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
+    if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    const r = await answerBatch({ env: opts.env, household: full }, memberViewer(full, who.member), body);
+    return sendJson(res, r.status, r.body);
   }
 
   // Comms (docs/specs/comms.md): JSON routes, each checking the member owns the thread's agent and opened it.

@@ -12,7 +12,8 @@
  *    uninstalled while the call was in flight: the call is refused with 503 and the reason.
  *  - **Refused:** `{allow: false, reason}` is a 403 with the authority's reason. The piece never runs.
  *  - **Fallback:** with no authority installed, there's nothing to ask: each piece decides by its
- *    own agent list, as before.
+ *    own agent list, as before. A shared collection has no such list (docs/specs/collections.md, "2. Consumer
+ *    capability"): asked with `required`, no authority is a refusal.
  *  - Owner calls never ask (the callers here are agents' only), nor does the authority's own piece
  *    asking about itself for a delivery (src/delivery.ts).
  *  - **Answers reused, never stale** (t-2065): running the authority for every call was two node
@@ -45,6 +46,9 @@ export interface GrantAsk {
   agent: string;
   piece: string;
   path: string;
+  /** A house's token (its id), a service house's (its service): said to the authority when there is one. */
+  house?: string;
+  service?: string;
 }
 
 /** Undefined when the call may go on; else the status (403 refused, 503 couldn't ask) and why. */
@@ -87,20 +91,22 @@ export function parseGrantAnswer(v: unknown, withBasis = false): (GrantAnswer & 
  * A path is what follows /api/<piece>/ (`run` for a piece's remote CLI), or `deliver` for a
  * delivery the piece makes for the agent.
  */
-export async function askGrant(env0: NodeJS.ProcessEnv, ask0: GrantAsk): Promise<GrantRefusal> {
+export async function askGrant(env0: NodeJS.ProcessEnv, ask0: GrantAsk, opts: { required?: boolean } = {}): Promise<GrantRefusal> {
   // One home for everything here: the records and bin read, the store file read, and the authority's own
   // `loom store` reads (it runs with this env), so core and the authority look at the same file.
   const env: NodeJS.ProcessEnv = { ...env0, LOOM_HOME: householdHome(env0) };
   // Exactly what the key names is what the authority is asked.
-  const ask: GrantAsk = { agent: ask0.agent, piece: ask0.piece, path: ask0.path };
+  const ask: GrantAsk = { agent: ask0.agent, piece: ask0.piece, path: ask0.path, ...(ask0.house !== undefined ? { house: ask0.house } : {}), ...(ask0.service !== undefined ? { service: ask0.service } : {}) };
   const auth = grantsAuthority(env);
   if (auth.piece === undefined) {
     if (auth.conflict) return { status: 503, error: `unavailable: more than one piece offers grants (${auth.conflict.join(', ')}); there's no authority to ask` };
+    // Where there's no piece's own list to fall back on (a shared collection: docs/specs/collections.md), no authority is a no.
+    if (opts.required) return { status: 403, error: `forbidden: no grants authority is installed, so ${ask0.agent} is given nothing of ${ask0.piece}'s ${ask0.path}` };
     return undefined;
   }
   const who = `${ask.agent}'s call to ${ask.piece}`;
   const before = grantsState(env, auth.piece, auth.argv);
-  const key = before && `${before.id}\0${JSON.stringify([ask.agent, ask.piece, ask.path])}`;
+  const key = before && `${before.id}\0${JSON.stringify([ask.agent, ask.piece, ask.path, ask.house ?? null, ask.service ?? null])}`;
   const hit = key ? answers.get(key) : undefined;
   if (hit && performance.now() - hit.at < ANSWER_MAX_AGE_MS) return refusal(hit.answer);
   const stdin = JSON.stringify(before ? { ...ask, basis: true } : ask);

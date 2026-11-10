@@ -176,7 +176,7 @@ built: see "Offers" below.
 ### Offers
 
 A managed piece (specs/pieces-install.md) declares in its package's `loom`
-block what it offers through core. These are five sibling keys, each with its
+block what it offers through core. These are six sibling keys, each with its
 own schema:
 
 | Key | What core does with it | Its schema |
@@ -186,6 +186,7 @@ own schema:
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
 | `delivery` | forwards [`POST /api/loom/deliver`](#deliver-anything-addressed-to-an-agent) to this piece | [specs/agent-runtime.md](specs/agent-runtime.md), "Delivery" |
+| `collections` | serves the piece's shared collections to windows and tokens, checking every row against its viewer | [specs/collections.md](specs/collections.md), "Declaring a provider" |
 
 ```jsonc
 "loom": {
@@ -243,6 +244,15 @@ own schema:
   (`src/grants.ts`, t-2065).
 - **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
   may declare it, and a second installed piece offering it is refused.
+- **`collections`:** the record types the piece publishes and the `query` argv
+  core runs with one viewer and a batch of up to 32 queries on stdin
+  ([specs/collections.md](specs/collections.md)). It publishes under its role,
+  else its name: a provider name is one piece's, and `loom` is core's. Its
+  limits are its own: 15 s and 1 MB an answer, four at once and sixteen waiting
+  per provider. Core checks every row it answers against the viewer (the
+  record's audience, core's agent rule, the field classes), so a provider that
+  ignores who's asking leaks nothing: it's out of contract, and answers no one
+  until it's reinstalled (`src/collections/`).
 - **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
   delivers on it (the clock) declares an empty entry for it, which defines
   nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
@@ -255,7 +265,8 @@ own schema:
   section-feed schema; without one, or once orphaned, core's generic render
   shows the conversation.
 - **Against what's installed:** a venue or tool name another installed piece
-  declares is refused, and so is a second piece offering `grants` or `delivery`. A piece's
+  declares is refused, and so is a second piece offering `grants` or `delivery`, or a
+  provider name (a role or a name) another piece already holds. A piece's
   own update, or a rollback, is checked the same way.
 - **One runner.** Core runs an offer's argv, plus that offer's arguments (and
   stdin, where it has one), in the piece's own environment, through the
