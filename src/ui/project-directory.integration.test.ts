@@ -92,12 +92,14 @@ describe.runIf(built && chrome)('Projects directory cards', () => {
       await card.getByText('Changed project', { exact: true }).waitFor();
       await card.getByText(/Couldn't count what's waiting/).waitFor();
       const warm = queries;
+      cached.projects.active.find((c: { slug: string }) => c.slug === 'cached').what = 'Cached page copy';
       await page.route('**/projects', async (route) => {
         if (route.request().resourceType() !== 'fetch') return route.continue();
         reads++; await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cached) });
       });
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       await expect.poll(() => reads).toBeGreaterThan(0);
+      await card.getByText('Cached page copy', { exact: true }).waitFor();
       await card.getByText(/Couldn't count what's waiting/).waitFor();
       await page.unroute('**/projects');
       forgetProjectCounts();
