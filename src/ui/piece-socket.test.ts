@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearPieceCache, expirePieceManifests, pieceManifests, SERVED_CACHE_MS } from './pieces.js';
+import { clearPieceCache as actedOn } from './pieces.js';
 import { closePieceSockets, manifestSocket, socketManifest } from './piece-socket.js';
 
 // t-2114: a managed piece's manifest from its own service over <home>/run/ui.sock, instead of a `ui --json` process.
@@ -171,5 +172,23 @@ describe('a piece\'s manifest from its service socket', () => {
     const rs = await Promise.all([1, 2].map(() => socketManifest(p.path, p.env, { maxBytes: 1024, waitMs: 80 })));
     expect(rs).toEqual([undefined, undefined]);
     expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it('since: a piece\'s own word asks no newer answer than it has; an action on it does, and on another piece doesn\'t (R2-3)', async () => {
+    const p = managed();
+    const seen = await serve(p.sock, ok(ver(p.path))) as Array<{ since: number }>;
+    const wait = () => new Promise((r) => setTimeout(r, 5));
+    await wait();
+    const t0 = Date.now();
+    await wait();
+    actedOn('/elsewhere/loom-other');
+    expirePieceManifests(p.path);
+    await pieceManifests(p.env);
+    expect(seen.at(-1)!.since).toBeLessThan(t0);
+    await wait();
+    const t = Date.now();
+    actedOn(p.path);
+    await pieceManifests(p.env);
+    expect(seen.at(-1)!.since).toBeGreaterThanOrEqual(t);
   });
 });

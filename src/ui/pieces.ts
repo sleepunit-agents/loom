@@ -111,8 +111,17 @@ type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number }
 const cache = new Map<string, CacheEntry>();
 let manifestGeneration = 0;
-/** When a piece last said it moved, or an action ran: a served manifest must be made since (piece-socket.ts). */
-let movedAt = 0;
+/**
+ * When an action last ran on a piece (by path), or on every piece (''): a served manifest must be made since then
+ * (piece-socket.ts), so the look after an action never shows the manifest from before it. A piece's own word that it
+ * moved isn't one: a service says so after it made the answer that moved (the runtime's ui-socket.mjs).
+ */
+const movedAt = new Map<string, number>();
+const sinceFor = (path: string): number => {
+  const t = Math.max(movedAt.get(path) ?? 0, movedAt.get('') ?? 0);
+  // A clock stepped back: no answer could be made "since", so ask for none rather than refuse every one.
+  return t > Date.now() ? 0 : t;
+};
 /** The runs under way, by cache key: whoever asks while one runs shares it (unless a piece's word came since). */
 const running = new Map<string, { generation: number; result: Promise<ManifestResult> }>();
 /**
@@ -129,13 +138,14 @@ const turnsOn = new Map<string, { scope: boolean; owners: boolean }>();
  */
 export function expirePieceManifests(path?: string): void {
   manifestGeneration++;
-  movedAt = Date.now();
+  // Every piece at once (no word from one of them in particular): any served answer from before is suspect.
+  if (path === undefined) movedAt.set('', Date.now());
   for (const [k, e] of cache) if (path === undefined || k.startsWith(`${path}\0`)) e.expired = true;
 }
 
 export function clearPieceCache(path?: string): void {
   manifestGeneration++;
-  movedAt = Date.now();
+  movedAt.set(path ?? '', Date.now());
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.
   for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
@@ -350,7 +360,7 @@ function json(stdout: string): unknown {
 
 async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
   // From the piece's own service when it has one (piece-socket.ts, t-2114): no process, an answer from memory.
-  const fromSocket = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: movedAt });
+  const fromSocket = await socketManifest(path, env, { maxBytes: PIECE_MAX_BYTES, since: sinceFor(path) });
   let served: Manifest | undefined;
   if (fromSocket?.ok) {
     const parsed = json(fromSocket.stdout);
