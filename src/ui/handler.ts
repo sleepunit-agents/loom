@@ -1248,19 +1248,21 @@ async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer
     // This member's own copy of each card (their threads' jobs): theirs alone.
     return (await memberCards(base, full, m)).map((c) => statusRecord(c, { members: [viewer.person] }));
   }
-  const all = new Map<string, MemRecord>();
+  // The snapshot holds no member's card, only that one moved: a card carries its member's own threads' jobs (their titles
+  // and links), and the snapshot's audience is every owner of the agent. What anyone is shown is asked again as them.
+  // A card's "Last seen 3 min ago" is left out of the digest: it moves every minute with nothing else moving, and
+  // would ask every viewer again each time (it's current on the next real change, and on Home's own page).
   const whose = new Map<string, string[]>();
   const copies = new Map<string, ReturnType<typeof createHash>>();
   for (const m of full.members) {
     for (const c of await memberCards(base, full, m)) {
-      const rec = statusRecord(c, {});
+      const rec = statusRecord({ ...c, readings: c.readings.filter((r) => r.label !== 'Last seen') }, {});
       whose.set(c.id, [...(whose.get(c.id) ?? []), m.person]);
       if (!copies.has(c.id)) copies.set(c.id, createHash('sha256'));
       copies.get(c.id)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
-      if (!all.has(c.id)) all.set(c.id, rec);
     }
   }
-  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
+  return [...whose].map(([agent, members]) => ({ id: agent, agent, audience: { members }, copies: copies.get(agent)!.digest('base64url').slice(0, 22) } as MemRecord));
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */

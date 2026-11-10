@@ -768,7 +768,10 @@ along with the listeners. The adapter is the only code that imports the client l
   reports (`jobs`: running, waiting, scheduled, backlog; `agentJobs` dedupes), how many run now (`running`), what's
   wrong, its readings (the clock's `Next` among them) and its last steps. A job in a member's Comms thread is that
   member's alone, so each row's audience is `members: [viewer]`. The core viewer's snapshot is each agent once, its
-  audience the members who own it, with an owner-class `copies` digest of every member's copy (as attention's).
+  audience the members who own it, carrying no one's card: only an owner-class `copies` digest of every member's copy,
+  so the log and index never hold a member's thread jobs under a wider audience. The digest leaves out "Last seen N
+  min ago", which would otherwise ask every viewer again each minute with nothing else moving (it's current again on
+  the next real change).
 - **What moves it**: whatever moves loom's bare "something changed" (`live.ts` `onChanged`: a piece's manifest moving,
   an action, a thread), coalesced to one nudge per `GAP_MS` (`handler.ts` `nudgeLive`), the 15 s pull, and after an action
   a pull soon (never awaited: `subs.ts` `SOON`). Builds are one per viewer at a time, one queued (attention's rule).
