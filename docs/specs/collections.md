@@ -742,6 +742,24 @@ along with the listeners. The adapter is the only code that imports the client l
 - **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
   refs and previews, the conversation page, and a thread's asks as a view of the attention set.
 
+## As built: tasks, the first piece's collection (t-2029, first slice)
+
+- **The tasks role publishes `tasks/task`** (sleepunit-agents/taskstore `src/collections.ts`, pinned here):
+  `loom-tasks collections query --json` answers a batch over every task as a record. The record has `title`, `type`,
+  `status`, `priority`, `assignee`, `created`, `updated` (its newest activity: made, started, closed or commented; an
+  update doesn't move it), `closed`, `parent`, `source`, `goal`, `why`, `doneWhen`, `ask`, `comments` (a count) and
+  `description` (heavy). taskstore stays the authority; core keeps no copy beyond its log and index.
+- **Who**: no `owners: 2`, as with its pages, so household owners only. Its audience is `{owners: true}`, and the
+  provider answers no rows to any other viewer, deciding before it pages.
+- **No change log yet**: core bridges it, with a snapshot as the core viewer on each pull (measured on the real
+  store: 2,126 tasks, five pages of 500, about 0.7 s). Past 10,000 tasks a snapshot is partial and deletes nothing, so
+  a `changes` verb is owed before then.
+- **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
+  store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.
+- **Still to move**: the consumers. That means the Tasks pages' lists, the ready and blocked queues, a Comms thread's
+  work panel (its 60 s poll), project feeds and counts, and Changes (PRs, checks, merge state), which needs its own
+  provider in loom-changes.
+
 ## What stays on its own transport (exceptions)
 
 Each needs its own rationale, and safe status and metadata about them still go through collections:
