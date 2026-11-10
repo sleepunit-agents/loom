@@ -390,6 +390,10 @@ export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly str
   }
   const offers = parseOffers(b, { bins, role: out.role });
   if (typeof offers === 'string') return offers;
+  if (offers.grants_store !== undefined) {
+    const c = out.store && Object.hasOwn(out.store, offers.grants_store) ? out.store[offers.grants_store] : undefined;
+    if (!c || c.history === false) return `loom.grants_store names a collection the piece declares in loom.store, one that keeps its revisions: not ${offers.grants_store}`;
+  }
   return { ...out, ...offers };
 }
 

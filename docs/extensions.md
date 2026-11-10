@@ -225,6 +225,22 @@ own schema:
   while it was asked is a 503 with the reason (fail closed). Owner calls never
   ask. With no authority installed, each piece decides by its own agent list
   (`src/grants.ts`).
+- **`grants_store`:** with `grants` only, one of the piece's own store
+  collections (declared in `loom.store`, keeping its revisions). It promises the
+  authority's answer depends on the ask, its installed version and that
+  collection alone. Core then adds `basis: true` to the ask, and the authority
+  may answer `basis: {piece, collection, key, sha256}` beside `allow`: whose store
+  and which collection it read,
+  the document of the collection it decided on, and the sha256 of its text
+  (null: there was none). Core reads the collection from the authority's store
+  file itself, and keeps the answer only when the store read was the
+  authority's own and that document is exactly what the authority read (and the
+  collection didn't change while it was asked); it reuses it while the
+  collection stays in that state, read again before every call, for at most a
+  minute, and only while the authority's bin resolves to the same file. Any
+  write to it (a grant given or taken) is a new ask on the very next
+  call. A failure is never kept, nor an answer without a basis
+  (`src/grants.ts`, t-2065).
 - **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
   may declare it, and a second installed piece offering it is refused.
 - **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
