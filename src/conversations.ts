@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
-  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
+  ConversationError, MAX_PLACE, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
 import { COMMS_VENUE, filedThreads, noteLoopPause } from './comms.js';
@@ -17,6 +17,21 @@ import { runOffer } from './offers-registry.js';
 import { askGrant } from './grants.js';
 
 // ─── Writing a turn ─────────────────────────────────────────────────────────
+
+/**
+ * Where an agent token's session turn goes (t-2133): a house's (or a service's) sessions are in its own namespace,
+ * `house:h-7 <place>` (`service:slack@h-7 …`), so one house never writes into another's, nor claims a place another will
+ * use first. A token in no house (loom's machine's own) writes the place as given, never one in a house's namespace.
+ */
+export function sessionPlace(role: Extract<Role, { kind: 'agent' }>, place: string): string {
+  const prefix = role.service ? `service:${role.service}${role.house ? `@${role.house}` : ''} ` : role.house ? `house:${role.house} ` : '';
+  if (!prefix) {
+    if (/^(?:house|service):/.test(place)) throw new ConversationError('a place starting house: or service: is a house\'s own session', 403);
+    return place;
+  }
+  if (prefix.length + place.length > MAX_PLACE) throw new ConversationError(`place is ${MAX_PLACE - prefix.length} characters at most from this house`);
+  return prefix + place;
+}
 
 /** A turn's idempotency key (the runtime's `<source>:<id>`): printable ASCII, kept 24 hours. */
 export const MAX_TURN_KEY = 240;
@@ -30,7 +45,7 @@ export const SESSION_VENUE = 'session';
  * POST /api/loom/conversations/turn, as `role`. The runtime writes for any of the
  * household's agents (the body names it, `agent`) in any venue but `session`: core's
  * `wake`, or one an installed piece declares. An agent token writes only venue `session`,
- * for itself. Every other role is refused before this is called (http-server.ts).
+ * for itself, and from a house only into that house's own sessions (sessionPlace, t-2133). Every other role is refused before this is called (http-server.ts).
  */
 export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number = Date.now()): { conversation: string; seq: number } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConversationError('a turn is a JSON object');
@@ -53,6 +68,7 @@ export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number 
   if (role.kind === 'agent' && turn.venue !== SESSION_VENUE) {
     throw new ConversationError(`an agent token writes only venue ${SESSION_VENUE} (its own harness session); ${turn.venue} is the runtime's`, 403);
   }
+  if (role.kind === 'agent') turn.place = sessionPlace(role, turn.place);
   if (role.kind === 'runtime') {
     if (turn.venue === SESSION_VENUE) throw new ConversationError(`venue ${SESSION_VENUE} is written by the harness, as the agent`, 403);
     const v = venueOf(h.home, turn.venue);

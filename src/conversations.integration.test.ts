@@ -118,6 +118,9 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
     tok.box = createToken(h, { role: { kind: 'piece', piece: 'shuttle', subject: 'thor' }, label: 'shuttle · thor' }).token;
     tok.peer = createToken(h, { role: { kind: 'peer', name: 'pal' }, label: 'pal' }).token;
     tok.runtime = createToken(h, { role: { kind: 'runtime', piece: 'shuttle' }, label: 'runtime', runtimePieces: runtimePieces(process.env) }).token;
+    tok.house7 = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-7' }, label: 'art @ h-7' }).token;
+    tok.house8 = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-8' }, label: 'art @ h-8' }).token;
+    tok.bridge = createToken(h, { role: { kind: 'agent', agent: 'art', service: 'slack', house: 'h-9' }, label: 'art/slack @ h-9' }).token;
     // The daemon syncs the venues registry at start.
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
@@ -199,6 +202,24 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
     expect((await post(tok.art, { ...session, agent: 'pond-bot' })).status).toBe(403);
     expect((await post(tok.art, msg('dm:U1', 0))).status).toBe(403);
     expect(getConversation(agentDir(h, 'pond-bot'), conversationId('pond-bot', 'session', 'claude-code:abc123'))).toBeUndefined();
+  });
+
+  it('a house writes only its own sessions: its own namespace, never another house\'s (t-2133)', async () => {
+    const session = { venue: 'session', place: 'claude-code:s1', at: at(0), from: { kind: 'unknown' }, kind: 'message' };
+    const r7 = await (await post(tok.house7, session)).json();
+    const r8 = await (await post(tok.house8, session)).json();
+    const rb = await (await post(tok.bridge, session)).json();
+    expect(r7.conversation).toBe(conversationId('art', 'session', 'house:h-7 claude-code:s1'));
+    expect(r8.conversation).toBe(conversationId('art', 'session', 'house:h-8 claude-code:s1'));
+    expect(rb.conversation).toBe(conversationId('art', 'session', 'service:slack@h-9 claude-code:s1'));
+    expect(new Set([r7.conversation, r8.conversation, rb.conversation]).size).toBe(3);
+    // h-8 naming h-7's place lands in its own namespace, never in h-7's.
+    const r = await (await post(tok.house8, { ...session, place: 'house:h-7 claude-code:s1', at: at(1) })).json();
+    expect(r.conversation).toBe(conversationId('art', 'session', 'house:h-8 house:h-7 claude-code:s1'));
+    expect(getConversation(agentDir(h, 'art'), r7.conversation)?.last).toBe(at(0));
+    // A token in no house never writes into a house's namespace; and a place too long with the prefix is refused.
+    expect((await post(tok.art, { ...session, place: 'house:h-7 claude-code:s1' })).status).toBe(403);
+    expect((await post(tok.house7, { ...session, place: 'x'.repeat(200) })).status).toBe(400);
   });
 
   it('any other role is refused: owner, piece credential, peer; and no token at all', async () => {
