@@ -58,7 +58,7 @@ export function providers(env: NodeJS.ProcessEnv): Map<string, Provider> {
     const name = providerName(r);
     // Install refuses a taken name; were two ever present (piece.json edited by hand), neither is served.
     if (out.has(name)) { out.delete(name); continue; }
-    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed}` });
+    out.set(name, { name, piece: r.name, owners2: c.owners === 2, types: c.types, query: c.query, install: `${r.name}@${r.installed ?? ''}@${r.version ?? ''}` });
   }
   return out;
 }
@@ -170,7 +170,8 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     });
     // One row out of contract makes the whole run's answers unavailable, not just its own query's: the batch's other
     // answers came from the same provider, deciding for the same viewer.
-    const bad = checked.some((a) => a === OUT_OF_CONTRACT);
+    // Marked out of contract while this run was out (another run's row): this one answers as the provider now does.
+    const bad = checked.some((a) => a === OUT_OF_CONTRACT) || broken();
     if (bad && p.install !== undefined && !broken()) {
       outOfContract.add(p.install);
       process.stderr.write(`loom: collections provider ${p.name} (${p.piece}) answered a row its viewer may not have; it answers no one until it's reinstalled or loom restarts\n`);
@@ -240,16 +241,22 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   if (a.error) return { id: q.id, error: a.error as QueryError['error'] } as QueryError;
   const decl = p.types[q.type];
   // A provider that ignores the page size broke the contract: how many it sent may count rows the viewer can't have.
-  if (a.rows.length > q.limit) return OUT_OF_CONTRACT;
+  // So does a page with a next that isn't full: a provider that paged first and filtered after would be saying hidden
+  // records matched (the contract: a page with a next is full).
+  if (a.rows.length > q.limit || (a.next !== null && a.rows.length < q.limit)) return OUT_OF_CONTRACT;
   const seen = new Set<string>();
   const rows: Record<string, unknown>[] = [];
   // A row left out (it expired since the provider read it) isn't in the provider's numbers' view of things: its
   // counts go too.
   let dropped = false;
+  // A row of the viewer's that core can't send (a bad id, a repeat, an expiry that isn't a time, too big) fails this
+  // answer alone: it was theirs, so saying so tells them nothing hidden.
+  let unusable: 'unavailable' | 'too-big' | undefined;
   for (const raw of a.rows as unknown[]) {
+    // Whose a row is comes first: one core can't place, or one this viewer may not have, takes the provider out of
+    // contract, since anything else core did about it would show the viewer a hidden record.
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return OUT_OF_CONTRACT;
     const r = raw as Record<string, unknown>;
-    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) return OUT_OF_CONTRACT;
     const audience = parseAudience(r.audience);
     if (!audience) return OUT_OF_CONTRACT;
     let agent: string | undefined;
@@ -259,10 +266,12 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
       agent = typeof v === 'string' ? v : undefined;
     }
     if (!admits(viewer, audience, agent, decl)) return OUT_OF_CONTRACT;
+    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) { unusable ??= 'unavailable'; continue; }
+    seen.add(r.id);
     let expires: number | undefined;
     if (r.expires !== undefined) {
       expires = expiresAt(r.expires);
-      if (!Number.isFinite(expires)) return OUT_OF_CONTRACT;
+      if (!Number.isFinite(expires)) { unusable ??= 'unavailable'; continue; }
       // Expired since the provider read it: the viewer's own row, so leaving it out tells them nothing hidden.
       if (expires <= now) { dropped = true; continue; }
     }
@@ -272,10 +281,10 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
       else if (Object.hasOwn(r, f)) out[f] = r[f];
     }
     if (expires !== undefined) out.expires = new Date(expires).toISOString();
-    if (Buffer.byteLength(JSON.stringify(out)) > RECORD_MAX_BYTES) return { id: q.id, error: 'too-big' };
-    seen.add(r.id);
+    if (Buffer.byteLength(JSON.stringify(out)) > RECORD_MAX_BYTES) { unusable = 'too-big'; continue; }
     rows.push(out);
   }
+  if (unusable) return { id: q.id, error: unusable };
   const complete = a.next === null && q.after === null;
   // A provider's numbers can't be rechecked, so only household owners get them unless the type passed the per-viewer
   // count fixtures. A complete answer core counts itself: every row in it passed core's checks.

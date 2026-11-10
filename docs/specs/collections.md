@@ -283,7 +283,10 @@ A record is visible to a viewer when **every one** of these holds:
    provider said: a provider that ignores who's asking leaks no rows. Nor does it leak through what core does
    about it: a shorter page, a missing `next` or an error would each tell the viewer a hidden record matched their
    query, so a provider that answers any row its viewer may not have is **out of contract**. That answer, and every
-   answer from it after, to anyone, is `unavailable` until it's reinstalled or loom restarts (one bit, once).
+   answer from it after, to anyone, is `unavailable` until it's reinstalled or loom restarts (one bit, once per
+   listener). So is a page with a `next` that isn't full: a provider that paged first and filtered after would be
+   saying hidden records matched. A row of the viewer's own that core can't send (a bad id, a bad expiry) fails only
+   that answer.
 3. **The agent rule admits them.** For an owner of some agents, core admits only records whose `agent` field names
    one of their agents. A record with no agent, or of a type with no `agent` field, is household owners' only, except
    through a `members` term that names that member: their own read markers, prefs and session list are theirs. This is

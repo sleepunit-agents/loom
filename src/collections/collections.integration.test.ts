@@ -68,8 +68,9 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     const total = rs.length;
     const by = {}; for (const r of rs) by[r.status] = (by[r.status] || 0) + 1;
     if (q.after) rs = rs.filter((r) => r.id > JSON.parse(q.after)[0]);
-    const page = rs.slice(0, q.limit);
-    const more = rs.length > q.limit;
+    // short: a page cut before it's filtered, as a provider that pages first would.
+    const page = mode === 'short' ? rs.filter((r) => r.agent === 'pond-bot').slice(0, 1) : rs.slice(0, q.limit);
+    const more = mode === 'short' ? true : rs.length > q.limit;
     return { id: q.id, rows: page.map((r) => { const o = { id: r.id, audience: r.audience }; if (r.expires) o.expires = r.expires; for (const f of q.fields) if (f in r) o[f] = r[f]; return o; }),
       next: more ? JSON.stringify([page[page.length - 1].id]) : null, total: { n: total, exact: true }, aggregates: q.aggregates.includes('count') ? { count: { n: total, exact: true, by } } : undefined };
   });
@@ -225,6 +226,21 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(runs('tasks')).toEqual([]);
       clearOutOfContract();
       expect(keys(await one(tok.loren, { where: [['agent', 'eq', 'pond-bot']] }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
+    });
+
+    it('a page with a next that isn\'t full is out of contract (a provider that paged before it filtered)', async () => {
+      mode('tasks', 'short');
+      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+      mode('tasks', '');
+      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+    });
+
+    it('a row of the viewer\'s own that core can\'t send fails that answer only, and the provider stays in contract', async () => {
+      writeFileSync(join(h.home, 'records.json'), JSON.stringify([...RECORDS, { id: 'bad id', agent: 'pond-bot', title: 'x', status: 'open', audience: { ownersOf: ['pond-bot'] } }]));
+      try {
+        expect(await one(tok.loren, {})).toEqual({ id: 'q', error: 'unavailable' });
+      } finally { writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS)); }
+      expect(keys(await one(tok.loren, {}))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
     });
 
     it('two members sharing an agent: sam\'s own record is sam\'s, and the field it\'s withheld from is listed', async () => {

@@ -35,8 +35,9 @@ export interface Audience {
   agents?: string[];
 }
 
-const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const names = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.length <= 64 && v.every((x) => typeof x === 'string' && NAME.test(x));
+/** A member's slug or an agent's name (a member's slug has no cap of its own: this one is generous). */
+const NAME = /^[a-z0-9][a-z0-9-]{0,127}$/;
+const names = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.length <= 256 && v.every((x) => typeof x === 'string' && NAME.test(x));
 
 /** A provider's audience, checked; undefined when it isn't one (the row is then dropped: fail closed). */
 export function parseAudience(v: unknown): Audience | undefined {
