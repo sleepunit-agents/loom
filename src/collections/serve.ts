@@ -158,9 +158,11 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
   await Promise.all([...byProvider].map(async ([name, list]) => {
     const p = all.get(name)!;
     const share = Math.floor(ANSWER_MAX_BYTES / list.length);
-    const asks: ProviderQuery[] = list.map((q) => ({ id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit, after: q.after,
-      // The agent field too: core's agent rule reads it. It's dropped again unless asked for.
-      fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...(p.types[q.type].agent ? [p.types[q.type].agent!] : [])])], aggregates: q.aggregates }));
+    // One row more than the page: core says there's more only when it has seen (and admitted) a row past the page, so
+    // `next` never says a hidden record matched. The order's fields and the agent field too: core makes the cursor from
+    // the one and reads the other for its agent rule. Both are dropped again unless asked for.
+    const asks: ProviderQuery[] = list.map((q) => ({ id: q.id, type: q.type, version: q.major, where: q.where, order: q.order, limit: q.limit + 1, after: q.after,
+      fields: [...new Set([...q.fields.filter((f) => f !== 'audience'), ...q.order.map(([f]) => f), ...(p.types[q.type].agent ? [p.types[q.type].agent!] : [])])], aggregates: q.aggregates }));
     const broken = () => p.install !== undefined && outOfContract.has(p.install);
     const got = broken() ? 'out of contract' : await runProvider(ctx, p, viewer, asks, share, now);
     const checked = list.map((q) => {
@@ -240,10 +242,8 @@ export const OUT_OF_CONTRACT = Symbol('out of contract');
 export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAnswer, share: number, now: number, seal: (cursor: string) => string): ClientAnswer | QueryError | typeof OUT_OF_CONTRACT {
   if (a.error) return { id: q.id, error: a.error as QueryError['error'] } as QueryError;
   const decl = p.types[q.type];
-  // A provider that ignores the page size broke the contract: how many it sent may count rows the viewer can't have.
-  // So does a page with a next that isn't full: a provider that paged first and filtered after would be saying hidden
-  // records matched (the contract: a page with a next is full).
-  if (a.rows.length > q.limit || (a.next !== null && a.rows.length < q.limit)) return OUT_OF_CONTRACT;
+  // More rows than asked (the page and one past it): how many it sent may count rows the viewer can't have.
+  if (a.rows.length > q.limit + 1) return OUT_OF_CONTRACT;
   const seen = new Set<string>();
   const rows: Record<string, unknown>[] = [];
   // A row left out (it expired since the provider read it) isn't in the provider's numbers' view of things: its
@@ -252,7 +252,7 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   // A row of the viewer's that core can't send (a bad id, a repeat, an expiry that isn't a time, too big) fails this
   // answer alone: it was theirs, so saying so tells them nothing hidden.
   let unusable: 'unavailable' | 'too-big' | undefined;
-  for (const raw of a.rows as unknown[]) {
+  for (const [index, raw] of (a.rows as unknown[]).entries()) {
     // Whose a row is comes first: one core can't place, or one this viewer may not have, takes the provider out of
     // contract, since anything else core did about it would show the viewer a hidden record.
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return OUT_OF_CONTRACT;
@@ -266,6 +266,8 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
       agent = typeof v === 'string' ? v : undefined;
     }
     if (!admits(viewer, audience, agent, decl)) return OUT_OF_CONTRACT;
+    // The row past the page: checked like the rest, never sent.
+    if (index >= q.limit) { if (typeof r.id !== 'string' || !RECORD_ID.test(r.id)) unusable ??= 'unavailable'; continue; }
     if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) { unusable ??= 'unavailable'; continue; }
     seen.add(r.id);
     let expires: number | undefined;
@@ -285,29 +287,28 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
     rows.push(out);
   }
   if (unusable) return { id: q.id, error: unusable };
-  const complete = a.next === null && q.after === null;
-  // A provider's numbers can't be rechecked, so only household owners get them unless the type passed the per-viewer
-  // count fixtures. A complete answer core counts itself: every row in it passed core's checks.
-  // `scoped_counts` isn't honoured yet, whatever an installed record says: install refuses it until the conformance run
-  // exists (t-2026), and a record from before that, or edited by hand, mustn't widen who gets numbers.
-  const counts = isHouseholdOwner(viewer) && !dropped;
+  // The row past the page, if the provider had one (and it's the viewer's: checked above with the rest), says there's
+  // more; it isn't sent. The cursor is core's own: the last sent row's order key, sealed.
+  const more = a.rows.length > q.limit;
+  const lastSent = more ? (a.rows[q.limit - 1] as Record<string, unknown>) : undefined;
+  const complete = !more && q.after === null;
+  // A provider's numbers can't be rechecked, and a careless one's would count records the viewer can't open (another
+  // member's own, for a household owner too) and name their values in a `by`. So until the conformance run can vouch
+  // for a provider's counts (t-2026), none are passed on, to anyone: a complete answer core counts itself (every row in
+  // it passed core's checks); a partial one has no total ("20", not "20 of …").
+  void dropped;
   const coverage: ClientAnswer['coverage'] = { complete };
   if (complete) coverage.total = { n: rows.length, exact: true };
-  else if (counts && count(a.total)) coverage.total = { n: a.total.n, exact: a.total.exact };
   let aggregates: ClientAnswer['aggregates'];
   for (const name of q.aggregates) {
-    const given = a.aggregates && typeof a.aggregates === 'object' ? (a.aggregates as Record<string, unknown>)[name] : undefined;
-    const by = decl.aggregates?.[name]?.by;
-    let v: NonNullable<ClientAnswer['aggregates']>[string] | undefined;
-    if (counts && count(given)) {
-      const b = (given as { by?: unknown }).by;
-      const byOk = b === undefined || (!!b && typeof b === 'object' && !Array.isArray(b) && Object.keys(b).length <= 1000 && Object.values(b).every((n) => Number.isInteger(n) && (n as number) >= 0));
-      if (byOk) v = { n: (given as { n: number }).n, exact: (given as { exact: boolean }).exact, ...(by && b ? { by: { ...(b as Record<string, number>) } } : {}) };
-    } else if (complete && !by) v = { n: rows.length, exact: true };
-    if (v) (aggregates ??= {})[name] = v;
+    if (complete && !decl.aggregates?.[name]?.by) (aggregates ??= {})[name] = { n: rows.length, exact: true };
   }
   let next: string | null = null;
-  if (a.next !== null) next = seal(a.next);
+  if (lastSent) {
+    const key = JSON.stringify([...q.order.map(([f]) => lastSent[f] ?? null), lastSent.id]);
+    // An order key too long to carry: the page ends here (partial, no next), rather than a cursor it can't keep.
+    if (key.length <= MAX_PROVIDER_CURSOR) next = seal(key);
+  }
   const answer: ClientAnswer = { id: q.id, rows, next, coverage, ...(aggregates ? { aggregates } : {}), withheld: q.withheld };
   if (Buffer.byteLength(JSON.stringify(answer)) > share) return { id: q.id, error: 'too-big' };
   return answer;

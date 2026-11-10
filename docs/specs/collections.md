@@ -218,8 +218,11 @@ below), and may not subscribe there: there is no stream on `/api`.
 - **Never on a hidden field.** Core refuses a query as `bad-query` when a `where`, `order` or `aggregates.by` names
   a field the viewer's class can't see, before the provider runs. Otherwise a viewer could learn a hidden value from
   which rows come back, character by character with `prefix`, or from the order.
-- **Pages are keyset pages**: `after` is an opaque cursor. Core seals every cursor (a MAC over the provider's cursor,
-  the viewer, the scope and the query), so a cursor can't be read, edited or reused by another viewer or query.
+- **Pages are keyset pages**: `after` is an opaque cursor. Core makes it itself, from the last row it sent (that row's
+  order values, then its id), and seals it (AES-GCM, bound to the viewer and the query), so a cursor can't be read,
+  edited or reused by another viewer or query. A provider is asked for **one row more than the page** and given
+  `after` as that order key: core says there's more only when the row past the page is one the viewer may have, so a
+  `next` never says that a hidden record matched (t-2021's review).
 - **Fields**: an answer carries the record key and only the fields named (or the type's `default_fields`), further
   cut down to what the viewer's class allows. A field the viewer may not see is **absent**, not null, and the answer
   lists which named fields were withheld, so a window shows "hidden", not "empty". A record's `audience` is sent to
@@ -246,7 +249,10 @@ The answer, per query:
   (unknown). The UI shows "20 of 214", "20 of 1000+", or "20", accordingly. A badge reads an **aggregate**, never
   `rows.length`.
 - **Counts and totals are something core can't check**: it can drop a row the viewer may not see, but it can't
-  recount a number. So a provider's `aggregates` and `coverage.total` go **to household owners only**, unless the
+  recount a number. **Until the conformance run exists (t-2026), no provider's counts go to anyone**, household owners
+  included: a careless provider's would count another member's own records and name their values in a `by` (t-2021's
+  review found it). Core counts complete answers itself, below. Once the run exists: a provider's `aggregates` and
+  `coverage.total` go **to household owners only**, unless the
   type declares `scoped_counts: true`, which it may do only once its conformance run passes the per-viewer count
   fixtures (an agent owner's count excludes other agents' records; a member's excludes others' threads). Without
   it, other viewers get `total` absent and no aggregates from the provider. **Where a subscription's coverage is

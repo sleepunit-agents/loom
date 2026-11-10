@@ -49,8 +49,8 @@ export interface Query {
   where: Clause[];
   order: OrderBy[];
   limit: number;
-  /** The provider's own cursor, unsealed (null: the first page). */
-  after: string | null;
+  /** Where the page starts: the order key (order values, then id) of the last row before it, unsealed (null: first). */
+  after: unknown[] | null;
   /** The fields the viewer gets, of those named (or the defaults). */
   fields: string[];
   /** Named fields the viewer's class may not see: absent from every row, and listed so a window says "hidden". */
@@ -144,12 +144,14 @@ export function checkQuery(q: QueryIn, decl: TypeDecl, classes: ReadonlySet<Fiel
     if (d.by?.some((f) => !visible(f))) return bad(`there's no aggregate ${JSON.stringify(a)}`);
   }
   // after: sealed to this viewer and this query's shape
-  let after: string | null = null;
+  let after: unknown[] | null = null;
   if (q.after !== undefined && q.after !== null) {
     if (typeof q.after !== 'string' || q.after.length > 4096) return bad('after is the cursor a previous page gave');
     const open = unseal(q.after, queryShape(ref, where, order));
-    if (open === undefined) return bad('that cursor isn\'t this query\'s (or it expired): ask for the first page again');
-    after = open;
+    let key: unknown;
+    try { key = open === undefined ? undefined : JSON.parse(open); } catch { key = undefined; }
+    if (!Array.isArray(key) || key.length !== order.length + 1) return bad('that cursor isn\'t this query\'s (or it expired): ask for the first page again');
+    after = key;
   }
   return { id, provider: ref.provider, type: ref.type, major: ref.major, where, order, limit: limit as number, after, fields, withheld, aggregates };
 }

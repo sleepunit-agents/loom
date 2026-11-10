@@ -67,7 +67,8 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     rs.sort((a, b) => a.id < b.id ? -1 : 1);
     const total = rs.length;
     const by = {}; for (const r of rs) by[r.status] = (by[r.status] || 0) + 1;
-    if (q.after) rs = rs.filter((r) => r.id > JSON.parse(q.after)[0]);
+    // after: core's keyset cursor, the order's values then the id (the order here is by id alone).
+    if (q.after) rs = rs.filter((r) => r.id > q.after[q.after.length - 1]);
     // short: a page cut before it's filtered, as a provider that pages first would.
     const page = mode === 'short' ? rs.filter((r) => r.agent === 'pond-bot').slice(0, 1) : rs.slice(0, q.limit);
     const more = mode === 'short' ? true : rs.length > q.limit;
@@ -228,11 +229,24 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(keys(await one(tok.loren, { where: [['agent', 'eq', 'pond-bot']] }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
     });
 
-    it('a page with a next that isn\'t full is out of contract (a provider that paged before it filtered)', async () => {
+    it('a provider that pages before it filters gives a short answer, never a next that says hidden records matched', async () => {
       mode('tasks', 'short');
-      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+      const a = await one(tok.loren, { limit: 2 });
+      expect(keys(a)).toEqual(['tasks/task/t-2']);
+      expect(a.next).toBeNull();
       mode('tasks', '');
-      expect(await one(tok.loren, { limit: 2 })).toEqual({ id: 'q', error: 'unavailable' });
+      expect(keys(await one(tok.loren, { limit: 2 }))).toEqual(['tasks/task/t-2', 'tasks/task/t-8']);
+    });
+
+    it('core says there\'s more only when it has seen a row past the page that the viewer may have', async () => {
+      // loren's two records, a page of one: the second is the row past the page, so there's a next.
+      const p1 = await one(tok.loren, { limit: 1 });
+      expect(keys(p1)).toEqual(['tasks/task/t-2']);
+      expect(typeof p1.next).toBe('string');
+      const p2 = await one(tok.loren, { limit: 1, after: p1.next });
+      expect(keys(p2)).toEqual(['tasks/task/t-8']);
+      expect(p2.next).toBeNull();
+      expect(runs('tasks').map((r) => r.ids)).toEqual([['q'], ['q']]);
     });
 
     it('a row of the viewer\'s own that core can\'t send fails that answer only, and the provider stays in contract', async () => {
@@ -292,10 +306,12 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
   });
 
   describe('counts', () => {
-    it('a provider\'s totals and aggregates go to household owners only; core counts a complete answer itself', async () => {
+    it('a provider\'s totals and aggregates go to no one yet; core counts a complete answer itself', async () => {
+      // Not even to a household owner, until the conformance run can vouch for a provider's counts (t-2026): a careless
+      // provider's would count another member's own records, and a `by` would name their values.
       const jon = await one(tok.jonathan, { limit: 3, aggregates: ['count'] });
-      expect(jon.coverage).toEqual({ complete: false, total: { n: 5, exact: true } });
-      expect(jon.aggregates).toEqual({ count: { n: 5, exact: true, by: { open: 3, closed: 2 } } });
+      expect(jon.coverage).toEqual({ complete: false });
+      expect(jon).not.toHaveProperty('aggregates');
       // loren, on a partial page: the provider's number can't be checked, so there's none.
       const loren = await one(tok.loren, { limit: 1, aggregates: ['count'] });
       expect(loren.coverage).toEqual({ complete: false });

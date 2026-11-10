@@ -25,7 +25,8 @@ export interface ProviderQuery {
   where: Clause[];
   order: OrderBy[];
   limit: number;
-  after: string | null;
+  /** The order key (the order's values, then the id) of the last row before this page; null: the first page. */
+  after: unknown[] | null;
   fields: string[];
   aggregates: string[];
 }
@@ -70,15 +71,14 @@ export function answerFrom(records: readonly MemRecord[], q: ProviderQuery, decl
   live.sort((a, b) => cmpKeys(keyOf(a, q.order), keyOf(b, q.order), q.order));
   let from = 0;
   if (q.after !== null) {
-    let k: unknown;
-    try { k = JSON.parse(q.after); } catch { return { id: q.id, rows: [], next: null, error: 'bad-query' }; }
+    const k = q.after;
     if (!Array.isArray(k) || k.length !== q.order.length + 1) return { id: q.id, rows: [], next: null, error: 'bad-query' };
-    from = live.findIndex((r) => cmpKeys(keyOf(r, q.order), k as unknown[], q.order) > 0);
+    from = live.findIndex((r) => cmpKeys(keyOf(r, q.order), k, q.order) > 0);
     if (from < 0) from = live.length;
   }
   const page = live.slice(from, from + q.limit);
   const more = from + q.limit < live.length;
-  const keep = new Set([...q.fields, ...(decl.agent ? [decl.agent] : [])]);
+  const keep = new Set([...q.fields, ...q.order.map(([f]) => f), ...(decl.agent ? [decl.agent] : [])]);
   const rows = page.map((r) => {
     const out: Record<string, unknown> = { id: r.id, audience: r.audience, ...(r.expires !== undefined ? { expires: r.expires } : {}) };
     for (const f of keep) if (f !== 'audience' && Object.hasOwn(r, f)) out[f] = r[f];
