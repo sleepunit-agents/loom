@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   user's alone), instead of starting `ui --json`: the runtime's delivery service answers from memory in under a
   millisecond, where each run was a node start that re-read its state (t-2114). No socket, another version's or a
   failing one: `ui --json` as before.
+- Pull a piece's shared records less often while they don't move: the Tasks and Changes pieces have no change log, so
+  every pull is a full snapshot (a process per 500 records), and an open Tasks page made one per piece every 15 s
+  (t-2110). A piece whose pulls find nothing is pulled at 15, 30, then every 60 s; its word that it wrote, or an action
+  on it, pulls it at once and puts it back on 15 s. A burst of its writes is one snapshot per 3 s, not per 1.5 s, and an
+  action's pull isn't followed by a second one for its own nudge.
 - Run each piece's manifest once for every window that sees the same answer, and less often while it doesn't
   move: the runtime's ran once per open agent window on every round and every word (t-2110). A manifest that runs
   past a page's 3 s wait shows its last good answer instead of dropping off the page, and its late answer is kept

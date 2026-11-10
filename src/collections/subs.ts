@@ -429,7 +429,8 @@ async function passOnce(h: HomeState): Promise<void> {
   if (nudged.length) {
     h.nudgeSeen = Math.max(h.nudgeSeen, ...nudged.map((n) => n.nudged));
     const wanted = wantedOf(h);
-    for (const n of nudged) if (wanted.has(n.domain)) h.puller.soon(n.domain);
+    // One word, one pull: a nudge a pull since then has already read (this listener's own, heard back) isn't pulled again.
+    for (const n of nudged) if (wanted.has(n.domain)) h.puller.nudged(n.domain, n.nudged);
   }
   const installed = providers(h.env());
   for (const s of [...h.streams.values()]) {
@@ -571,6 +572,23 @@ export async function deliverNow(home: string): Promise<void> {
   if (!h) return;
   pass(h);
   while (h.passing) await h.passing;
+}
+
+/** Every pull asked for here so far, done and delivered (tests). */
+export async function pullsSettled(home: string): Promise<void> {
+  const h = homes.get(home);
+  if (!h) return;
+  await h.puller.settle();
+  await deliverNow(home);
+}
+
+/** One poll round now, its pulls done and delivered (tests). */
+export async function roundNow(home: string): Promise<void> {
+  const h = homes.get(home);
+  if (!h) return;
+  h.puller.round();
+  await h.puller.settle();
+  await deliverNow(home);
 }
 
 /** Pull a domain now, as this listener (tests, and a command's answer: t-2024). */
