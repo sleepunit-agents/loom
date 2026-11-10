@@ -6,7 +6,7 @@
  *
  * loom runs several listeners (LAN, tailnet, localhost), and the runtime posts a reply to one while the browser holds
  * its stream on another. So a thread's move is told through household.db (comms_threads.updated) and a tick file
- * (`comms.tick`, a time only) that every listener with an open stream watches, plus a fallback poll. The same pass
+ * (`comms.tick`, a time and a stamp only) that every listener with an open stream watches, plus a fallback poll. The same pass
  * tells the thread's member's shared stream (src/ui/live.ts changedFor), so the dock's count refreshes, and only theirs.
  */
 import { watch, type FSWatcher } from 'node:fs';

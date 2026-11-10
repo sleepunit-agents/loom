@@ -667,8 +667,18 @@ const withThreadsAt = withThreads;
  */
 export function bump(home: string): void {
   if (!home) return;
-  try { writeFileSync(join(home, 'comms.tick'), String(Date.now())); } catch { /* the streams' fallback poll still finds it */ }
+  // A stamp no other write makes (the time, and this process and a count): a listener here knows its own tick's echo.
+  const stamp = `${Date.now()}.${process.pid}.${++bumps}`;
+  try { writeFileSync(join(home, 'comms.tick'), stamp); ownTicks.set(home, stamp); } catch { /* the streams' fallback poll still finds it */ }
   for (const f of listeners) f();
+}
+let bumps = 0;
+const ownTicks = new Map<string, string>();
+/** Whether comms.tick holds this process's own last stamp (an echo of a bump already heard through onBump). */
+export function isOwnTick(home: string): boolean {
+  const mine = ownTicks.get(home);
+  if (!mine) return false;
+  try { return readFileSync(join(home, 'comms.tick'), 'utf-8') === mine; } catch { return false; }
 }
 const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
@@ -929,7 +939,11 @@ export function setArchived(h: Household, t: Thread, archived: boolean, now: Dat
 /** The member read up to `seq` (never backwards), with the thread in front now. */
 export function markRead(h: Household, t: Thread, seq: unknown, now: Date = new Date()): void {
   if (!Number.isSafeInteger(seq) || (seq as number) < 0) fail('bad-input: seq is a whole number');
-  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
+  const read = Math.max(t.read_seq, seq as number);
+  // Nothing newly read (the app's 30 s read while a thread is in front): only when it was in front (push reads that),
+  // and no bump: no list row moved, so no stream or live set is told, nor every thread pulled again for it.
+  if (read === t.read_seq) { withThreadsAt(h.home, (db) => db.prepare('UPDATE comms_threads SET in_front = ? WHERE id = ?').run(now.getTime(), t.id)); return; }
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: read, in_front: now.getTime() }, now));
 }
 
 export function askStop(h: Household, t: Thread, now: Date = new Date()): void {

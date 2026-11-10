@@ -5,7 +5,10 @@
  *  - parity: a member's open threads in the collection, and which are unread, are exactly the Comms list's (GET /comms);
  *    the per-agent unread threads are what the desktop's cards count (threads, the owner's decision 3);
  *  - scope: one member's thread never reaches another member, not even another owner of the same agent;
- *  - live: a reply and a read reach the member's live subscription as one row's change, and no one else's.
+ *  - live: a reply and a read reach the member's live subscription as one row's change, and no one else's;
+ *  - the list: the rows the app draws from the set (web/src/thread-rows.ts listOf), for the open list, archived threads,
+ *    Background work and both, are GET /comms's own, field for field and in its order, for each member; and a pin, an
+ *    archive and a title made by another process (no same-process bump) reach a live subscription on the tick file.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -16,7 +19,9 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn } from '../backends/conversations.js';
-import { adapterCall, markRead, openThread, threadFor } from '../comms.js';
+import { adapterCall, allThreads, markRead, openThread, setArchived, setPinned, setTitle, threadFor } from '../comms.js';
+import { listOf, SPEC as APP_SPEC } from '../../web/src/thread-rows.js';
+import type { Rec, ViewState } from '../../web/src/collections/runtime.js';
 import { stopCommsWatch } from '../ui/comms-live.js';
 import { closeAllBackends } from '../backends/index.js';
 
@@ -70,12 +75,20 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
     return o.thread;
   };
   const reply = (t: { id: string; agent: string }, text: string) => adapterCall(h, process.env, { op: 'post', place: t.id, agent: t.agent, text });
-  const SPEC = { type: 'loom/thread@^1', where: [['archived', 'eq', null], ['background', 'eq', false]], order: [['updated', 'desc']], limit: 200, fields: ['agent', 'title', 'updated', 'unread', 'working', 'last_seq'] };
+  const SPEC: Record<string, unknown> = { ...APP_SPEC };
   const ask = async (who: string, q: Record<string, unknown> = {}) => {
     const r = await fetch(`${base}/collections/query`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok[who]}` }, body: JSON.stringify({ queries: [{ id: 'q', ...SPEC, ...q }] }) });
     return ((await r.json()) as { answers: Data[] }).answers[0];
   };
-  const list = async (who: string): Promise<Data> => (await fetch(`${base}/comms`, { headers: { authorization: `Bearer ${tok[who]}`, accept: 'application/json' } })).json();
+  const list = async (who: string, qs = ''): Promise<Data> => (await fetch(`${base}/comms${qs}`, { headers: { authorization: `Bearer ${tok[who]}`, accept: 'application/json' } })).json();
+  /** The rows the app draws from an answer, as the live set hands them over (thread-rows.ts listOf). */
+  const drawn = (a: Data) => {
+    const records = new Map<string, Rec>((a.rows as Rec[]).map((r) => [r.key, r]));
+    return listOf({ keys: [...records.keys()], coverage: a.coverage, withheld: a.withheld, status: 'live', more: false } as ViewState, records);
+  };
+  /** GET /comms's rows as the list draws them (comms-routes.ts view, threadsOf's unread). */
+  const served = (l: Data) => (l.threads as Data[]).map((t) => ({ id: t.id, agent: t.agent, title: t.title, titled_by: t.titled_by, project: t.project, pinned: t.pinned,
+    archived: t.archived, opened: t.opened, last: t.last, read_seq: t.read_seq, channel: t.channel, conversation: t.conversation, unread: t.unread, last_seq: t.last_seq, state: t.state }));
 
   beforeAll(async () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-threads-live-'));
@@ -145,5 +158,58 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
     expect(replyMs).toBeLessThan(4_000);
     expect(readMs).toBeLessThan(4_000);
     expect(sam.frames.some((f) => f.event === 'rows' && JSON.stringify(f.data).includes(t.id))).toBe(false);
+  }, 30_000);
+
+  it('draws the Comms list, archived threads, Background work and both exactly as GET /comms does, for each member', async () => {
+    const pinned = thread('jonathan', 'art', 'pinned one'); setPinned(h, threadFor(h, member('jonathan'), pinned.id), true);
+    const gone = thread('jonathan', 'mark', 'archived one'); setArchived(h, threadFor(h, member('jonathan'), gone.id), true);
+    const named = thread('jonathan', 'art', 'named'); setTitle(h, threadFor(h, member('jonathan'), named.id), 'A name', 'member');
+    reply(named, 'unread reply');
+    const samGone = thread('sam', 'art', 'sam archived'); setArchived(h, threadFor(h, member('sam'), samGone.id), true);
+    const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'live-bg', label: 'A job', at: at(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime');
+    const job = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv.conversation, text: 'A brief' }) as { id: string };
+    // And an archived job, so the fourth view (archived Background work) isn't empty.
+    const cv2 = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'live-bg-2', label: 'An old job', at: at(), from: { kind: 'agent', id: 'art' }, kind: 'message' } as never, 'runtime:runtime');
+    const old = adapterCall(h, process.env, { op: 'spawn', agent: 'art', conversation: cv2.conversation, text: 'An old brief' }) as { id: string };
+    const oldMember = h.members.find((m) => m.person === allThreads(h.home).find((t) => t.id === old.id)!.member)!;
+    setArchived(h, threadFor(h, oldMember, old.id), true);
+    const views: Array<[string, Array<[string, string, unknown?]>]> = [
+      ['', [['archived', 'eq', null], ['background', 'eq', false]]],
+      ['?archived=1', [['archived', 'has'], ['background', 'eq', false]]],
+      ['?background=1', [['archived', 'eq', null], ['background', 'eq', true]]],
+      ['?archived=1&background=1', [['archived', 'has'], ['background', 'eq', true]]],
+    ];
+    let sawJob = false;
+    let sawBoth = false;
+    for (const who of ['jonathan', 'sam']) {
+      for (const [qs, where] of views) {
+        const l = await list(who, qs);
+        const a = await ask(who, { where });
+        expect(a.coverage.complete, `${who} ${qs}`).toBe(true);
+        expect(drawn(a), `${who} ${qs}`).toEqual(served(l));
+        // The job's thread is its assigned member's Background work (whichever owner the runtime gave it to).
+        if (qs === '?background=1') sawJob ||= (l.threads as Data[]).some((t) => t.id === job.id);
+        if (qs === '?archived=1&background=1') sawBoth ||= (l.threads as Data[]).some((t) => t.id === old.id);
+      }
+    }
+    expect(sawJob).toBe(true);
+    expect(sawBoth).toBe(true);
+    expect(JSON.stringify((await ask('sam', { where: views[1][1] })).rows)).not.toContain(gone.id);
+  }, 30_000);
+
+  it('hears a thread moved by another process on the tick file, not only in this one', async () => {
+    const t = thread('jonathan', 'art', 'moved elsewhere');
+    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
+    await ask('jonathan', { subscribe: true, stream: jon.hello.stream });
+    const key = `loom/thread/${t.id}`;
+    // Another process's write: the row changes in household.db and comms.tick is written, with no listener here told.
+    const db = new BetterSqlite3(join(h.home, 'household.db'));
+    db.prepare('UPDATE comms_threads SET pinned = 1, updated = ? WHERE id = ?').run(Date.now(), t.id);
+    db.close();
+    writeFileSync(join(h.home, 'comms.tick'), String(Date.now()));
+    const t0 = Date.now();
+    expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.key === key && u.pinned === true)), 6000)).toBe(true);
+    // Well inside the 15 s pull: the tick file brought it.
+    expect(Date.now() - t0).toBeLessThan(5_000);
   }, 30_000);
 });

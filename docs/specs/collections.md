@@ -721,8 +721,26 @@ along with the listeners. The adapter is the only code that imports the client l
 - **Parity** (`threads-live.integration.test.ts`): a member's live threads and their unread are exactly `GET /comms`'s
   list and its count, never another member's (another owner of the same agent included). A reply reached the
   member's live window in 35 ms; a read right after it in 1.5 s (coalesced with the reply's pull).
-- **Still to move**: thread metadata and pages of messages for an open thread (its own `/comms/<t>` stream stays the
-  transport for words), refs and previews, the conversation page, and a thread's asks as a view of the attention set.
+- **The Comms list itself** (second slice): `thread` 1.2 adds the rest of a list row (`channel`, `titled_by`, `read_seq`,
+  `conversation`, `working_since`, `queued`, `failed`; still never a word), and the list draws its rows from the same
+  subscription as the dock and the cards (`web/src/thread-rows.ts` `listOf`: pinned, then unread, then newest, as
+  `threadsOf`). Archived threads, Background work and both are their own sets, subscribed only while the list shows
+  them (loom is asked for one only if its set hasn't answered in 2 s). Live, nothing asks `GET /comms` again: not
+  after a pin, an archive, a title, a delete, nor after every pull of an open thread (`onChanged`), and the Comms page
+  itself isn't refetched on a bare change or its timer (`liveViews`, now one entry per live set); it's asked once for
+  who can be written to, and once more if the set stops being live. Parity
+  (`threads-live.integration.test.ts`): for each member and each of the four views, the rows the app draws are
+  `GET /comms`'s, field for field and in order; in a real browser (`comms-app.integration.test.ts`) a thread renamed
+  elsewhere moves in an open list with no `/comms` request (before: one).
+- **Another process's thread write arrives at once**: the subscriptions watch `comms.tick` (written by every thread
+  write, `comms.ts` `bump`; a tick still holding this process's own stamp is its echo, so one write is one pull), so a reply the runtime posts through another listener,
+  or a CLI's write, is pulled within `GAP_MS`, not on the next 15 s pull (the test fails without it).
+- **A read that reads nothing new doesn't bump** (the app's 30 s read while a thread is in front): it records only
+  that the thread was in front (push reads that), so no list row moves and no listener pulls every thread for it.
+- **Known edges**: a view of more than 200 threads isn't whole, so it reads `GET /comms` once and isn't kept current
+  (archived lists that long); two threads with the same newest time can sort differently from `GET /comms`.
+- **Still to move**: pages of messages for an open thread (its own `/comms/<t>` stream stays the transport for words),
+  refs and previews, the conversation page, and a thread's asks as a view of the attention set.
 
 ## What stays on its own transport (exceptions)
 

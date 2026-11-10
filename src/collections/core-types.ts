@@ -51,7 +51,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     aggregates: { count: {} },
   }),
   thread: declare('thread', {
-    version: '1.1',
+    version: '1.2',
     schema: { type: 'object', properties: { agent: { type: 'string' }, title: { type: ['string', 'null'] }, updated: { type: 'string' } } },
     agent: 'agent',
     fields: {
@@ -68,6 +68,14 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
       working: { class: 'member', filter: ['eq'] },
       background: { class: 'member', filter: ['eq'] },
       last_seq: { class: 'member' },
+      // The rest of its Comms list row (1.2, t-2027): what the list and a thread's menu draw (comms-routes.ts view, stateOf).
+      channel: { class: 'member' },
+      titled_by: { class: 'member' },
+      read_seq: { class: 'member' },
+      conversation: { class: 'member' },
+      working_since: { class: 'member' },
+      queued: { class: 'member' },
+      failed: { class: 'member' },
     },
     default_fields: ['agent', 'title', 'updated', 'pinned'],
     max_page: 200,
@@ -132,7 +140,8 @@ function recordsFor(h: Household, type: string, viewer: Viewer): MemRecord[] {
       .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
     const state = threadRowStates(h, mine);
     return mine.map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project,
-        ...state.get(t.id)!, audience: { members: [t.member] } }));
+        channel: t.channel, titled_by: t.titled_by, read_seq: t.read_seq, conversation: t.conversation, working_since: t.working_since,
+        queued: t.queued_since !== null, failed: t.last_failed, ...state.get(t.id)!, audience: { members: [t.member] } }));
   }
   return [];
 }

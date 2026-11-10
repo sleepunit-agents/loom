@@ -24,7 +24,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { Household } from '../household.js';
-import { onBump } from '../comms.js';
+import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
 import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
@@ -118,6 +118,8 @@ interface HomeState {
   passing: Promise<void> | undefined;
   again: boolean;
   offBump?: () => void;
+  /** comms.tick: a thread moved by another process (a reply the runtime posted to another listener, a CLI). */
+  commsWatcher?: FSWatcher;
 }
 
 const homes = new Map<string, HomeState>();
@@ -163,8 +165,17 @@ function ensureRunning(h: HomeState): void {
   }
   h.poll ??= setInterval(() => pass(h), PASS_MS);
   h.poll.unref?.();
-  // Core's own threads move through comms.ts: their domain is pulled when they do.
-  h.offBump ??= onBump(() => h.puller.soon('loom/thread'));
+  // Core's own threads move through comms.ts: their domain is pulled when they do, here (onBump) and in any other
+  // process (a reply the runtime posts through another listener, a CLI), by the tick file every write leaves (comms.ts
+  // bump). A tick that still holds this process's own stamp is that bump's echo: one write, one pull.
+  h.offBump ??= onBump(() => { void h.puller.soon('loom/thread'); });
+  if (!h.commsWatcher) {
+    try {
+      h.commsWatcher = watch(home, (_e, f) => { if (String(f) === 'comms.tick' && !isOwnTick(home)) void h.puller.soon('loom/thread'); });
+      h.commsWatcher.on('error', () => { h.commsWatcher?.close(); h.commsWatcher = undefined; });
+      h.commsWatcher.unref?.();
+    } catch { /* the poll still runs */ }
+  }
 }
 
 function stopIfIdle(h: HomeState): void {
@@ -173,6 +184,7 @@ function stopIfIdle(h: HomeState): void {
   h.watcher?.close(); h.watcher = undefined;
   clearInterval(h.poll); h.poll = undefined;
   h.offBump?.(); h.offBump = undefined;
+  h.commsWatcher?.close(); h.commsWatcher = undefined;
   homes.delete(h.household().home);
 }
 
