@@ -62,6 +62,11 @@ _Avoid_: log, trace, transcript
 2. **A thread is its opener's.** With several owners on one agent (owners.md), each owner sees only the threads they
    opened. A thread's words are never shown to another member, household owner included. The conversation record
    (its metadata and digests) is still visible to the agent's owners, as for any venue (conversations.md, "Reading").
+   Its asks are its member's too (t-2084): a Needs you of its conversation, and an approval asked from it, are in
+   their Inbox, Home, badges, live attention records and devices' pushes alone, and only they can answer a Needs you
+   of it (`needs-*` refuses anyone else as it refuses a conversation that isn't the agent's). One exception: a card
+   only a household owner may give (the approvals piece's lead cards: a grant, a vouch, a reset) also goes to
+   household owners, as the ones who answer it. A thread the store can't place is no one's.
 3. **The server enforces both, on every route in "Routes" below.** Each request resolves the signed-in member's
    `agents` from `members` (owners.md), never from what the caller sends. Then:
    - a thread route answers `403` unless the member owns the thread's agent **and** is the thread's `member`;
