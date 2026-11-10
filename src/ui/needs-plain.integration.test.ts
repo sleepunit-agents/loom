@@ -233,6 +233,22 @@ describe('a Needs you in plain words', () => {
     expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['t-41 is gone']);
   });
 
+  it('a task it waits on clears it once the owner answers that same ask on the task (t-2098), never another', async () => {
+    const at = new Date().toISOString();
+    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
+    const asked: [string, string, string][] = [];
+    let answered: boolean | undefined = false;
+    const check: WaitCheckers = { approvals: async () => ({}), task: async () => 'open', taskAnswered: async (id, ask, since) => { asked.push([id, ask, since]); return answered; } };
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    expect(asked[0][0]).toBe('t-40');
+    expect(asked[0][1]).toBe('Can you check the backup restored?');
+    expect(asked[0][2] >= at.slice(0, 16)).toBe(true);
+    answered = undefined;
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    answered = true;
+    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['you answered it on t-40']);
+  });
+
   it('the stale one of 2026-11-03, a plain string naming an approval already spent, clears the same way', async () => {
     // Written before the lint, as it is in the live store: straight into the table.
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Asked for the wake approval.', needs_owner: 'Allow the wake card on Home' });
