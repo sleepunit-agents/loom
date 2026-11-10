@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -190,18 +190,42 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     raw.close();
     expect(row.card_json).not.toContain('npm test');
     expect(row.step.toString('latin1')).not.toContain('npm test');
-    expect(stateOf(tt)).toMatchObject({ working: true, alive_at: '2026-11-10T10:00:01.000Z', tokens: 4100 });
+    // A sign of life from before this spell of work isn't this run's.
+    expect(stateOf(tt)).toMatchObject({ working: true });
+    expect(stateOf(tt).alive_at).toBeUndefined();
+    const fresh = new Date(Date.now() + 1000).toISOString();
+    postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: fresh, tokens: 4100 } });
+    expect(stateOf(threadFor(h, member('jonathan'), t.id))).toMatchObject({ working: true, alive_at: fresh, tokens: 4100 });
     // A sign of life alone is taken; a bad part refuses the post whole.
     expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [], alive: { at: '2026-11-10T10:00:30.000Z' } })).toMatchObject({ ok: true, added: 0 });
+    // Refused whole: a good card before a bad one isn't kept either.
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p3' }, { ...card, id: 'p4', exit: 1.5 }] })).toThrow(/bad-input/);
+    expect((await messagesOf(h, process.env, tt)).some((m) => m.id === 'p3')).toBe(false);
+    // An older core's wording, pinned here so the runtime's fallback (loom-box delivery.mjs OLD_CORE) can trust it.
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p5', bogus: 1 }] })).toThrow(/^bad-input: card 0 has unknown keys: bogus$/);
+    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [] })).toThrow(/^bad-input: cards is a list of 1-50$/);
+    // A body is kept only for a diff or the body's words: what a read or a search found never.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'r1', tool: 'Read', summary: 'Read a.ts', state: 'done', detail: 'a.ts', body: 'FILE-CONTENTS-NEVER-KEPT' }] }).added).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'r1')!.card?.step).toEqual({ detail: 'a.ts' });
+    // A post of a card is the card whole: its words replace those kept.
+    expect(postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ id: 'd1', tool: 'Edit', summary: 'Edited a.ts', state: 'done', detail: 'a.ts' }] }).updated).toBe(1);
+    expect((await messagesOf(h, process.env, tt)).find((m) => m.id === 'd1')!.card?.step).toEqual({ detail: 'a.ts' });
     for (const bad of [{ body: 'bell\x07' }, { body: 'osc \x1b]0;x' }, { detail: 'a\x1b[1mb' }, { result: 'two\nlines' }, { exit: 1.5 }, { limit: 0 }, { end: 'soon' }, { parent: 'a b' }, { items: [{ text: 'x', state: 'maybe' }] }, { other: 1 }]) {
       expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [{ ...card, id: 'p2', ...bad }] })).toThrow(/bad-input/);
     }
-    expect(() => postActivity(h, process.env, { conversation: t.conversation, run: 'r-2', cards: [] })).toThrow(/bad-input/);
-    // Swept with its label.
+    // Nothing a command printed or a file held is anywhere in the store, sealed or not.
+    for (const f of ['comms.db', 'household.db']) {
+      const bytes = readFileSync(join(h.home, f));
+      for (const never of ['OUTPUT-NEVER-KEPT', 'FILE-CONTENTS-NEVER-KEPT']) expect(bytes.includes(Buffer.from(never))).toBe(false);
+    }
+    // Swept with its label: the sealed words go from the row itself.
     sweepComms({ ...h, commsDays: 0 }, new Date(Date.now() + 60_000));
     const gone = (await messagesOf(h, process.env, tt)).find((m) => m.id === 'p1')!;
     expect(gone.text).toBeNull();
     expect(gone.card?.step).toBeUndefined();
+    const swept = new BetterSqlite3(join(h.home, 'comms.db'), { readonly: true });
+    expect(swept.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE step IS NOT NULL").get()).toEqual({ n: 0 });
+    swept.close();
     markRead(h, tt, 99);
   });
 

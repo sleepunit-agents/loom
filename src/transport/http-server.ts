@@ -809,8 +809,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const runOf = (header: string | undefined): string =>
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
-  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
-  const bodyCap = (subpath: string) => subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' || subpath === 'comms/activity' ? 64 * 1024 : 4 * 1024;
+  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. Activity carries
+   * steps' words (t-2109: a command, a diff, the body's own words, each card's bounded): 1 MB, the runtime posting at
+   * most half that a time. */
+  const bodyCap = (subpath: string) => subpath === 'comms/activity' ? 1024 * 1024 : subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);

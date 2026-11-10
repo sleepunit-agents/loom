@@ -1378,7 +1378,9 @@ const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
 /** A card's keys (comms.md, section 3): its base, and the parts the owner's Watching view shows (t-2109). */
 const CARD_KEYS = ['id', 'at', 'tool', 'summary', 'state', 'detail', 'body', 'result', 'exit', 'limit', 'end', 'parent', 'items'];
 const CARD_ID = /^[A-Za-z0-9_.:\-]{1,80}$/;
-const SHELL_TOOLS = new Set(['Bash', 'command_execution', 'BashOutput', 'exec_command', 'shell']);
+/** The tools whose card may keep a body (t-2109): an edit's diff, the body's own words. Never a command's output or a
+ * file's contents (comms.md, section 3). */
+const BODY_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'text']);
 export const MAX_DETAIL = 4000;
 export const MAX_BODY = 32_000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -1392,8 +1394,9 @@ function stepOfCard(o: Record<string, unknown>, i: number): { words: StepWords |
   const words: StepWords = {}, plain: StepPlain = {};
   const bad = (k: string, why: string): never => fail(`bad-input: card ${i}'s ${k} ${why}`);
   if (o.detail !== undefined) { if (typeof o.detail !== 'string' || o.detail.length > MAX_DETAIL || o.detail.includes('\x1b') || !SHOWN_TEXT.test(o.detail)) bad('detail', `is text of at most ${MAX_DETAIL}`); words.detail = o.detail as string; }
-  // A shell step's output is never kept (t-2109; on demand, unstored, is t-2112): a body on one is dropped.
-  if (o.body !== undefined) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); if (!SHELL_TOOLS.has(String(o.tool))) words.body = o.body as string; }
+  // A body is kept only for a diff or the body's words (BODY_TOOLS); a command's output never (t-2109; on demand,
+  // unstored, is t-2112), nor what a tool read: on any other card it's dropped.
+  if (o.body !== undefined) { if (typeof o.body !== 'string' || o.body.length > MAX_BODY || !SHOWN_TEXT.test(o.body)) bad('body', `is text of at most ${MAX_BODY}`); if (BODY_TOOLS.has(String(o.tool))) words.body = o.body as string; }
   if (o.result !== undefined) { if (typeof o.result !== 'string' || o.result.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.result)) bad('result', 'is one printable line'); words.result = o.result as string; }
   if (o.items !== undefined) {
     if (!Array.isArray(o.items) || o.items.length > 20) bad('items', 'is a list of at most 20');
@@ -1477,13 +1480,12 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       if (c.state === 'running') delete card.t1;
       withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(card), r.id, prior.seq));
       // Its label moves with it (t-1944: a failed step says why, a plan says where it's got to), sealed like the first
-      // one; a label already swept stays swept. Its words (t-2109) the same.
+      // one; a label already swept stays swept. Its words (t-2109) the same: each post of a card is the card whole (the
+      // runtime reads it whole each time), so its words replace those kept, and a part it no longer says is gone.
       if (prior.kept) {
         const blob = encrypt(h.home, env, c.summary);
-        const words = c.words ? encrypt(h.home, env, JSON.stringify(c.words)) : undefined;
-        withMessages(h.home, (db) => (words
-          ? db.prepare('UPDATE comms_messages SET text = ?, step = ? WHERE thread = ? AND seq = ?').run(blob, words, r.id, prior.seq)
-          : db.prepare('UPDATE comms_messages SET text = ? WHERE thread = ? AND seq = ?').run(blob, r.id, prior.seq)));
+        const words = c.words ? encrypt(h.home, env, JSON.stringify(c.words)) : null;
+        withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = ?, step = ? WHERE thread = ? AND seq = ?').run(blob, words, r.id, prior.seq));
       }
       updated++;
     } else {
@@ -1686,8 +1688,10 @@ export function stateOf(t: Thread): { working: boolean; working_since: string | 
   // While it works: when the runtime last said its body is up (`beat`), and its body's last sign of life and tokens
   // (t-2109), so the app can tell working from quiet from stuck.
   const working = t.working_since !== null;
+  // A sign of life from before this spell of work is a past run's: not this one's.
+  const fresh = working && !!t.alive_at && t.alive_at >= (Date.parse(t.working_since ?? '') || 0) - 60_000;
   return { working, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed,
     ...(working && t.working_beat ? { beat: new Date(t.working_beat).toISOString() } : {}),
-    ...(working && t.alive_at ? { alive_at: new Date(t.alive_at).toISOString() } : {}),
-    ...(working && typeof t.alive_tokens === 'number' ? { tokens: t.alive_tokens } : {}) };
+    ...(fresh ? { alive_at: new Date(t.alive_at!).toISOString() } : {}),
+    ...(fresh && typeof t.alive_tokens === 'number' ? { tokens: t.alive_tokens } : {}) };
 }

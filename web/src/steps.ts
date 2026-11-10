@@ -86,8 +86,9 @@ export type Alive = { face: 'working' | 'quiet' | 'stuck'; quiet: number; step: 
  * record moving (`alive_at`) and a step starting or ending. Stuck when quiet for STUCK_MS, or a step running past its
  * own time limit (and a half-minute's grace).
  */
-export function aliveOf(state: { alive_at?: string; tokens?: number }, cards: WorkCard[], now: number): Alive {
-  let last = Number.isFinite(ms(state.alive_at)) ? ms(state.alive_at) : 0;
+export function aliveOf(state: { alive_at?: string; tokens?: number; working_since?: string | null }, cards: WorkCard[], now: number): Alive {
+  // With nothing else heard, since it started working: a body that never says anything is quiet, then stuck.
+  let last = Math.max(Number.isFinite(ms(state.alive_at)) ? ms(state.alive_at) : 0, Number.isFinite(ms(state.working_since)) ? ms(state.working_since) : 0);
   let step: WorkCard | null = null;
   for (const c of cards) {
     const s = spanOf(c);

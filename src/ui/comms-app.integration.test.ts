@@ -221,11 +221,13 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     post([{ id: 'b1', at: ago(280), end: ago(268), tool: 'Bash', summary: 'Ran the deploy tests', state: 'failed', exit: 1, detail: 'npm test -- deploy', result: 'exit 1: 11 passed, 1 failed',
       body: '\x1b[32m✔ builds\x1b[0m\n\x1b[31m✖ waits for the lock\x1b[0m\n  AssertionError: lock missing\nℹ pass 11\nℹ fail 1' }]);
     post([{ id: 'e1', at: ago(200), end: ago(199), tool: 'Edit', summary: 'Edited deploy.test.mjs', state: 'done', detail: 'deploy.test.mjs', result: '2 additions, 1 removal',
-      body: '@@ -40,3 +40,4 @@\n   const lock = join(dir, "deploy.lock");\n-  await sleep(500);\n+  await waitFor(lock);\n+  // the lock, not a guess' }]);
+      body: '@@ -40,3 +40,4 @@\n   const lock = join(dir, "deploy.lock");\n-  await sleep(500);\n\x1b[32m+  await waitFor(lock);\x1b[0m\n+  // the lock, not a guess' }]);
     post([{ id: 'a1', at: ago(190), end: ago(150), tool: 'Agent', summary: 'Started a helper: Check other sleeps', state: 'done', result: '2 tool uses' },
       { id: 'a1:g', at: ago(185), end: ago(184), tool: 'Grep', summary: 'Searched for "sleep(" in test', state: 'done', parent: 'a1', detail: '"sleep(" in test', result: 'Found 3 files' },
       { id: 'a1:r', at: ago(180), end: ago(179), tool: 'Read', summary: 'Read deploy-follow.test.mjs', state: 'done', parent: 'a1', detail: 'deploy-follow.test.mjs', result: 'Read 88 lines' }]);
     post([{ id: 'b2', at: ago(150), tool: 'Bash', summary: 'Run the deploy tests again', state: 'running', detail: 'npm test -- deploy', limit: 600 }], { at: ago(150), tokens: 41_200 });
+    // It's been at work since the first of these, five minutes ago.
+    { const db = new BetterSqlite3(join(h.home, 'household.db')); db.prepare('UPDATE comms_threads SET working_since = ? WHERE id = ?').run(ago(300), job.id); db.close(); }
     try {
       for (const look of ['neon', 'lowlight', 'daylight']) for (const phone of [false, true]) {
         const ctx = await browser.newContext(phone
@@ -272,6 +274,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
           await edit.locator('.work-row__head').click();
           expect(await edit.locator('.work-diff[data-d="add"]').count()).toBe(2);
           expect(await edit.locator('.work-diff[data-d="rm"]').count()).toBe(1);
+          expect(await edit.locator('.work-term').textContent()).not.toContain('\x1b');
           await helper.locator('.work-row__head').first().click();
           expect(await helper.locator('.work-rows .work-row').count()).toBe(2);
           // The working line: quiet for over two minutes, and says so itself, with the step it's on.

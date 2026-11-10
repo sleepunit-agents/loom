@@ -17,9 +17,12 @@ function Ansi({ text }: { text: string }) {
   return <>{ansiRuns(text).map((r, i) => (r.fg || r.bold ? <span key={i} className="work-ansi" data-fg={r.fg} data-bold={r.bold ? '' : undefined}>{r.text}</span> : r.text))}</>;
 }
 
-/** An edit's diff: each line green when added, red when removed. */
+/** An edit's diff: each line green when added, red when removed (read past any colour code), its colours as runs. */
 function Diff({ text }: { text: string }) {
-  return <>{text.split('\n').map((l, i) => <span key={i} className="work-diff" data-d={l.startsWith('@@') ? 'hunk' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'rm' : undefined}>{l}{'\n'}</span>)}</>;
+  return <>{text.split('\n').map((l, i) => {
+    const plain = ansiRuns(l).map((r) => r.text).join('');
+    return <span key={i} className="work-diff" data-d={plain.startsWith('@@') ? 'hunk' : plain.startsWith('+') ? 'add' : plain.startsWith('-') ? 'rm' : undefined}><Ansi text={l} />{'\n'}</span>;
+  })}</>;
 }
 
 /** The plan as a checklist (the newest plan card's items). */
@@ -47,7 +50,7 @@ function Row({ n, now }: { n: WorkNode<WorkCard>; now: number }) {
   const { c } = n;
   if (isText(c)) {
     const w = wordsOf(c);
-    return <div className="work-text">{w.body ?? c.text ?? ''}{n.kids.length ? <Rows nodes={n.kids} now={now} /> : null}</div>;
+    return <div className="work-text"><Ansi text={w.body ?? c.text ?? ''} />{n.kids.length ? <Rows nodes={n.kids} now={now} /> : null}</div>;
   }
   const w = wordsOf(c);
   const tool = String(c.card?.tool ?? '');

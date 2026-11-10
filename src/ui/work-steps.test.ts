@@ -45,6 +45,11 @@ describe('the working line', () => {
     expect(aliveOf({ alive_at: iso(1000) }, [quiet], T0 + 1000 + QUIET_MS).face).toBe('quiet');
     expect(aliveOf({ alive_at: iso(1000) }, [quiet], T0 + 1000 + STUCK_MS).face).toBe('stuck');
   });
+  it('a body that says nothing at all is quiet, then stuck, counted from when it started working', () => {
+    expect(aliveOf({ working_since: iso(0) }, [], T0 + 30_000).face).toBe('working');
+    expect(aliveOf({ working_since: iso(0) }, [], T0 + QUIET_MS + 1000).face).toBe('quiet');
+    expect(aliveOf({ working_since: iso(0) }, [], T0 + STUCK_MS + 1000).face).toBe('stuck');
+  });
   it('stuck when a step runs past its own limit, even while the body still writes', () => {
     const a = aliveOf({ alive_at: iso(170_000) }, [running], T0 + 180_000);
     expect(a).toMatchObject({ face: 'stuck', over: true });
