@@ -146,7 +146,7 @@ function keep(h: Household, env: NodeJS.ProcessEnv, thread: string, it: InboxIte
 }
 
 /** The approval kinds only the household owner gives (core applies them: handler.ts applyGrant/applyOwnerApproval). */
-export const OWNER_KINDS: ReadonlySet<string> = new Set(['grant', 'vouch-wake', 'principal-reset']);
+export const OWNER_KINDS: ReadonlySet<string> = new Set(['grant', 'vouch-wake', 'principal-reset', 'box-write-off']);
 
 const VERDICT_OF_STATE: Record<string, string> = { allowed: 'allowed', used: 'allowed', denied: 'denied', expired: 'expired' };
 const verdictOfState = (s: string): string => (Object.hasOwn(VERDICT_OF_STATE, s) ? VERDICT_OF_STATE[s] : /^[a-z-]{1,20}$/.test(s) ? s : 'closed');
