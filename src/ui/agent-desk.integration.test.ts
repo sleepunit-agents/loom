@@ -148,6 +148,34 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     });
   }
 
+  it('a job that starts shows on its agent\'s rail card from the live cards alone, Home\'s page never asked again (t-2028)', async () => {
+    const p = await screen(1440, 900, '/inbox?t=*inbox');
+    await rail(p, 'nova').waitFor();
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent()).toMatch(/quiet/i);
+    await p.waitForFunction(() => document.documentElement.dataset.attention === 'live');
+    // From here Home's page (the desk's own, under the tiles) can't answer: whatever the rail shows next came live.
+    const asked: string[] = [];
+    await p.route((u) => u.pathname === '/', (r) => { if (r.request().resourceType() === 'document') return r.continue(); asked.push(r.request().url()); return r.abort(); });
+    const now = new Date().toISOString();
+    d.report({
+      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
+      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
+      nova: { jobs: [{ id: 'job-nova', text: 'Sorting the photo library', kind: 'lane', status: 'running', where: 'wake', since: now }] },
+    });
+    await d.changed();
+    // Within the pieces' round: the runtime's word is heard at once alone, but after the 15 s round when other scopes'
+    // rounds are under way (live.ts tick; the bare change waits the same).
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent(), { timeout: 30_000 }).toMatch(/working/i);
+    expect(await rail(p, 'nova').textContent()).toContain('Sorting the photo library');
+    d.report({
+      art: { doing: [{ text: 'Making the field box installer survive power loss', kind: 'lane', where: 'wake', since: now }], readings: [{ label: 'Next', value: 'tonight · 03:00', detail: 'backup check' }] },
+      mark: { readings: [{ label: 'Next', value: 'Sun · 21:00', detail: 'weekly plan' }] },
+    });
+    await d.changed();
+    await expect.poll(() => rail(p, 'nova').locator('.loom-rcard__st').textContent(), { timeout: 30_000 }).toMatch(/quiet/i);
+    await p.context().close();
+  }, 90_000);
+
   it('only the viewer\'s own agents: Sam owns Mark, so Mark alone, and only Sam\'s unread', async () => {
     const p = await screen(1440, 900, '/', { who: 'sam' });
     await card(p, 'mark').waitFor();

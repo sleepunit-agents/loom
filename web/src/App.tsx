@@ -2,6 +2,7 @@
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { useAttention, withAttention } from './attention';
 import { useThreads, withThreads } from './threads-live';
+import { deskHomeOf, useAgentCards, withAgentCards } from './agents-live';
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
@@ -225,7 +226,10 @@ export default function App() {
   const attention = useAttention(mainPage.data?.chrome?.csrf);
   // And the member's Comms threads, live (threads-live.ts, t-2027): the dock's count and the agent cards read them.
   const threads = useThreads(mainPage.data?.chrome?.csrf);
-  const data = useMemo(() => withThreads(withAttention(mainPage.data, attention), threads), [mainPage.data, attention, threads]);
+  // And each agent's card, live (agents-live.ts, t-2028): the desktop's cards and rail, and Home's, on every page.
+  const cards = useAgentCards(mainPage.data?.chrome?.csrf);
+  const data = useMemo(() => withAgentCards(withThreads(withAttention(mainPage.data, attention), threads), cards), [mainPage.data, attention, threads, cards]);
+  const deskHome = useMemo(() => deskHomeOf(data?.view === 'house-home' ? data.home as never : null, cards, attention), [data, cards, attention]);
   const tilesApi = useRef<import('./tiling/tiles').TilesApi | null>(null);
   // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
   const [D, setD] = useState(desk$);
@@ -490,7 +494,7 @@ export default function App() {
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
   const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
-    const data = withThreads(withAttention(pg.data, attention), threads);
+    const data = withAgentCards(withThreads(withAttention(pg.data, attention), threads), cards);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
     const inAgent = !!agentHead?.id && !!data?.chrome?.shell?.household;
@@ -675,7 +679,7 @@ export default function App() {
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} onOpen={setTileOpen} outerGo={go}
-                shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} deskEnv={(g) => pageEnv(mainPage, g)}
+                shell={chrome.shell} homeData={deskHome} deskEnv={(g) => pageEnv(mainPage, g)}
                 oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.

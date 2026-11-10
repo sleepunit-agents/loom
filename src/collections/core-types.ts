@@ -24,7 +24,7 @@ import type { Viewer } from './viewer.js';
 export type CoreSource = (viewer: Viewer, now: number) => Promise<MemRecord[]>;
 const sources = new Map<string, Map<string, CoreSource>>();
 /** The core types whose records only a registered source makes. */
-const SOURCED = new Set(['attention']);
+const SOURCED = new Set(['attention', 'agent-status']);
 export function registerCoreSource(home: string, type: string, f: CoreSource): void {
   let m = sources.get(home);
   if (!m) sources.set(home, (m = new Map()));
@@ -123,6 +123,38 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
     default_fields: ['agent', 'kind', 'box', 'attention', 'unread', 'seen', 'sort', 'at', 'text', 'meta', 'outcome', 'source', 'sourceLabel', 'page', 'label', 'href',
       'actions', 'reply', 'needs', 'approval', 'waitsOnApproval', 'fine', 'relayedFrom', 'conversation'],
     max_page: 500,
+    aggregates: { count: {} },
+    audience: 'ask',
+  }),
+  // One agent's card (t-2028): its state and why, what it has going (doing), every job a piece reports for it (running,
+  // waiting, scheduled, backlog), what's wrong, its readings, when it was last seen, its last few steps; as Home's own
+  // code makes it for this member (src/ui/handler.ts agentCards over their pieces; a Comms thread's job is its member's
+  // alone, handler.ts atWorkFor). So it's an `ask` type, each row's audience the viewer, as attention is.
+  'agent-status': declare('agent-status', {
+    version: '1.0',
+    schema: { type: 'object', properties: { agent: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' } } },
+    agent: 'agent',
+    fields: {
+      agent: { class: 'member', filter: ['eq', 'in'], order: true },
+      label: { class: 'member' },
+      bg: { class: 'member' },
+      fg: { class: 'member' },
+      face: { class: 'member' },
+      state: { class: 'member', filter: ['eq', 'in'] },
+      reason: { class: 'member' },
+      doing: { class: 'member' },
+      jobs: { class: 'member' },
+      // How many of its jobs are running now (the rail's boxes, t-2077; "Working · N things").
+      running: { class: 'member', filter: ['eq', 'gt', 'gte'] },
+      problems: { class: 'member' },
+      seen: { class: 'member' },
+      readings: { class: 'member' },
+      steps: { class: 'member' },
+      // A digest of every member's own copy (the core viewer's snapshot alone): a copy that moves moves the record.
+      copies: { class: 'owner' },
+    },
+    default_fields: ['agent', 'label', 'bg', 'fg', 'face', 'state', 'reason', 'doing', 'jobs', 'running', 'problems', 'seen', 'readings', 'steps'],
+    max_page: 100,
     aggregates: { count: {} },
     audience: 'ask',
   }),

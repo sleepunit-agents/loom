@@ -81,7 +81,7 @@ import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../
 import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
 import { registerCoreSource } from '../collections/core-types.js';
 import type { MemRecord } from '../collections/memory.js';
-import { ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
+import { AGENT_STATUS_DOMAIN, ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
 import { GAP_MS, nudge } from '../collections/pull.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
@@ -1082,6 +1082,20 @@ const nudgeLater = new Map<string, NodeJS.Timeout>();
 const builds = new Map<string, number>();
 export const attentionBuilds = (home: string): number => builds.get(home) ?? 0;
 
+/** The same for any other domain loom's bare "something changed" moves (one timer per home and domain). */
+const liveNudgedAt = new Map<string, number>();
+const liveNudgeLater = new Map<string, NodeJS.Timeout>();
+function nudgeLive(home: string, domain: string): void {
+  const k = `${home}\0${domain}`;
+  if (liveNudgeLater.has(k)) return;
+  const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
+  const go = () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); nudge(home, domain); };
+  if (!wait) { go(); return; }
+  const t = setTimeout(go, wait);
+  t.unref?.();
+  liveNudgeLater.set(k, t);
+}
+
 function nudgeAttention(home: string): void {
   if (nudgeLater.has(home)) return;
   const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
@@ -1179,6 +1193,74 @@ async function buildAttention(base: UiOptions, full: Household, viewer: Viewer):
     }
   }
   return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
+}
+
+/**
+ * The agent-status records (core's `agent-status` type, src/collections/core-types.ts; t-2028): each agent's card as
+ * Home's own code makes it for this member (agentCards over their pieces, atWorkFor: a Comms thread's job is its
+ * member's alone), so the desktop's cards, the rail, the bar's agents at work and Home read one set. For the core
+ * viewer: each agent once, its audience exactly the members who own it, with a digest of every member's own copy (two
+ * members' copies differ by their threads' jobs), so a change to any copy moves it and that member is asked again.
+ */
+async function memberCards(base: UiOptions, full: Household, m: Member): Promise<AgentCard[]> {
+  const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
+  const hh = own ? narrowed(full, own) : full;
+  const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
+  const pieces = atWorkFor(forOwner((await pieceManifests(env)).pieces, own), full, m);
+  return agentCards(hh, pieces, agentsOf(hh)!, Date.now());
+}
+
+/** A card as a record: its agent is its id. */
+const statusRecord = (c: AgentCard, audience: Record<string, unknown>): MemRecord => {
+  const { id, ...rest } = c;
+  return { ...rest, id, agent: id, running: (c.jobs ?? []).filter((j) => j.status === 'running').length, audience } as MemRecord;
+};
+
+const statusSlots = new Map<string, { cur: Promise<MemRecord[]>; next?: Promise<MemRecord[]> }>();
+/** How many times each household's agent-status records were built (tests). */
+const statusBuilds = new Map<string, number>();
+export const agentStatusBuilds = (home: string): number => statusBuilds.get(home) ?? 0;
+
+/** One build per viewer at a time, and at most one queued after it (attentionFor's rule). */
+function agentStatusFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
+  const full = base.household?.();
+  if (!full || viewer.kind === 'agent') return Promise.resolve([]);
+  const k = `${full.home}\0${viewerId(viewer)}`;
+  const run = (): Promise<MemRecord[]> => {
+    const now = base.household?.() ?? full;
+    const p: Promise<MemRecord[]> = buildAgentStatus(base, now, viewer).finally(() => {
+      statusBuilds.set(full.home, (statusBuilds.get(full.home) ?? 0) + 1);
+      const s = statusSlots.get(k);
+      if (s?.cur === p && !s.next) statusSlots.delete(k);
+    });
+    return p;
+  };
+  const s = statusSlots.get(k);
+  if (!s) { const cur = run(); statusSlots.set(k, { cur }); return cur; }
+  s.next ??= s.cur.catch(() => undefined).then(() => { const cur = run(); statusSlots.set(k, { cur }); return cur; });
+  return s.next;
+}
+
+async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+  if (viewer.kind === 'member') {
+    const m = full.members.find((x) => x.person === viewer.person);
+    if (!m) return [];
+    // This member's own copy of each card (their threads' jobs): theirs alone.
+    return (await memberCards(base, full, m)).map((c) => statusRecord(c, { members: [viewer.person] }));
+  }
+  const all = new Map<string, MemRecord>();
+  const whose = new Map<string, string[]>();
+  const copies = new Map<string, ReturnType<typeof createHash>>();
+  for (const m of full.members) {
+    for (const c of await memberCards(base, full, m)) {
+      const rec = statusRecord(c, {});
+      whose.set(c.id, [...(whose.get(c.id) ?? []), m.person]);
+      if (!copies.has(c.id)) copies.set(c.id, createHash('sha256'));
+      copies.get(c.id)!.update(`${m.person}\0${JSON.stringify(rec)}\0`);
+      if (!all.has(c.id)) all.set(c.id, rec);
+    }
+  }
+  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, copies: copies.get(r.id)!.digest('base64url').slice(0, 22) }));
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
@@ -1606,7 +1688,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (full) {
     const base = opts, home = full.home;
     registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
-    onChanged(home, () => nudgeAttention(home));
+    // Each agent's card (t-2028), made by Home's own code for each viewer.
+    registerCoreSource(home, 'agent-status', (v) => agentStatusFor(base, v));
+    onChanged(home, () => { nudgeAttention(home); nudgeLive(home, AGENT_STATUS_DOMAIN); });
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
