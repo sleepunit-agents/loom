@@ -135,7 +135,7 @@ type Named = { key: string; label: string };
 const withFit = <T extends Named>(r: T | null, own: (key: string) => Partial<Omit<Fit, 'why'>> | undefined): (T & { fit: Fit }) | null =>
   (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label, own(r.key)) } : null);
 
-export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, accent, onFocus, outerGo, shell, homeData, deskEnv, oneWindow }: {
+export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, accent, onFocus, onOpen, outerGo, shell, homeData, deskEnv, oneWindow }: {
   api: React.MutableRefObject<TilesApi | null>;
   /** The app a page is in, or null for the desktop (Home) and anything that isn't a tile. */
   appOf: (path: string) => Named | null;
@@ -151,6 +151,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   /** What a tile's page wears as its accent (index.css [data-accent]): its app's colour, or its agent's. */
   accent: (o: AppRef) => Accent;
   onFocus: (f: Focused) => void;
+  onOpen: (apps: { key: string; label: string }[]) => void;
   /** Anything that isn't a tile's (Find, signing out, another site). */
   outerGo: (href: string) => void;
   shell: Shell;
@@ -750,6 +751,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const rail = useMemo<RailLink>(() => ({ onAir, shown: railShown, screen: screenOf && slot ? { agent: screenOf, el: slot } : null }), [onAir, railShown, screenOf, slot]);
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
   const fp = f ? pages.current.get(f.key) : undefined;
+  // Minimized windows remain open and keep their dock keys.
+  const openKeys = JSON.stringify([...s.apps, ...s.min].map(({ key, label }) => ({ key, label })));
+  useEffect(() => { onOpen(JSON.parse(openKeys)); }, [openKeys, onOpen]);
   const focusedTitle = f ? titleOf(fp ?? ({ data: null } as PageState), f) : '';
   const fd = fp && !fp.error && !fp.waiting ? fp.data as { view?: string; page?: { intro?: string }; intro?: string } | null : null;
   const focusedIntro = fd?.view === 'page' ? fd.page?.intro : fd?.view === 'sheet' ? fd.intro : undefined;
