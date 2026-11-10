@@ -8,6 +8,12 @@ on:
   # The merge queue (t-1935) tests each group before it lands on main.
   merge_group:
 
+# Superseded PR heads must not occupy runners needed by their replacement.
+# Main and merge-queue runs retain distinct groups and are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
