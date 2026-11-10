@@ -25,7 +25,9 @@ const PIECE_ITEM = /^[a-z][a-z0-9-]{0,39}:[A-Za-z0-9._@/#:-]{1,160}$/;
 const PAGE = /^[A-Za-z0-9][A-Za-z0-9._~/-]{0,199}$/;
 /** What a label never keeps: control characters, line and paragraph separators, and bidi overrides (which could make
  * the line read other than it is). Stripped, not refused: a label is the item's, and the member can't edit it. */
-const UNSHOWN = /[\x00-\x1f\x7f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+const UNSHOWN = /[\x00-\x1f\x7f\u200b-\u200f\u061c\ufeff\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+/** Quote marks and their look-alikes: a label is shown between “ and ”, so none of its own can close that early. */
+const QUOTES = /["\u201c\u201d\u201e\u201f\u00ab\u00bb\u2039\u203a\u275d\u275e\u301d\u301e\uff02]/g;
 /** How far ahead of loom's clock a member's own clock may be. */
 const SKEW_MS = 5 * 60_000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/;
@@ -41,7 +43,7 @@ export function parseAbout(raw: unknown, now: Date = new Date()): About {
   const o = raw as Record<string, unknown>;
   const extra = Object.keys(o).filter((k) => !['ref', 'label', 'page', 'seen'].includes(k));
   if (extra.length) return fail(`bad-input: about has unknown keys: ${extra.join(', ')}`);
-  const label = typeof o.label === 'string' ? o.label.replace(/\s+/g, ' ').replace(UNSHOWN, '').trim().slice(0, ABOUT_LABEL_MAX).trim() : '';
+  const label = typeof o.label === 'string' ? o.label.replace(/\s+/g, ' ').replace(UNSHOWN, '').replace(QUOTES, "'").trim().slice(0, ABOUT_LABEL_MAX).trim() : '';
   if (!label) return fail(`bad-input: about.label is 1-${ABOUT_LABEL_MAX} printable characters`);
   const ref = o.ref === undefined ? undefined : typeof o.ref === 'string' && (refShape(o.ref) || PIECE_ITEM.test(o.ref)) ? o.ref : fail('bad-input: about.ref is a loom ref (t-12, a-…, github:owner/repo#N, …) or <piece>:<id>');
   const page = o.page === undefined ? undefined : typeof o.page === 'string' && PAGE.test(o.page) && !o.page.split('/').includes('..') ? o.page : fail('bad-input: about.page is a loom path');
