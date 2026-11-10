@@ -376,7 +376,9 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     try {
       await deliverNow(h.home);
       await until(() => ev.frames.some((f) => f.event === 'reset'));
-      expect(ev.frames.find((f) => f.event === 'reset')!.data).toMatchObject({ sub: 'q', reason: 'scope' });
+      expect(ev.frames.find((f) => f.event === 'reset')!.data).toMatchObject({ sub: 'q', reason: 'scope', scope: 2 });
+      // And the stream closes: everything else it carried was fixed when it opened.
+      expect(await until(() => ev.closed())).toBe(true);
     } finally {
       hj.members[1].agents = ['pond-bot'];
       writeFileSync(join(h.home, 'household.json'), JSON.stringify(hj));

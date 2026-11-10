@@ -414,9 +414,13 @@ async function passOnce(h: HomeState): Promise<void> {
     if (!v) { s.port.close(); h.streams.delete(s.port.id); continue; }
     const vid = viewerId(v);
     if (vid !== s.vid) {
+      // Their authority changed: every subscription resets (the window drops what it held), and the stream closes, since
+      // everything else it carries (its bare changes, whose agents it hears of) was fixed when it opened. The window
+      // opens a new one, as who they are now.
       s.scope++;
-      s.viewer = v; s.vid = vid;
       for (const sub of [...s.subs.values()]) reset(s, sub, 'scope');
+      s.port.close();
+      h.streams.delete(s.port.id);
       continue;
     }
     for (const sub of [...s.subs.values()]) {
@@ -449,7 +453,7 @@ async function passOnce(h: HomeState): Promise<void> {
       if (gone || !s.subs.has(sub.id)) continue;
       trim(sub);
       if (ask && domainMoved) {
-        if (!sub.waiting) reaskSoon(sub.reask, s, sub, p);
+        if (!sub.waiting) reaskSoon(h, sub.reask, s, sub, p);
         continue;
       }
       send(s, sub);
@@ -468,18 +472,27 @@ async function passOnce(h: HomeState): Promise<void> {
  * upserted, what was delivered and isn't leaves. A provider that doesn't answer leaves counts off (never a stale number
  * presented as current) and an `ask` subscription reset.
  */
-function reaskSoon(reask: Reask, s: Stream, sub: Sub, p: Provider): void {
+function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider): void {
   sub.waiting = true;
-  // The viewer as they are now, before asking and again before sending: a change to their authority meanwhile is the
-  // next pass's reset, never rows asked or sent as who they were.
-  const still = (): Viewer | undefined => { const v = s.port.viewer(); return v && viewerId(v) === s.vid ? v : undefined; };
+  // The viewer and the provider as they are now, before asking and again before sending: a change to either meanwhile
+  // is the next pass's reset, never rows asked or sent under what was.
+  let p = p0;
+  const still = (): Viewer | undefined => {
+    const v = s.port.viewer();
+    if (!v || viewerId(v) !== s.vid) return undefined;
+    const now = providers(h.env()).get(sub.provider);
+    if (!now || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
+    p = now;
+    return v;
+  };
   void (async () => {
     await new Promise((r) => setTimeout(r, AGG_GAP_MS));
     const v = still();
     const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
     if (s.subs.get(sub.id) !== sub || !v || !still()) return;
-    if (!got) { reset(s, sub, 'gap'); return; }
+    // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something).
+    if (!got) return;
     // Only what differs from what this subscription was sent.
     const now = new Set<string>();
     got.admitted.forEach((r, i) => {

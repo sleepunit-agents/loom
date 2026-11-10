@@ -159,7 +159,9 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
       // change that t-2032 retires.
       if (before) for (const [path, print] of now) if (before.get(path) !== print) {
         const piece = basename(path).replace(/^loom-/, '');
-        for (const c of clients) if (scopeOf(c.env) === scope) frame(c, 'page', { piece });
+        // Household owners' streams only: an owner of some agents isn't told which pieces are installed (a piece that
+        // doesn't scope them is hidden from them), and still hears the bare change, as before.
+        for (const c of clients) if (scopeOf(c.env) === scope && c.sees === '*') frame(c, 'page', { piece });
       }
     }
   })().finally(() => {

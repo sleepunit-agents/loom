@@ -89,6 +89,7 @@ export function withLog<T>(home: string, f: (db: Database) => T): T {
   const db = new BetterSqlite3(path);
   try {
     if (fresh) chmodSync(path, 0o600);
+  if (!ready.has(path)) chmodSync(join(home, 'collections'), 0o700);
     db.pragma('busy_timeout = 5000');
     db.pragma('journal_mode = WAL');
     if (fresh || !ready.has(path)) { db.exec(SCHEMA); ready.add(path); }
