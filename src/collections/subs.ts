@@ -551,6 +551,16 @@ export async function pullAfterAction(home: string, env: NodeJS.ProcessEnv, piec
   await pullNowAll(home, domains);
 }
 
+/** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
+ * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
+export function pullSoon(home: string, domains: readonly string[]): void {
+  for (const d of domains) nudge(home, d);
+  const h = homes.get(home);
+  if (!h) return;
+  const wanted = wantedOf(h);
+  for (const d of domains) if (wanted.has(d)) h.puller.soon(d);
+}
+
 /** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them
  * for every other listener. */
 export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {

@@ -83,7 +83,7 @@ import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../
 import { memberViewer, viewerId, type Viewer } from '../collections/viewer.js';
 import { registerCoreSource } from '../collections/core-types.js';
 import type { MemRecord } from '../collections/memory.js';
-import { ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullNowAll } from '../collections/subs.js';
+import { ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
 import { nudge } from '../collections/pull.js';
 import { beginOp, finishOp, withLog } from '../collections/log.js';
 
@@ -1109,18 +1109,23 @@ async function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[
     // Each item is this member's own Inbox's: theirs alone, whoever else's Inbox has the same one.
     return items.map((it) => attentionRecord(it, { members: [viewer.person] }, true));
   }
+  // Each item's audience is exactly the members whose Inbox has it (a member's own outcome is theirs alone; a scoped
+  // piece's answer is that owner's), never a wider term: anything that reads these as the core viewer (push, Needs
+  // auto-resolve) filters for a person by it.
   const store = storeFor(base);
   const all = new Map<string, MemRecord>();
+  const whose = new Map<string, string[]>();
   const reads = new Map<string, number>();
   for (const m of full.members) {
     const { items, reader } = await memberInbox(base, full, m);
     const opened = store.openedKeys(reader);
     for (const it of items) {
       if (opened.has(it.key)) reads.set(it.key, (reads.get(it.key) ?? 0) + 1);
-      if (!all.has(it.key)) all.set(it.key, attentionRecord(it, it.agent ? { ownersOf: [it.agent] } : { owners: true }, false));
+      whose.set(it.key, [...(whose.get(it.key) ?? []), m.person]);
+      if (!all.has(it.key)) all.set(it.key, attentionRecord(it, {}, false));
     }
   }
-  return [...all.values()].map((r) => ({ ...r, reads: reads.get(r.id) ?? 0 }));
+  return [...all.values()].map((r) => ({ ...r, audience: { members: whose.get(r.id)! }, reads: reads.get(r.id) ?? 0 }));
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
@@ -1554,7 +1559,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
   if (full && who?.member) opts = { ...opts, member: who.member };
   if (full && who?.member && who.member.agents !== '*') {
-    const own = who.member.agents;
+    // The agents they own that are still the household's (memberViewer's rule): a departed one is in no one's scope.
+    const own = who.member.agents.filter((a) => full.agents.includes(a));
     if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
     const base = opts.household!;
     opts = { ...opts, household: () => narrowed(base(), own), ownerScope: own, env: { ...opts.env, LOOM_OWNER_SCOPE: own.join(',') } };
@@ -1822,9 +1828,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const key = form.get('i') ?? '';
     if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
     storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
-    // A read is a change like any other (collections.md, "Read state"): every window of this member's hears it, the
-    // one that read it included, before this answer (bounded), so none asks its page again for it.
-    if (full) await pullNowAll(full.home, [ATTENTION_DOMAIN]);
+    // A read is a change like any other (collections.md, "Read state"): every window of this member's hears it. Pulled
+    // soon (at once if it wasn't in the last GAP_MS, else when that's up), never awaited here: a loop of reads costs one
+    // pull per gap, not one each.
+    if (full) pullSoon(full.home, [ATTENTION_DOMAIN]);
     return sendJson(res, 200, { ok: true });
   }
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;

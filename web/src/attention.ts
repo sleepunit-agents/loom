@@ -5,10 +5,10 @@
 // numbers agree and none asks its page again to find out.
 //
 // It loads the collection runtime as its own chunk (page.ts collectionsRuntime), on the first window that asks.
-import { useEffect, useSyncExternalStore } from 'react';
-import { collectionsRuntime, liveViews } from './page';
+import { liveViews } from './page';
+import { liveSet } from './live-set';
 import type { InboxItem } from './views';
-import type { CollectionRuntime, QuerySpec, Rec, ViewState } from './collections/runtime';
+import type { QuerySpec, Rec, ViewState } from './collections/runtime';
 
 export const ATTENTION_TYPE = 'loom/attention@^1';
 const SPEC: QuerySpec = { type: ATTENTION_TYPE, order: [['sort', 'desc']], limit: 500 };
@@ -39,59 +39,29 @@ export function attentionOf(state: ViewState, records: ReadonlyMap<string, Rec>)
   return { items, needs, byAgent };
 }
 
-// One per tab: made on the first ask, kept while anyone listens (the runtime keeps a view LINGER_MS after the last
-// close, so a window reopened soon after is warm).
-let current: Attention | null = null;
-let rt: CollectionRuntime | null = null;
-let handle: ReturnType<CollectionRuntime['view']> | null = null;
-let starting: Promise<void> | null = null;
-const hearers = new Set<() => void>();
-
-function publish(): void {
-  const next = rt && handle ? attentionOf(handle.state(), rt.records(SPEC.type)) : null;
-  current = next;
+// One per tab (live-set.ts): kept while anyone listens; a cleared runtime (signed out) is never read again.
+const set = liveSet<Attention>(SPEC, attentionOf, (next) => {
   // Said on the page, for anyone looking (and the browser tests): whether what needs you is read live.
   if (typeof document !== 'undefined') document.documentElement.dataset.attention = next ? 'live' : 'page';
-  for (const f of hearers) f();
-}
-
-function start(csrf: () => string): void {
-  if (starting || typeof window === 'undefined') return;
-  starting = collectionsRuntime(csrf).then(({ runtime }) => {
-    rt = runtime;
-    handle = runtime.view(SPEC, publish);
-    publish();
-  }, () => { /* no runtime (the chunk didn't load): the pages' own copies stay */ });
-}
-
-function subscribe(f: () => void): () => void {
-  hearers.add(f);
-  return () => {
-    hearers.delete(f);
-    if (!hearers.size && handle) { handle.close(); handle = null; rt = null; starting = null; current = null; }
-  };
-}
+});
 
 /** Hear the live set move (and keep it live while listening). */
-export const onAttention = (f: () => void): (() => void) => subscribe(f);
+export const onAttention = (f: () => void): (() => void) => set.subscribe(f);
 
 // A page whose every changing part is read live doesn't need asking again on loom's bare "something changed", nor on
 // a timer (page.ts usePage): the Inbox, once the set is live (its open item's piece page excepted: rare, and kept by
 // its own pick).
-liveViews((view) => view === 'inbox' && current !== null);
+liveViews((view) => view === 'inbox' && set.current() !== null);
 
 /**
  * The live attention set for this tab, or null while it isn't live (use the page's copy then). `csrf` is the page's
  * anti-forgery token; none (no signed-in page yet): nothing is asked.
  */
-export function useAttention(csrf: string | undefined): Attention | null {
-  const value = useSyncExternalStore(subscribe, () => current, () => null);
-  useEffect(() => { if (csrf) start(() => csrf); }, [csrf]);
-  return value;
-}
+export const useAttention = (csrf: string | undefined): Attention | null => set.use(csrf);
 
 /** What the live set says of one ask, for a card that would otherwise ask loom (ask-open.ts): undefined when it can't say. */
 export function openFromLive(q: { k?: string; a?: string }): boolean | undefined {
+  const current = set.current();
   if (!current) return undefined;
   const it = current.items.find((x) => (q.k ? x.key === q.k : [...(x.actions ?? []), ...(x.approval?.actions ?? [])].some((b) => b.fields?.id === q.a)) && x.box !== 'done');
   return !!it;

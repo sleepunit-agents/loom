@@ -23,6 +23,8 @@ import type { Viewer } from './viewer.js';
  */
 export type CoreSource = (viewer: Viewer, now: number) => Promise<MemRecord[]>;
 const sources = new Map<string, Map<string, CoreSource>>();
+/** The core types whose records only a registered source makes. */
+const SOURCED = new Set(['attention']);
 export function registerCoreSource(home: string, type: string, f: CoreSource): void {
   let m = sources.get(home);
   if (!m) sources.set(home, (m = new Map()));
@@ -135,8 +137,10 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
     if (!held.has(q.type)) {
       const src = sources.get(h.home)?.get(q.type);
       // A source that fails says unavailable for this answer, never "none" (which would read as everything gone).
+      // A type whose records come from a source no one has registered yet (loom just started, no page asked yet): not
+      // "none", which would read as nothing needing anyone, but unavailable until it is.
       held.set(q.type, src ? await src(viewer, now).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
-        : recordsFor(h, q.type, viewer));
+        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer));
     }
     const recs = held.get(q.type)!;
     out.push(recs === 'unavailable' ? { id: q.id, rows: [], more: false, error: 'unavailable' } : answerFrom(recs, q, decl, now));

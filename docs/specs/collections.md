@@ -657,14 +657,19 @@ along with the listeners. The adapter is the only code that imports the client l
   parity test (`attention.integration.test.ts`) holds both to it, for a household owner and an owner of one agent.
   The type is `audience: "ask"` (a viewer's rows are re-asked as them when anything moves), and each row's audience is
   `members: [viewer]`: core's agent rule still applies on top of it.
-- **The core viewer's snapshot** (the bridge) is every member's items once each, with no one's read state and an
+- **The core viewer's snapshot** (the bridge) is every member's items once each, its audience exactly the members
+  whose Inbox has it (`members: [...]`: a member's own outcome is theirs alone), with no one's read state and an
   owner-class `reads` (how many members opened it), so a read moves the record and the member's subscriptions are
-  asked again. What moves it: every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read`, and
-  everything that says loom's bare "something changed" (`live.ts` `onChanged`), plus the 15 s pull.
+  asked again. What moves it: every action (`pullAfterAction` always pulls `loom/attention`), `/inbox/read` (a pull
+  soon, never awaited, so a loop of reads costs one pull per 1.5 s), and everything that says loom's bare "something
+  changed" (`live.ts` `onChanged`), plus the 15 s pull.
+- **Before any page has been asked for** (loom just started), nothing has registered the Inbox's code, and the type
+  answers `unavailable`, never an empty set that would read as "nothing needs you".
 - **A re-ask is leading-edge**: at once when the subscription wasn't asked in the last 1.5 s, else when the gap is up
   (`subs.ts` `reaskSoon`). Measured (`attention.bench.integration.test.ts`, 10 asks, median of 7): an Allow reached
   another window in 0.26 s (was 1.3 s: the bare change, then the Inbox's and Home's pages again); a read reached the
-  member's other windows in 0.13 s (was their next timed refetch, 20 to 60 s); the first load is one 6 ms, 4.9 KB
+  member's other windows in 1.3 s (was their next timed refetch, 20 to 60 s; 0.13 s when the read awaited its pull,
+  which let a loop of reads keep loom recomputing every Inbox); the first load is one 6 ms, 4.9 KB
   answer (was the Inbox's page, 12 ms and 6.9 KB, and Home's, 12 ms and 4.6 KB, each carrying its own copy).
 - **`GET /inbox?i=` no longer marks read**; the app posts `/inbox/read` for the item it opens.
 - **The manifest cache key now includes `LOOM_OWNER_SCOPE`** (`pieces.ts` `scopeKey`): the parity test found a

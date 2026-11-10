@@ -154,6 +154,15 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
   const shape = (xs: Data[]) => xs.map((x) => ({ key: String(x.key).replace(/^loom\/attention\//, ''), box: x.box, kind: x.kind, attention: x.attention, unread: x.unread, text: x.text, agent: x.agent }))
     .sort((a, b) => (a.key < b.key ? -1 : 1));
 
+  it('answers unavailable, never "nothing", before loom has been asked for a page', async () => {
+    // The machine route doesn't go through the page's handler, so nothing has registered the Inbox's code yet.
+    const api = async () => ((await (await fetch(`${base}/api/loom/collections/query`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.jonathan}` },
+      body: JSON.stringify({ queries: [{ id: 'q', type: 'loom/attention@^1', fields: FIELDS }] }) })).json()) as { answers: Data[] }).answers[0];
+    expect((await api()).error).toBe('unavailable');
+    await page('jonathan');
+    expect((await api()).rows.length).toBeGreaterThan(0);
+  });
+
   it('holds exactly what each member\'s Inbox page holds, and counts its Needs you', async () => {
     for (const who of ['jonathan', 'sam']) {
       const p = await page(who);
@@ -213,5 +222,14 @@ describe('attention records: the Inbox\'s items, one set for every view (t-2025)
     expect(await until(() => !!left(jon) && !!left(sam))).toBe(true);
     // The count moves in the same frame as the row.
     expect((left(jon)!.data.aggregates as Data).count.n).toBe(j.aggregates.count.n - 1);
+    // What core holds of each item says exactly whose Inbox has it: Jonathan's own outcome ("You did this") is his
+    // alone, Mark's card only Jonathan's (Sam doesn't own Mark), Art's card both of theirs.
+    const db = new BetterSqlite3(join(h.home, 'collections', 'live.db'), { readonly: true });
+    const idx = db.prepare("SELECT key, audience, record FROM idx WHERE key LIKE 'loom/attention/%'").all() as Array<{ key: string; audience: string; record: string }>;
+    db.close();
+    const whose = (f: (r: Data) => boolean) => JSON.parse(idx.find((x) => f(JSON.parse(x.record)))!.audience);
+    expect(whose((r) => r.kind === 'fyi' && r.meta === 'You did this')).toEqual({ members: ['jonathan'] });
+    expect(whose((r) => r.text === 'Let Mark post to the studio channel?')).toEqual({ members: ['jonathan'] });
+    expect(whose((r) => r.text === 'Give Art access to Tasks?')).toEqual({ members: ['jonathan', 'sam'] });
   });
 });
