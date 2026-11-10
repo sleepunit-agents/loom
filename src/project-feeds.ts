@@ -78,8 +78,9 @@ async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unf
  * the managed pieces installed under `env`'s LOOM_HOME.
  */
 export function managedPieceSections(env: NodeJS.ProcessEnv = process.env) {
-  return async ({ card, since, nowMs, contextDir }: { card: ProjectCard; since: string; nowMs?: number; contextDir?: string }): Promise<FeedSection[]> =>
-    runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir ? threadFeedArgs(contextDir, card.slug, env) : []);
+  // noThreads (a house's hub, t-2118): no feed is asked about the project's Comms threads.
+  return async ({ card, since, nowMs, contextDir, noThreads }: { card: ProjectCard; since: string; nowMs?: number; contextDir?: string; noThreads?: boolean }): Promise<FeedSection[]> =>
+    runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir && !noThreads ? threadFeedArgs(contextDir, card.slug, env) : []);
 }
 
 /** `--conversation <cv>` for each of the project's filed Comms threads (comms.md, "Project hubs"), at most 200. */

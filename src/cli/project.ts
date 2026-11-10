@@ -14,6 +14,7 @@
 import { parseArgs } from 'node:util';
 import { readProject, listProjects, projectHubOf, projectOrphans, type HubSection } from '../tools/project.js';
 import { managedPieceSections } from '../project-feeds.js';
+import { heldFromEnv } from '../backends/episodes.js';
 import type { FeedGroup } from '../offers.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
@@ -138,7 +139,8 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     if (!name || parsed.positionals.length > 1) { io.stderr(`project ${sub} takes one name.\n${USAGE}`); return 2; }
     const result = sub === 'show'
       ? readProject(env.contextDir, name, includeArchived)
-      : await projectHubOf(env.contextDir, { slug: name, since: parsed.values.since, include_archived: includeArchived }, { pieceSections: managedPieceSections() });
+      : await projectHubOf(env.contextDir, { slug: name, since: parsed.values.since, include_archived: includeArchived },
+        { pieceSections: managedPieceSections(), noConversations: heldFromEnv(io.env) !== undefined });
     if (!result.found) {
       if (env.json) renderJson(io, result);
       else io.stderr(`no project ${name}\n`);

@@ -26,6 +26,7 @@ import { conversationsSection, conversationView, genericRender, householdConvers
 import { bindHouseConversation, houseConversation, listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
 import { tapeForContext } from './backends/episodes.js';
+import { handleCliBody } from './transport/cli-endpoint.js';
 import { remember } from './tools/remember.js';
 import { projectHubOf } from './tools/project.js';
 import { openProjectsStore } from './backends/projects.js';
@@ -418,6 +419,37 @@ describe('criterion 3: digests (conversation_digest)', () => {
     }
     const local = await mcp(art);
     expect(ids(await local.call('conversations'))).toEqual(expect.arrayContaining([conv, other]));
+  });
+
+  // t-2118: the boot tape (identity's "Last 24h", the episodes tool, `/cli wake` and `memory tape`) carries digests:
+  // from a house, only the held conversation's; from one that holds none, none.
+  it('from a house, the tape carries only the digests of the conversation it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U4', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-14', conversation: conv });
+    writeDigest(art, { conversation: conv, run: 'run-t1' }, { summary: 'held-conversation-words' });
+    writeDigest(art, { conversation: other, run: 'run-t2' }, { summary: 'another-conversation-words' });
+    const text = (r: { body: unknown }) => JSON.stringify(r.body);
+    const own = await mcp(art, { house: 'h-14' });
+    for (const t of [text(await own.call('identity', { client: 'claude-code' })), text(await own.call('episodes', { hours: 100000 }))]) {
+      expect(t).toContain('held-conversation-words');
+      expect(t).not.toContain('another-conversation-words');
+    }
+    const bridge = await mcp(art, { house: 'h-15', service: 'discord' });
+    expect(text(await bridge.call('episodes', { hours: 100000 }))).not.toMatch(/conversation-words/);
+    const local = await mcp(art);
+    expect(text(await local.call('episodes', {}))).toContain('another-conversation-words');
+    for (const argv of [['memory', 'tape', '--hours', '100000'], ['wake']]) {
+      const none = await handleCliBody(art, { argv }, null);
+      const held = await handleCliBody(art, { argv }, conv);
+      const all = await handleCliBody(art, { argv }, undefined);
+      if (!none.ok || !held.ok || !all.ok) throw new Error('cli refused');
+      expect(none.response.stdout).not.toMatch(/conversation-words/);
+      expect(held.response.stdout).toContain('held-conversation-words');
+      expect(held.response.stdout).not.toContain('another-conversation-words');
+      expect(all.response.stdout).toContain('another-conversation-words');
+    }
+    // A request can't name what it holds itself: its env carries LOOM_CLIENT and LOOM_MODEL only.
+    expect(await handleCliBody(art, { argv: ['wake'], env: { LOOM_HOUSE_HELD: conv } })).toMatchObject({ ok: false });
   });
 
   it('a house holds one conversation, for good', () => {
@@ -830,6 +862,10 @@ describe('criterion 12, end to end: project_hub carries the conversations core s
     const viaTool = await mcp(dir, { house: 'h-20', service: 'discord' });
     expect(JSON.stringify((await viaTool.call('project_hub', { slug: 'pond' })).body)).not.toContain('Pond channel');
     expect(JSON.stringify((await (await mcp(dir)).call('project_hub', { slug: 'pond' })).body)).toContain('Pond channel');
+    // And through /cli from a house (t-2118): the same.
+    const cliHub = async (held?: string | null) => { const r = await handleCliBody(dir, { argv: ['project', 'hub', 'pond', '--json'] }, held); if (!r.ok) throw new Error(r.error); return r.response.stdout; };
+    expect(await cliHub(null)).not.toContain('Pond channel');
+    expect(await cliHub(undefined)).toContain('Pond channel');
   });
 });
 

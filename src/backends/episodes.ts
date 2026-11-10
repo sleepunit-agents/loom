@@ -46,6 +46,21 @@ export interface TapeOptions {
   timeZone?: string;
   /** "now" override for tests. */
   nowMs?: number;
+  /**
+   * Whose digests: undefined, every conversation's (loom's machine); a conversation id, that one's only; null, none.
+   * A house reads only the conversation it holds (t-2118, server.ts bodyHouseConversation).
+   */
+  onlyConversation?: string | null;
+}
+
+/**
+ * The conversation a house's call holds, as the server said in LOOM_HOUSE_HELD (t-2118): undefined when it said
+ * nothing (no house: loom's machine), null for "-" or anything that isn't a conversation id (holds none).
+ */
+export function heldFromEnv(env: NodeJS.ProcessEnv): string | null | undefined {
+  const v = env.LOOM_HOUSE_HELD;
+  if (v === undefined) return undefined;
+  return /^cv-[0-9a-f]{12}$/.test(v) ? v : null;
 }
 
 const DEFAULT_HOURS = 24;
@@ -176,5 +191,6 @@ export function tapeForContext(contextDir: string, opts: TapeOptions = {}): stri
 export function digestRows(contextDir: string, opts: TapeOptions = {}): TapeDigest[] {
   const now = opts.nowMs ?? Date.now();
   const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
-  return tapeDigests(contextDir, since, new Date(now).toISOString());
+  if (opts.onlyConversation === null) return [];
+  return tapeDigests(contextDir, since, new Date(now).toISOString(), opts.onlyConversation);
 }

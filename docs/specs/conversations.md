@@ -375,7 +375,10 @@ audit log, so it has no raw text to copy.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
   above. From a house (t-2118), only the conversation that house holds: the list has that one, `conversation` refuses
   any other as if it weren't there, and the findings are its own. `project_hub` from a house has no conversations
-  section. A service's house, with or without a house id, holds none, so it reads none.
+  section (and its pieces aren't asked about the project's Comms threads). The boot tape is held the same way:
+  identity's "Last 24h", `episodes`, and `/cli` `wake`, `memory tape` and `project hub` carry only the held
+  conversation's digests (the server sets it from the token, `LOOM_HOUSE_HELD`). A service's house, with or without a
+  house id, holds none, so it reads none.
 
 **The ask** (`needs_owner` as an object, src/backends/needs.ts), written for the owner: what decision, why, what
 happens either way.

@@ -228,7 +228,7 @@ export type HubSection =
  * `piece:<name>` and turn its own failure into `{key, error}`; the hub orders
  * them by key after the core sections.
  */
-export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string; nowMs: number }) => Promise<HubSection[]>;
+export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string; nowMs: number; noThreads?: boolean }) => Promise<HubSection[]>;
 
 /** No piece sections: `projectHubOf`'s default. The installed pieces' feeds are `managedPieceSections`. */
 export const noPieceSections: PieceSectionSource = async () => [];
@@ -394,7 +394,7 @@ export async function projectHubOf(
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
-      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since, nowMs });
+      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since, nowMs, ...(opts.noConversations ? { noThreads: true } : {}) });
     } catch {
       pieces = [];
     }

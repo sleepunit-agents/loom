@@ -154,7 +154,7 @@ export function bodyHouseConversation(contextDir: string, caller: LoomServerConf
 export function houseWriteProblem(contextDir: string, caller: LoomServerConfig['caller'], conversation: string | undefined): string | null {
   const held = bodyHouseConversation(contextDir, caller);
   if (held === undefined) return null;
-  if (held === null) return `${caller?.house} holds no conversation the runtime named, so it writes for none`;
+  if (held === null) return `${caller?.house ?? `the ${caller?.service} service`} holds no conversation the runtime named, so it writes for none`;
   return held === conversation ? null : `${caller?.house} holds ${held}: it writes for that conversation only`;
 }
 
@@ -230,7 +230,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // normalized name); LOOM_CLIENT is only the no-peer fallback (in loadIdentity).
       const effectiveClient =
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
-      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people);
+      // From a house, the tape carries only the digests of the conversation it holds (t-2118).
+      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller));
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -468,7 +469,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ hours }) => {
-      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000 });
+      // From a house, only the digests of the conversation it holds (t-2118); the episodes are the agent's own.
+      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000, onlyConversation: bodyHouseConversation(contextDir, config.caller) });
       return { content: [{ type: 'text' as const, text: tape ?? `No episodes in the last ${hours ?? 24}h.` }] };
     },
   );

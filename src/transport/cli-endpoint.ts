@@ -109,8 +109,11 @@ export async function runCliRequest(contextDir: string, request: CliRequest): Pr
   return { exitCode, stdout, stderr };
 }
 
-export async function handleCliBody(contextDir: string, body: unknown): Promise<CliOutcome> {
+export async function handleCliBody(contextDir: string, body: unknown, held?: string | null): Promise<CliOutcome> {
   const request = parseCliRequest(body);
   if (typeof request === 'string') return { ok: false, error: request };
-  return { ok: true, response: await runCliRequest(contextDir, request) };
+  // A house's call reads only the conversation it holds (t-2118): the tape, identity and a hub (episodes.ts heldFromEnv).
+  // Set here from the caller's token, never from the request (its env hints are only LOOM_CLIENT and LOOM_MODEL).
+  const env = held === undefined ? request.env : { ...request.env, LOOM_HOUSE_HELD: held ?? '-' };
+  return { ok: true, response: await runCliRequest(contextDir, { ...request, env }) };
 }
