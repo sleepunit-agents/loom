@@ -195,11 +195,13 @@ export const MAX_DELIVERY_RUNNING = 8;
 export const MAX_DELIVERY_WAITING = 32;
 export const MAX_GRANTS_RUNNING = 8;
 export const MAX_GRANTS_WAITING = 32;
-export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants';
+export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants' | 'collections';
 const offerPools: Record<Exclude<OfferPool, 'page'>, Pool> = {
   tools: new Pool(MAX_TOOLS_RUNNING, MAX_TOOLS_WAITING),
   grants: new Pool(MAX_GRANTS_RUNNING, MAX_GRANTS_WAITING),
   delivery: new Pool(MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING),
+  // Bounded per provider by its caller (src/collections/providers.ts: four running, sixteen waiting each).
+  collections: new Pool(Infinity),
 };
 
 async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {

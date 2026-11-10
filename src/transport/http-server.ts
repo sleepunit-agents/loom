@@ -58,6 +58,8 @@ import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROL
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { askGrant } from '../grants.js';
 import { grantsAuthority } from '../offers-registry.js';
+import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
+import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
@@ -556,6 +558,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (piece === 'loom' && subpath === ENSURE_ROUTE) return ensureApi(req, res, role);
     // POST /api/loom/people/merge (docs/specs/person-cards.md, "Merge"): a household owner, or the runtime.
     if (piece === 'loom' && subpath === MERGE_ROUTE) return mergeApi(req, res, role);
+    // POST /api/loom/collections/query (docs/specs/collections.md, "Asking: queries"): an owner's, an agent's or a house's
+    // token, each as a viewer of its own kind. No stream here: subscribing is the page's.
+    if (piece === 'loom' && subpath === COLLECTIONS_QUERY_ROUTE) return collectionsApi(req, res, role);
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -602,6 +607,37 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /**
+   * POST /api/loom/collections/query {queries: [...]}: the answers for the token's own viewer (src/collections/serve.ts).
+   * Piece, peer, review and runtime tokens are programs with their own seams, and are refused.
+   */
+  async function collectionsApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let viewer: Viewer;
+    if (role.kind === 'owner') {
+      // An owner token naming no member is the first household owner's (owners.md); one naming a member who left is no one's.
+      const m = role.member === undefined ? firstOwner(h) : memberOf(h, role.member);
+      if (!m) return sendError(res, 403, 'forbidden: this token\'s member isn\'t one of the household\'s');
+      viewer = memberViewer(h, m);
+    } else if (role.kind === 'agent') {
+      if (!h.agents.includes(role.agent)) return sendError(res, 403, `forbidden: ${role.agent} isn't one of the household's agents`);
+      viewer = { kind: 'agent', agent: role.agent, ...(role.house ? { house: role.house } : {}), ...(role.service ? { service: role.service } : {}) };
+    } else {
+      return sendError(res, 403, `forbidden: a ${role.kind} token doesn't read shared collections (it has its own seam)`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, COLLECTIONS_MAX_BYTES);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: a batch of queries is ${COLLECTIONS_MAX_BYTES / 1024} KB at most`);
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    const r = await answerBatch({ env: process.env, household: h }, viewer, body);
+    if (r.status !== 200) return sendError(res, r.status, `bad-input: ${r.body.error}`);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(r.body));
   }
 
   /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */

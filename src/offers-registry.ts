@@ -67,6 +67,9 @@ export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   grants: { timeoutMs: 10_000, maxBytes: 4 * 1024, pool: 'grants' },
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
+  // docs/specs/collections.md ("Their limits are their own"): 15 s and 1 MB an answer; the pool is per provider
+  // (src/collections/providers.ts), apart from the page's.
+  collections: { timeoutMs: 15_000, maxBytes: 1024 * 1024, pool: 'collections' },
 };
 
 /**
