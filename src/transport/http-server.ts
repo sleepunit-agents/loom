@@ -1083,6 +1083,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     })().catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
   });
 
+  // Traefik keeps backend connections idle for up to 90 seconds. Close
+  // after its reuse window, so a reused POST cannot race Node's 5 s default.
+  http.keepAliveTimeout = 120_000;
+  http.headersTimeout = 125_000;
+
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
     http.listen(opts.port, opts.host, () => resolve());
