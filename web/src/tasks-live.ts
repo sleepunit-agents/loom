@@ -12,7 +12,7 @@
 import { collectionsRuntime } from './page';
 import type { CollectionRuntime, QuerySpec, Rec, ViewState } from './collections/runtime';
 
-const FIELDS = ['title', 'type', 'status', 'priority', 'assignee', 'ask', 'goal', 'blocked', 'ready', 'updated', 'source'];
+const FIELDS = ['refState', 'title', 'type', 'status', 'priority', 'assignee', 'ask', 'goal', 'blocked', 'ready', 'updated', 'source'];
 const DAY = 86_400_000;
 /** Recently moved: a Tasks page's "Done in the last 7 days" and "Recently updated", with a day to spare. */
 export const RECENT_DAYS = 8;
