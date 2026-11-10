@@ -168,7 +168,11 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
   against a provider that ignores its viewer it can only take it out of contract at the first hidden row, and every
   answer before that said no hidden record matched (t-2021's review). So a provider is trusted code, as a piece's
   pages already are: core serves collections only from a piece installed from a repo in loom's catalog, never a local
-  or unlisted one, and its checks are the defence behind that, not the only one.
+  or unlisted one, and its checks are the defence behind that, not the only one. What a provider owes, and t-2026's
+  run pins: it filters for its viewer before it pages; it filters and orders on a field as this viewer would see it
+  (a type that hides a field record by record never filters or sorts on the stored value); a row carries only the
+  fields asked for, the order's and the agent field. Two signals stay outside any answer: a run's time can grow with
+  data the viewer can't see, and a busy provider pool says other viewers are asking.
 - **`owners: 2`**, declared here and fixed at install: the gate [owners.md](owners.md) already has for pages.
   **A provider that doesn't declare it answers only household owners**, and core refuses any other viewer's query
   before running it. It's read from the installed declaration, never from a cached manifest, so it can't flap when a
