@@ -780,6 +780,8 @@ along with the listeners. The adapter is the only code that imports the client l
   write lock fence a suspended listener even after a successor's lease expires. Heavy descriptions and comment text
   never enter the source log. `updated` remains newest activity, independent of source revision. Existing stores
   start at a new random origin, with a snapshot for initial state; subsequent pulls no longer scan every task.
+  Initial cursor and snapshot index seed commit together after the snapshot succeeds, so lost initialization can
+  retry unchanged records, and an old snapshot cannot resurrect a successor’s deleted row.
   History is retained without pruning in this slice. A single change larger than the byte budget is unavailable.
 - **Parity** (taskstore `test/collections.test.ts`): every task once across keyset pages; the open queue equals the
   store's open tasks; `source eq conversation:<cv>` equals the thread feed's made-here tasks.

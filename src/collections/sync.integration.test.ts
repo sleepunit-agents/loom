@@ -19,9 +19,10 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, revokeToken, type Household } from '../household.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from '../ui/pieces.js';
-import { clearOutOfContract } from './serve.js';
+import { clearOutOfContract, providers } from './serve.js';
+import { pullDomain } from './pull.js';
 import { deliverNow, pullNow } from './subs.js';
-import { withLog } from './log.js';
+import { withLog, seedIndex, setCursor } from './log.js';
 
 // A provider with a commit log: plog.json is [{rev, txn, op, id, record?, audience?}], records.json its current state.
 const PROVIDER_BIN = `#!${process.execPath}
@@ -63,6 +64,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', async () => {
     return console.log(JSON.stringify({ 'tasks/task': { head: head.rev, txn: head.txn, changes: changes.slice(0, limit), more: changes.length > limit } }));
   }
   const all = read('records.json', []);
+  if (read('hold-snapshot.json', false)) { fs.writeFileSync(home + '/snapshot-started', 'yes'); await new Promise((r) => setTimeout(r, 200)); }
   const v = ask.viewer;
   const mine = (r) => {
     const a = r.audience;
@@ -213,6 +215,8 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     rmSync(join(h.home, 'change-page.json'), { force: true });
     rmSync(join(h.home, 'hold-change.json'), { force: true });
     rmSync(join(h.home, 'change-started'), { force: true });
+    rmSync(join(h.home, 'hold-snapshot.json'), { force: true });
+    rmSync(join(h.home, 'snapshot-started'), { force: true });
     writeFileSync(join(h.home, 'plog.json'), '[]');
     writeFileSync(join(h.home, 'records.json'), '[]');
     rmSync(join(h.home, 'collections', 'live.db'), { force: true });
@@ -264,6 +268,44 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     await sync();
     expect(await until(() => JSON.stringify(rowsFrames(ev)).includes('later transaction'))).toBe(true);
     expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number }).rev)).toBe(n + 3);
+  });
+
+  it('a suspended initial snapshot cannot seed rows deleted by a successor', async () => {
+    writeFileSync(join(h.home, 'hold-snapshot.json'), 'true');
+    const pull = () => pullDomain({ env: process.env, household: h }, providers(process.env).get('tasks')!, 'tasks/task');
+    const pulling = pull();
+    expect(await until(() => { try { return readFileSync(join(h.home, 'snapshot-started'), 'utf-8') === 'yes'; } catch { return false; } })).toBe(true);
+    commit([{ op: 'delete', id: 't-1' }]);
+    const last = JSON.parse(readFileSync(join(h.home, 'plog.json'), 'utf-8')).at(-1);
+    withLog(h.home, (db) => {
+      const { epoch } = db.prepare("SELECT epoch FROM domains WHERE domain = 'tasks/task'").get() as { epoch: string };
+      db.transaction(() => {
+        seedIndex(db, 'tasks/task', epoch, [{ key: 'tasks/task/t-2', audience: { ownersOf: ['pond-bot'] }, agent: 'pond-bot', record: { agent: 'pond-bot', title: 'pond two', status: 'open' } }]);
+        setCursor(db, 'tasks/task', epoch, last.rev, last.txn);
+      }).immediate();
+      db.prepare("UPDATE domains SET lease = 'successor', lease_until = 0 WHERE domain = 'tasks/task'").run();
+    });
+    await pulling;
+    expect(withLog(h.home, (db) => db.prepare("SELECT key FROM idx WHERE key = 'tasks/task/t-1'").get())).toBeUndefined();
+    expect(withLog(h.home, (db) => db.prepare("SELECT key FROM idx WHERE key = 'tasks/task/t-2'").get())).toBeDefined();
+    expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number }).rev)).toBe(3);
+  });
+
+  it('losing a first snapshot leaves initialization retryable, including unchanged expiring records', async () => {
+    const expires = Date.now() + 60_000;
+    writeFileSync(join(h.home, 'records.json'), JSON.stringify(records().map((r) => r.id === 't-2' ? { ...r, expires } : r)));
+    writeFileSync(join(h.home, 'hold-snapshot.json'), 'true');
+    const pull = () => pullDomain({ env: process.env, household: h }, providers(process.env).get('tasks')!, 'tasks/task');
+    const pulling = pull();
+    expect(await until(() => { try { return readFileSync(join(h.home, 'snapshot-started'), 'utf-8') === 'yes'; } catch { return false; } })).toBe(true);
+    withLog(h.home, (db) => db.prepare("UPDATE domains SET lease = 'other-listener', lease_until = ? WHERE domain = 'tasks/task'").run(Date.now() + 30_000));
+    await pulling;
+    expect(withLog(h.home, (db) => (db.prepare("SELECT rev FROM domains WHERE domain = 'tasks/task'").get() as { rev: number | null }).rev)).toBeNull();
+    rmSync(join(h.home, 'hold-snapshot.json'), { force: true });
+    withLog(h.home, (db) => db.prepare("UPDATE domains SET lease_until = 0 WHERE domain = 'tasks/task'").run());
+    await pull();
+    expect(withLog(h.home, (db) => db.prepare("SELECT expires FROM idx WHERE key = 'tasks/task/t-2'").get())).toEqual({ expires });
+    expect(withLog(h.home, (db) => (db.prepare("SELECT COUNT(*) AS n FROM idx").get() as { n: number }).n)).toBe(2);
   });
 
   it.each([false, true])('a provider call that loses its lease cannot commit (successor already expired: %s)', async (expired) => {

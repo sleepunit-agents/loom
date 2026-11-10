@@ -169,11 +169,16 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string):
     // A first pull starts at the provider's head: windows get what's there now by snapshot, and changes from here.
     if (cursor.rev === null) {
       if (typeof a.txn !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(a.txn)) return 'failed';
-      started = true;
-      if (!atCursor((db) => { setCursor(db, domain, row.epoch, a.head as number, a.txn as string); return true; })) return 'busy';
-      // What's there already reaches the index by snapshot (its expiry is kept from it); changes from the head on.
+      // The initial cursor and index become visible together. A failed/lost snapshot
+      // leaves initialization retryable; a successor cannot skip unchanged rows.
       const snap = await snapshot(ctx, p, types);
-      if (typeof snap !== 'string') withLog(home, (db) => seedIndex(db, domain, row.epoch, [...snap.seen].map(([key, c]) => ({ key, audience: c.audience!, ...(c.agent ? { agent: c.agent } : {}), ...(c.expires !== undefined ? { expires: c.expires } : {}), record: c.record! }))));
+      if (typeof snap === 'string') return snap;
+      if (!atCursor((db) => {
+        seedIndex(db, domain, row.epoch, [...snap.seen].map(([key, c]) => ({ key, audience: c.audience!, ...(c.agent ? { agent: c.agent } : {}), ...(c.expires !== undefined ? { expires: c.expires } : {}), record: c.record! })));
+        setCursor(db, domain, row.epoch, a.head as number, a.txn as string);
+        return true;
+      })) return 'busy';
+      started = true;
       break;
     }
     if (!Array.isArray(a.changes) || a.changes.length > PAGE_MAX) return 'failed';
