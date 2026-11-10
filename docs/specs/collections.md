@@ -48,10 +48,11 @@ documents in a piece's store). The two must not be confused, so this spec always
 - **Record type**: one kind of record a provider publishes (`task`, `approval`, `thread`), with a versioned schema.
 - **Record key**: a record's stable name, `<provider>/<type>/<id>` (below).
 - **Domain**: what a revision counts over: one record type, or all of a provider's types (`<provider>/*`).
-- **Revision**: `(epoch, rev)`. `rev` is a provider's commit sequence for one domain. `epoch` is **minted by core**
-  at install, replacement and restore (core drives all three) and handed to the provider, so a new implementation
-  or a rolled-back store never collides with an old counter, even when the restore brings back an old epoch with
-  the store.
+- **Revision**: `(epoch, rev)`. `rev` is a provider's commit sequence for one domain. `epoch` is **minted and kept by
+  core alone** (the provider never stores it): at install, replacement and restore, which core drives, and whenever
+  core finds a provider's log went backwards (Core pulls, below). So a new implementation or a rolled-back store
+  never collides with an old counter. Core may add a `sub` position of its own after `rev` (expiry, below), so the
+  full order is `(epoch, rev, sub)`.
 - **Viewer**: who is looking: a member's session (a household owner, or an owner of some agents), an agent's
   token, or a house's token. Viewer authority decides which records and fields exist for them.
 - **Consumer**: the code asking on the viewer's behalf: a core window, a piece's widget, a piece's own page. Its
@@ -161,7 +162,7 @@ like the other five ([extensions.md](../extensions.md), "Offers"):
 - **`aggregates`**: the counts the provider computes authoritatively (below). A consumer never derives a total by
   counting rows it happens to hold.
 - **`owners: 2`** in the piece's manifest is the gate [owners.md](owners.md) already has, and stays authoritative
-  there: **a provider whose manifest doesn't say `owners: 2` answers only household owners**, and core refuses any
+  there (core reads it from its cached manifest; a piece with no `ui` verb counts as not saying it): **a provider whose manifest doesn't say `owners: 2` answers only household owners**, and core refuses any
   other viewer's query before running it.
 - Validation at install refuses: unknown keys, a type or field name out of grammar, a schema over 16 KB, a
   `max_page` over 500, an aggregate or filter over an undeclared field, and a provider name or role already taken.
@@ -256,7 +257,8 @@ questions apart, and gives each its own enforcement point:
      permission.
    - **An agent or house token asks the grants authority too**, with `{agent, house, service}` and the same path,
      and fails closed exactly like `/api/<piece>/…` today. **With no grants authority installed, agent and house
-     tokens are denied** every collection (there's no per-piece agent list to fall back on here). A house's own token never reads a type that doesn't
+     tokens are denied** every collection, core's own types included (there's no per-piece agent list to fall back on
+     here; agents still have their MCP tools). A house's own token never reads a type that doesn't
      declare `houses: true`, whatever the grants say: a service house that strangers can steer must not see the
      household's asks because its agent may.
    - Piece, peer, review and runtime tokens are refused on the query route: they're programs with their own seams.
@@ -347,8 +349,11 @@ A provider never pushes records to core. Core **pulls** them with the provider's
 - **A transaction is never split**: an answer ends on a transaction boundary, except a transaction bigger than one
   page, which ends with `more: true`; core holds it until its last change arrives. Core delivers one transaction to a
   subscriber in one frame, with the aggregates that go with it.
-- **Every answer carries the domain's head** (`"head": 8814`). A head below core's cursor in the same epoch means the
-  store went backwards (restored by any route), and core treats it as a new epoch.
+- **Core proves the log didn't go backwards on every pull.** It sends, with its cursor, the transaction id it holds
+  at that revision (`{"rev": 8812, "txn": "x90"}`), and the provider answers `{"reset": true}` unless its own log
+  has that transaction at that revision. Every answer also carries the domain's head (`"head": 8814`), and a head
+  below the cursor is the same reset. A store restored by any route, even one that has since written past the
+  cursor, fails the check, and core mints a new epoch for the domain.
 - **Too old**: a revision older than the provider's log answers `{"reset": true}` for that domain. A new epoch (a
   replaced implementation, a restored store) answers with the new epoch and no changes. Either way core resets the
   domain's subscriptions.
@@ -359,16 +364,18 @@ A provider never pushes records to core. Core **pulls** them with the provider's
   migrated (t-2022), and the inventory lists which ones it carries.
 - **When core pulls**: whenever it's nudged, and every 15 s for every domain that has an open subscription. Nudges
   coalesce: at most one pull per domain per `GAP_MS`, however many arrive, and one listener at a time holds a
-  domain's pull lease (as one listener holds the push watch today, `takePushWatch`). The log is unique on
-  `(domain, epoch, rev)` and written insert-or-ignore, so a pull that does overlap writes nothing twice. **Today's
+  domain's pull lease (as one listener holds the push watch today, `takePushWatch`), which expires after 30 s so a
+  listener that dies holding it doesn't stop the domain. The log is unique on
+  `(domain, epoch, rev, sub)` and written insert-or-ignore, so a pull that does overlap writes nothing twice. **Today's
   15 s manifest round stays**, per scope, for every piece whose pages or manifest fields are still read (it is what
   sends `page` frames), and shrinks as each piece's fields move. A nudge is `POST /api/loom/collections/nudge {"domain": …}` with any token
   core accepts on `/api`, or `loom collections nudge <domain>` on loom's machine (it touches a tick file every
   listener watches, as Comms does). **A nudge carries nothing but a domain name**: a forged one costs one pull. So a
   piece's CLI run directly by an agent, which has no token of its own, can still say it wrote.
 - **Expiry**: a record with a natural end (an ask that expires, a reading's `observedAt` plus its lifetime) carries
-  `expires`. Core writes its delete into the log at that time itself, **at the record's own revision**, so any later
-  change from the provider (a renewal with a new `expires`) supersedes it. Core also drops rows past `expires` from
+  `expires`. Core writes its delete into the log at that time itself, at the record's own revision with a `sub` of
+  1 (`(epoch, R, 1)`), which sorts after the record's upsert and before any later change from the provider (a
+  renewal with a new `expires`), so the renewal supersedes it. The log is unique on `(domain, epoch, rev, sub)`. Core also drops rows past `expires` from
   query answers. So aggregates and lists drop it together whether or not the provider is ever run again.
 - Core posts its own changes into the same log, in-process.
 
@@ -382,9 +389,12 @@ A provider never pushes records to core. Core **pulls** them with the provider's
 - **Beside the log, core keeps an index of current state per key**, not pruned: its revision, its audience, and the
   fields any declared filter, order or aggregate uses. That's what tells core, for a change to a record last touched
   yesterday, who could see it before and whether it matched a subscription before, so narrowing deletes and
-  aggregate arithmetic never depend on the log's window. A key's index row goes when its delete leaves the log.
-  Where core still can't know a record's prior state (an index row lost to a reset), it asks the provider for the
-  aggregate again instead of guessing.
+  aggregate arithmetic never depend on the log's window. **Every query answer and snapshot that passes through core
+  fills it too** (they carry the key, revision, audience and those fields), so a record that hasn't changed since
+  core started still has a row once anyone has read it. A key's index row goes when its delete leaves the log.
+- Where core still can't know a record's prior state (a key with no index row), it sends a delete to every
+  subscription in the domain whose viewer the new audience doesn't admit (harmless where the viewer never held the
+  key), and asks the provider for the aggregate again instead of guessing.
 - **The log and the index are caches**: derived from providers, left out of the household bundle, rebuilt by
   snapshot after a restore.
 
@@ -440,8 +450,8 @@ data: { "piece": "clock" }
   invalidated domain, a total that wasn't exact).
 - **Ordering**: within a domain, frames go out in revision order. Across domains there is no global order, and none
   is promised. A view joining two domains shows each at its own revision.
-- **Duplicates and old revisions are ignored** by the client: a record's `(epoch, rev)` only moves forward, and a
-  new epoch arrives only after a reset.
+- **Duplicates and old revisions are ignored** by the client: a record's `(epoch, rev, sub)` only moves forward, a
+  delete beats an upsert at the same position, and a new epoch arrives only after a reset.
 - **Back-pressure**: a window more than 256 frames behind is sent `reset: gap` for its biggest subscriptions
   instead of more frames.
 - **Provider removed or replaced**: `reset: provider-gone` (removed) or `reset: epoch` (replaced or restored) for
