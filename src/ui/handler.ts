@@ -877,11 +877,14 @@ function askOwners(h: Household, nowMs = Date.now()): (cv: string, agent?: strin
   return (cv, agent) => {
     const k = `${agent ?? ''}\0${cv}`;
     if (seen.has(k)) return seen.get(k);
-    let o: AskOwner = t?.live.get(cv) ?? t?.deleted.get(cv);
-    if (!o) {
-      // Its own agent's store first, then any other's: an ask may name another agent than the one it's of.
+    const th = t?.live.get(cv) ?? t?.deleted.get(cv);
+    // A thread is an ask's only when it's its own agent's: a conversation is a body's claim, trusted within its agent
+    // (comms.ts threadOfAgentConversation), so one naming another agent's thread is no thread's (its agent's owners').
+    let o: AskOwner = th && (!agent || th.agent === agent) ? th : undefined;
+    if (!th) {
+      // Its own agent's store (any agent's for one that names none).
       let c: ReturnType<typeof conversationOf> | undefined;
-      try { for (const a of [...(agent && h.agents.includes(agent) ? [agent] : []), ...h.agents.filter((x) => x !== agent)]) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
+      try { for (const a of agent ? (h.agents.includes(agent) ? [agent] : []) : h.agents) if ((c = conversationOf(agentDir(h, a), cv))) break; } catch { c = undefined; o = 'no one'; }
       if (c?.venue === COMMS_VENUE) o = t?.deleted.get(c.place) ?? 'no one';
       else if (c?.venue === 'spawn') o = !t || nowMs - (Date.parse(c.started) || nowMs) < SPAWN_GRACE_MS ? 'no one' : 'household';
     }

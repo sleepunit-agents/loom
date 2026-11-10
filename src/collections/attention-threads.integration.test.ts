@@ -286,6 +286,13 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     return (await r.json()) as { ok: boolean; message: string };
   };
 
+  it('an approval naming another agent\'s thread is no thread\'s: its own agent\'s owners see it', async () => {
+    const t = thread('sam');
+    cards({ 'a-00000021': { agent: 'mark', text: 'Mark: OK to post to the studio channel?', at: '2026-11-10T10:00:00Z', conversation: t.conversation } });
+    expect(texts((await get('jonathan', '/inbox')).items)).toContain('Mark: OK to post to the studio channel?');
+    expect((await act('jonathan', '/act/approvals', { _action: 'deny', id: 'a-00000021' })).ok).toBe(true);
+  }, 30_000);
+
   it('Jonathan can\'t Allow an approval asked from Sam\'s thread, even naming its id; a lead card from it he can; Sam can his own', async () => {
     const t = thread('sam');
     cards({
