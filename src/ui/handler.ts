@@ -535,14 +535,16 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  */
 // The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at
 // start, off the event loop (zlib's thread pool), so nothing waits on it.
-setTimeout(() => {
+setTimeout(async () => {
   const dir = join(WEB_DIR, 'assets');
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
     const file = join(dir, f);
     if (!/\.(js|css|svg|json)$/.test(f)) continue;
     const body = readFileSync(file);
-    void packAsset(file, body).catch(() => {});
+    // Keep spare zlib workers for response decoding, crypto and cold requests.
+    // Enqueuing the entire build here can hold fetch().json() behind Brotli11.
+    await packAsset(file, body).catch(() => {});
   }
 }, 1_000).unref();
 function encoded(req: IncomingMessage, body: Buffer): { body: Buffer; headers: Record<string, string> } {
