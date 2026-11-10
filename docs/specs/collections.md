@@ -1134,3 +1134,27 @@ bridge, index or log. Subscriptions retain only hashes of sent rows for comparis
 cursors on non-live requests. This provider is the foundation; Comms' existing routes remain its client until their
 message-page consumer migration lands. Full snapshot cost still grows with retained message identities; an incremental
 metadata journal is a future optimization, without changing this contract.
+
+### Persistent query transport
+
+A provider may declare `loom.collections.query_serve: true`. Core then runs the
+installed `query` argv with `--serve` appended and keeps the process available
+for further batches. The one-shot query remains the fallback when the bounded
+server pool is busy or cooling down after a failed server.
+
+The transport is the piece API server's framing: one line
+`{"id": n, "grant": "<per-call store grant or null>", "request": <query batch>}`
+and one reply line `{"id": n, "exit": 0, "stdout": "<query's JSON lines>"}`.
+A nonzero exit fails that call. Each batch carries its own viewer, queries,
+cursors and time; there is no answer reuse. The store grant is carried only
+in the request, never inherited by the process or retained for later calls.
+Providers must not retain viewer-specific authorization state between calls.
+
+Core still checks the installed declaration, grants and query before dispatch,
+and parses/admit-checks every returned row using the ordinary query path.
+The persistent answer is bounded to 4 MB of encoded stdout; larger batches
+fail unavailable. Server framing overhead is bounded separately. Requests
+retain the collection pool and 15-second deadline. At most two servers run
+per command, binary version and environment; a version or settings change
+retires old idle servers. Idle servers end after one minute and are recycled
+after ten minutes. API and query commands never share a process.

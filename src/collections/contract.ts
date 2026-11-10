@@ -50,6 +50,8 @@ export interface CollectionsOffer {
   /** 2: the provider scopes agent owners to their agents. Without it, it answers household owners only. */
   owners?: 2;
   query: string[];
+  /** Serve query batches over the bounded persistent request protocol (query argv plus --serve). */
+  query_serve?: true;
   changes?: string[];
   search?: string[];
   types: Record<string, TypeDecl>;
@@ -184,11 +186,13 @@ export function parseTypeDecl(name: string, raw: unknown, where = `collections.t
 /** A piece's `collections` offer, checked; a string says what's wrong. */
 export function parseCollectionsOffer(raw: unknown, argv: ArgvCheck): CollectionsOffer | string {
   if (!isObject(raw)) return 'loom.collections is not an object';
-  const bad = unknownKey(raw, ['owners', 'query', 'changes', 'search', 'types']);
-  if (bad !== undefined) return `loom.collections has no key ${JSON.stringify(bad)} (it has owners, query, changes, search, types)`;
+  const bad = unknownKey(raw, ['owners', 'query', 'query_serve', 'changes', 'search', 'types']);
+  if (bad !== undefined) return `loom.collections has no key ${JSON.stringify(bad)} (it has owners, query, query_serve, changes, search, types)`;
   if (raw.owners !== undefined && raw.owners !== 2) return 'loom.collections.owners is 2 (it scopes agent owners to their agents) or absent';
   const out: Partial<CollectionsOffer> = {};
   if (raw.owners === 2) out.owners = 2;
+  if (raw.query_serve !== undefined && raw.query_serve !== true) return 'loom.collections.query_serve is true or absent';
+  if (raw.query_serve === true) out.query_serve = true;
   for (const k of ['query', 'changes', 'search'] as const) {
     if (raw[k] === undefined) { if (k === 'query') return 'loom.collections.query is required: the argv core runs with a batch of queries'; continue; }
     const a = argv(raw[k], `loom.collections.${k}`);
