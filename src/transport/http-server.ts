@@ -476,7 +476,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
         sessions.set(sid, { transport, identity });
-        if (workerSocket && process.connected) process.send?.({ type: 'loom-session-open', id: sid }, () => undefined);
       },
     });
 
