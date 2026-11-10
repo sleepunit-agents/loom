@@ -11,7 +11,7 @@ import { AgentChatPermission } from '@/components/ui/agent-chat';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { LIVE_SAYS, useAskLive } from './ask-open';
-import { act, type Source } from './loom';
+import { act, UNSURE, type Source } from './loom';
 import { RefText } from './comms-refs';
 
 type Btn = { action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> };
@@ -68,12 +68,20 @@ export function ThreadAskCard({ a, who, member, csrf, owner, onAnswered }: { a: 
     // A danger button, or one that says so, asks first, as the Inbox's does (blocks.tsx ActButton).
     if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return false;
     sending.current = true;
+    setSaid(null);
     try {
       if (!(await check())) return false;
       setBusy(true);
       const r = await act({ source, path: '', query: {}, csrf }, csrf, b.action, fields);
       if (r.ok) { if (verdict) setMine({ verdict, at: new Date().toISOString() }); setSaid(r.message || null); onAnswered(); return true; }
       setSaid(r.message || 'That didn’t go through.');
+      // Unsure whether it landed: read loom's answer again, so the card shows what loom recorded (t-1995).
+      if (r.unsure) onAnswered();
+      return false;
+    } catch {
+      // Whatever threw, the card says so and reads again: never a spinner that ends in nothing (t-1995).
+      setSaid(UNSURE);
+      onAnswered();
       return false;
     } finally { setBusy(false); sending.current = false; }
   };
