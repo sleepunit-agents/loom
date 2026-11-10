@@ -46,6 +46,9 @@ export interface GrantAsk {
   agent: string;
   piece: string;
   path: string;
+  /** A house's token (its id), a service house's (its service): said to the authority when there is one. */
+  house?: string;
+  service?: string;
 }
 
 /** Undefined when the call may go on; else the status (403 refused, 503 couldn't ask) and why. */
@@ -93,7 +96,7 @@ export async function askGrant(env0: NodeJS.ProcessEnv, ask0: GrantAsk, opts: { 
   // `loom store` reads (it runs with this env), so core and the authority look at the same file.
   const env: NodeJS.ProcessEnv = { ...env0, LOOM_HOME: householdHome(env0) };
   // Exactly what the key names is what the authority is asked.
-  const ask: GrantAsk = { agent: ask0.agent, piece: ask0.piece, path: ask0.path };
+  const ask: GrantAsk = { agent: ask0.agent, piece: ask0.piece, path: ask0.path, ...(ask0.house !== undefined ? { house: ask0.house } : {}), ...(ask0.service !== undefined ? { service: ask0.service } : {}) };
   const auth = grantsAuthority(env);
   if (auth.piece === undefined) {
     if (auth.conflict) return { status: 503, error: `unavailable: more than one piece offers grants (${auth.conflict.join(', ')}); there's no authority to ask` };
@@ -103,7 +106,7 @@ export async function askGrant(env0: NodeJS.ProcessEnv, ask0: GrantAsk, opts: { 
   }
   const who = `${ask.agent}'s call to ${ask.piece}`;
   const before = grantsState(env, auth.piece, auth.argv);
-  const key = before && `${before.id}\0${JSON.stringify([ask.agent, ask.piece, ask.path])}`;
+  const key = before && `${before.id}\0${JSON.stringify([ask.agent, ask.piece, ask.path, ask.house ?? null, ask.service ?? null])}`;
   const hit = key ? answers.get(key) : undefined;
   if (hit && performance.now() - hit.at < ANSWER_MAX_AGE_MS) return refusal(hit.answer);
   const stdin = JSON.stringify(before ? { ...ask, basis: true } : ask);

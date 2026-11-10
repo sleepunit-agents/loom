@@ -121,7 +121,7 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     if (viewer.kind === 'agent') {
       const k = `${ref.provider}/${ref.type}`;
       if (!asked.has(k)) {
-        asked.set(k, askGrant(ctx.env, { agent: viewer.agent, piece: CORE_PROVIDER, path: `collections/${k}` }, { required: true })
+        asked.set(k, askGrant(ctx.env, { agent: viewer.agent, piece: CORE_PROVIDER, path: `collections/${k}`, ...(viewer.house ? { house: viewer.house } : {}), ...(viewer.service ? { service: viewer.service } : {}) }, { required: true })
           .then((no) => (no ? (no.status === 403 ? 'denied' as const : 'unavailable' as const) : undefined)));
       }
       const no = await asked.get(k)!;
@@ -129,7 +129,9 @@ export async function answerBatch(ctx: ServeContext, viewer: Viewer, body: unkno
     }
     const p = all.get(ref.provider);
     const decl = p && Object.hasOwn(p.types, ref.type) ? p.types[ref.type] : undefined;
-    if (!p || !decl) { answers.set(q.id, { id: q.id, error: 'unsupported-version', why: `nothing installed serves ${ref.provider}/${ref.type}` }); continue; }
+    // Only a household owner may learn what's installed (as /pieces.json): anyone else gets one answer for a provider
+    // that isn't there and one that doesn't answer them.
+    if (!p || !decl) { answers.set(q.id, owner ? { id: q.id, error: 'unsupported-version', why: `nothing installed serves ${ref.provider}/${ref.type}` } : { id: q.id, error: 'denied' }); continue; }
     if (!providerAdmits(viewer, p.owners2)) { answers.set(q.id, { id: q.id, error: 'denied' }); continue; }
     if (viewer.kind === 'agent' && ((viewer.service !== undefined && !(decl.houses && decl.services)) || (viewer.house !== undefined && !decl.houses))) {
       answers.set(q.id, { id: q.id, error: 'denied' });
@@ -201,9 +203,9 @@ const count = (v: unknown): v is { n: number; exact: boolean } => !!v && typeof 
 
 /** Expiry as the provider says it: ms since the epoch, or an ISO time. NaN when it's neither. */
 function expiresAt(v: unknown): number {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string' && v.length <= 40) return Date.parse(v);
-  return Number.NaN;
+  const t = typeof v === 'number' ? v : typeof v === 'string' && v.length <= 40 ? Date.parse(v) : Number.NaN;
+  // A Date's own range: past it, a time can't be said (toISOString throws), so it's no time.
+  return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : Number.NaN;
 }
 
 /** One provider answer checked for this viewer: every row admitted again, trimmed, and its counts gated. */
@@ -214,24 +216,27 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   if (a.rows.length > q.limit) return { id: q.id, error: 'unavailable' };
   const seen = new Set<string>();
   const rows: Record<string, unknown>[] = [];
+  // A provider that answered a row this viewer may not have didn't answer for this viewer, so its numbers can't be
+  // for them either: any row core drops drops the provider's counts too.
+  let dropped = false;
   for (const raw of a.rows as unknown[]) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { dropped = true; continue; }
     const r = raw as Record<string, unknown>;
-    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) continue;
+    if (typeof r.id !== 'string' || !RECORD_ID.test(r.id) || seen.has(r.id)) { dropped = true; continue; }
     const audience = parseAudience(r.audience);
-    if (!audience) continue;
+    if (!audience) { dropped = true; continue; }
     let agent: string | undefined;
     if (decl.agent !== undefined) {
       const v = Object.hasOwn(r, decl.agent) ? r[decl.agent] : undefined;
-      if (v !== undefined && v !== null && typeof v !== 'string') continue;
+      if (v !== undefined && v !== null && typeof v !== 'string') { dropped = true; continue; }
       agent = typeof v === 'string' ? v : undefined;
     }
     let expires: number | undefined;
     if (r.expires !== undefined) {
       expires = expiresAt(r.expires);
-      if (!Number.isFinite(expires) || expires <= now) continue;
+      if (!Number.isFinite(expires) || expires <= now) { dropped = true; continue; }
     }
-    if (!admits(viewer, audience, agent, decl)) continue;
+    if (!admits(viewer, audience, agent, decl)) { dropped = true; continue; }
     const out: Record<string, unknown> = { key: `${p.name}/${q.type}/${r.id}` };
     for (const f of q.fields) {
       if (f === 'audience') out.audience = audience;
@@ -245,7 +250,7 @@ export function checkAnswer(viewer: Viewer, p: Provider, q: Query, a: ProviderAn
   const complete = a.next === null && q.after === null;
   // A provider's numbers can't be rechecked, so only household owners get them unless the type passed the per-viewer
   // count fixtures. A complete answer core counts itself: every row in it passed core's checks.
-  const counts = isHouseholdOwner(viewer) || decl.scoped_counts;
+  const counts = (isHouseholdOwner(viewer) || decl.scoped_counts) && !dropped;
   const coverage: ClientAnswer['coverage'] = { complete };
   if (complete) coverage.total = { n: rows.length, exact: true };
   else if (counts && count(a.total)) coverage.total = { n: a.total.n, exact: a.total.exact };

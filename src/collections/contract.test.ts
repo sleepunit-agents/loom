@@ -58,6 +58,8 @@ describe('the collections offer: checked at install', () => {
     ['a heavy field to filter on', offer({ task: { ...TASK, fields: { ...TASK.fields, description: { class: 'member', heavy: true, filter: ['eq'] } } } }), /heavy field can't be filtered/],
     ['a kept: false field to order on', offer({ task: { ...TASK, fields: { ...TASK.fields, words: { class: 'member', kept: false, order: true } } } }), /kept: false field can't be/],
     ['services without houses', offer({ task: { ...TASK, services: true } }), /services needs houses/],
+    ['scoped counts before the conformance run exists', offer({ task: { ...TASK, scoped_counts: true } }), /need a passing conformance run/],
+    ['scoped search before the conformance run exists', offer({ task: { ...TASK, scoped_search: true } }, { search: ['loom-tasks', 's'] }), /need a passing conformance run/],
   ])('refuses %s', (_, raw, why) => {
     expect(parseCollectionsOffer(raw, argv)).toMatch(why);
   });

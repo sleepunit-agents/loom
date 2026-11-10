@@ -168,6 +168,10 @@ export function parseTypeDecl(name: string, raw: unknown, where = `collections.t
   const houses = flag('houses'), services = flag('services'), scopedCounts = flag('scoped_counts'), scopedSearch = flag('scoped_search');
   for (const v of [houses, services, scopedCounts, scopedSearch]) if (typeof v === 'string') return v;
   if (services === true && houses !== true) return `${where}.services needs houses: true (a service house is a house)`;
+  // A provider's counts and search hits are numbers and matches core can't recheck: a type may say they're per viewer
+  // only once its conformance run passes the per-viewer fixtures (collections.md, "Counts"), and that run (t-2026)
+  // doesn't exist yet. Until it does, nothing may claim it.
+  if (scopedCounts === true || scopedSearch === true) return `${where}: scoped_counts and scoped_search need a passing conformance run, which loom can't make yet (t-2026)`;
   return {
     version: raw.version, schema: raw.schema, ...(agent ? { agent } : {}), fields, default_fields: [...raw.default_fields as string[]], max_page: raw.max_page as number,
     ...(aggregates ? { aggregates } : {}), domain: domain as TypeDecl['domain'], audience: audience as TypeDecl['audience'],

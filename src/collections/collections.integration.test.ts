@@ -224,6 +224,9 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
     it('a provider without owners: 2 answers household owners only: anyone else is denied before it runs', async () => {
       const q = [{ id: 'n', type: 'notes/task@^1' }];
       expect((await query(tok.loren, q)).body.answers).toEqual([{ id: 'n', error: 'denied' }]);
+      // And to them it's the same answer as a provider that isn't installed: only household owners learn what is.
+      expect((await query(tok.loren, [{ id: 'n', type: 'nothing/task@^1' }])).body.answers).toEqual([{ id: 'n', error: 'denied' }]);
+      expect((await query(tok.jonathan, [{ id: 'n', type: 'nothing/task@^1' }])).body.answers[0]).toMatchObject({ error: 'unsupported-version' });
       expect((await query(tok.art, q)).body.answers).toEqual([{ id: 'n', error: 'denied' }]);
       expect(runs('notes')).toEqual([]);
       expect((await query(tok.jonathan, q)).body.answers[0]).toHaveProperty('rows');
@@ -247,6 +250,11 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       const jon = await one(tok.jonathan, { limit: 3, aggregates: ['count'] });
       expect(jon.coverage).toEqual({ complete: false, total: { n: 8, exact: true } });
       expect(jon.aggregates).toEqual({ count: { n: 8, exact: true, by: { open: 6, closed: 2 } } });
+      // A page where core dropped a row the provider shouldn't have answered: its numbers aren't this viewer's either.
+      const dropped = await one(tok.jonathan, { limit: 5, aggregates: ['count'] });
+      expect(keys(dropped)).toEqual(['tasks/task/t-1', 'tasks/task/t-2', 'tasks/task/t-3', 'tasks/task/t-4']);
+      expect(dropped.coverage).toEqual({ complete: false });
+      expect(dropped).not.toHaveProperty('aggregates');
       // loren: the leaky provider's 8 (and its by-status counts) would reveal others' records. Partial: no number.
       const loren = await one(tok.loren, { limit: 1, aggregates: ['count'] });
       expect(loren.coverage).toEqual({ complete: false });
@@ -305,6 +313,16 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
       expect(runs('tasks')[0]).toMatchObject({ ids: ['a', 'b'], share: 512 * 1024 });
     });
 
+    it('an expiry out of a date\'s range drops that row, and never fails the batch', async () => {
+      writeFileSync(join(h.home, 'records.json'), JSON.stringify([...RECORDS, { id: 't-9', agent: 'art', title: 'far', status: 'open', expires: 1e300, audience: { owners: true } }]));
+      try {
+        const r = await query(tok.jonathan, [{ id: 'q', type: 'tasks/task@^1', where: [['status', 'eq', 'open']] }, { id: 'a', type: 'loom/agent@^1' }]);
+        expect(r.status).toBe(200);
+        expect(keys(r.body.answers[0])).not.toContain('tasks/task/t-9');
+        expect(r.body.answers[1]).toHaveProperty('rows');
+      } finally { writeFileSync(join(h.home, 'records.json'), JSON.stringify(RECORDS)); }
+    });
+
     it('a query over its byte share answers too-big alone', async () => {
       mode('tasks', 'big');
       const r = await query(tok.jonathan, [{ id: 'big', type: 'tasks/task@^1', limit: 3, fields: ['title'] }, ...Array.from({ length: 31 }, (_, i) => ({ id: `s${i}`, type: 'tasks/task@^1', limit: 1 }))]);
@@ -338,6 +356,8 @@ describe('shared collection queries: one bounded, permissioned interface', () =>
     it('a house reads a type only where it allows houses, a service house only where it allows services too, whatever the grants', async () => {
       // tasks/task allows houses (not services); loom/agent allows neither.
       expect(keys(await one(tok.artHouse, {}))).toEqual(['tasks/task/t-1']);
+      // The authority is told which house is asking.
+      expect(asked()).toContainEqual({ agent: 'art', piece: 'loom', path: 'collections/tasks/task', house: 'h-1' });
       expect(await one(tok.artService, {})).toEqual({ id: 'q', error: 'denied' });
       expect((await query(tok.artHouse, [{ id: 'a', type: 'loom/agent@^1' }])).body.answers).toEqual([{ id: 'a', error: 'denied' }]);
     });

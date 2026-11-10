@@ -254,6 +254,11 @@ The answer, per query:
   owner's badge still counts their own ([owners.md](owners.md): "Badges count your own"). The attention types are
   small and complete, so t-2025 relies on this; a count over a partial list says "20" rather than a number it can't
   trust.
+- **A provider counts only what its viewer may see**, household owners included: a record whose audience is
+  `members` alone is counted only for the members it names. Core can't recount, so it does what it can: when it
+  drops any row of an answer (the provider answered a row this viewer may not have), it drops that answer's
+  provider totals and aggregates too. Until the conformance suite exists (t-2026), install refuses `scoped_counts`
+  and `scoped_search`.
 - **`at`** is the point on the window's stream this answer is consistent with: frames after it apply on top of it.
 - **Errors are per query**: `unsupported-version`, `bad-query` (with which clause), `too-big`, `denied` (the viewer
   or the consumer may not read this type), `unavailable` (the provider timed out or failed). One provider's failure
