@@ -110,8 +110,13 @@ export async function loadIdentity(
   _defaultPathForTest?: string,
   /** Whose digests the tape carries (TapeOptions.onlyConversation): a house's, only the conversation it holds (t-2118). */
   onlyConversation?: string | null,
+  profile?: 'full' | 'work',
 ): Promise<string> {
   const parts: string[] = [];
+  // Agent-authored, explicit work identity. Missing/empty/oversized keeps full identity.
+  const work = profile === 'work' ? await readOptional(join(contextDir, 'work-identity.md')) : null;
+  const lean = !!work?.trim() && Buffer.byteLength(work) <= 8000;
+
   const effectiveClient = client ?? process.env.LOOM_CLIENT;
   const effectiveModel = model ?? process.env.LOOM_MODEL;
 
@@ -133,7 +138,7 @@ export async function loadIdentity(
   const defaultPath = _defaultPathForTest ?? resolveDefaultContextPath();
 
   // Terminal creed — the immutable identity
-  const creed = await readOptional(join(contextDir, 'IDENTITY.md'));
+  const creed = lean ? work : await readOptional(join(contextDir, 'IDENTITY.md'));
   if (creed) {
     parts.push('# Identity\n\n' + creed.trim());
   } else if (contextDir === defaultPath) {
@@ -153,7 +158,7 @@ export async function loadIdentity(
 
   // Preferences — how the user likes to work
   const preferences = await readOptional(join(contextDir, 'preferences.md'));
-  if (preferences) {
+  if (!lean && preferences) {
     parts.push('# Preferences\n\n' + preferences.trim());
   }
 
@@ -166,7 +171,7 @@ export async function loadIdentity(
   // after preferences so a fresh body knows what the last body did before it
   // reads anything ranked. Best-effort: no store / no episodes → no block.
   try {
-    const tape = tapeForContext(contextDir, { onlyConversation });
+    const tape = lean ? null : tapeForContext(contextDir, { onlyConversation });
     if (tape) {
       parts.push(
         '# Last 24h across bodies\n\n' +
@@ -214,7 +219,7 @@ export async function loadIdentity(
   // recall. ASSEMBLED from authored atoms (never generated); injected after
   // preferences. Best-effort — a missing/empty store just omits the block.
   try {
-    const digest = digestForContext(contextDir);
+    const digest = lean ? null : digestForContext(contextDir);
     if (digest) parts.push('# Top of Mind\n\n' + digest);
   } catch {
     // a digest failure must never block identity load
@@ -222,7 +227,7 @@ export async function loadIdentity(
 
   // Self-model — what the agent knows about its own capabilities
   const selfModel = await readOptional(join(contextDir, 'self-model.md'));
-  if (selfModel) {
+  if (!lean && selfModel) {
     parts.push('# Self-Model\n\n' + selfModel.trim());
   }
 
@@ -245,7 +250,7 @@ export async function loadIdentity(
   }
 
   // Harness manifest — the shape of the current runtime (stack spec §4.7).
-  if (effectiveClient) {
+  if (!lean && effectiveClient) {
     const block = await harnessBlock.read(contextDir, effectiveClient);
     if (block) {
       parts.push(`# Harness: ${effectiveClient}\n\n${block.body}`);
@@ -263,7 +268,7 @@ export async function loadIdentity(
   }
 
   // Model manifest — model-family-specific capability notes (stack spec §4.8).
-  if (effectiveModel) {
+  if (!lean && effectiveModel) {
     const block = await modelBlock.read(contextDir, effectiveModel);
     if (block) {
       parts.push(`# Model: ${effectiveModel}\n\n${block.body}`);
@@ -282,7 +287,7 @@ export async function loadIdentity(
   // memories/INDEX.md sidecar exists from FS-backend days, surface a
   // brief summary as a hint — full content lives in the DB.
   const memoryIndex = await readOptional(join(contextDir, 'memories', 'INDEX.md'));
-  if (memoryIndex) {
+  if (!lean && memoryIndex) {
     parts.push('# Memories\n\n' + summarizeMemoryIndex(memoryIndex));
   }
 

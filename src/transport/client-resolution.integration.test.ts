@@ -87,4 +87,25 @@ describe('c-loom-identity: harness from the handshake', () => {
     expect(out).not.toContain('DESKTOP-HARNESS-MARKER');
     expect(out).not.toContain('CODE-HARNESS-MARKER');
   });
+  it('identity MCP forwards work profile and explicit full restores the complete identity', async () => {
+    writeFileSync(join(tmpDir, 'work-identity.md'), 'WORK-IDENTITY-MARKER');
+    writeFileSync(join(tmpDir, 'preferences.md'), 'FULL-PREFERENCES-MARKER');
+    mkdirSync(join(tmpDir, 'roles')); mkdirSync(join(tmpDir, 'projects'));
+    writeFileSync(join(tmpDir, 'roles', 'coding.md'), 'INTEGRATED-ROLE');
+    writeFileSync(join(tmpDir, 'projects', 'repo.md'), 'INTEGRATED-PROJECT');
+    const work = await identityAs('claude-code', { profile: 'work', role: 'coding', project: 'repo', people: ['loren'] });
+    expect(work).toContain('INTEGRATED-ROLE');
+    expect(work).toContain('INTEGRATED-PROJECT');
+    expect(work).toContain('_(no card for loren)_');
+    expect(work).toContain('WORK-IDENTITY-MARKER');
+    expect(work).not.toContain('I am the test.');
+    expect(work).not.toContain('FULL-PREFERENCES-MARKER');
+    expect(work).not.toContain('CODE-HARNESS-MARKER');
+    const full = await identityAs('claude-code', { profile: 'full' });
+    expect(full).toContain('I am the test.');
+    expect(full).toContain('FULL-PREFERENCES-MARKER');
+    expect(full).toContain('CODE-HARNESS-MARKER');
+    expect(full).not.toContain('WORK-IDENTITY-MARKER');
+  });
+
 });
