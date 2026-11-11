@@ -30,25 +30,35 @@ const timer = setInterval(() => {
     }
     const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
     const requests: Promise<unknown>[] = [];
-    const bounded = async (at = Date.now()) => {
-      const pending = pieceManifests(env, at);
-      requests.push(pending);
-      const outcome = await Promise.race([pending, new Promise<null>(r => setTimeout(() => r(null), PIECE_TIMEOUT_MS + 700))]);
-      expect.soft(outcome).not.toBeNull();
-      if (outcome) expect(outcome).toMatchObject({ pieces: [], skipped: Array.from({length: count}, (_, i) => ({piece:`probe${i}`,reason:'timed out'})) });
+    const bounded = async (at = Date.now(), concurrent = false) => {
+      let done = 0;
+      const calls = Array.from({length: concurrent ? 2 : 1}, () => {
+        const pending = pieceManifests(env, at).then(r => { done++; return r; });
+        requests.push(pending);
+        return pending;
+      });
+      await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS - 1);
+      expect(done).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done).toBe(calls.length);
+      for (const call of calls) expect(await call).toMatchObject({
+        pieces: [], skipped: Array.from({length: count}, (_, i) => ({piece:`probe${i}`,reason:'timed out'})),
+      });
     };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      await Promise.all([bounded(), bounded()]);
+      await bounded(Date.now(), true);
       // The first caller has timed out, but its producer is still pending. Neither
       // a fresh hit nor a synthetically stale hit is a last good answer.
       await bounded();
       await bounded(Date.now() + CACHE_MS + 1);
     } finally {
+      vi.useRealTimers();
       writeFileSync(join(root, 'release'), 'yes');
       await Promise.all(requests);
-      await refreshPieceManifests(env);
     }
-    expect((await pieceManifests(env)).pieces).toHaveLength(count);
+    // An ordinary page read must see the late answer without a live refresh repairing it.
+    await expect.poll(async () => (await pieceManifests(env)).pieces.length).toBe(count);
     expect(readFileSync(join(root, 'started'), 'utf8').trim().split('\n')).toHaveLength(count);
   }, 25_000);
 
