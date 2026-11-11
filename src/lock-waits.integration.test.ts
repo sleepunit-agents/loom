@@ -379,15 +379,28 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       keeper.pragma('journal_mode = WAL');
       keeper.prepare('SELECT 1 FROM sqlite_master').get();
       const held = await hold(memory, 'recovery');
+      const original = lockGate.waitForLocks;
+      let entered!: () => void;
+      const queued = new Promise<void>((resolve) => { entered = resolve; });
+      const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation((w) => {
+        const before = pendingLockWaits();
+        const waiting = original(w);
+        if (w.read?.includes(memory)) {
+          // Revoke at the real queue boundary, not after a timer that can run after the CLI already executed.
+          expect(pendingLockWaits()).toBeGreaterThan(before);
+          revokeToken(h, label);
+          entered();
+        }
+        return waiting;
+      });
       try {
         const request = fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
           body: JSON.stringify(path === '/mcp' ? { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'revoked', version: '1' } } } : { argv: ['memory', 'list'] }) });
-        await delay(100);
+        await queued;
         expect(await pending(request)).toBe(true);
-        revokeToken(h, label);
         await held.release();
         expect((await request).status).toBe(401);
-      } finally { await held.release(); keeper.close(); }
+      } finally { probe.mockRestore(); await held.release(); keeper.close(); }
     }, 20_000);
   }
 
