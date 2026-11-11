@@ -54,13 +54,13 @@ export interface MemoryView {
 
 interface Row {
   ref: string; title: string; category: string; project: string | null; content: string;
-  sourcing: string | null; scope: string | null; created: string; updated: string | null;
+  sourcing: string | null; scope: string | null; created: string; updated: string | null; authored_at: string | null;
   last_accessed: string | null; expires_at: string | null; times_seen: number | null;
   metadata: string | null; salience: number | null;
   recall_heat: number | null; recall_heat_at: string | null;
 }
 
-const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
+const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, authored_at, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
 
 function open(contextDir: string): BetterSqlite3.Database | null {
   const path = resolveSqliteDbPath(contextDir);
@@ -115,7 +115,7 @@ function personOf(metadata: string | null): string | null {
 
 function view(r: Row, nowMs: number, inDigest = false): MemoryView {
   const heat = heatOf(r, nowMs);
-  const writtenHeat = temperature(r.updated ?? r.created, r.category, nowMs);
+  const writtenHeat = temperature(r.authored_at ?? r.created, r.category, nowMs);
   const recallHeat = decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs);
   return {
     ref: r.ref, title: r.title, category: r.category, project: r.project, content: r.content,
