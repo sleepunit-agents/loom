@@ -37,6 +37,8 @@ describe('identity core and pieces', () => {
     expect(Buffer.byteLength(core)).toBeLessThan(24_000);
     expect(core).toContain('CREED\n' + 'c'.repeat(8056));
     expect(core).toContain('PREFERENCES\n' + 'p'.repeat(9230));
+    expect(core).toContain('TOP-OF-MIND\n' + 'd'.repeat(4774));
+    expect(Object.keys(IDENTITY_PIECES).sort()).toEqual(['harness', 'last-24h', 'memories', 'model', 'self-model']);
     for (const text of ['TOP-OF-MIND', 'RETRO PLAYBOOK', 'PROJECT BRIEF', '# Pieces']) expect(core).toContain(text);
     for (const text of ['# Self-Model', '# Harness:', '# Model:', '# Last 24h', '# Memories', 'CLIENT RESTRICTIONS']) expect(core).not.toContain(text);
     for (const [name, when] of Object.entries(IDENTITY_PIECES)) expect(core).toContain(`- ${name} — load ${when}`);
@@ -69,6 +71,7 @@ describe('identity core and pieces', () => {
     expect(selected.match(/# Model:/g)).toHaveLength(1);
     expect(selected).not.toContain('HARNESS');
     const all = await load('all');
+    for (const body of ['CREED\n' + 'c'.repeat(8056), 'PREFERENCES\n' + 'p'.repeat(9230), 'TOP-OF-MIND\n' + 'd'.repeat(4774)]) expect(all).toContain(body);
     for (const text of ['CREED', 'PREFERENCES', 'TOP-OF-MIND', 'SELF-MODEL', 'HARNESS', 'MODEL\n', 'TAPE:cv-held', 'LEGACY MEMORY', 'RETRO PLAYBOOK', 'PROJECT BRIEF', 'CLIENT RESTRICTIONS']) expect(all).toContain(text);
     for (const [label, body] of [['SELF-MODEL', 's'.repeat(17760)], ['HARNESS', 'h'.repeat(15233)], ['MODEL', 'm'.repeat(2593)], ['TAPE:cv-held', 't'.repeat(6350)]]) {
       expect(all).toContain(label + '\n' + body);
@@ -77,6 +80,20 @@ describe('identity core and pieces', () => {
     const headings = ['# Identity', '# Preferences', '# Last 24h', '# Top of Mind', '# Self-Model', '# Mode:', '# Project:', '# Harness:', '# Model:', '# Memories', '## Runtime:'];
     const positions = headings.map(h => all.indexOf(h));
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('never caps or rewrites oversized authored core content', async () => {
+    const creed = 'OVERSIZED CREED\n' + '多'.repeat(12_000) + '\nCREED END';
+    const preferences = 'OVERSIZED PREFERENCES\n' + 'p'.repeat(30_000) + '\nPREFERENCES END';
+    await writeFile(join(dir, 'IDENTITY.md'), creed);
+    await writeFile(join(dir, 'preferences.md'), preferences);
+    for (const selection of [undefined, 'all']) {
+      const result = await load(selection);
+      expect(Buffer.byteLength(result)).toBeGreaterThan(24_000);
+      expect(result).toContain(creed);
+      expect(result).toContain(preferences);
+      expect(result).toContain('TOP-OF-MIND\n' + 'd'.repeat(4774));
+    }
   });
 
   it('keeps recorder health warnings in default core and full, after the index', async () => {
@@ -104,7 +121,7 @@ describe('identity core and pieces', () => {
     });
     expect(code).toBe(0);
     for (const text of ['CREED', 'SELF-MODEL', 'HARNESS', 'MODEL\n', 'TAPE:cv-held', 'CLIENT RESTRICTIONS']) expect(stdout).toContain(text);
-    for (const body of ['s'.repeat(17760), 'h'.repeat(15233), 'm'.repeat(2593), 't'.repeat(6350)]) expect(stdout).toContain(body);
+    for (const body of ['CREED\n' + 'c'.repeat(8056), 'PREFERENCES\n' + 'p'.repeat(9230), 'TOP-OF-MIND\n' + 'd'.repeat(4774), 's'.repeat(17760), 'h'.repeat(15233), 'm'.repeat(2593), 't'.repeat(6350)]) expect(stdout).toContain(body);
     expect(stdout).not.toContain('# Pieces');
   });
 });
