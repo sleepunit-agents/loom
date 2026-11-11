@@ -296,12 +296,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
 
 
   /** Send only part of a body first: the original pre-body probe has run before the test takes the lock. */
-  const uploading = (path: string, body: string, headers: Record<string, string>) => {
+  const uploading = (path: string, body: string, headers: Record<string, string>, origin = base) => {
     let req!: ClientRequest, text = '';
     let received!: () => void;
     const started = new Promise<void>((resolve) => { received = resolve; });
     const result = new Promise<number>((resolve, reject) => {
-      req = request(`${base}${path}`, { method: 'POST', headers: { ...headers, expect: '100-continue' } }, (res) => {
+      req = request(`${origin}${path}`, { method: 'POST', headers: { ...headers, expect: '100-continue' } }, (res) => {
         res.on('data', (d) => { text += d; }); res.on('end', () => resolve(res.statusCode ?? 0));
       });
       req.on('error', reject);
@@ -605,26 +605,6 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
-  it('a slow Reject waits on its memory database', async () => {
-    const dir = agentDir(h, 'art');
-    const proposal = propose(dir, { category: 'feedback', title: 'Reject under contention', content: 'test', source: 'test' });
-    const upload = uploading('/a/art/act/loom', `_action=reject&id=${proposal.id}`, {
-      'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded',
-    });
-    await upload.started;
-    const held = await hold(join(dir, 'memories.db'), 'exclusive');
-    try {
-      const began = performance.now(); upload.finish(); await delay(100);
-      expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
-      expect(await pending(upload.result)).toBe(true);
-      await held.release();
-      expect(await upload.result).toBe(200);
-      expect(JSON.parse(upload.text())).toMatchObject({ ok: true });
-      expect(listProposals(dir).some((p) => p.id === proposal.id)).toBe(false);
-    } finally { await held.release(); }
-  }, 20_000);
-
   it('a slow action waits on the receipt database and keeps one result for retries', async () => {
     const op = 'receipt-slow-body-12345678';
     const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;
@@ -831,6 +811,39 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       try { expect(check.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE conversation = 'cv-cancelled'").get()).toEqual({ n: 1 }); }
       finally { check.close(); }
     } finally { await held.release(); await other?.close(); }
+  }, 20_000);
+
+  it.each(['selected', 'standalone'])('a slow Reject waits on the %s memory database', async (mode) => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-reject-lock-'));
+    const scoped = mode === 'selected';
+    const dir = scoped ? join(home, 'agents', 'other') : home;
+    mkdirSync(dir, { recursive: true });
+    let household: Household | undefined;
+    if (scoped) {
+      mkdirSync(join(home, 'agents', 'default'), { recursive: true });
+      writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['default', 'other'], default: 'default', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+      household = loadHousehold(home)!;
+    }
+    const server = await startHttpServer({ contextDir: scoped ? agentDir(household!, 'default') : dir, host: '127.0.0.1', port: 0, token: 'reject-test-token', ...(household ? { household } : {}) });
+    const origin = `http://127.0.0.1:${server.port}`;
+    try {
+      const proposal = propose(dir, { category: 'feedback', title: 'Reject under contention', content: 'test', source: 'test' });
+      const upload = uploading(scoped ? '/a/other/act/loom' : '/act/loom', `_action=reject&id=${proposal.id}`, {
+        'x-loom-fetch': '1', authorization: 'Bearer reject-test-token', 'content-type': 'application/x-www-form-urlencoded',
+      }, origin);
+      await upload.started;
+      const held = await hold(join(dir, 'memories.db'), 'exclusive');
+      try {
+        const began = performance.now(); upload.finish(); await delay(100);
+        expect((await fetch(`${origin}/login`)).status).toBe(200);
+        expect(performance.now() - began).toBeLessThan(1000);
+        expect(await pending(upload.result)).toBe(true);
+        await held.release();
+        expect(await upload.result).toBe(200);
+        expect(JSON.parse(upload.text())).toMatchObject({ ok: true });
+        expect(listProposals(dir).some((p) => p.id === proposal.id)).toBe(false);
+      } finally { await held.release(); }
+    } finally { await server.close(); rmSync(home, { recursive: true, force: true }); }
   }, 20_000);
 
 });
