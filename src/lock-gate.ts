@@ -83,6 +83,8 @@ function allFree(w: LockWait): boolean {
 interface Waiter { deadline: number; go: (free: boolean) => void }
 interface Line { w: LockWait; waiters: Waiter[] }
 const lines = new Map<string, Line>();
+/** A count only, for checking queue bounds without exposing paths, pids or caller data. */
+export const pendingLockWaits = (): number => [...lines.values()].reduce((n, line) => n + line.waiters.length, 0);
 
 const lineKey = (w: LockWait): string => JSON.stringify([
   [...(w.read ?? [])].sort(), [...(w.write ?? [])].sort(), (w.files ?? []).map((f) => f.path).sort(),
@@ -116,7 +118,11 @@ async function pump(key: string, line: Line): Promise<void> {
  */
 export function waitForLocks(w: LockWait): Promise<boolean> {
   const key = lineKey(w);
-  if (!lines.has(key) && allFree(w)) return Promise.resolve(true);
+  try { if (!lines.has(key) && allFree(w)) return Promise.resolve(true); }
+  catch (error) {
+    console.error('loom: a lock probe failed; going on without it', error);
+    return Promise.resolve(false);
+  }
   return new Promise((go) => {
     const deadline = performance.now() + (w.budgetMs ?? READ_WAIT_MS);
     const line = lines.get(key);

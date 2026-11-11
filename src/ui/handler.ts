@@ -45,7 +45,7 @@ import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:z
 import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
-import { resolveRepoRoot } from '../config.js';
+import { resolveRepoRoot, resolveSqliteDbPath } from '../config.js';
 import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionsLock, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
 import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
@@ -86,7 +86,7 @@ import { registerCoreSource } from '../collections/core-types.js';
 import type { MemRecord } from '../collections/memory.js';
 import { AGENT_STATUS_DOMAIN, ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
 import { GAP_MS, nudge } from '../collections/pull.js';
-import { beginOp, finishOp, withLog } from '../collections/log.js';
+import { beginOp, finishOp, liveDbPath, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -1735,6 +1735,17 @@ function decode(s: string): string | null {
   try { return decodeURIComponent(s); } catch { return null; }
 }
 
+// Options are necessarily public, before a credential exists. They share ONE wait per sessions file, so a flood of
+// option requests cannot put one waiter each ahead of signed-in work. Challenge issuance remains capped in sessions.ts.
+const challengeWaits = new Map<string, Promise<boolean>>();
+function waitForChallenge(home: string): Promise<boolean> {
+  const lock = sessionsLock(home), running = challengeWaits.get(lock.path);
+  if (running) return running;
+  const wait = waitForLocks({ files: [lock] }).finally(() => challengeWaits.delete(lock.path));
+  challengeWaits.set(lock.path, wait);
+  return wait;
+}
+
 /** Handle a request for the page. The caller has already matched isUiRequest. */
 export async function handleUi(req: IncomingMessage, res: ServerResponse, pathname: string, opts: UiOptions): Promise<void> {
   // No token, no page: an open /ui would be readable by any site that
@@ -1771,7 +1782,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLoginLink(code));
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
-    const spent = storeFor(opts).spendLink(code);
+    const store = storeFor(opts);
+    const checked = store.peekLink(code);
+    // A stranger's made-up code never gets a place in the lock line. The locked spend still checks expiry and
+    // single use after the wait, and live() still checks revocation: waiting never becomes permission to sign in.
+    if (checked && opts.auth.live(checked)) await waitForLocks({ files: [sessionsLock(opts.household?.().home ?? opts.contextDir)] });
+    const spent = checked && opts.auth.live(checked) ? store.spendLink(code) : null;
     if (!spent || !opts.auth.live(spent.secret)) {
       return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
     }
@@ -1835,13 +1851,26 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, PASSKEY_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (pathname === '/login/passkey/options') {
+      await waitForChallenge(opts.household?.().home ?? opts.contextDir);
       return sendJson(res, 200, { challenge: storeFor(opts).createChallenge('login', null), rpId: rp.rpId, timeout: 300_000 });
     }
     const store = storeFor(opts);
-    const stored = typeof body.id === 'string' ? store.passkey(body.id) : null;
+    let stored = typeof body.id === 'string' ? store.passkey(body.id) : null;
     if (!stored) return sendJson(res, 401, { error: 'loom doesn\'t know that passkey (it may have been removed)' });
     try {
-      const a = verifyAssertion(body, stored, rp);
+      let a = verifyAssertion(body, stored, rp);
+      if (!store.hasChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
+      if ((a.counter !== 0 || stored.counter !== 0) && a.counter <= stored.counter) return sendJson(res, 401, { error: 'that passkey\'s counter went backwards: it may have been copied, so it was refused' });
+      // Only a verified credential joins the wait; reread and verify after it as a key may have been removed or
+      // replaced meanwhile. Challenge consumption and counter checks stay inside the same synchronous section.
+      if (!opts.auth.live(Buffer.from(stored.secret, 'hex'))) return sendJson(res, 401, { error: passkeyStopped(stored) });
+      {
+        await waitForLocks({ files: [sessionsLock(opts.household?.().home ?? opts.contextDir)] });
+        const current = store.passkey(stored.id);
+        if (!current) return sendJson(res, 401, { error: 'loom doesn\'t know that passkey (it may have been removed)' });
+        stored = current;
+        a = verifyAssertion(body, stored, rp);
+      }
       if (!store.useChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
       // Its own token in a household (t-1969): live while the passkey is kept and its person is a member. Checked
       // before the counter moves, so a refused passkey doesn't show as used.
@@ -1869,6 +1898,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     // The sessions file's lock, waited out off the event loop (lock-gate.ts), once the token matched: never for a stranger.
     await waitForLocks({ files: [sessionsLock(opts.household?.().home ?? opts.contextDir)] });
+    if (!opts.auth.live(match)) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
       'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
@@ -1915,7 +1945,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
-    if (c && /^[0-9a-f]{64}$/.test(c)) { storeFor(opts).delete(c); closeSession(`session:${c}`); }
+    if (c && /^[0-9a-f]{64}$/.test(c)) {
+      // An unknown cookie has nothing to revoke and mustn't queue a stranger behind the sessions lock.
+      if (who?.kind === 'session') {
+        await waitForLocks({ files: [sessionsLock(full?.home ?? unscoped.contextDir)] });
+        storeFor(opts).delete(c);
+      }
+      closeSession(`session:${c}`);
+    }
     // And the copies of pages this browser kept for offline (https only; the sign-in page's /app.js also asks the worker).
     return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, 'clear-site-data': '"cache", "storage"' });
   }
@@ -1936,7 +1973,21 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     await waitForLocks(reads ? { read: dbs } : { write: dbs, budgetMs: WRITE_WAIT_MS });
   }
   const tokens = pathname.startsWith('/act/') || /^\/a\/[a-z][a-z0-9-]{0,39}\/act\//.test(pathname) || pathname.startsWith('/passkeys') || pathname === '/account';
-  if (!reads) await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+  const authority = JSON.stringify([who.member ?? null, full?.agents ?? null]);
+  const changedAuthority = (): boolean => {
+    const current = whoIs(req, unscoped);
+    if (current && JSON.stringify([current.member ?? null, householdNow?.().agents ?? null]) === authority) return false;
+    sendJson(res, 403, { error: 'this sign-in or its permissions changed; reload and try again' });
+    return true;
+  };
+  const waitForWrite = async (write: string[] = []): Promise<boolean> => {
+    // Check at admission too: a credential revoked during upload must not join the authenticated lock line.
+    if (changedAuthority()) return false;
+    await waitForLocks({ write: [...(full ? [liveDbPath(full.home)] : []), ...write], files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+    // Scope captured before the upload/wait is used only if it still holds. A changed scope reloads the page.
+    return !changedAuthority();
+  };
+  if (!reads && !await waitForWrite()) return;
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
@@ -1994,6 +2045,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, COLLECTIONS_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    if (!await waitForWrite()) return;
     const r = await answerBatch({ env: opts.env, household: full, live: () => householdNow!(), page: { session: streamOwner(req, who) } }, memberViewer(full, who.member), body);
     return sendJson(res, r.status, r.body);
   }
@@ -2013,6 +2065,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   if (full && (pathname === '/comms' || pathname.startsWith('/comms/')) && !(req.method === 'GET' && wantsPage(req))) {
     const guard = (r: IncomingMessage, body: Record<string, unknown>): string | null => {
+      if (!whoIs(r, unscoped)) return 'forbidden: signed out; sign in again';
       if (!sameOrigin(r)) return 'forbidden: cross-site request';
       if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return 'forbidden: this page is stale; reload and try again';
       return null;
@@ -2058,6 +2111,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, PASSKEY_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    if (!await waitForWrite()) return;
     const sub = pushSub(body.sub);
     if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
     if (pathname === '/push/unsubscribe') { storeFor(opts).removePushSub(sub.endpoint); return sendJson(res, 200, { ok: true }); }
@@ -2074,6 +2128,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, PASSKEY_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    if (!await waitForWrite()) return;
     const store = storeFor(opts);
     const session = store.get(who.cookie);
     if (!session) return sendJson(res, 401, { error: 'signed out' });
@@ -2137,6 +2192,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const body = await readJson(req, LOGIN_MAX_BYTES);
     if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    if (!await waitForWrite()) return;
     const p = prefsOf(body);
     if (!p) return sendJson(res, 400, { error: 'not an Appearance choice loom keeps' });
     if (!Object.keys(p).length) return sendJson(res, 400, { error: 'no Appearance choice to save' });
@@ -2177,6 +2233,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const form = await readForm(req, ACT_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
     if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) return send(res, 403, 'text/plain', 'forbidden: this form is stale; reload and try again');
+    if (!await waitForWrite()) return;
     const key = form.get('i') ?? '';
     if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
     storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
@@ -2200,6 +2257,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) {
       return send(res, 403, 'text/plain', 'forbidden: this form is stale or not from loom\'s page; reload and try again');
     }
+    // Core memory mutations use the selected agent's store, including the unscoped core route.
+    const memory = sourceId === 'loom' ? [resolveSqliteDbPath(agentAct ? agentDir(hh!, agentAct[1]) : opts.contextDir)] : [];
+    if (!await waitForWrite(memory)) return;
     const action = form.get('_action') ?? '';
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');
@@ -2211,6 +2271,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // which would sign whoever read the file in (sessions.ts keeps only hashes for the same reason).
     const opSession = createHmac('sha256', storeFor(opts).key).update(`loom-op\0${streamOwner(req, who)}`).digest('base64url');
     const opHome = (opts.household?.() ?? hh)?.home;
+    // Completion can follow a slow piece call: its receipt waits again, without re-running the accepted action.
+    const finishReceipt = async (state: 'done' | 'failed', answer: string, onlyAccepted = false): Promise<void> => {
+      if (op === null || !opHome) return;
+      await waitForLocks({ write: [liveDbPath(opHome)], budgetMs: WRITE_WAIT_MS });
+      withLog(opHome, (db) => finishOp(db, op, opSession, state, answer, onlyAccepted));
+    };
     // Without a household there's no shared store for receipts: the action runs as one without an id.
     if (op !== null && opHome) {
       if (!/^[A-Za-z0-9_-]{16,64}$/.test(op)) return send(res, 400, 'text/plain', 'bad operation id');
@@ -2225,7 +2291,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // ran that never answered stays accepted, and becomes unknown: never run again.
       res.once('finish', () => {
         if ([400, 403, 404, 413].includes(res.statusCode)) {
-          try { withLog(opHome, (db) => finishOp(db, op, opSession, 'failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true)); } catch { /* it stays accepted, then unknown */ }
+          void finishReceipt('failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true).catch(() => { /* it stays accepted, then unknown */ });
         }
       });
     }
@@ -2412,10 +2478,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // A retry gets this same answer, never a second run. A one-time message (a secret, a link: `keep`) is never written
       // down: a retry hears it was done, and that it was shown once.
       const kept = result.keep ? JSON.stringify({ ok: result.ok, message: result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.', ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
-      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', kept));
+      await finishReceipt(result.ok ? 'done' : 'failed', kept);
       return send(res, 200, 'application/json', answer);
     }
-    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } })));
+    await finishReceipt(result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 

@@ -32,7 +32,7 @@ import { resolveSqliteDbPath } from '../config.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
 import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { deliverAsOwner } from '../delivery.js';
-import type { Household, Member } from '../household.js';
+import { memberOf, type Household, type Member } from '../household.js';
 import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
@@ -224,6 +224,19 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     return send(503, { error: 'unavailable: Comms couldn\'t answer; see the daemon log' });
   };
   const m = c.member;
+  const postReady = async (body: Record<string, unknown>, agent?: string, writesMemory = false) => {
+    const before = c.live(), owner = before && m ? memberOf(before, m.person) : undefined;
+    if (!before || !owner || (agent && (!before.agents.includes(agent) || (owner.agents !== '*' && !owner.agents.includes(agent))))) {
+      throw new CommsError('forbidden: you can post only with an agent you own', 403);
+    }
+    const memories = agent ? [resolveSqliteDbPath(agentDir(before, agent))] : [];
+    await waitForLocks({ read: writesMemory ? [] : memories, write: [join(h.home, HOUSEHOLD_DB), join(h.home, 'comms.db'), ...(writesMemory ? memories : [])], budgetMs: WRITE_WAIT_MS });
+    const why = c.guard(req, body);
+    if (why) throw new CommsError(why, 403);
+    const current = c.live(), member = current && m ? memberOf(current, m.person) : undefined;
+    if (!current || !member) throw new CommsError('forbidden: Comms is for an agent\'s owners', 403);
+    return { household: current, member };
+  };
   try {
     if (pathname === '/comms') {
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
@@ -277,7 +290,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         body.text = withAbout(body.text, about);
         delete body.about;
       }
-      const o = openThread(h, c.env, m, body, new Date(), aboutKey);
+      const current = await postReady(body, typeof body.agent === 'string' ? body.agent : undefined);
+      const o = openThread(current.household, c.env, current.member, body, new Date(), aboutKey);
       if (o.created) {
         deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
         send(200, { thread: view(o.thread), seq: o.seq, delivery: 'sending' });
@@ -330,10 +344,13 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     if (!body) return send(400, { error: 'bad-input: a JSON object' }), true;
     const why = c.guard(req, body);
     if (why) return send(403, { error: why }), true;
+    const current = await postReady(body, t.agent, verb === 'title');
+    // The thread and the member's scope may have moved while the body arrived or its locks were held.
+    t = threadFor(current.household, current.member, t.id);
     switch (verb) {
       case 'model': {
         if (typeof body.harness !== 'string') return send(400, { error: 'model is auto, claude or codex' }), true;
-        const r = await threadModel(c, t, m!, body.harness); send(r.status, r.body); return true;
+        const r = await threadModel(c, t, current.member, body.harness); send(r.status, r.body); return true;
       }
       case 'send': {
         // Accepted once recorded (t-1881): the delivery goes on in the background, and the thread's live state says
@@ -353,7 +370,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'unpin': setPinned(h, t, false); send(200, { ok: true }); return true;
       case 'archive':
       case 'delete': {
-        const r = await threadControl(c, t, m!, 'interrupt');
+        const r = await threadControl(c, t, current.member, 'interrupt');
         // A new thread may never have reached the runtime: there is no body to stop.
         if (r.status !== 200 && !noRuntimeConversation(r)) { send(r.status, r.body); return true; }
         if (verb === 'archive') setArchived(h, t, true); else deleteThread(h, t);
@@ -363,7 +380,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'read': markRead(h, t, body.seq); send(200, { ok: true }); return true;
       case 'stop':
       case 'resume': {
-        const r = await threadControl(c, t, m!, verb === 'stop' ? 'interrupt' : 'resume');
+        const r = await threadControl(c, t, current.member, verb === 'stop' ? 'interrupt' : 'resume');
         if (noRuntimeConversation(r) && verb === 'stop') send(200, { ok: true, state: 'idle' });
         else send(r.status, r.body);
         return true;
