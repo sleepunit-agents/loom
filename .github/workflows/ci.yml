@@ -74,7 +74,28 @@ jobs:
 
       # The household bundle (src/bundle.ts) encrypts with age; its tests run the real thing.
       - name: Install age
-        run: command -v age >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq age)
+        shell: bash
+        run: |
+          set -euo pipefail
+          age_tmp=$(mktemp -d)
+          trap 'rm -rf "$age_tmp"' EXIT
+          if curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 120 \
+            https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz \
+            --output "$age_tmp/age.tar.gz"; then
+            # Fail closed on a checksum mismatch; apt is only a download fallback.
+            echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  $age_tmp/age.tar.gz" | sha256sum --check
+            tar -xzf "$age_tmp/age.tar.gz" -C "$age_tmp"
+            mkdir -p "$HOME/.local/bin"
+            install -m 0755 "$age_tmp/age/age" "$age_tmp/age/age-keygen" "$HOME/.local/bin/"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
+          else
+            echo "::warning::age release download failed; falling back to apt"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq age
+          fi
+          age --version
+          age-keygen --version
 
       # The browser suites (src/ui/*.integration.test.ts) skip themselves when no Chrome is found, so a
       # runner without one would pass them silently. The list is theirs.
