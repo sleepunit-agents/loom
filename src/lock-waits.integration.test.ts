@@ -29,6 +29,9 @@ import * as lockGate from './lock-gate.js';
 import { pendingLockWaits, waitForLocks } from './lock-gate.js';
 import { clearPieceCache } from './ui/pieces.js';
 import { propose, listProposals } from './backends/proposals.js';
+import { changed } from './ui/live.js';
+import { GAP_MS, nudge } from './collections/pull.js';
+import { domainOf, nudgedSince, withLog } from './collections/log.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
@@ -605,7 +608,27 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
+  it('a deferred collection nudge waits without blocking and persists after release', async () => {
+    const domain = 'loom/nudge-lock-test';
+    withLog(h.home, (db) => domainOf(db, domain, 'test'));
+    const since = Date.now() - 1;
+    const held = await hold(join(h.home, 'collections', 'live.db'), 'exclusive');
+    try {
+      const began = performance.now();
+      const hint = nudge(h.home, domain);
+      await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(hint)).toBe(true);
+      await held.release(); await hint;
+      expect(withLog(h.home, (db) => nudgedSince(db, since)).some((r) => r.domain === domain)).toBe(true);
+    } finally { await held.release(); }
+  }, 20_000);
+
   it('a slow action waits on the receipt database and keeps one result for retries', async () => {
+    // Register the household's change hooks and force their coalesced timers into this upload's lock window.
+    await fetch(`${base}/account`, { headers: { authorization: `Bearer ${tok.jonathan}` } });
+    changed(); changed();
     const op = 'receipt-slow-body-12345678';
     const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;
     const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
@@ -613,9 +636,13 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const path = join(h.home, 'collections', 'live.db');
     const held = await hold(path, 'exclusive');
     try {
-      const began = performance.now(); upload.finish(); await delay(100);
+      const began = performance.now(); upload.finish();
+      await delay(GAP_MS + 100);
+      // The delayed attention/status nudges must not spend SQLite's synchronous timeout while this action waits.
+      expect(performance.now() - began).toBeLessThan(GAP_MS + 1000);
+      const loginAt = performance.now();
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
+      expect(performance.now() - loginAt).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
       await held.release(); expect(await upload.result).toBe(200);
       const answer = JSON.parse(upload.text());
       expect(answer).toMatchObject({ ok: true, receipt: { op, state: 'done' } });

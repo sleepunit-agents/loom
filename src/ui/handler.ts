@@ -1263,7 +1263,7 @@ function nudgeLive(home: string, domain: string): void {
   const k = `${home}\0${domain}`;
   if (liveNudgeLater.has(k)) return;
   const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
-  const go = () => backgroundJob(`collection nudge ${domain}`, () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); nudge(home, domain); });
+  const go = () => backgroundJob(`collection nudge ${domain}`, () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); return nudge(home, domain); });
   if (!wait) { go(); return; }
   const t = setTimeout(go, wait);
   t.unref?.();
@@ -1273,7 +1273,7 @@ function nudgeLive(home: string, domain: string): void {
 function nudgeAttention(home: string): void {
   if (nudgeLater.has(home)) return;
   const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
-  const go = () => backgroundJob('collection attention nudge', () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); });
+  const go = () => backgroundJob('collection attention nudge', () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); return nudge(home, ATTENTION_DOMAIN); });
   if (!wait) { go(); return; }
   const t = setTimeout(go, wait);
   t.unref?.();
