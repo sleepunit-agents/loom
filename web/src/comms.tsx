@@ -450,8 +450,8 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
         </List>
       ) : null)}
       {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={onOtherRows} />}
-      {(showArchived || showBackground) && other?.length === 0 && <Empty title={showBackground ? 'No background work here.' : 'No archived threads.'} />}
-      {!threads.length && !showArchived && !showBackground && <Empty title="No threads yet" text="Start one with one of your agents." />}
+      {(showArchived || showBackground) && other?.length === 0 && <Empty framed={false} title={showBackground ? 'No background work here.' : 'No archived threads.'} />}
+      {!threads.length && !showArchived && !showBackground && <Empty framed={false} title="No threads yet" text="Start one with one of your agents." />}
       <div className="mt-auto flex flex-col">
       <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
       <button type="button" className="comms-archived" onClick={() => { setArchived(null); setShowArchived(!showArchived); }}>{showArchived ? 'Back to active' : 'Archived'}</button>
@@ -959,7 +959,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             ))}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <Loading label="Reconnecting…" />}
-            {refused && <LoadError title={refused} text={messages.length ? "What's shown here may be out of date." : undefined} retry={() => void pull()} />}
+            {refused && <LoadError framed={false} title={refused} text={messages.length ? "What's shown here may be out of date." : undefined} retry={() => void pull()} />}
             {/* The working line (t-1918): what the agent is on as it happens, the newest step and how long, under the thread. */}
             {(face === 'working' || face === 'thinking') && (
               <div className="comms-live loom-data" role="status" data-face={face} data-alive={face === 'working' ? alive.face : undefined}>
@@ -1028,7 +1028,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
           </button>
         ))}
       </div>
-      {error && <LoadError title="Couldn’t start this conversation" text={error} />}
+      {error && <LoadError framed={false} title="Couldn’t start this conversation" text={error} />}
       <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} draft="new" />
     </article>
   );
@@ -1118,7 +1118,7 @@ export function CommsView({ data }: { data: CommsData }) {
   return (
     <div ref={box} className="comms" data-wide="" data-one={one ? '' : undefined}>
       {one && pane ? null : list}
-      {pane ?? (one ? null : <Empty title="Pick a thread, or start one" />)}
+      {pane ?? (one ? null : <Empty framed={false} title="Pick a thread, or start one" />)}
       {one && pane && drawerOpen && <ThreadsDrawer onClose={() => setDrawerOpen(false)}>{list}</ThreadsDrawer>}
     </div>
   );

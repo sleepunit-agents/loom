@@ -39,14 +39,14 @@ export const Row = forwardRef<HTMLButtonElement, RowProps>(function Row({ title,
 });
 
 /** Say what's absent, then (only if useful) how something gets here. */
-export function Empty({ title, text, children, compact = false }: { title: string; text?: string; children?: ReactNode; compact?: boolean }) {
-  return <PrimitiveEmpty data-compact={compact || undefined} className="loom-kit-state grid justify-items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
+export function Empty({ title, text, children, compact = false, framed = true }: { title: string; text?: string; children?: ReactNode; compact?: boolean; framed?: boolean }) {
+  return <PrimitiveEmpty data-framed={framed ? undefined : 'false'} data-compact={compact || undefined} className="loom-kit-state grid justify-items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
     <EmptyTitle className="text-base">{title}</EmptyTitle>{text && <EmptyDescription className="text-sm">{text}</EmptyDescription>}{children}
   </PrimitiveEmpty>;
 }
 export function Loading({ label = 'Loading…' }: { label?: string }) { return <p className="loom-kit-state" role="status" aria-live="polite">{label}</p>; }
-export function Error({ title = 'Couldn’t load this', text, retry }: { title?: string; text?: string; retry?: () => void }) {
-  return <div role="alert"><Empty title={title} text={text}>{retry && <Button variant="outline" onClick={retry}>Try again</Button>}</Empty></div>;
+export function Error({ title = 'Couldn’t load this', text, retry, framed }: { title?: string; text?: string; retry?: () => void; framed?: boolean }) {
+  return <div role="alert"><Empty title={title} text={text} framed={framed}>{retry && <Button variant="outline" onClick={retry}>Try again</Button>}</Empty></div>;
 }
 
 /** A row with ordinary link semantics (modifier click, new tab and copy address). */

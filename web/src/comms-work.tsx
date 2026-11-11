@@ -97,11 +97,11 @@ export function WorkPanel({ thread, conversation, csrf, replySeq, heading = fals
   const items = work?.items ?? [];
   const rows = (
     <div className="comms-work-content" id={`work-${thread}`}>
-      {error && <LoadError title="Couldn’t read this thread’s work" retry={() => void load()} />}
+      {error && <LoadError framed={false} title="Couldn’t read this thread’s work" retry={() => void load()} />}
       {work === null ? !error && <Loading label="Reading…" />
-        : items.length === 0 ? <Empty compact title="Nothing yet" text="Tasks, changes and notes this thread names or makes show up here." />
+        : items.length === 0 ? <Empty framed={false} compact title="Nothing yet" text="Tasks, changes and notes this thread names or makes show up here." />
           : <List label="Work in this thread"><ul className="comms-work__list">{items.map((it) => <Row key={it.ref} it={it} />)}</ul></List>}
-      {work?.failed.map((f) => <LoadError key={f} title={`${f} didn't answer.`} retry={() => void load()} />)}
+      {work?.failed.map((f) => <LoadError framed={false} key={f} title={`${f} didn't answer.`} retry={() => void load()} />)}
     </div>
   );
   return (
