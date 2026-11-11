@@ -40,6 +40,7 @@ import { changed, closeSession, onChanged, openStream, type Sees } from './live.
 import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { setTimeout as scheduleHint } from 'node:timers';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
 import { packAsset } from './asset-encoding.js';
@@ -1265,7 +1266,7 @@ function nudgeLive(home: string, domain: string): void {
   const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
   const go = () => backgroundJob(`collection nudge ${domain}`, () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); return nudge(home, domain); });
   if (!wait) { go(); return; }
-  const t = setTimeout(go, wait);
+  const t = scheduleHint(go, wait);
   t.unref?.();
   liveNudgeLater.set(k, t);
 }
@@ -1275,7 +1276,7 @@ function nudgeAttention(home: string): void {
   const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
   const go = () => backgroundJob('collection attention nudge', () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); return nudge(home, ATTENTION_DOMAIN); });
   if (!wait) { go(); return; }
-  const t = setTimeout(go, wait);
+  const t = scheduleHint(go, wait);
   t.unref?.();
   nudgeLater.set(home, t);
 }
