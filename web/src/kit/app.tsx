@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/button';
 import './app.css';
 
 /** Header, filters and content. about participates in the desktop's Chat about this menu. */
-export function AppFrame({ children, filters, about, ...header }: ComponentProps<typeof AppHeader> & { children: ReactNode; filters?: ReactNode; about?: About }) {
+export function AppFrame({ children, filters, about, header: showHeader = true, ...heading }: ComponentProps<typeof AppHeader> & { children: ReactNode; filters?: ReactNode; about?: About; header?: boolean }) {
   return <section className="loom-kit-frame" {...(about ? aboutAttr(about) : {})}>
-    <AppHeader {...header} />{filters && <div className="loom-kit-filters">{filters}</div>}{children}
+    {showHeader && <AppHeader {...heading} />}{filters && <div className="loom-kit-filters">{filters}</div>}{children}
   </section>;
 }
 
@@ -40,4 +40,10 @@ export function Empty({ title, text, children }: { title: string; text?: string;
 export function Loading({ label = 'Loading…' }: { label?: string }) { return <p className="loom-kit-state" role="status" aria-live="polite">{label}</p>; }
 export function Error({ title = 'Couldn’t load this', text, retry }: { title?: string; text?: string; retry?: () => void }) {
   return <div role="alert"><Empty title={title} text={text}>{retry && <Button variant="outline" onClick={retry}>Try again</Button>}</Empty></div>;
+}
+
+/** A row with ordinary link semantics (modifier click, new tab and copy address). */
+export function LinkRow({ title, meta, status, href, ...props }: Omit<ComponentProps<'a'>, 'title'> & { title: ReactNode; meta?: ReactNode; status?: ReactNode }) {
+  const content = <span className="loom-kit-words"><span className="loom-kit-title">{title}</span>{meta && <span className="loom-kit-meta">{meta}</span>}{status && <span className="loom-kit-status">{status}</span>}</span>;
+  return href ? <a {...props} href={href} className={`loom-kit-row ${props.className ?? ''}`}>{content}</a> : <div className="loom-kit-row">{content}</div>;
 }

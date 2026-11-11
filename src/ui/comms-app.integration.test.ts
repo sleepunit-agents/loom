@@ -102,6 +102,33 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
   }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
+  for (const width of [1440, 390]) for (const look of ['neon', 'daylight']) {
+    it(`kit screenshot ${width} ${look}`, async () => {
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.addInitScript((look) => { localStorage.setItem('loom-look', look); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); }, look);
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const p = await ctx.newPage();
+      try {
+        await p.goto(`${base}/comms?t=*comms`);
+        const row = p.locator('.comms-list [data-prefetch]').first();
+        await row.waitFor();
+        expect(await p.locator('html').getAttribute('data-look')).toBe(look);
+        expect(await p.locator('html').evaluate((el) => getComputedStyle(el).getPropertyValue('--v-canvas').trim().toLowerCase())).toBe(look === 'neon' ? '#07070c' : '#f5f3ee');
+        expect(await noSideways(p)).toBe(true);
+        if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-list.png`) });
+        await row.click();
+        await p.getByText('Sure. A framed portrait, a signal meter, and the channel line. See t-12.', { exact: false }).first().waitFor();
+        expect(await noSideways(p)).toBe(true);
+        if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-thread.png`) });
+        const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'session', place: `kit-${width}-${look}`, label: 'Conversation kit evidence', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art');
+        await p.goto(`${base}/conversation/${cv.conversation}`);
+        await p.locator('main [data-band], main .loom-kit-list').first().waitFor();
+        expect(await noSideways(p)).toBe(true);
+        if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `conversation-${width}-${look}.png`) });
+      } finally { await ctx.close(); }
+    }, 45_000);
+  }
+
   it('keeps its list live: a thread renamed elsewhere moves in the open list, and /comms isn\'t asked again (t-2027)', async () => {
     const { ctx, page, errors } = await open(false);
     try {
@@ -113,12 +140,12 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       const asked: string[] = [];
       page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/comms' && r.method() === 'GET') asked.push(u.search); });
       setTitle(h, threadFor(h, h.members[0], thread.id), 'Renamed elsewhere', 'agent');
-      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      await page.locator('.comms-list .loom-kit-title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
       // Archived threads are their own live set: shown without asking loom either.
       await page.getByRole('button', { name: 'Archived', exact: true }).click();
-      await page.locator('.comms-empty').filter({ hasText: 'No archived threads.' }).waitFor({ timeout: 5_000 });
+      await page.locator('.comms-list .loom-kit-state').filter({ hasText: 'No archived threads.' }).waitFor({ timeout: 5_000 });
       await page.getByRole('button', { name: 'Back to active', exact: true }).click();
-      await page.locator('.comms-row__title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
+      await page.locator('.comms-list .loom-kit-title').filter({ hasText: 'Renamed elsewhere' }).waitFor({ timeout: 5_000 });
       await page.waitForTimeout(500);
       expect(asked).toEqual([]);
       expect(errors).toEqual([]);
@@ -139,9 +166,9 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     try {
       await page.goto(`${base}/comms`);
       await page.locator('.comms-list').waitFor();
-      expect(await page.locator('.comms-row__title').allTextContents()).not.toContain('Internal diagnostic');
+      expect(await page.locator('.comms-list .loom-kit-title').allTextContents()).not.toContain('Internal diagnostic');
       await page.getByRole('button', { name: 'Background work', exact: true }).click();
-      const row = page.locator('.comms-row__btn').filter({ hasText: 'Internal diagnostic' });
+      const row = page.locator('.comms-list [data-split-row]').filter({ hasText: 'Internal diagnostic' });
       await row.waitFor();
       await row.click();
       const brief = page.locator('.comms-msg--agent').filter({ hasText: 'Diagnostic brief from Art' });
@@ -363,10 +390,10 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     const { ctx, page, errors } = await open(true);
     try {
       await page.goto(`${base}/comms`);
-      await page.locator('.comms-row').first().waitFor();
-      expect(await page.locator('.comms-row__title').first().textContent()).toBe('New thread with Art E Fish');
+      await page.locator('.comms-list li').first().waitFor();
+      expect(await page.locator('.comms-list .loom-kit-title').first().textContent()).toBe('New thread with Art E Fish');
       expect(await noSideways(page)).toBe(true);
-      await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms-list [data-split-row]').first().click();
       await page.locator('.comms-screen').waitFor();
       // The channel line says what the agent is doing (t-1918): its last turn done, here.
       expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · DONE/);
@@ -491,12 +518,12 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-thread, .comms-blank').count()).toBe(0);
       // The list's agents are their letters (t-1925 D): the pixel face is the comm screen's.
-      const rows = await page.locator('.comms-row').count();
+      const rows = await page.locator('.comms-list li').count();
       expect(rows).toBeGreaterThan(0);
-      expect(await page.locator('.comms-row .loom-letter').count()).toBe(rows);
+      expect(await page.locator('.comms-list li .loom-letter').count()).toBe(rows);
       // A thread: the list makes way, and the threads fold out from the menu button in its header (t-1925 C).
       const menu = page.locator('.comms-thread .comms-drawer-btn');
-      await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms-list [data-split-row]').first().click();
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-list').count()).toBe(0);
       expect(await back.count()).toBe(0);
@@ -522,7 +549,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(await page.locator('.comms-new-thread .comms-drawer-btn').isVisible()).toBe(true);
       // Picking a thread in it opens that thread and closes it.
       await page.locator('.comms-new-thread .comms-drawer-btn').click(); await drawer.waitFor();
-      await drawer.locator('.comms-row__btn').first().click();
+      await drawer.locator('.comms-list [data-split-row]').first().click();
       await page.locator('.comms[data-one] .comms-thread:not(.comms-new-thread)').waitFor({ timeout: 8000 });
       await expect.poll(() => drawer.count()).toBe(0);
       // /comms itself, one pane: the list, as before.
@@ -532,7 +559,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
       // The edge: 930 px is one pane, 931 two, side by side with no way back (beside the agents' rail the comm screen is
       // the rail's, so the band needs less: comms.tsx ONE_PANE_BELOW_RAIL). A thread open across it stays mounted.
-      await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms-list [data-split-row]').first().click();
       await page.locator('.comms-thread:not(.comms-thread--opening) .comms-composer').waitFor();
       await page.locator('.loom-rscreen .comms-screen').waitFor();
       await page.locator('.comms-composer textarea').fill('a draft kept across the width');

@@ -124,12 +124,12 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     expect(new URL(p.url()).pathname).toBe(`/comms/${bare(t)}`);
     // Opening a thread from the list lands on its colon-free address too.
     await p.goto(`${base}/comms`);
-    await p.locator('.comms-row__btn').first().click();
+    await p.locator('.comms-list [data-split-row]').first().click();
     await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/[a-z2-7]{10}$/);
     // Its JSON answers at both.
     for (const at of [bare(t), t.id]) expect((await p.context().request.get(`${base}/comms/${at}`, { headers: { accept: 'application/json' } })).status()).toBe(200);
     // The list's agents are their letters, drawn in their colour (a lit square, not bare text).
-    const letter = await p.locator('.comms-row .loom-letter').first().evaluate((e) => { const c = getComputedStyle(e); return { w: e.getBoundingClientRect().width, bg: c.backgroundColor, shadow: c.boxShadow }; });
+    const letter = await p.locator('.comms-list li .loom-letter').first().evaluate((e) => { const c = getComputedStyle(e); return { w: e.getBoundingClientRect().width, bg: c.backgroundColor, shadow: c.boxShadow }; });
     expect(letter.w).toBe(30);
     expect(letter.bg).not.toBe('rgba(0, 0, 0, 0)');
     expect(letter.shadow).not.toBe('none');
@@ -142,7 +142,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     const p = await screen(1920, 1080, `/comms/${bare(t)}`, 'no-preference');
     await p.locator('.comms-screen').waitFor();
     await expect.poll(() => label(p)).toBe('ART E FISH · THINKING');
-    expect(await p.locator('.comms-thread__head [data-slot="agent-state"], .comms-state').count()).toBe(0);
+    expect(await p.locator('.comms-thread > header [data-slot="agent-state"], .comms-state').count()).toBe(0);
     await shot(p, 'thinking');
     adapterCall(h, process.env, { op: 'status', place: t.id, agent: 'art', status: 'working' });
     postActivity(h, process.env, { conversation: t.conversation, run: 'run-a', cards: [{ id: 'c1', at: new Date().toISOString(), tool: 'Bash', summary: 'Ran the tests', state: 'running' }] });

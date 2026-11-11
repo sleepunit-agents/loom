@@ -536,5 +536,5 @@ export async function conversationPage(contextDir: string, agent: string, id: st
     ...(steps.length === 100 ? [{ type: 'list' as const, items: [{ text: 'Earlier steps', page: `loom:${opts.page ?? `a/${agent}/conversation/${id}`}?before=${steps[0].seq}` }] }] : []),
   ] });
   if (view.render.error) sections.push({ id: 'render', blocks: [{ type: 'text', tone: 'muted', text: `Shown by loom: ${view.render.error}.` }] });
-  return { refresh: watchable && opts.before === undefined && (steps.some((s) => s.state === 'running') || Date.now() - Math.max(Date.parse(steps.at(-1)?.at ?? c.last), Date.parse(c.last)) < 15 * 60_000) ? 2 : undefined, title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
+  return { conversation: { agent, id }, refresh: watchable && opts.before === undefined && (steps.some((s) => s.state === 'running') || Date.now() - Math.max(Date.parse(steps.at(-1)?.at ?? c.last), Date.parse(c.last)) < 15 * 60_000) ? 2 : undefined, title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
 }

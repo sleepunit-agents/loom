@@ -59,6 +59,8 @@ export interface ChangesData {
   reader?: Page | null;
 }
 export interface Page {
+  /** Core conversation presentation; its venue-rendered blocks remain authoritative. */
+  conversation?: { agent: string; id: string };
   changes?: ChangesData; title: string; intro?: string; sections: Section[]; refresh?: number }
 export interface TickerActivity { action: string; where?: string; observedAt: string; expiresAt: string; href?: string }
 export interface AgentView { activity?: TickerActivity; activityUnavailable?: boolean; id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string; working?: true }

@@ -124,8 +124,8 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
       const you = (await tile.locator('.comms-band .comms-people').boundingBox())!;
       const panel = (await tile.locator('.comms-band__side .comms-work').boundingBox())!;
       expect(panel.y > you.y || panel.x >= you.x + you.width).toBe(true);
-      await tile.locator('.comms-work__row').first().waitFor();
-      const rows = await tile.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
+      await tile.locator('.comms-work .loom-kit-row').first().waitFor();
+      const rows = await tile.locator('.comms-work .loom-kit-row').evaluateAll((els) => els.map((e) => [e.querySelector('.loom-kit-status')!.textContent, e.querySelector('.loom-kit-meta')!.textContent]));
       expect(rows).toEqual([
         ['Blocked', 't-1881 · made here'],
         ['Waiting on you', 'sleepunit-agents/loom#545 · made here'],
@@ -133,7 +133,7 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
         ['In progress', 't-1882 · made here'],
         ['Done', 't-12'],
       ]);
-      expect(await tile.locator('.comms-work__row a').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
+      expect(await tile.locator('.comms-work .loom-kit-row[href]').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
       // Its rows inside the tile: nothing past its edge.
       const t = (await tile.boundingBox())!;
       expect(await widest(page)).toBeLessThanOrEqual(t.x + t.width + 1);
@@ -150,11 +150,11 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
       const toggle = page.locator('.comms-work__toggle');
       await page.waitForFunction(() => /Work \(5/.test(document.querySelector('.comms-work__toggle')?.textContent ?? ''));
       expect(await toggle.textContent()).toMatch(/^Work \(5 · 1 needs a look\)/);
-      expect(await page.locator('.comms-work__rows').isVisible()).toBe(false);
+      expect(await page.locator('.comms-work-content').isVisible()).toBe(false);
       if (shots) await page.screenshot({ path: join(shots, 'after-390-folded.png') });
       await toggle.tap();
-      await page.locator('.comms-work__row').first().waitFor();
-      expect(await page.locator('.comms-work__row').count()).toBe(5);
+      await page.locator('.comms-work .loom-kit-row').first().waitFor();
+      expect(await page.locator('.comms-work .loom-kit-row').count()).toBe(5);
       expect(await noSideways(page)).toBe(true);
       expect(await widest(page)).toBeLessThanOrEqual(390);
       if (shots) await page.screenshot({ path: join(shots, 'after-390-open.png') });

@@ -25,6 +25,8 @@ import { useFollow } from './comms-follow';
 import { refBits, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
+import { AppHeader } from './app-header';
+import { List, Row, Empty, Loading, Error as LoadError } from './kit';
 import { attentionNow, onAttention } from './attention';
 import { useOtherThreads, useThreads } from './threads-live';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatThread } from '@/components/ui/agent-chat';
@@ -47,15 +49,17 @@ export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' 
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null; delivery?: Delivery };
 /** Where a message of yours is, as the server recorded it (comms.md, "Sending"): never a guess the app makes. */
 type Delivery = 'sending' | 'delivered' | 'failed';
-/** A thread's first read, and each earlier page: src/comms.ts PAGE. */
 const PAGE_SIZE = 100;
+/** A thread's first read, and each earlier page: src/comms.ts PAGE. */
+
 const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
+const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
 /**
  * Whether a message can still change where it is on its own: one of yours on its way, or a step still running. The
  * app reads the thread again from the oldest of these, so their state is the server's, not what it was when first
  * read. (Your last message, not delivered, is read again too: Send again from another tab puts it back on its way.)
  */
-const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
+
 export type { ThreadAsk };
 export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
@@ -349,7 +353,7 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin, onAction }
   const acted = useRef(false);
   const mark = marks[t.agent];
   return (
-    <li className="comms-row" data-current={current || undefined} data-unread={t.unread || undefined}
+    <li className="list-none" data-current={current || undefined} data-unread={t.unread || undefined}
       onContextMenu={(e) => { e.preventDefault(); setContext({ x: e.clientX, y: e.clientY }); }}
       onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
         e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setContext({ x: rect.left, y: rect.bottom });
@@ -361,18 +365,12 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin, onAction }
         const s = touch.current; touch.current = null;
         if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) { acted.current = true; onArchive(); }
       }}>
-      <button type="button" className="comms-row__btn" data-prefetch={threadPath(t.id)} onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
-        {/* A letter, the agents' small mark (t-1925 D): the pixel face is the comm screen's. */}
-        <span className="loom-letter comms-row__letter" aria-hidden style={{ '--c': mark ? markColor(mark.bg) : 'var(--v-pink)', '--ls': '30px' } as React.CSSProperties}>
-          {(mark?.label ?? t.agent)[0].toUpperCase()}</span>
-        <span className="comms-row__main">
-          <span className="comms-row__title">{t.title ?? `New thread with ${agentName(t.agent, marks)}`}</span>
-          <span className="comms-row__sub loom-data">{t.state.working ? 'working…' : `CH ${String(t.channel).padStart(2, '0')}${t.project ? ` · ${t.project}` : ''}`}</span>
-        </span>
-        <span className="comms-row__time loom-data">{ago(t.last)}</span>
-        {t.pinned && <span className="comms-row__pin" aria-label="pinned">▲</span>}
-        {t.unread && <span className="comms-row__dot" aria-label="unread" />}
-      </button>
+      <Row selected={current} unread={t.unread} data-prefetch={threadPath(t.id)}
+        onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}
+        icon={<span className="loom-letter" aria-hidden style={{ '--c': mark ? markColor(mark.bg) : 'var(--v-pink)', '--ls': '30px' } as React.CSSProperties}>{(mark?.label ?? t.agent)[0].toUpperCase()}</span>}
+        title={t.title ?? `New thread with ${agentName(t.agent, marks)}`}
+        meta={t.state.working ? 'working…' : `CH ${String(t.channel).padStart(2, '0')}${t.project ? ` · ${t.project}` : ''}`}
+        trailing={<>{ago(t.last)}{t.pinned && <span aria-label="pinned"> · ▲</span>}</>} />
       {context && <ThreadContextMenu thread={t} at={context} close={closeContext} act={onAction} />}
     </li>
   );
@@ -444,20 +442,17 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
   const list = showArchived || showBackground ? [[showBackground ? 'Background work' : 'Archived', other ?? []] as const] : groups;
   return (
     <nav className="comms-list" aria-label="Threads">
-      <header className="comms-list__head">
-        <h2 className="loom-data">COMMS</h2>
-        <button type="button" className="comms-new" onClick={onNew}>+ New thread</button>
-      </header>
+      <AppHeader title="Comms" where="/comms" go={() => {}} actions={<button type="button" className="comms-new" onClick={onNew}>+ New thread</button>} />
       {list.map(([label, rows]) => rows.length ? (
-        <div key={label} className="comms-group">
-          <h3 className="comms-group__label loom-data">{label.toUpperCase()}</h3>
-          <ul data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
+        <List key={label} label={label}>
+          <h3 className="loom-data px-3 py-2 text-xs opacity-70">{label.toUpperCase()}</h3>
+          <ul className="m-0 list-none p-0" data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
             onAction={(action) => void act(t, action)} onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
-        </div>
+        </List>
       ) : null)}
       {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={onOtherRows} />}
-      {(showArchived || showBackground) && other?.length === 0 && <p className="comms-empty">{showBackground ? 'No background work here.' : 'No archived threads.'}</p>}
-      {!threads.length && !showArchived && !showBackground && <p className="comms-empty">No threads yet. Start one with one of your agents.</p>}
+      {(showArchived || showBackground) && other?.length === 0 && <Empty title={showBackground ? 'No background work here.' : 'No archived threads.'} />}
+      {!threads.length && !showArchived && !showBackground && <Empty title="No threads yet" text="Start one with one of your agents." />}
       <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
       <button type="button" className="comms-archived" onClick={() => { setArchived(null); setShowArchived(!showArchived); }}>{showArchived ? 'Back to active' : 'Archived'}</button>
     </nav>
@@ -565,7 +560,7 @@ function DrawerButton({ open, toggle }: Drawer) {
 function ThreadsDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const first = panel.current?.querySelector<HTMLElement>('.comms-row[data-current] .comms-row__btn') ?? panel.current?.querySelector<HTMLElement>('.comms-row__btn, button');
+    const first = panel.current?.querySelector<HTMLElement>('[aria-current="true"][data-split-row]') ?? panel.current?.querySelector<HTMLElement>('[data-split-row], button');
     first?.focus();
     // Back to this Comms' own menu button (the panel's box holds both).
     const box = panel.current?.closest('.comms');
@@ -900,14 +895,15 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
 
   return (
     <article ref={pane} className="comms-thread" data-wide={wide || undefined} data-short={wide && short ? '' : undefined}>
-      <header className="comms-thread__head" onContextMenu={(e) => {
+      <header className="relative border-b border-[var(--v-border)] p-3" onContextMenu={(e) => {
         e.preventDefault(); setMenu(false); setContext({ x: e.clientX, y: e.clientY });
       }}>
-        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
-        <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
-        {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
-        {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
-        <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
+        <AppHeader title={thread.title ?? `New thread with ${mark.label}`} where={threadPath(thread.id)} go={() => {}}
+          context={thread.project ?? undefined}
+          lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined}
+          actions={<div className="flex items-center gap-2"><button type="button" onClick={rename} title="Rename" aria-label="Rename conversation">Rename</button>
+            {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
+            <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button></div>} />
         {context && <ThreadContextMenu thread={thread} at={context} close={closeContext} act={(action) => {
           if (action === 'title') void rename(); else if (action === 'project') void project(); else void verb(action);
         }} />}
@@ -933,7 +929,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             {!into && screen}
             <div className="comms-band__side">
               <section className="comms-people" aria-labelledby={`people-${thread.id}`}>
-                <h2 id={`people-${thread.id}`} className="comms-people__head loom-data">IN THIS CONVERSATION</h2>
+                <h2 id={`people-${thread.id}`} className="loom-data text-xs opacity-70">IN THIS CONVERSATION</h2>
                 <ul>
                   <li><span className="loom-letter" aria-hidden style={{ '--c': markColor(mark.bg), '--ls': '24px' } as React.CSSProperties}>{mark.label[0]}</span>
                     <span className="comms-people__name">{mark.label}</span><span className="comms-people__what loom-data">{channelWord(face, link).toLowerCase()}</span></li>
@@ -961,14 +957,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
               <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} conversation={thread.conversation} />
             ))}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
-            {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
-            {refused && (
-              <div className="comms-msg comms-msg--error comms-refused" role="alert">
-                <p>{refused}</p>
-                {messages.length > 0 && <p className="comms-refused__stale">What's shown here may be out of date.</p>}
-                <button type="button" className="comms-refused__retry" onClick={() => void pull()}>Try again</button>
-              </div>
-            )}
+            {link === 'lost' && <Loading label="Reconnecting…" />}
+            {refused && <LoadError title={refused} text={messages.length ? "What's shown here may be out of date." : undefined} retry={() => void pull()} />}
             {/* The working line (t-1918): what the agent is on as it happens, the newest step and how long, under the thread. */}
             {(face === 'working' || face === 'thinking') && (
               <div className="comms-live loom-data" role="status" data-face={face} data-alive={face === 'working' ? alive.face : undefined}>
@@ -1004,14 +994,9 @@ function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; ma
   const mark = marks[t.agent] ?? { label: agentName(t.agent, marks), bg: 'pink', fg: '#000' };
   return (
     <article className="comms-thread comms-thread--opening" data-wide={wide || undefined} aria-busy="true">
-      <header className="comms-thread__head">
-        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
-        <span className="comms-thread__title">{t.title ?? `New thread with ${mark.label}`}</span>
-      </header>
+      <AppHeader title={t.title ?? `New thread with ${mark.label}`} where={threadPath(t.id)} go={() => {}} lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
       <div className="comms-thread__body">
-        <div className="comms-chat loom-skel-wait" aria-hidden>
-          {[0, 1, 2].map((n) => <div key={n} className="comms-opening__line"><span className="loom-skel-line" /><span className="loom-skel-line" /></div>)}
-        </div>
+        <Loading label="Opening conversation…" />
       </div>
       <Composer onSend={async () => false} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={`Message ${mark.label}`} draft={t.id} />
     </article>
@@ -1033,19 +1018,16 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
   };
   return (
     <article className="comms-thread comms-new-thread" data-wide={wide || undefined}>
-      <header className="comms-thread__head">
-        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
-        <span className="comms-thread__title">New thread</span>
-      </header>
+      <AppHeader title="New thread" where="/comms/new" go={() => {}} lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
       <div className="comms-pick" role="radiogroup" aria-label="Who with">
         {agents.map((a) => (
           <button key={a} type="button" role="radio" aria-checked={a === agent} className="comms-pick__agent" data-on={a === agent || undefined}
             style={{ '--c': marks[a] ? markColor(marks[a].bg) : undefined } as React.CSSProperties} onClick={() => setAgent(a)}>
-            {marks[a] ? <AgentAvatar a={marks[a]} size={32} className="comms-row__avatar" /> : <span className="comms-row__face">{agentName(a, marks)[0]}</span>}{agentName(a, marks)}
+            {marks[a] ? <AgentAvatar a={marks[a]} size={32} className="shrink-0" /> : <span className="grid size-9 place-items-center rounded-lg">{agentName(a, marks)[0]}</span>}{agentName(a, marks)}
           </button>
         ))}
       </div>
-      {error && <p className="comms-msg comms-msg--error" role="alert">{error}</p>}
+      {error && <LoadError title="Couldn’t start this conversation" text={error} />}
       <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} draft="new" />
     </article>
   );
@@ -1135,7 +1117,7 @@ export function CommsView({ data }: { data: CommsData }) {
   return (
     <div ref={box} className="comms" data-wide="" data-one={one ? '' : undefined}>
       {one && pane ? null : list}
-      {pane ?? (one ? null : <div className="comms-blank"><p className="loom-data">PICK A THREAD, OR START ONE</p></div>)}
+      {pane ?? (one ? null : <Empty title="Pick a thread, or start one" />)}
       {one && pane && drawerOpen && <ThreadsDrawer onClose={() => setDrawerOpen(false)}>{list}</ThreadsDrawer>}
     </div>
   );

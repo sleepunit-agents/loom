@@ -73,7 +73,7 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
     const p = await ctx.newPage();
     await p.goto(`${base}/comms/${o.thread.id.replace(/^th:/, '')}?t=*comms`);
     await p.locator('.loom-tile').getByText('A reply you can read.').waitFor();
-    expect(await p.locator('.comms-refused').count()).toBe(0);
+    expect(await p.locator('[role="alert"]').count()).toBe(0);
 
     // The key goes: every read of the thread is now a 503 (comms.key is missing).
     const key = join(h.home, COMMS_KEY);
@@ -83,7 +83,7 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
       expect(refused.status()).toBe(503);
       // The pane reads again (as it does every 30 s and when the page comes back into view).
       await p.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-      const banner = p.locator('.comms-refused[role="alert"]');
+      const banner = p.locator('[role="alert"]');
       await banner.waitFor();
       expect(await banner.innerText()).toContain('Can\'t open this conversation right now: loom couldn\'t decrypt it.');
       expect(await banner.innerText()).toContain('What\'s shown here may be out of date.');
@@ -98,8 +98,8 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
 
     // The key is back: Try again reads, and the error goes. (The thread may read again by itself first, when loom's live
     // stream says something moved: then there's no Try again left to press.)
-    await p.locator('.comms-refused').getByRole('button', { name: 'Try again' }).click({ timeout: 5000 }).catch(() => undefined);
-    await expect.poll(() => p.locator('.comms-refused').count()).toBe(0);
+    await p.locator('[role="alert"]').getByRole('button', { name: 'Try again' }).click({ timeout: 5000 }).catch(() => undefined);
+    await expect.poll(() => p.locator('[role="alert"]').count()).toBe(0);
     expect(await p.locator('.loom-tile').getByText('A reply you can read.').isVisible()).toBe(true);
     await ctx.close();
   });

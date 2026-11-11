@@ -143,7 +143,7 @@ process.stdin.on('end', () => {
         await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(n) }));
         await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
         await p.locator('.comms-band .comms-screen, .loom-rscreen .comms-screen').first().waitFor();
-        await p.locator(n ? '.comms-band .comms-work__row' : '.comms-band .comms-work__empty').first().waitFor();
+        await p.locator(n ? '.comms-band .comms-work .loom-kit-row' : '.comms-band .comms-work .loom-kit-state').first().waitFor();
         await p.waitForTimeout(300);
         sizes[n] = await band(p);
         if (SHOTS && n === 20) await p.screenshot({ path: `${SHOTS}/comms-band-${w}.png` });
@@ -182,7 +182,7 @@ process.stdin.on('end', () => {
       await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
       const p = await ctx.newPage();
       await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
-      const row = p.locator('.comms-row').filter({ has: p.locator(`[data-prefetch="/comms/${bare(t)}"]`) });
+      const row = p.locator('.comms-list li').filter({ has: p.locator(`[data-prefetch="/comms/${bare(t)}"]`) });
       await row.waitFor();
       if (SHOTS) {
         await p.locator('.comms-composer textarea').fill('A little more room around Send.');
@@ -261,7 +261,7 @@ process.stdin.on('end', () => {
         const p = await ctx.newPage();
         await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(20) }));
         await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
-        await p.locator('.comms-band .comms-work__row').first().waitFor();
+        await p.locator('.comms-band .comms-work .loom-kit-row').first().waitFor();
         await p.locator('.comms-chat .v-agent-chat__message').nth(12).waitFor();
         await p.waitForTimeout(300);
         const g = await room(p);

@@ -118,7 +118,7 @@ export function ThreadAskCard({ a, who, member, csrf, owner, onAnswered }: { a: 
           <label className="comms-ask__label loom-data" htmlFor={`ask-${a.key}`}>{pair ? 'Or answer in your own words' : a.reply.label}</label>
           <Textarea id={`ask-${a.key}`} value={draft} rows={2} placeholder="What should it know or do?" onChange={(e) => setDraft(e.target.value)} disabled={!ok}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && draft.trim()) void send({ action: a.reply!.action, label: 'Send' }, a.reply!.source, { ...a.reply!.fields, text: draft }).then((s) => { if (s) setDraft(''); }); }} />
-          <div className="comms-ask__row">
+          <div className="flex flex-wrap justify-end gap-2">
             {a.buttons?.list.map((b) => (
               <Button key={b.action + b.label} size="sm" variant="ghost" disabled={!ok} onClick={() => void send(b, a.buttons!.source, b.fields ?? {})}>{b.label}</Button>))}
             <Button size="sm" disabled={!ok || !draft.trim()} onMouseDown={(e) => e.preventDefault()}
@@ -146,7 +146,7 @@ export function ThreadAskCard({ a, who, member, csrf, owner, onAnswered }: { a: 
       {replyBox}
       {/* A plain Done or Dismiss with no reply box (a piece's other choices). */}
       {open && !done && [...(!a.reply && a.buttons ? [a.buttons] : []), ...(a.more ? [a.more] : [])].map((g, k) => (
-        <div key={k} className="comms-ask__row">{g.list.map((b) => <Button key={b.action + b.label} size="sm" variant={b.tone === 'primary' ? 'default' : 'outline'} disabled={!ok}
+        <div key={k} className="flex flex-wrap justify-end gap-2">{g.list.map((b) => <Button key={b.action + b.label} size="sm" variant={b.tone === 'primary' ? 'default' : 'outline'} disabled={!ok}
           onClick={() => void send(b, g.source, b.fields ?? {})}>{b.label}</Button>)}</div>
       ))}
       {said && <p className="comms-ask__said" role="status">{said}</p>}

@@ -242,10 +242,10 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
   it.runIf(hasAge)('Comms\' thread list: each thread wears its agent\'s letter, not a cropped face', async () => {
     const p = await device(1280);
     await p.goto(`${base}/comms`);
-    await p.locator('.comms-row').first().waitFor();
-    const rows = await p.locator('.comms-row').count();
-    expect(await p.locator('.comms-row .loom-letter').count()).toBe(rows);
-    expect(await p.locator('.comms-row .loom-pixel-avatar').count()).toBe(0);
+    await p.locator('.comms-list li').first().waitFor();
+    const rows = await p.locator('.comms-list li').count();
+    expect(await p.locator('.comms-list li .loom-letter').count()).toBe(rows);
+    expect(await p.locator('.comms-list li .loom-pixel-avatar').count()).toBe(0);
     await p.context().close();
   }, 60_000);
 

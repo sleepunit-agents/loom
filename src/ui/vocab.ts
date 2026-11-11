@@ -129,6 +129,8 @@ export interface ChangesData {
   reader?: Page | null;
 }
 export interface Page {
+  /** Core conversation presentation; its venue-rendered blocks remain authoritative. */
+  conversation?: { agent: string; id: string };
   changes?: ChangesData;
   title: string;
   intro?: string;

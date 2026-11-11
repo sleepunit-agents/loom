@@ -6,6 +6,7 @@
 // Comms chunk.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { List, LinkRow } from './kit';
 import { useEnv } from './blocks';
 import { watchTasks } from './tasks-live';
 import { taskCardsOf } from './task-ref-cards';
@@ -156,12 +157,10 @@ function RefPopover({ card, at, onClose }: { card: RefCard; at: HTMLElement; onC
   return createPortal(
     <div ref={box} className="comms-refcard" role="dialog" aria-label={`${KIND_WORD[card.kind]}: ${card.title}`} data-kind={card.kind}
       style={pos ? { left: pos.left, top: pos.top } : { visibility: 'hidden' }}>
-      <span className="comms-refcard__kind loom-data">{KIND_WORD[card.kind]}</span>
-      <b className="comms-refcard__title">{card.title}</b>
-      {card.status && <span className="comms-refcard__status loom-data" data-tone={card.tone}>{card.status}</span>}
+      <List label="Reference preview"><LinkRow title={card.title} meta={KIND_WORD[card.kind]} status={card.status} /></List>
       {page ? <a className="comms-refcard__open" href={page} onClick={(e) => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); onClose(); go(page); }}>Open</a>
         : href ? <a className="comms-refcard__open" href={href} target="_blank" rel="noopener noreferrer" onClick={onClose}>Open on GitHub ↗</a>
-          : <span className="comms-refcard__none loom-data">{card.kind === 'note' ? 'Notes have no page yet' : ''}</span>}
+          : <span className="loom-data text-xs opacity-70">{card.kind === 'note' ? 'Notes have no page yet' : ''}</span>}
     </div>, document.body);
 }
 

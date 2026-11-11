@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { changesLive, tasksLive, watchChanges, watchTasks } from './tasks-live';
 import './comms-work.css';
+import { List, LinkRow, Loading, Empty, Error as LoadError } from './kit';
 
 export interface WorkItem { title: string; ref: string; status: string; tone?: 'bad' | 'warn' | 'ok'; when?: string; url?: string; made?: true; from: string }
 interface Work { items: WorkItem[]; failed: string[] }
@@ -33,20 +34,9 @@ export function workLabel(items: WorkItem[]): string {
 
 function Row({ it }: { it: WorkItem }) {
   const url = safeUrl(it.url);
-  const inner = (
-    <>
-      <span className="comms-work__title">{it.title}</span>
-      <span className="comms-work__line">
-        <span className="comms-work__badge loom-data" data-tone={it.tone}>{it.status}</span>
-        <span className="comms-work__meta loom-data">{shortRef(it.ref)}{it.made ? ' · made here' : ''}</span>
-      </span>
-    </>
-  );
-  return (
-    <li className="comms-work__row" data-tone={it.tone} data-made={it.made || undefined}>
-      {url ? <a href={url} {...(url.startsWith('https://') ? { target: '_blank', rel: 'noreferrer' } : {})}>{inner}</a> : <span>{inner}</span>}
-    </li>
-  );
+  return <li data-tone={it.tone} data-made={it.made || undefined}><LinkRow href={url}
+    {...(url?.startsWith('https://') ? { target: '_blank', rel: 'noreferrer' } : {})}
+    title={it.title} status={<span data-tone={it.tone}>{it.status}</span>} meta={`${shortRef(it.ref)}${it.made ? ' · made here' : ''}`} /></li>;
 }
 
 /** Whether these moved tasks concern the panel: one it shows, or one made in its conversation. */
@@ -65,6 +55,7 @@ export function changesConcern(keys: ReadonlySet<string>, records: ReadonlyMap<s
 
 export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: string; conversation: string; csrf: string; replySeq: number }) {
   const [work, setWork] = useState<Work | null>(null);
+  const [error, setError] = useState(false);
   const shown = useRef<WorkItem[]>([]);
   shown.current = work?.items ?? [];
   const [open, setOpen] = useState(false);
@@ -72,8 +63,10 @@ export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: st
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/comms/${thread}/work`, { credentials: 'same-origin', headers: { accept: 'application/json' } });
-      if (r.ok && alive.current) setWork((await r.json()) as Work);
-    } catch { /* the next read tries again */ }
+      if (!r.ok) throw new Error('unavailable');
+      const next = await r.json() as Work;
+      if (alive.current) { setWork(next); setError(false); }
+    } catch { if (alive.current) setError(true); }
   }, [thread]);
   useEffect(() => {
     alive.current = true;
@@ -103,16 +96,17 @@ export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: st
 
   const items = work?.items ?? [];
   const rows = (
-    <div className="comms-work__rows" id={`work-${thread}`}>
-      {work === null ? <p className="comms-work__empty">Reading…</p>
-        : items.length === 0 ? <p className="comms-work__empty">Nothing yet. Tasks, changes and notes this thread names or makes show up here.</p>
-          : <ul className="comms-work__list">{items.map((it) => <Row key={it.ref} it={it} />)}</ul>}
-      {work?.failed.map((f) => <p key={f} className="comms-work__failed">{f} didn't answer.</p>)}
+    <div className="comms-work-content" id={`work-${thread}`}>
+      {error && <LoadError title="Couldn’t read this thread’s work" retry={() => void load()} />}
+      {work === null ? !error && <Loading label="Reading…" />
+        : items.length === 0 ? <Empty title="Nothing yet" text="Tasks, changes and notes this thread names or makes show up here." />
+          : <List label="Work in this thread"><ul className="comms-work__list">{items.map((it) => <Row key={it.ref} it={it} />)}</ul></List>}
+      {work?.failed.map((f) => <LoadError key={f} title={`${f} didn't answer.`} retry={() => void load()} />)}
     </div>
   );
   return (
     <section className="comms-work" data-open={open || undefined} aria-label="Work in this thread">
-      <h2 className="comms-work__head loom-data">WORK IN THIS THREAD</h2>
+      <h2 className="comms-work-label loom-data">WORK IN THIS THREAD</h2>
       <button type="button" className="comms-work__toggle" aria-expanded={open} aria-controls={`work-${thread}`} onClick={() => setOpen(!open)}>
         <span>{workLabel(items)}</span><span aria-hidden>{open ? '▴' : '▾'}</span>
       </button>

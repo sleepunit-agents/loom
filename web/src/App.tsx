@@ -766,6 +766,7 @@ const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
 
 const FoldCard = lazy(() => import('./fold'));
+const ConversationView = lazy(() => import('./conversation'));
 const ChartLine = lazy(() => import('./chart-line'));
 
 /** Where a page's side sections go (App's sideAt): folded at its top, or a column beside it. */
@@ -792,6 +793,7 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const at = useContext(SideAtContext);
   const main = page.sections.filter((s) => !isSide(s));
   const side = page.sections.filter(isSide);
+  if (page.conversation) return <Suspense fallback={<Spinner size="lg" />}><ConversationView page={page} /></Suspense>;
   const card = (s: Page['sections'][number]) => (s.fold ? (
     // Its title while its chunk loads, so the page doesn't jump.
     <Suspense key={s.id} fallback={<Card data-band className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>

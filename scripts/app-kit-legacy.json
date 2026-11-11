@@ -14,31 +14,6 @@
   "agent-window.css": [
     "loom-aghead__none"
   ],
-  "comms-work.css": [
-    "comms-work__empty",
-    "comms-work__head",
-    "comms-work__row",
-    "comms-work__rows"
-  ],
-  "comms.css": [
-    "comms-ask__row",
-    "comms-empty",
-    "comms-list__head",
-    "comms-people__head",
-    "comms-refcard__none",
-    "comms-row",
-    "comms-row__avatar",
-    "comms-row__btn",
-    "comms-row__dot",
-    "comms-row__face",
-    "comms-row__letter",
-    "comms-row__main",
-    "comms-row__pin",
-    "comms-row__sub",
-    "comms-row__time",
-    "comms-row__title",
-    "comms-thread__head"
-  ],
   "desk-agents.css": [
     "loom-adesk__none",
     "loom-bigcard__empty",

@@ -5,6 +5,8 @@ on:
       - 'web/src/kit/**'
       - 'scripts/app-kit-legacy.json'
       - 'src/ui/*app*.test.ts'
+      - 'web/src/comms*'
+      - 'web/src/conversation*'
       - 'web/src/inbox*'
       - 'web/src/changes*'
       - '.github/workflows/app-kit-evidence.yml'
@@ -31,7 +33,7 @@ jobs:
       - name: Keep the same screenshot fixtures
         run: |
           mkdir -p "$RUNNER_TEMP/kit-fixtures"
-          cp src/ui/inbox-app.integration.test.ts src/ui/changes-app.integration.test.ts "$RUNNER_TEMP/kit-fixtures/"
+          cp src/ui/inbox-app.integration.test.ts src/ui/changes-app.integration.test.ts src/ui/comms-app.integration.test.ts "$RUNNER_TEMP/kit-fixtures/"
       - name: Check out the before version
         if: matrix.version == 'before'
         env:
@@ -46,7 +48,7 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
-      - name: Capture the two apps only
+      - name: Capture the migrated apps only
         run: |
           cp "$RUNNER_TEMP/kit-fixtures/"*.ts src/ui/
           mkdir -p artifacts/app-kit
@@ -54,6 +56,7 @@ jobs:
           export LOOM_SHOTS="$PWD/artifacts/app-kit"
           export LOOM_TEST_SHOTS="$LOOM_SHOTS"
           nice -n 19 npx vitest run src/ui/inbox-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
+          nice -n 19 npx vitest run src/ui/comms-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
           nice -n 19 npx vitest run src/ui/changes-app.integration.test.ts --testNamePattern='1440|390' --maxWorkers=1
       - uses: actions/upload-artifact@v7
         if: always()
