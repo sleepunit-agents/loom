@@ -82,12 +82,16 @@ function listen(h: { change: () => void; open: (on: boolean) => void }): () => v
  * then.
  */
 let collections: Promise<{ runtime: import('./collections/runtime').CollectionRuntime; stores: import('./collections/adapter').LibraryStores }> | undefined;
+// The first transport outlives the window that created it. Every caller refreshes its credential getter.
+let collectionCsrf: () => string = () => '';
 const makeCollections = (csrf: () => string) => Promise.all([import('./collections/adapter'), import('./collections/transport')]).then(([a, t]) => a.makeRuntime(t.pageTransport(csrf)));
 export function collectionsRuntime(csrf: () => string): NonNullable<typeof collections> {
   // One that was cleared (signed out, revoked) is never handed out again, nor a chunk that failed to load; windows asking
   // at once share the one remade.
+  collectionCsrf = csrf;
+  const currentCsrf = () => collectionCsrf();
   const was = collections;
-  collections = (was ? was.then((m) => (m.runtime.isCleared() ? makeCollections(csrf) : m), () => makeCollections(csrf)) : makeCollections(csrf));
+  collections = (was ? was.then((m) => (m.runtime.isCleared() ? makeCollections(currentCsrf) : m), () => makeCollections(currentCsrf)) : makeCollections(currentCsrf));
   return collections;
 }
 

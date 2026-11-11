@@ -91,13 +91,24 @@ describe.runIf(built && chrome)('Changes split panes', () => {
       const app = p.locator('.loom-changes').last();
       await app.waitFor();
       await expect.poll(() => app.getAttribute('data-mode')).toBe(width === 390 ? 'one' : 'three');
+      expect(await p.locator('html').getAttribute('data-look')).toBe(look);
+      expect(await p.locator('html').evaluate((el) => getComputedStyle(el).getPropertyValue('--v-canvas').trim().toLowerCase())).toBe(
+        { neon: '#07070c', lowlight: '#15171a', daylight: '#f5f3ee' }[look]);
+      expect(await app.locator('[data-split-row]').first().evaluate((el) => getComputedStyle(el).color)).toBe(
+        { neon: 'rgb(243, 241, 255)', lowlight: 'rgb(243, 244, 244)', daylight: 'rgb(31, 29, 39)' }[look]);
       if (SHOTS && width === 390) await p.screenshot({ path: join(SHOTS, `changes-${width}-${look}-list.png`) });
-      await app.locator('[data-split-row]').first().click();
+      const firstRow = app.locator('[data-split-row]').first();
+      expect(await firstRow.textContent()).toContain('acme/tasks#1');
+      expect(await firstRow.textContent()).toContain('Art');
+      expect(await firstRow.textContent()).toContain('Green · needs your yes');
+      await firstRow.click();
       await expect.poll(() => new URL(p.url()).pathname).toContain('/c/github/acme/loom/1');
       await app.getByRole('heading', { name: 'Summary', exact: true }).waitFor();
       expect(await app.getByRole('button', { name: 'Yes, merge it' }).count()).toBe(1);
       expect(await app.getByText('Green (4 checks)', { exact: true }).count()).toBe(1);
       expect(await app.getByText('Approved by Ada', { exact: true }).count()).toBe(1);
+      expect(await firstRow.getAttribute('aria-current')).toBe('true');
+      expect(await firstRow.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
       if (width === 390) {
         expect(await app.locator('.loom-split__list').isVisible()).toBe(false);
       } else {

@@ -11,7 +11,7 @@ import { useContext, useId, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Textarea } from '@/components/ui/textarea';
-import { ActButton, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
+import { ActButton, EnvContext, Link, LoomMark, type Env } from './blocks';
 import { markRead, type Chrome, type Source } from './loom';
 import { ApprovalBox, As, KIND, Mark, type InboxItem, Fine } from './views';
 import { Arrive } from './arrive';
@@ -19,7 +19,7 @@ import { askerOf, bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
 import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
-import { Split, type SplitFolder } from './split';
+import { Split, Row as KitRow, Empty, type SplitFolder } from './kit';
 import { aboutAttr, chatAbout, validAbout, type About } from './about';
 import './inbox.css';
 
@@ -123,8 +123,8 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
       listTitle={label} listMeta={shown.length || undefined}
       list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={askerOf(i, name).who} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick}
         done={doneOf(i) ? () => void markDone(i) : undefined} />)
-        : <div className="loom-split__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
-          text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
+        : <Empty title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
+          text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} />}
       reader={went ? <p className="loom-split__note" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
         : reading ? <Reader key={reading.key} i={reading} who={askerOf(reading, name).who} mark={reading.agent ? agents[reading.agent] : undefined}
         tasks={tasks} github={github} env={env} onAnswered={onAnswered} picks={picks} /> : null}
@@ -162,15 +162,11 @@ function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: strin
   return (
     // What's new arrives (arrive.tsx; docs/specs/ui-app.md): a row that wasn't there at the last answer glows once.
     <Arrive k={`in:${i.key}\0${i.kind}`}>
-      <button ref={el} type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}
-        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)} {...aboutAttr(inboxAbout(i, p.title))}>
-        {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
-        {/* Who asks, by their face (pixel or drawn), with what it is as a badge on it; nobody's is its kind alone. */}
-        {mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>
-          : <span className="loom-inbox__kind" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span>}
-        <span className="loom-split__words"><span className="loom-split__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
-        <span className="loom-inbox__when loom-data">{short(i.at)}</span>
-      </button>
+      <KitRow ref={el} data-box={box} unread={i.unread} selected={current} onClick={() => onPick(i)}
+        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)} {...aboutAttr(inboxAbout(i, p.title))}
+        title={p.title} meta={sub} trailing={short(i.at)}
+        icon={mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>
+          : <span className="loom-inbox__kind" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span>} />
     </Arrive>
   );
 }
