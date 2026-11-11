@@ -70,7 +70,8 @@ function buildCurrentDb(dir: string): string {
       times_seen INTEGER NOT NULL DEFAULT 1,
       uniq TEXT,
       recall_heat REAL NOT NULL DEFAULT 0,
-      recall_heat_at TEXT
+      recall_heat_at TEXT,
+      authored_at TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
