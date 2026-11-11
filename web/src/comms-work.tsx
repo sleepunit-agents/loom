@@ -34,7 +34,7 @@ export function workLabel(items: WorkItem[]): string {
 
 function Row({ it }: { it: WorkItem }) {
   const url = safeUrl(it.url);
-  return <li data-tone={it.tone} data-made={it.made || undefined}><LinkRow href={url}
+  return <li data-tone={it.tone} data-made={it.made || undefined}><LinkRow wrap href={url}
     {...(url?.startsWith('https://') ? { target: '_blank', rel: 'noreferrer' } : {})}
     title={it.title} status={it.status} tone={it.tone} meta={`${shortRef(it.ref)}${it.made ? ' · made here' : ''}`} /></li>;
 }

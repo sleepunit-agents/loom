@@ -70,8 +70,6 @@
 .comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }
 .comms-msg__gone { color: var(--v-text-3); font-style: italic; font-size: 13px; }
 .comms-msg--error { align-self: stretch; max-width: none; border-left: 2px solid var(--v-danger, #f55); padding: 4px 10px; color: var(--v-text-2); font-size: 13px; }
-.comms-refused p { margin: 0 0 4px; }
-.comms-refused__retry { margin-top: 2px; font: inherit; color: var(--v-text); background: none; border: 1px solid currentColor; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
 .comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
 .comms-earlier { border: 1px dashed var(--comms-line); border-radius: 10px; padding: 10px 12px; color: var(--v-text-2); font-size: 13px; }
 .comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }
@@ -172,10 +170,6 @@
 .comms-refcard__open { justify-self: end; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--v-text); text-decoration: underline; text-underline-offset: 3px; }
 /* A thread on its way (comms.tsx ThreadOpening): a few lines of its shape, after 150 ms, where its messages will be. */
 .comms-thread--opening .comms-chat { display: grid; align-content: end; gap: 18px; padding: 18px; flex: 1 1 auto; min-height: 0; }
-.comms-opening__line { display: grid; gap: 8px; }
-.comms-opening__line:nth-child(even) { justify-items: end; }
-.comms-opening__line .loom-skel-line { display: block; height: 12px; width: 60%; border-radius: 999px; }
-.comms-opening__line .loom-skel-line + .loom-skel-line { width: 40%; }
 
 /* ---- t-1918 / t-1925 C ---- */
 /* A row's agent: its letter (the pixel face is the comm screen's). */
