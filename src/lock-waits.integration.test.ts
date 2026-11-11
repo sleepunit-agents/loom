@@ -30,6 +30,7 @@ import { pendingLockWaits, waitForLocks } from './lock-gate.js';
 import { clearPieceCache } from './ui/pieces.js';
 import { propose, listProposals } from './backends/proposals.js';
 import { changed } from './ui/live.js';
+import * as collectionPull from './collections/pull.js';
 import { GAP_MS, nudge } from './collections/pull.js';
 import { domainOf, nudgedSince, withLog } from './collections/log.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -47,16 +48,16 @@ process.stdin.on('end', () => {
 `;
 
 /** Another process holding `path`: `exclusive` (BEGIN EXCLUSIVE), or `recovery` (a WAL recovery's locks, its index invalid). */
-async function hold(path: string, how: 'exclusive' | 'recovery'): Promise<{ release: () => Promise<void> }> {
+async function hold(path: string, how: 'exclusive' | 'recovery', releaseAfterMs = 0): Promise<{ release: () => Promise<void> }> {
   const child: ChildProcessWithoutNullStreams = how === 'exclusive'
     ? spawn(process.execPath, ['-e', `
         const Database = require('better-sqlite3');
         const db = new Database(process.argv[1]);
         db.exec('BEGIN EXCLUSIVE');
         console.log('held');
-        process.stdin.once('data', () => { db.exec('ROLLBACK'); db.close(); process.exit(0); });
+        process.stdin.once('data', () => setTimeout(() => { db.exec('ROLLBACK'); db.close(); process.exit(0); }, Number(process.argv[2])));
         setTimeout(() => process.exit(2), 20000).unref();
-      `, path], { stdio: 'pipe' })
+      `, path, String(releaseAfterMs)], { stdio: 'pipe' })
     // As walIndexRecover holds them: the shared DMS lock (byte 128) and WRITE, CKPT and RECOVER exclusive (120-122),
     // with the wal-index header zeroed so every reader must recover. SQLite answers SQLITE_BUSY_RECOVERY meanwhile.
     : spawn('python3', ['-c', `
@@ -71,12 +72,14 @@ sys.stdin.readline()
   child.stderr.on('data', (d) => process.stderr.write(d));
   const [started] = await Promise.race([once(child.stdout, 'data'), once(child, 'exit').then(() => [null])]);
   if (!started) throw new Error(`the ${how} holder exited before holding ${path}`);
+  let releasing: Promise<void> | undefined;
   return {
-    release: async () => {
+    release: () => releasing ??= (async () => {
       if (child.exitCode !== null) return;
+      const exited = once(child, 'exit');
       child.stdin.end('\n');
-      await once(child, 'exit');
-    },
+      await exited;
+    })(),
   };
 }
 
@@ -612,6 +615,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const domain = 'loom/nudge-lock-test';
     withLog(h.home, (db) => domainOf(db, domain, 'test'));
     const since = Date.now() - 1;
+    const tick = join(h.home, 'collections', 'collections.tick');
+    writeFileSync(tick, 'before-nudge');
     const held = await hold(join(h.home, 'collections', 'live.db'), 'exclusive');
     try {
       const began = performance.now();
@@ -620,15 +625,46 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(hint)).toBe(true);
+      expect(readFileSync(tick, 'utf8')).toBe('before-nudge');
       await held.release(); await hint;
+      expect(readFileSync(tick, 'utf8')).not.toBe('before-nudge');
       expect(withLog(h.home, (db) => nudgedSince(db, since)).some((r) => r.domain === domain)).toBe(true);
     } finally { await held.release(); }
+  }, 20_000);
+
+  it('a spent nudge budget keeps the original synchronous write and tick', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-nudge-fallback-'));
+    const domain = 'loom/nudge-budget-test';
+    withLog(home, (db) => domainOf(db, domain, 'test'));
+    const held = await hold(join(home, 'collections', 'live.db'), 'exclusive', 250);
+    const original = lockGate.waitForLocks;
+    let expired = false, budget: number | undefined;
+    const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation(async (w) => {
+      const free = await original(w);
+      if (w.write?.includes(join(home, 'collections', 'live.db')) && !free) {
+        expired = true; budget = w.budgetMs;
+        void held.release(); // Child releases after 250ms: the old synchronous write must wait for it.
+      }
+      return free;
+    });
+    try {
+      const since = Date.now() - 1, began = performance.now();
+      await nudge(home, domain);
+      expect(expired).toBe(true); expect(budget).toBe(lockGate.WRITE_WAIT_MS);
+      expect(performance.now() - began).toBeGreaterThan(lockGate.WRITE_WAIT_MS + 150);
+      expect(withLog(home, (db) => nudgedSince(db, since)).some((r) => r.domain === domain)).toBe(true);
+      expect(Number(readFileSync(join(home, 'collections', 'collections.tick'), 'utf8'))).toBeGreaterThan(since);
+    } finally { probe.mockRestore(); await held.release(); rmSync(home, { recursive: true, force: true }); }
   }, 20_000);
 
   it('a slow action waits on the receipt database and keeps one result for retries', async () => {
     // Register the household's change hooks and force their coalesced timers into this upload's lock window.
     await fetch(`${base}/account`, { headers: { authorization: `Bearer ${tok.jonathan}` } });
+    const domains = ['loom/attention', 'loom/agent-status'];
+    withLog(h.home, (db) => { for (const d of domains) domainOf(db, d, 'test'); });
     changed(); changed();
+    const hints = vi.spyOn(collectionPull, 'nudge');
+    const since = Date.now() - 1;
     const op = 'receipt-slow-body-12345678';
     const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;
     const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
@@ -640,16 +676,21 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       await delay(GAP_MS + 100);
       // The delayed attention/status nudges must not spend SQLite's synchronous timeout while this action waits.
       expect(performance.now() - began).toBeLessThan(GAP_MS + 1000);
+      expect(hints.mock.calls.map(([, d]) => d).sort()).toEqual([...domains].sort());
+      const deferred = hints.mock.results.map((r) => r.value as Promise<void>);
+      for (const hint of deferred) expect(await pending(hint)).toBe(true);
       const loginAt = performance.now();
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(performance.now() - loginAt).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
-      await held.release(); expect(await upload.result).toBe(200);
+      await held.release(); await Promise.all(deferred);
+      expect(withLog(h.home, (db) => nudgedSince(db, since)).filter((r) => domains.includes(r.domain)).map((r) => r.domain).sort()).toEqual([...domains].sort());
+      expect(await upload.result).toBe(200);
       const answer = JSON.parse(upload.text());
       expect(answer).toMatchObject({ ok: true, receipt: { op, state: 'done' } });
       expect(markIndexOf(loadHousehold(h.home)!, 'art')).toBe(4);
       const retry = await fetch(`${base}/act/loom`, { method: 'POST', headers: { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' }, body });
       expect(await retry.json()).toEqual(answer);
-    } finally { await held.release(); }
+    } finally { hints.mockRestore(); await held.release(); }
   }, 20_000);
 
   it('a slow collection query rechecks its caller after its body arrives', async () => {
