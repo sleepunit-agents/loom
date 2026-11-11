@@ -283,7 +283,7 @@ needs no Comms-specific code for them:
 
 So the activity cards need a new capture:
 
-- **Only for `loom` conversations.** No other venue's bodies are read this way.
+- **For conversations with a Comms thread, including managed venues and spawned jobs.** Owner-alone conversations may carry words; other conversations carry fixed labels only, under the host and core gates described below.
 - **Where it's read:**
   - **Claude:** the session's own transcript, `<projects>/<cwd>/<session>.jsonl`, which the runner already finds for
     slots (`sessionFiles`). An `assistant` line's `message.content[]` entry of `type: "tool_use"` (`id`, `name`,
@@ -1163,14 +1163,14 @@ A thread filed under a project already feeds its hub (section "Project" above). 
     no gates read (the fake gates doc is empty).
 16. Activity is captured from a Claude transcript fixture (real lines from a `claude --bg` session, kept in the
     runtime's `test/`) and a Codex `events.jsonl` fixture (from a real `codex exec --json` run).
-    - A Bash call shows its `description` and never its command.
-    - A `text` or `thinking` entry, and a Codex `agent_message`, make no card, and none of their words reach one.
-    - A file read shows a path relative to the repo, never one starting with `/`.
+    - A Bash call shows its description; the owner-alone view may also show its redacted command detail, never shell output.
+    - Assistant `text` and Codex `agent_message` entries make owner-alone text cards. Thinking never makes a card; conversations with other people receive no text cards or free words.
+    - A file read shows a plain basename, never a directory or absolute path; private paths use a fixed phrase.
     - A Claude `tool_use` makes a `running` card, its `tool_result` makes it `done`, and one with `is_error: true`
       makes it `failed`. A Codex `item.started` makes a `running` card, and `item.completed` with `status:
       "completed"` or `"failed"` makes it `done` or `failed`. Each card's `run` is the body's run.
-    - No result or output text reaches any card.
-    - Nothing is captured for a `slack` conversation.
+    - Results are fixed phrases only. Shell and read output never reaches a card; an owner-alone edit may carry a redacted diff.
+    - Managed venues, including Slack, receive fixed labels only when anyone besides the owner is present, enforced by the host and core gates.
 
 **The app (Playwright, phone and desktop viewports)**
 
