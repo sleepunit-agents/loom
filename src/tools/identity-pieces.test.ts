@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadIdentity, IDENTITY_PIECES, IDENTITY_CORE_BUDGET_BYTES } from './identity.js';
+import { PeopleStore, openPeopleStore } from '../backends/people.js';
 import { FAILURE_THRESHOLD } from '../backends/recorder-health.js';
 import { run as wake } from '../cli/wake.js';
 
@@ -50,7 +51,7 @@ describe('identity core and pieces', () => {
       harness: '# Harness: claude-code\n\nHARNESS\n' + 'h'.repeat(15233) + '\n\n---\n\n## Runtime: Test\nCLIENT RESTRICTIONS',
       model: '# Model: test-model\n\nMODEL\n' + 'm'.repeat(2593),
       'last-24h': 'TAPE:cv-held\n' + 't'.repeat(6350),
-      memories: 'LEGACY MEMORY',
+      memories: '# Memories\n\n1 memories stored (1 project).\nUse `recall()` to search by relevance.\n\n**Recent:**\n- [project] LEGACY MEMORY',
     };
     const headings = { 'self-model': '# Self-Model', harness: '# Harness:', model: '# Model:', 'last-24h': '# Last 24h', memories: '# Memories' };
     for (const name of Object.keys(IDENTITY_PIECES) as (keyof typeof markers)[]) {
@@ -59,7 +60,7 @@ describe('identity core and pieces', () => {
       for (const [other, heading] of Object.entries(headings)) {
         if (other !== name) expect(piece).not.toContain(heading);
       }
-      if (name === 'self-model' || name === 'harness' || name === 'model') expect(piece).toBe(markers[name]);
+      if (name !== 'last-24h') expect(piece).toBe(markers[name]);
       for (const text of ['# Identity', '# Preferences', '# Top of Mind', '# Mode:', '# Project:', '# Pieces']) expect(piece).not.toContain(text);
     }
     expect(await load('harness')).toContain('CLIENT RESTRICTIONS');
@@ -76,10 +77,39 @@ describe('identity core and pieces', () => {
     for (const [label, body] of [['SELF-MODEL', 's'.repeat(17760)], ['HARNESS', 'h'.repeat(15233)], ['MODEL', 'm'.repeat(2593)], ['TAPE:cv-held', 't'.repeat(6350)]]) {
       expect(all).toContain(label + '\n' + body);
     }
+    expect(all).toContain('# Memories\n\n1 memories stored (1 project).\nUse `recall()` to search by relevance.\n\n**Recent:**\n- [project] LEGACY MEMORY');
     expect(all).not.toContain('# Pieces');
     const headings = ['# Identity', '# Preferences', '# Last 24h', '# Top of Mind', '# Self-Model', '# Mode:', '# Project:', '# Harness:', '# Model:', '# Memories', '## Runtime:'];
     const positions = headings.map(h => all.indexOf(h));
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('preserves populated owners and room cards in core and historical full order', async () => {
+    const home = join(dir, 'household');
+    const agent = join(home, 'agents', 'art');
+    await mkdir(agent, { recursive: true });
+    await mkdir(join(home, 'commons'));
+    await writeFile(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], default: 'art', owner: 'jonathan-barket' }));
+    await writeFile(join(agent, 'IDENTITY.md'), 'HOUSEHOLD CREED');
+    await writeFile(join(agent, 'preferences.md'), 'HOUSEHOLD PREFERENCES');
+    const commons = new PeopleStore({ dbPath: join(home, 'commons', 'people.db') });
+    try { commons.write({ slug: 'jonathan-barket', name: 'Jonathan Barket' }); } finally { commons.close(); }
+    const people = openPeopleStore(agent)!;
+    try { people.write({ slug: 'guest', name: 'Guest', summary: 'A complete room card.', how: { mode: 'terse' } }); } finally { people.close(); }
+    const owners = '# Owners\n\nThe people you belong to. Their cards are in People.\n\n- Jonathan Barket (`jonathan-barket`): owns the household and every agent in it';
+    const card = '## Guest (guest)\nA complete room card.\n**How:** mode: terse';
+    for (const selection of [undefined, 'all']) {
+      const result = await loadIdentity(agent, undefined, undefined, undefined, undefined, ['guest'], '/not-default', 'cv-held', selection);
+      expect(result).toContain(owners);
+      expect(result).toContain(card);
+      expect(result.indexOf('# Owners')).toBeGreaterThan(result.indexOf('# Preferences'));
+      expect(result.indexOf('# In the room')).toBeGreaterThan(result.indexOf('# Owners'));
+      expect(result.indexOf('# In the room')).toBeLessThan(result.indexOf('# Top of Mind'));
+      if (selection === 'all') {
+        expect(result.indexOf('# Owners')).toBeLessThan(result.indexOf('# Last 24h'));
+        expect(result.indexOf('# In the room')).toBeGreaterThan(result.indexOf('# Last 24h'));
+      }
+    }
   });
 
   it('never caps or rewrites oversized authored core content', async () => {
