@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   temperature,
+  recomputeSalience,
+  pickForDigest,
   tierOf,
   assembleDigest,
   recomputeSalienceForContext,
@@ -24,6 +26,7 @@ import {
   FEEDBACK_CONFIDENCE_DEFAULT,
   type DigestRow,
 } from './salience.js';
+import { heatList, memoryByRef } from '../ui/data.js';
 import { remember } from '../tools/remember.js';
 import { recall } from '../tools/recall.js';
 import { closeAllBackends } from './index.js';
@@ -173,7 +176,8 @@ describe('recompute + digest through the real store', () => {
     await remember(tmpDir, { category: 'project', title: 'New thread', content: 'today' });
     // Age the first one's timestamps by 60 days (simulate the passage of time).
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
-    db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL WHERE title = ?')
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL WHERE title = ?').run(daysAgo(0), 'New thread');
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL, last_accessed = NULL WHERE title = ?')
       .run(daysAgo(60), 'Old thread');
     db.close();
 
@@ -193,8 +197,9 @@ describe('recompute + digest through the real store', () => {
     await remember(tmpDir, { category: 'project', title: 'Old thread', content: 'last month' });
     await remember(tmpDir, { category: 'project', title: 'New thread', content: 'today' });
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL WHERE title = ?').run(daysAgo(0), 'New thread');
     // Stored salience still says 1.0 for both, as if the lane never ran.
-    db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL, salience = 1 WHERE title = ?')
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL, last_accessed = NULL, salience = 1 WHERE title = ?')
       .run(daysAgo(60), 'Old thread');
     db.close();
 
@@ -213,7 +218,7 @@ describe('recompute + digest through the real store', () => {
     await remember(tmpDir, { category: 'project', title: 'Recalled', content: 'x' });
     await remember(tmpDir, { category: 'project', title: 'Only looked at', content: 'z' });
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
-    db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL').run(daysAgo(30));
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL, last_accessed = NULL').run(daysAgo(30));
     db.prepare('UPDATE memories SET recall_heat = 0.8, recall_heat_at = ? WHERE title = ?').run(daysAgo(0), 'Recalled');
     db.prepare('UPDATE memories SET last_accessed = ? WHERE title = ?').run(daysAgo(0), 'Only looked at');
     db.close();
@@ -234,7 +239,7 @@ describe('recall heat', () => {
     for (const t of titles) await remember(tmpDir, { category: 'project', title: t, content: `${t}: details about the kiln and pottery studio` });
     // Old memories: written heat alone would be cold.
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
-    db.prepare('UPDATE memories SET created = ?, updated = NULL').run(new Date(Date.now() - 60 * 86_400_000).toISOString());
+    db.prepare('UPDATE memories SET authored_at = NULL, created = ?, updated = NULL').run(new Date(Date.now() - 60 * 86_400_000).toISOString());
     db.close();
   });
   afterEach(async () => {
@@ -244,7 +249,7 @@ describe('recall heat', () => {
 
   const heats = () => {
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir), { readonly: true });
-    const rows = db.prepare('SELECT title, category, created, updated, recall_heat, recall_heat_at, last_accessed FROM memories').all() as Array<{
+    const rows = db.prepare('SELECT title, category, created, updated, authored_at, recall_heat, recall_heat_at, last_accessed FROM memories').all() as Array<{
       title: string; category: string; created: string; updated: string | null; recall_heat: number; recall_heat_at: string | null; last_accessed: string | null;
     }>;
     db.close();
@@ -275,5 +280,81 @@ describe('recall heat', () => {
     expect(data.atoms[0].title).toBe(h[0].title);
     expect(data.atoms[0].tier).toBe('Hot');
     expect(data.atoms.at(-1)!.tier).not.toBe('Hot');
+  });
+});
+
+
+describe('timestamp hardening', () => {
+  it('reads malformed and future timestamps as cold without poisoning valid recall heat', () => {
+    for (const at of ['', 'NaN', 'not-a-date', daysAgo(-100)]) {
+      expect(temperature(at, 'project', NOW)).toBe(0);
+      expect(heatOf({ category: 'project', created: daysAgo(60), updated: at, authored_at: at }, NOW)).toBe(0);
+      expect(heatOf({ category: 'project', created: at, updated: null,
+        recall_heat: 0.5, recall_heat_at: daysAgo(0) }, NOW)).toBe(0.5);
+      expect(heatOf({ category: 'project', created: daysAgo(10), updated: null,
+        recall_heat: 1, recall_heat_at: at }, NOW)).toBeCloseTo(0.5);
+    }
+  });
+
+  it('breaks equal heat ties independently of input order and handles NaN scalars', () => {
+    const rows = ['z', 'a', 'm'].map(title => ({ title, content: title, category: 'project', sourcing: null, salience: 1 }));
+    expect(pickForDigest(rows).map(r => r.title)).toEqual(['a', 'm', 'z']);
+    expect(pickForDigest([...rows].reverse())).toEqual(pickForDigest(rows));
+    expect(pickForDigest([{ ...rows[0], salience: NaN }, rows[1]]).map(r => r.title)).toEqual(['a', 'z']);
+  });
+
+  it('counts malformed and future timestamp fields and stores finite heat', () => {
+    const db = new BetterSqlite3(':memory:');
+    try {
+      db.exec(`CREATE TABLE memories (id INTEGER PRIMARY KEY, category TEXT, created TEXT, updated TEXT,
+        recall_heat REAL, recall_heat_at TEXT, salience REAL, archived INTEGER DEFAULT 0)`);
+      const insert = db.prepare('INSERT INTO memories (category, created, updated, recall_heat, recall_heat_at) VALUES (?, ?, ?, ?, ?)');
+      insert.run('project', 'NaN', daysAgo(-2), 1, 'bad');
+      insert.run('project', daysAgo(10), null, null, null);
+      const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+      expect(recomputeSalience(db, NOW, counts)).toBe(2);
+      expect(counts).toEqual({ invalidTimestamps: 2, futureTimestamps: 1 });
+      expect(db.prepare('SELECT salience FROM memories ORDER BY id').all()).toEqual([{ salience: 0 }, { salience: 0.5 }]);
+      db.exec('ALTER TABLE memories ADD COLUMN authored_at TEXT');
+      db.prepare('UPDATE memories SET authored_at = ? WHERE id = 1').run('bad-anchor');
+      db.prepare('UPDATE memories SET authored_at = ? WHERE id = 2').run(daysAgo(-1));
+      recomputeSalience(db, NOW, counts);
+      expect(counts).toEqual({ invalidTimestamps: 3, futureTimestamps: 2 });
+      expect(db.prepare('SELECT salience FROM memories ORDER BY id').all()).toEqual([{ salience: 0 }, { salience: 0 }]);
+    } finally { db.close(); }
+  });
+
+  it('UI and digest agree on authored heat and legacy creation fallback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'loom-anchor-ui-'));
+    try {
+      const { ref } = await remember(dir, { category: 'project', title: 'UI heat', content: 'body' });
+      const db = new BetterSqlite3(resolveSqliteDbPath(dir));
+      try {
+        db.prepare('UPDATE memories SET created = ?, updated = ?, authored_at = ?').run(daysAgo(60), daysAgo(0), daysAgo(60));
+        const check = (expected: number) => {
+          expect(memoryByRef(dir, ref, NOW)!.writtenHeat).toBeCloseTo(expected);
+          expect(memoryByRef(dir, ref, NOW)!.heat).toBeCloseTo(expected);
+          expect(heatList(dir, { nowMs: NOW }).rows[0].heat).toBeCloseTo(expected);
+          expect(digestData(dir, 10, NOW)!.atoms[0].salience).toBeCloseTo(expected);
+        };
+        check(1 / 64);
+        db.prepare('UPDATE memories SET authored_at = ?').run(daysAgo(0));
+        check(1);
+        db.prepare('UPDATE memories SET authored_at = NULL').run();
+        check(1 / 64);
+        db.exec('ALTER TABLE memories DROP COLUMN authored_at');
+        check(1 / 64); // read-only callers also work before migration
+      } finally { db.close(); }
+    } finally {
+      await closeAllBackends();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('audit-only bulk stamps cannot reheat legacy rows or override an authored anchor', () => {
+    for (const authored_at of [undefined, null, daysAgo(60)]) {
+      expect(heatOf({ category: 'project', created: daysAgo(60), updated: daysAgo(0), authored_at }, NOW))
+        .toBeCloseTo(1 / 64);
+    }
   });
 });

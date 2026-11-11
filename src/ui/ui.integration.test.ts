@@ -325,7 +325,8 @@ describe('loom UI over HTTP', () => {
   it('Mind explains heat, and an aged memory sits below a fresh one with no recompute', async () => {
     await remember(stack, { category: 'project', title: 'an old memory', content: 'stale' });
     const db = new BetterSqlite3(resolveSqliteDbPath(stack));
-    db.prepare('UPDATE memories SET created = ?, salience = 1 WHERE title = ?').run(new Date(Date.now() - 90 * 86_400_000).toISOString(), 'an old memory');
+    const aged = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    db.prepare('UPDATE memories SET created = ?, authored_at = ?, salience = 1 WHERE title = ?').run(aged, aged, 'an old memory');
     db.close();
     const cookie = await login();
     // The board's Mind: top of mind, ranked, with every memory a link away.

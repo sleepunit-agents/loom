@@ -36,12 +36,14 @@ export const DEFAULT_HALF_LIFE_DAYS = 30;
 const DAY_MS = 86_400_000;
 
 /**
- * Temperature in (0, 1]: 1.0 at the moment of last touch, 0.5 after one
+ * Temperature in [0, 1]: 1.0 at the moment of last touch, 0.5 after one
  * category half-life, decaying exponentially after. `lastTouchIso` is the most
- * recent of last_accessed / updated / created.
+ * recent authored write. Malformed or future timestamps read as cold (0).
  */
 export function temperature(lastTouchIso: string, category: string, nowMs: number): number {
-  const ageDays = Math.max(0, (nowMs - Date.parse(lastTouchIso)) / DAY_MS);
+  const touchMs = Date.parse(lastTouchIso);
+  if (!Number.isFinite(touchMs) || !Number.isFinite(nowMs) || touchMs > nowMs) return 0;
+  const ageDays = (nowMs - touchMs) / DAY_MS;
   const halfLife = HALF_LIVES[category] ?? DEFAULT_HALF_LIFE_DAYS;
   return Math.pow(2, -ageDays / halfLife);
 }
@@ -133,6 +135,8 @@ export interface HeatInput {
   category: string;
   created: string;
   updated: string | null;
+  /** Known authored write; legacy rows fall back to creation, never audit updates. */
+  authored_at?: string | null;
   recall_heat?: number | null;
   recall_heat_at?: string | null;
 }
@@ -144,14 +148,15 @@ export interface HeatInput {
  * turning up once at the bottom of someone's results.
  */
 export function heatOf(r: HeatInput, nowMs: number): number {
-  const written = temperature(r.updated ?? r.created, r.category, nowMs);
+  const written = temperature(r.authored_at ?? r.created, r.category, nowMs);
   return Math.max(written, decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs));
 }
 
-/** Columns heatOf reads; older stores without the recall columns read them as null. */
+/** Legacy stores read missing heat columns as null; no writes on digest reads. */
 export function heatColumns(db: Database): string {
   const have = hasColumn(db, 'memories', 'recall_heat');
-  return have ? 'created, updated, recall_heat, recall_heat_at' : 'created, updated, NULL AS recall_heat, NULL AS recall_heat_at';
+  const authored = hasColumn(db, 'memories', 'authored_at') ? 'authored_at' : 'NULL AS authored_at';
+  return `created, updated, ${authored}, ${have ? 'recall_heat, recall_heat_at' : 'NULL AS recall_heat, NULL AS recall_heat_at'}`;
 }
 
 /**
@@ -160,10 +165,25 @@ export function heatColumns(db: Database): string {
  * live, see liveRows); the stored field is for anything that sorts in SQL.
  * Returns the number of memories recomputed.
  */
-export function recomputeSalience(db: Database, nowMs: number): number {
+export interface TimestampCounts { invalidTimestamps: number; futureTimestamps: number }
+
+export function recomputeSalience(db: Database, nowMs: number, counts?: TimestampCounts): number {
   const rows = db
     .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE archived = 0`)
     .all() as Array<HeatInput & { id: number }>;
+  if (counts) {
+    counts.invalidTimestamps = 0;
+    counts.futureTimestamps = 0;
+    for (const r of rows) {
+      // Count timestamp fields, not rows; absent optional fields are not invalid.
+      for (const value of [r.created, r.updated, r.authored_at, r.recall_heat_at]) {
+        if (value == null) continue;
+        const ms = Date.parse(value);
+        if (!Number.isFinite(ms)) counts.invalidTimestamps++;
+        else if (ms > nowMs) counts.futureTimestamps++;
+      }
+    }
+  }
   const upd = db.prepare('UPDATE memories SET salience = ? WHERE id = ?');
   const tx = db.transaction(() => {
     for (const r of rows) upd.run(heatOf(r, nowMs), r.id);
@@ -212,9 +232,20 @@ function atomLine(r: DigestRow): string {
  * glue. Returns null when there is nothing to show.
  */
 /** The rows the digest includes: hottest first, until the token budget is spent. */
+function compareDigestRows(a: DigestRow, b: DigestRow): number {
+  const heat = (Number.isFinite(b.salience) ? b.salience : 0) - (Number.isFinite(a.salience) ? a.salience : 0);
+  if (heat) return heat;
+  // Code-unit comparison is locale-independent; equal authored atoms render identically.
+  for (const key of ['category', 'title', 'content', 'sourcing'] as const) {
+    const av = a[key] ?? '', bv = b[key] ?? '';
+    if (av !== bv) return av < bv ? -1 : 1;
+  }
+  return 0;
+}
+
 export function pickForDigest<T extends DigestRow>(rows: T[], opts: DigestOptions = {}): T[] {
   const budgetChars = (opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET) * (opts.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN);
-  const ordered = [...rows].sort((a, b) => b.salience - a.salience);
+  const ordered = [...rows].sort(compareDigestRows);
   const picked: T[] = [];
   let used = 0;
   for (const r of ordered) {
@@ -256,14 +287,14 @@ function openMemoriesDb(contextDir: string, readonly: boolean): Database | null 
 }
 
 /** Lane entry point: recompute + store salience for a context. Returns count (or null if no store). */
-export function recomputeSalienceForContext(contextDir: string, nowMs: number): number | null {
+export function recomputeSalienceForContext(contextDir: string, nowMs: number, counts?: TimestampCounts): number | null {
   const db = openMemoriesDb(contextDir, false);
   if (!db) return null;
   try {
     // Self-heal: a store that predates the salience migration gets it here, so
     // the lane works on any store (migrations are idempotent).
     if (!hasColumn(db, 'memories', 'salience')) runMigrations(db, { strict: false });
-    return recomputeSalience(db, nowMs);
+    return recomputeSalience(db, nowMs, counts);
   } finally {
     db.close();
   }
@@ -295,11 +326,11 @@ function liveRows(db: Database, nowMs: number): Array<DigestRow & { stored: numb
     )
     .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
   return rows
-    .map(({ created, updated, recall_heat, recall_heat_at, ...r }) => ({
+    .map(({ created, updated, authored_at, recall_heat, recall_heat_at, ...r }) => ({
       ...r,
-      salience: heatOf({ category: r.category, created, updated, recall_heat, recall_heat_at }, nowMs),
+      salience: heatOf({ category: r.category, created, updated, authored_at, recall_heat, recall_heat_at }, nowMs),
     }))
-    .sort((a, b) => b.salience - a.salience);
+    .sort(compareDigestRows);
 }
 
 /**

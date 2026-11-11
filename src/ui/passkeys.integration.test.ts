@@ -5,12 +5,14 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { request } from 'node:http';
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
+import { pendingLockWaits } from '../lock-gate.js';
 import { LINK_TOKEN, sessionStore, signinLink } from './sessions.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { createConversationTables } from '../backends/conversations.js';
@@ -133,6 +135,107 @@ describe('passkeys', () => {
     else process.env.LOOM_PUBLIC_URL = saved;
     await rm(stack, { recursive: true, force: true });
   });
+
+  it('public passkey options share an async wait and leave the sign-in page responsive', async () => {
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const options = Array.from({ length: 5 }, () => call('POST', '/login/passkey/options', { json: {} }));
+      await delay(100);
+      expect((await call('GET', '/login')).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(pendingLockWaits()).toBe(1);
+      expect(await Promise.race([options[0].then(() => false), delay(20).then(() => true)])).toBe(true);
+      rmSync(lock);
+      const replies = await Promise.all(options);
+      expect(replies.every((r) => r.status === 200)).toBe(true);
+      const challenges = replies.map((r) => JSON.parse(r.body).challenge);
+      expect(new Set(challenges).size).toBe(5);
+      for (const challenge of challenges) {
+        expect(sessionStore(stack).useChallenge(challenge, 'login')).toEqual({ secret: null });
+        expect(sessionStore(stack).useChallenge(challenge, 'login')).toBeNull();
+      }
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a signed replay with a spent challenge never joins the sessions queue', async () => {
+    const cookie = await signIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const assertion = device.assert(challenge);
+    expect((await call('POST', '/login/passkey', { json: assertion })).status).toBe(200);
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      expect((await call('POST', '/login/passkey', { json: assertion })).status).toBe(401);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(pendingLockWaits()).toBe(0);
+    } finally { rmSync(lock, { force: true }); }
+  });
+
+  it('a fresh challenge signed with a stale counter never joins the sessions queue', async () => {
+    const device = new Device();
+    expect((await addPasskey(await signIn(), device)).status).toBe(200);
+    expect((await passkeySignIn(device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const assertion = device.assert(challenge, { bump: false });
+    const lock = join(stack, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const refused = await call('POST', '/login/passkey', { json: assertion });
+      expect(refused.status).toBe(401); expect(refused.body).toContain('counter went backwards');
+      expect(performance.now() - began).toBeLessThan(1000); expect(pendingLockWaits()).toBe(0);
+    } finally { rmSync(lock, { force: true }); }
+  });
+
+  it.each(['removed', 'replaced'])('a passkey %s during its lock wait cannot open a session', async (how) => {
+    const cookie = await signIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      // The lock holder removes the key before releasing it, as another listener can.
+      const path = join(stack, 'ui-sessions.json');
+      const file = JSON.parse(readFileSync(path, 'utf8'));
+      if (how === 'removed') delete file.passkeys[device.id.toString('base64url')];
+      else file.passkeys[device.id.toString('base64url')].publicKey = new Device().publicKey.export({ format: 'der', type: 'spki' }).toString('base64url');
+      writeFileSync(path, JSON.stringify(file));
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401);
+      expect(denied.headers['set-cookie']).toBeUndefined();
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
+
+  it('a verified passkey waits asynchronously for the sessions lock, then signs in', async () => {
+    const cookie = await signIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(stack, 'ui-sessions.lock');
+    writeFileSync(lock, String(process.pid));
+    try {
+      const began = performance.now();
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect((await call('GET', '/login')).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      rmSync(lock);
+      const signed = await signin;
+      expect(signed.status).toBe(200);
+      expect(cookieOf(signed)).toContain('loom_ui=');
+      expect((await call('GET', '/account', { cookie: cookieOf(signed) })).status).toBe(200);
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
 
   it('adds one from a signed-in browser, then signs in with it alone', async () => {
     const cookie = await signIn();
@@ -300,6 +403,24 @@ describe('passkeys in a household', () => {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     await rm(h.home, { recursive: true, force: true });
   });
+
+  it.each(['token revoked', 'member removed'])('a queued passkey sign-in is refused after its %s', async (change) => {
+    const device = new Device();
+    expect((await addPasskey(await linkSignIn('sam'), device, 'Queued Sam')).status).toBe(200);
+    const key = byId()[device.id.toString('base64url')];
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    const lock = join(h.home, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    try {
+      const signin = call('POST', '/login/passkey', { json: device.assert(challenge) });
+      await delay(100);
+      expect(await Promise.race([signin.then(() => false), delay(20).then(() => true)])).toBe(true);
+      if (change === 'token revoked') revokeToken(h, key.tokenLabel!);
+      else removeMember(h, 'sam');
+      rmSync(lock);
+      const denied = await signin;
+      expect(denied.status).toBe(401); expect(denied.headers['set-cookie']).toBeUndefined();
+    } finally { rmSync(lock, { force: true }); }
+  }, 20_000);
 
   it('revoking the sign-in links token leaves a passkey signing its person in', async () => {
     const cookie = await linkSignIn();

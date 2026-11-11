@@ -182,7 +182,7 @@ describe('pendingMigrations', () => {
       'add_memory_deletions',
       'add_scope',
       'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
-      'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges',
+      'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges', 'add_authored_at',
     ]);
   });
 
@@ -437,7 +437,7 @@ describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
     insert(db, 'project/p1', 'foo-bar', 'same', 'folded-project');
     insert(db, 'project/p2', 'foobar', 'same', null);
 
-    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges']);
+    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges', 'add_authored_at']);
     runMigrations(db, { strict: true });
 
     const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
@@ -467,5 +467,19 @@ describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
       { ref: string; uniq: string | null }[];
     expect(rows).toEqual([{ ref: 'project/a', uniq: keyA }, { ref: 'project/b', uniq: keyB }]);
     db.close();
+  });
+});
+
+
+describe('authored heat legacy policy', () => {
+  it('adds an empty anchor without copying ambiguous audit timestamps, and is idempotent', () => {
+    const db = openOldSchemaDb(':memory:');
+    try {
+      db.prepare("INSERT INTO memories (uuid, ref, title, category, content, created, updated) VALUES ('u', 'project/a', 'A', 'project', 'body', '2020-01-01', '2026-11-11')").run();
+      runMigrations(db);
+      expect(db.prepare('SELECT created, updated, authored_at FROM memories').get())
+        .toEqual({ created: '2020-01-01', updated: '2026-11-11', authored_at: null });
+      expect(runMigrations(db).every(r => r.status === 'skipped')).toBe(true);
+    } finally { db.close(); }
   });
 });

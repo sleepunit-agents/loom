@@ -358,6 +358,13 @@ export class SessionStore {
     return this.spendLink(code, nowS)?.secret ?? null;
   }
 
+  /** Check a link without spending or locking it. A valid caller may then wait asynchronously before spendLink,
+   * which still checks and spends it under the lock (expiry and another browser can win while we wait). */
+  peekLink(code: string, nowS = Math.floor(Date.now() / 1000)): Buffer | null {
+    const l = this.read().links?.[hashId(code)];
+    return l && l.expires > nowS ? Buffer.from(l.secret, 'hex') : null;
+  }
+
   /** useLink, with the label the link was made with. */
   spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string; signedInAt?: number; agent?: true } | null {
     if (!existsSync(this.file)) return null;
@@ -440,6 +447,12 @@ export class SessionStore {
       f.challenges[hashId(challenge)] = { expires: nowS + ttlS, purpose, ...(secret ? { secret: secret.toString('hex') } : {}) };
     });
     return challenge;
+  }
+
+  /** Non-consuming check before a verified assertion joins a wait. useChallenge still consumes it under the lock. */
+  hasChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): boolean {
+    const c = this.read().challenges?.[hashId(challenge)];
+    return !!c && c.expires > nowS && c.purpose === purpose;
   }
 
   /** Spend a challenge: it's gone either way; null unless it was this purpose and unexpired. */

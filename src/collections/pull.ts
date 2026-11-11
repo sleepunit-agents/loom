@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Core pulls; anyone may nudge (docs/specs/collections.md, "Changes: from provider to window").
  *
@@ -17,6 +18,7 @@
  * that it moved (a nudge, an action, its API saying it wrote) puts it back on every round. One listener at a time holds
  * a domain's lease.
  */
+import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { randomBytes } from 'node:crypto';
 import { readRecord } from '../cli/pieces-managed.js';
 import type { Household } from '../household.js';
@@ -26,7 +28,7 @@ import { findPiece } from '../cli/pieces.js';
 import { CORE_PROVIDER, RECORD_ID, type TypeDecl } from './contract.js';
 import { coreAnswers, coreMessageSnapshot } from './core-types.js';
 import type { ProviderQuery } from './memory.js';
-import { domainOf, expire, indexOf, markNudged, prune, resetEpoch, seedIndex, setCursor, setMode, takeLease, tick, withLog, writeTxn, type Change } from './log.js';
+import { domainOf, expire, indexOf, markNudged, prune, resetEpoch, seedIndex, setCursor, setMode, takeLease, tick, withLog, writeTxn, liveDbPath, type Change } from './log.js';
 import { providers, readAnswers, type Provider } from './serve.js';
 import { parseAudience } from './viewer.js';
 
@@ -350,6 +352,10 @@ export class Puller {
 
   /** Every wanted domain that's due, and the expiry pass. */
   round(): void {
+    return backgroundJob('collection round', () => this.roundWork());
+  }
+
+  private roundWork(): void {
     const c = this.ctx();
     try { if (withLog(c.household.home, (db) => expire(db))) tick(c.household.home); } catch (e) { process.stderr.write(`loom: collections expiry failed: ${(e as Error).message}\n`); }
     const wanted = this.wanted();
@@ -429,6 +435,10 @@ export class Puller {
   }
 
   private run(domain: string): Promise<PullOutcome> {
+    return backgroundJob(`collection refresh ${domain}`, () => this.runWork(domain));
+  }
+
+  private runWork(domain: string): Promise<PullOutcome> {
     const on = this.running.get(domain);
     if (on) return on;
     const started = Date.now();
@@ -456,7 +466,11 @@ export class Puller {
  * A nudge (POST /api/loom/collections/nudge, `loom collections nudge`): the domain is marked, and every listener that
  * pulls it hears of it from the tick file. Nothing is said back about whether it exists.
  */
-export function nudge(home: string, domain: string): void {
+export async function nudge(home: string, domain: string): Promise<void> {
   if (typeof domain !== 'string' || !/^[a-z][a-z0-9-]{0,39}\/([a-z][a-z0-9-]{0,31}|\*)$/.test(domain)) return;
-  try { withLog(home, (db) => markNudged(db, domain)); tick(home); } catch { /* a nudge is a hint; the poll still pulls */ }
+  try {
+    // A delayed change hint can land after the request's gate, while another request waits on this store.
+    await waitForLocks({ write: [liveDbPath(home)], budgetMs: WRITE_WAIT_MS });
+    withLog(home, (db) => markNudged(db, domain)); tick(home);
+  } catch { /* a nudge is a hint; the poll still pulls */ }
 }

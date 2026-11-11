@@ -1,3 +1,4 @@
+import { waitForLocks, WRITE_WAIT_MS } from './lock-gate.js';
 /**
  * Work in a Comms thread (docs/specs/comms.md, "Work in this thread"): the refs a thread's messages name, kept as refs
  * only; the pieces' thread feeds, merged into the panel's list; and the `from` block a piece's page carries, drawn per
@@ -10,7 +11,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Database } from 'better-sqlite3';
-import { withHouseholdDb } from './household-store.js';
+import { HOUSEHOLD_DB, withHouseholdDb } from './household-store.js';
 import { loadHousehold, type Household, type Member } from './household.js';
 import { COMMS_DB, SINCE_MAX, messagesOf, owns, threadOfConversation, threadPath, threadsOf, type Thread } from './comms.js';
 import { piecesOffering, runOffer } from './offers-registry.js';
@@ -102,17 +103,25 @@ export function noteRefs(home: string, thread: string, seq: number, at: string, 
  * are still kept, decrypted once each, indexed; then `refs_backfilled` in comms_meta, so no later start reads any.
  * Answers how many messages it read.
  */
-export async function backfillRefs(h: Household, env: NodeJS.ProcessEnv, now: Date = new Date()): Promise<number> {
-  if (backfilled(h.home)) return 0;
+export async function backfillRefs(h: Household, env: NodeJS.ProcessEnv, now: Date = new Date(), active: () => boolean = () => true): Promise<number> {
+  if (!active()) return 0;
+  await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
+  if (!active() || backfilled(h.home)) return 0;
   let read = 0;
   if (existsSync(join(h.home, COMMS_DB))) {
     const seen = new Set<string>();
     for (const m of h.members) {
+      await waitForLocks({ read: [join(h.home, COMMS_DB)], write: [join(h.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
+      if (!active()) return read;
       for (const t of [...threadsOf(h, m, { background: 'include' }), ...threadsOf(h, m, { archived: true, background: 'include' })]) {
         if (seen.has(t.id)) continue;
         seen.add(t.id);
         for (let after = 0; ;) {
+          await waitForLocks({ read: [join(h.home, COMMS_DB)], write: [join(h.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
+          if (!active()) return read;
           const msgs = await messagesOf(h, env, t, { after });
+          await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
+          if (!active()) return read;
           for (const x of msgs) {
             if ((x.kind === 'message' || x.kind === 'reply') && x.text) {
               read++;
@@ -125,6 +134,8 @@ export async function backfillRefs(h: Household, env: NodeJS.ProcessEnv, now: Da
       }
     }
   }
+  await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB)], budgetMs: WRITE_WAIT_MS });
+  if (!active()) return read;
   markBackfilled(h.home, now.toISOString());
   return read;
 }

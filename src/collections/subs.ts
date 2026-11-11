@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Subscriptions: core to window (docs/specs/collections.md, "Core to window").
  *
@@ -422,6 +423,10 @@ function pass(h: HomeState): void {
 }
 
 async function passOnce(h: HomeState): Promise<void> {
+  return backgroundJob('collection delivery', () => passOnceWork(h));
+}
+
+async function passOnceWork(h: HomeState): Promise<void> {
   const home = h.household().home;
   const now = Date.now();
   // A nudge said a domain moved: pull it soon, if a subscription here reads it.
