@@ -453,8 +453,10 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
       {live && which && <OtherThreads key={which} which={which} csrf={csrf} onRows={onOtherRows} />}
       {(showArchived || showBackground) && other?.length === 0 && <Empty title={showBackground ? 'No background work here.' : 'No archived threads.'} />}
       {!threads.length && !showArchived && !showBackground && <Empty title="No threads yet" text="Start one with one of your agents." />}
+      <div className="mt-auto flex flex-col">
       <button type="button" className="comms-archived" aria-pressed={showBackground} onClick={() => { setArchived(null); setShowBackground(!showBackground); }}>Background work</button>
       <button type="button" className="comms-archived" onClick={() => { setArchived(null); setShowArchived(!showArchived); }}>{showArchived ? 'Back to active' : 'Archived'}</button>
+      </div>
     </nav>
   );
 }

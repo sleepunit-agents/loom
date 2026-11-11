@@ -32,8 +32,8 @@ export const Row = forwardRef<HTMLButtonElement, RowProps>(function Row({ title,
 });
 
 /** Say what's absent, then (only if useful) how something gets here. */
-export function Empty({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
-  return <PrimitiveEmpty className="loom-kit-state grid justify-items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
+export function Empty({ title, text, children, compact = false }: { title: string; text?: string; children?: ReactNode; compact?: boolean }) {
+  return <PrimitiveEmpty data-compact={compact || undefined} className="loom-kit-state grid justify-items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
     <EmptyTitle className="text-base">{title}</EmptyTitle>{text && <EmptyDescription className="text-sm">{text}</EmptyDescription>}{children}
   </PrimitiveEmpty>;
 }

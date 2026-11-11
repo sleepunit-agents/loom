@@ -21,3 +21,7 @@
 .loom-kit-trailing { font-family: var(--loom-font-data); font-size: 11px; color: var(--v-text-3); padding-top: 2px; white-space: nowrap; }
 .loom-kit-state { padding: 16px 12px; color: var(--v-text-2); }
 @media (prefers-contrast: more) { .loom-kit-meta { color: var(--v-text); } }
+
+.loom-kit-state[data-compact] { padding: 8px; border: 0; gap: 4px; text-align: left; justify-items: start; }
+.loom-kit-state[data-compact] [data-slot="empty-title"] { font-size: 14px; }
+.loom-kit-state[data-compact] [data-slot="empty-description"] { max-width: none; font-size: 12px; }

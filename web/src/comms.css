@@ -12,7 +12,7 @@
 .comms[data-wide][data-one] { grid-template-columns: minmax(0, 1fr); }
 .comms[data-wide][data-one] .comms-list { border-right: 0; }
 .comms-new { font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--v-pink) 60%, transparent); color: var(--v-text); background: color-mix(in srgb, var(--v-pink) 12%, transparent); min-height: 36px; }
-.comms-archived { margin-top: auto; align-self: flex-start; font-size: 12px; color: var(--v-text-3); padding: 12px 8px; min-height: 44px; }
+.comms-archived { margin-top: 0; align-self: flex-start; font-size: 12px; color: var(--v-text-3); padding: 12px 8px; min-height: 44px; }
 
 /* ---- a thread ---- */
 .comms-thread { display: flex; flex-direction: column; min-height: 0; min-width: 0; container: comms-thread / inline-size; }
