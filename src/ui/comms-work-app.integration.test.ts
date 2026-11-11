@@ -30,8 +30,9 @@ const shots = process.env.LOOM_SHOT_DIR;
 
 // Times before the fixture thread's messages (a note's when is its message's time), so the order holds whenever it runs.
 const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const LONG_TITLE = ('Make the comm screen frame thinner and preserve every word of this task title. '.repeat(3)).slice(0, 190);
 const ITEMS = [
-  { title: 'Make the comm screen frame thinner', ref: 't-1881', status: 'Blocked', tone: 'bad', when: ago(3), page: 'task/t-1881', made: true },
+  { title: LONG_TITLE, ref: 't-1881', status: 'Blocked', tone: 'bad', when: ago(3), page: 'task/t-1881', made: true },
   { title: 'Move the YOU panel under the portrait', ref: 't-1882', status: 'In progress', when: ago(2), page: 'task/t-1882', made: true },
   { title: 'Old dock tidy', ref: 't-12', status: 'Done', tone: 'ok', when: ago(96), page: 'task/t-12' },
 ];
@@ -110,6 +111,13 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
     page.on('pageerror', (e) => errors.push(e.message));
     return { ctx, page, errors };
   }
+  async function fullTitle(page: Page) {
+    const title = page.locator('.comms-work .loom-kit-title').first();
+    expect(await title.textContent()).toBe(LONG_TITLE);
+    const size = await title.evaluate((el) => ({ height: el.clientHeight, whole: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) }));
+    expect(size.height).toBeGreaterThan(size.line * 3);
+    expect(size.whole).toBeLessThanOrEqual(size.height + 1);
+  }
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   const widest = (page: Page) => page.evaluate(() => Math.max(...[...document.querySelectorAll('.comms-work, .comms-work *')].map((e) => e.getBoundingClientRect().right)));
 
@@ -143,6 +151,7 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
         el.remove(); return expected;
       });
       expect(tones).toEqual(expectedTones);
+      await fullTitle(page);
       // Its rows inside the tile: nothing past its edge.
       const t = (await tile.boundingBox())!;
       expect(await widest(page)).toBeLessThanOrEqual(t.x + t.width + 1);
@@ -164,6 +173,7 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
       await toggle.tap();
       await page.locator('.comms-work .loom-kit-row').first().waitFor();
       expect(await page.locator('.comms-work .loom-kit-row').count()).toBe(5);
+      await fullTitle(page);
       expect(await noSideways(page)).toBe(true);
       expect(await widest(page)).toBeLessThanOrEqual(390);
       if (shots) await page.screenshot({ path: join(shots, 'after-390-open.png') });

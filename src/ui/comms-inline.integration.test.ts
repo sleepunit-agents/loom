@@ -274,7 +274,13 @@ describe.runIf(built && chrome && hasAge)('asks and loom things inline in Comms 
     const t = thread();
     asks([permission('a-00000101', t.conversation, new Date(Date.now() - 500).toISOString())]);
     const { ctx, page, errors } = await open('jonathan', DESK);
+    const longTitle = ('A complete source-owned reference title with every word readable. '.repeat(4)).slice(0, 200);
     try {
+      await page.route(/\/comms\/[^/]+\/refs\?/, async (route) => {
+        const response = await route.fetch(); const body = await response.json();
+        if (body.refs?.['at:mark']) body.refs['at:mark'].title = longTitle;
+        await route.fulfill({ response, json: body });
+      });
       await page.goto(`${base}/comms/${t.id}`);
       const reply = page.locator('.comms-reply').last();
       // @mark: an agent the reader owns, a chip; t-12: no tasks piece here, so its words (no link, no chip).
@@ -291,7 +297,10 @@ describe.runIf(built && chrome && hasAge)('asks and loom things inline in Comms 
       const card = page.locator('.comms-refcard');
       await card.waitFor();
       expect(await card.locator('.loom-kit-meta').textContent()).toBe('Agent');
-      expect(await card.locator('.loom-kit-title').textContent()).toBe('Mark');
+      expect(await card.locator('.loom-kit-title').textContent()).toBe(longTitle);
+      const titleSize = await card.locator('.loom-kit-title').evaluate((el) => ({ height: el.clientHeight, whole: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) }));
+      expect(titleSize.height).toBeGreaterThan(titleSize.line * 3);
+      expect(titleSize.whole).toBeLessThanOrEqual(titleSize.height + 1);
       expect(await card.locator('.comms-refcard__open').getAttribute('href')).toBe('/a/mark');
       await page.keyboard.press('Escape');
       await expect.poll(() => card.count()).toBe(0);
