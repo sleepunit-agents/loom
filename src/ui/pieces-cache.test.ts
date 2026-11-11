@@ -10,6 +10,48 @@ describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
+  it.each([1, 8])('bounds concurrent cold, after-timeout and stale pending callers with %i producers', async (count) => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-deadline-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (let i = 0; i < count; i++) {
+      const path = join(bin, `loom-probe${i}`);
+      writeFileSync(path, `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(join(root, 'started'))}, 'start\\n');
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(join(root, 'release'))})) return;
+  clearInterval(timer);
+  console.log(JSON.stringify({v:2,tile:{label:'Probe',value:'late'}}));
+}, 10);
+`);
+      chmodSync(path, 0o755);
+    }
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const requests: Promise<unknown>[] = [];
+    const bounded = async (at = Date.now()) => {
+      const pending = pieceManifests(env, at);
+      requests.push(pending);
+      const outcome = await Promise.race([pending, new Promise<null>(r => setTimeout(() => r(null), PIECE_TIMEOUT_MS + 700))]);
+      expect.soft(outcome).not.toBeNull();
+      if (outcome) expect(outcome).toMatchObject({ pieces: [], skipped: Array.from({length: count}, (_, i) => ({piece:`probe${i}`,reason:'timed out'})) });
+    };
+    try {
+      await Promise.all([bounded(), bounded()]);
+      // The first caller has timed out, but its producer is still pending. Neither
+      // a fresh hit nor a synthetically stale hit is a last good answer.
+      await bounded();
+      await bounded(Date.now() + CACHE_MS + 1);
+    } finally {
+      writeFileSync(join(root, 'release'), 'yes');
+      await Promise.all(requests);
+      await refreshPieceManifests(env);
+    }
+    expect((await pieceManifests(env)).pieces).toHaveLength(count);
+    expect(readFileSync(join(root, 'started'), 'utf8').trim().split('\n')).toHaveLength(count);
+  }, 25_000);
+
   it('failed UI offers start only once per freshness window, or on that piece moving', async () => {
     const root = mkdtempSync(join(tmpdir(), 'loom-failed-ui-'));
     dirs.push(root);

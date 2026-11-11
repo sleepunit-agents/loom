@@ -109,7 +109,7 @@ type ManifestResult = PieceInfo | PieceSkip;
  * `expired`: the piece said it moved, so the next look asks it again, keeping this answer for a run that fails or is
  * slow (t-2064). `print` is the answer as the round compares it, `same` how many rounds in a row it came back the same.
  */
-interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number; recordsMoved?: boolean }
+interface CacheEntry { settled?: ManifestResult; at: number; result: Promise<ManifestResult>; refreshing?: number; expired?: boolean; print?: string; same?: number; recordsMoved?: boolean }
 const cache = new Map<string, CacheEntry>();
 /** Failed/unsupported UI offers get the same freshness window as a manifest, rather than a process per live round. */
 const failedManifests = new Map<string, { at: number; result: ManifestResult }>();
@@ -476,7 +476,7 @@ function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Key
 }
 
 /** `fresh`, or `last` once `ms` has passed (the run goes on, and its answer is kept for the next look). */
-function within(fresh: Promise<ManifestResult>, last: Promise<ManifestResult> | ManifestResult, ms: number): Promise<ManifestResult> {
+function within(fresh: Promise<ManifestResult>, last: ManifestResult, ms: number): Promise<ManifestResult> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<ManifestResult>((resolve) => { timer = setTimeout(() => resolve(last), ms); });
   return Promise.race([fresh, late]).finally(() => clearTimeout(timer));
@@ -494,23 +494,25 @@ function keep(key: string, before: CacheEntry | undefined, generation: number, r
   if (!('manifest' in r)) {
     // A failure is no answer to compare: no print, so the round asks it again. The last good answer keeps its age, so
     // a piece that keeps failing still ages out (STALE_MAX_MS).
-    if (!before) { cache.set(key, { at: Date.now(), result }); return; }
+    if (!before) { cache.set(key, { at: Date.now(), result, settled: r }); return; }
     void before.result.then((last) => {
       if (cache.get(key) !== before || generation !== manifestGeneration) return;
       if ('manifest' in last) { before.refreshing = undefined; before.expired = false; before.same = 0; }
-      else cache.set(key, { at: Date.now(), result });
+      else cache.set(key, { at: Date.now(), result, settled: r });
     });
     return;
   }
   const print = printOf(r);
-  cache.set(key, { at: Date.now(), result, print, same: before?.print === print ? (before.same ?? 0) + 1 : 0 });
+  cache.set(key, { at: Date.now(), result, settled: r, print, same: before?.print === print ? (before.same ?? 0) + 1 : 0 });
 }
 
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
   const k = keyOf(path, env);
   const { key } = k;
   const hit = cache.get(key);
-  if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return hit.result;
+  const timeout: ManifestResult = { piece, reason: 'timed out' };
+  const last = hit?.settled;
+  if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return within(hit.result, last ?? timeout, PIECE_TIMEOUT_MS);
   const generation = manifestGeneration;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
     // Past its window, the last answer at once while a fresh one runs behind it. Said to have moved, the fresh one,
@@ -521,14 +523,14 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
       hit.refreshing = generation;
       void next.then((r) => keep(key, hit, generation, next, r));
     }
-    if (!hit.expired) return hit.result;
-    return within(next, hit.result, PIECE_TIMEOUT_MS).then((r) => ('manifest' in r ? r : hit.result));
+    if (!hit.expired && last) return Promise.resolve(last);
+    return within(next, last ?? timeout, PIECE_TIMEOUT_MS).then((r) => ('manifest' in r ? r : last ?? r));
   }
   // Cache the run itself: concurrent page loads share it, and one that outlasts the page's wait is the next look's.
   const result = runManifest(piece, path, env, k);
   const entry: CacheEntry = { at: nowMs, result };
   cache.set(key, entry);
-  void result.then((r) => { if ('manifest' in r) entry.print = printOf(r); });
+  void result.then((r) => { entry.settled = r; if ('manifest' in r) entry.print = printOf(r); });
   return within(result, { piece, reason: 'timed out' }, PIECE_TIMEOUT_MS);
 }
 
