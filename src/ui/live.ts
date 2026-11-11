@@ -70,13 +70,13 @@ const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && abo
  * What else hears "something changed", by household home: the shared collections, whose attention records are made
  * from everything a change can move (t-2025: subs.ts nudges `loom/attention`, which costs at most one pull per GAP_MS).
  */
-const changeHooks = new Map<string, (about: Sees) => void>();
-export function onChanged(home: string, f: (about: Sees) => void): void { changeHooks.set(home, f); }
-function hooks(about: Sees = '*'): void { for (const f of changeHooks.values()) { try { f(about); } catch { /* a hint; the poll still pulls */ } } }
+const changeHooks = new Map<string, () => void>();
+export function onChanged(home: string, f: () => void): void { changeHooks.set(home, f); }
+function hooks(): void { for (const f of changeHooks.values()) { try { f(); } catch { /* a hint; the poll still pulls */ } } }
 
 /** Tell the open apps that may see it that something changed (soon, and once for a burst). */
 export function changed(about: Sees = '*'): void {
-  hooks(about);
+  hooks();
   tell(about);
 }
 function tell(about: Sees): void {

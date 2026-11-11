@@ -205,9 +205,6 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     stream.stop();
   }, 20_000);
 
-  // Three sequential deliveries each wait for the pull/re-ask coalescers. On Node 22 this
-  // valid lifecycle takes ~4.6 s without load, too close to Vitest's default 5 s deadline.
-  // Keep each until() bounded at 6 s; budget all three phases as the adjacent lifecycle tests do.
   it('delivers a changed page including retention and removes a deleted thread, with no words kept in the index', async () => {
     const t = thread('jonathan', 'art', 'live initial');
     const stream = await openEvents(base, tok.jonathan); streams.push(stream);
@@ -225,7 +222,7 @@ describe.skipIf(!hasAge)('Comms message pages as live records (t-2027)', () => {
     expect(await until(() => stream.frames.some((f) => f.event === 'rows' && (f.data.upserts as Data[] | undefined)?.some((r) => r.thread === t.id && r.message?.text === null)))).toBe(true);
     deleteThread(h, threadFor(h, member('jonathan'), t.id));
     expect(await until(() => stream.frames.some((f) => f.event === 'rows' && (f.data.leaves as string[] | undefined)?.includes(`loom/message/${t.id}:1`)))).toBe(true);
-  }, 20_000);
+  });
   it('opens words only when a changed message can affect the subscribed thread and sequence range', async () => {
     const t = thread('jonathan', 'art', 'watched words');
     const other = thread('jonathan', 'art', 'another thread');
