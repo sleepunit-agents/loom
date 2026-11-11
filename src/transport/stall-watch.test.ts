@@ -6,11 +6,12 @@ import { Puller } from '../collections/pull.js';
 import type { pullDomain } from '../collections/pull.js';
 type PullContext = Parameters<typeof pullDomain>[0];
 import { refreshPieceManifests } from '../ui/pieces.js';
-import { afterEach, expect, it } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { afterEach, expect, it, vi } from 'vitest';
 import { backgroundAttributionState, backgroundJob, routeOf, watchStalls, type StallWatch } from './stall-watch.js';
 
 let w: StallWatch | undefined;
-afterEach(() => { w?.stop(); w = undefined; });
+afterEach(() => { w?.stop(); w = undefined; vi.restoreAllMocks(); });
 
 const block = (ms: number) => { const until = performance.now() + ms; while (performance.now() < until) { /* hold the loop */ } };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -165,23 +166,28 @@ it('chooses a later slower callback as well as an earlier one', async () => {
 
 
 it('names actual collection and piece-manifest rounds', async () => {
+  // Real timers and attribution hooks still run; only measured work advances this clock.
+  // Runner load and filesystem setup cannot change which round held the loop.
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const measuredWork = () => { now += 220; };
   const lines: string[] = [];
   w = watchStalls({ thresholdMs: 100, tickMs: 20, log: (l) => lines.push(l) });
   const home = mkdtempSync(join(tmpdir(), 'loom-attribution-'));
   try {
     const puller = new Puller(() => {
-      block(220);
+      measuredWork();
       return { household: { home }, env: {} } as PullContext;
     }, () => new Set());
     puller.round();
     await wait(60);
-    expect(lines.find((l) => l.startsWith('loom: event loop stalled'))).toMatch(/slowest: collection round 2\d\d ms/);
+    expect(lines.find((l) => l.startsWith('loom: event loop stalled'))).toMatch(/slowest: collection round 220 ms/);
     lines.length = 0;
     let first = true;
-    const env = { get LOOM_HOME() { if (first) { first = false; block(220); } return home; } };
+    const env = { get LOOM_HOME() { if (first) { first = false; measuredWork(); } return home; } };
     await refreshPieceManifests(env);
     await wait(60);
-    expect(lines.find((l) => l.startsWith('loom: event loop stalled'))).toMatch(/slowest: piece manifest round 2\d\d ms/);
+    expect(lines.find((l) => l.startsWith('loom: event loop stalled'))).toMatch(/slowest: piece manifest round 220 ms/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
