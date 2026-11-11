@@ -332,7 +332,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     } finally { await held.release(); keeper.close(); }
   }, 20_000);
 
-  it('activation-time audit maintenance waits off the loop', async () => {
+  it('activation-time audit maintenance waits off the loop and an independent Comms sweep progresses', async () => {
+    const t = await open();
+    const words = new BetterSqlite3(join(h.home, COMMS_DB));
+    words.prepare("UPDATE comms_messages SET at = '2020-01-01T00:00:00Z' WHERE thread = ? AND seq = 1").run(t.id); words.close();
     const db = openAuditDb(h.home);
     db.prepare('INSERT OR REPLACE INTO audit_entries VALUES (?, ?, ?, ?, ?, ?, ?)').run('art', 'cv-maintenance', 1, 'loom', 'message', '2020-01-01T00:00:00Z', Buffer.from('expired'));
     db.close();
@@ -346,6 +349,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(pendingLockWaits()).toBe(1);
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(performance.now() - began).toBeLessThan(1000);
+      // The audit lock remains held: another named timer job must still finish its own work.
+      await expect.poll(() => {
+        const check = new BetterSqlite3(join(h.home, COMMS_DB));
+        try { return check.prepare('SELECT text FROM comms_messages WHERE thread = ? AND seq = 1').get(t.id); }
+        finally { check.close(); }
+      }, { timeout: 1000 }).toEqual({ text: null });
       await held.release();
       await expect.poll(() => {
         const check = new BetterSqlite3(join(h.home, AUDIT_DB));
