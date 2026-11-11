@@ -451,7 +451,7 @@ describe('criterion 3: digests (conversation_digest)', () => {
     writeDigest(art, { conversation: other, run: 'run-t2' }, { summary: 'another-conversation-words' });
     const text = (r: { body: unknown }) => JSON.stringify(r.body);
     const own = await mcp(art, { house: 'h-14' });
-    for (const t of [text(await own.call('identity', { client: 'claude-code' })), text(await own.call('episodes', { hours: 100000 }))]) {
+    for (const t of [text(await own.call('identity', { client: 'claude-code', piece: 'last-24h' })), text(await own.call('episodes', { hours: 100000 }))]) {
       expect(t).toContain('held-conversation-words');
       expect(t).not.toContain('another-conversation-words');
     }

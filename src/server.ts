@@ -1,3 +1,4 @@
+import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
  * Loom — MCP Server Factory
  *
@@ -185,7 +186,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       description:
       'Load the persistent identity for this agent. Returns the terminal creed ' +
-      '(who you are), relevant memories, preferences, and self-model. ' +
+      '(who you are), preferences, owners, Top of Mind and a Pieces index. ' +
       'IMPORTANT: Call this tool FIRST before doing any other work. ' +
       'The identity defines who you are and how you should behave.',
       inputSchema:
@@ -211,6 +212,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Slugs of the people this turn is addressed by (the room), e.g. ["patrick-kells"]. ' +
           'Adds an "# In the room" block with their person cards. Omit for no block.',
         ),
+        piece: z.string().optional().describe(
+          'Return only this identity section: ' + IDENTITY_SECTIONS.map(section => section.name).join(', ') + '; "all" returns full output. Missing content is omitted. Omit for core + index.',
+        ),
+        pieces: z.array(z.string()).optional().describe('Return only these identity pieces. Combined with piece when both are given.'),
         conversation: z.string().max(64).optional().describe(
           'The conversation this body is in (cv-…), as the runtime or harness that started it says. ' +
           'With run, it is where conversation_digest writes.',
@@ -219,7 +224,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people, conversation, run }) => {
+    async ({ project, client, model, role, people, piece, pieces, conversation, run }) => {
       // The body's conversation and run (docs/specs/conversations.md): kept for this session's
       // conversation_digest. Both or neither; a later identity call replaces them.
       if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
@@ -231,7 +236,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const effectiveClient =
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
       // From a house, the tape carries only the digests of the conversation it holds (t-2118).
-      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller));
+      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller),
+        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])]);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
