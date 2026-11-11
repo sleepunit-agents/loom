@@ -269,7 +269,7 @@ describe.runIf(built && chrome)('the Tasks pages, on the tasks\' live records', 
         await page.getByRole('dialog', { name: 'Task: Original task title' }).getByText('Cancelled', { exact: true }).waitFor({ timeout: 8000 });
         await page.getByRole('button', { name: 'Task t-2: Original task title, Cancelled', exact: true }).waitFor();
         expect(await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).getAttribute('href')).toBe('/p/tasks/task/t-2');
-        expect(await page.getByRole('dialog').locator('.comms-refcard__status').getAttribute('data-tone')).toBeNull();
+        expect(await page.getByRole('dialog').locator('.loom-kit-status').getAttribute('data-tone')).toBeNull();
         expect(refs).toBe(before);
         expect(await page.getByRole('button', { name: /^Task t-3:/ }).count()).toBe(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);

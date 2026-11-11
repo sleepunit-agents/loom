@@ -118,8 +118,10 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-list.png`) });
         await row.click();
         await p.getByText('Sure. A framed portrait, a signal meter, and the channel line. See t-12.', { exact: false }).first().waitFor();
-        const dialog = p.waitForEvent('dialog').then((d) => d.dismiss());
+        const dialog = p.waitForEvent('dialog').then((d) => d.accept('Conversation header evidence'));
         await Promise.all([dialog, p.getByRole('button', { name: 'New thread with Art E Fish', exact: true }).click()]);
+        await p.reload();
+        await p.getByRole('button', { name: 'Conversation header evidence', exact: true }).waitFor();
         expect(await noSideways(p)).toBe(true);
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-thread.png`) });
         const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'session', place: `kit-${width}-${look}`, label: 'Conversation kit evidence', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art');
@@ -127,7 +129,12 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         await p.locator('main [data-band], main .loom-kit-list').first().waitFor();
         expect(await noSideways(p)).toBe(true);
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `conversation-${width}-${look}.png`) });
-      } finally { await ctx.close(); }
+      } finally {
+        await ctx.close();
+        const db = new BetterSqlite3(join(h.home, 'household.db'));
+        db.prepare('UPDATE comms_threads SET title = NULL, titled_by = NULL WHERE id = ?').run(thread.id);
+        db.close();
+      }
     }, 45_000);
   }
 

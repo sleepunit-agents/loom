@@ -290,8 +290,8 @@ describe.runIf(built && chrome && hasAge)('asks and loom things inline in Comms 
       await mark.click();
       const card = page.locator('.comms-refcard');
       await card.waitFor();
-      expect(await card.locator('.comms-refcard__kind').textContent()).toBe('Agent');
-      expect(await card.locator('.comms-refcard__title').textContent()).toBe('Mark');
+      expect(await card.locator('.loom-kit-meta').textContent()).toBe('Agent');
+      expect(await card.locator('.loom-kit-title').textContent()).toBe('Mark');
       expect(await card.locator('.comms-refcard__open').getAttribute('href')).toBe('/a/mark');
       await page.keyboard.press('Escape');
       await expect.poll(() => card.count()).toBe(0);
