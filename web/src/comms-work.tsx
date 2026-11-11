@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { changesLive, tasksLive, watchChanges, watchTasks } from './tasks-live';
 import './comms-work.css';
-import { List, LinkRow, Loading, Empty, Error as LoadError } from './kit';
+import { List, ListTitle, LinkRow, Loading, Empty, Error as LoadError } from './kit';
 
 export interface WorkItem { title: string; ref: string; status: string; tone?: 'bad' | 'warn' | 'ok'; when?: string; url?: string; made?: true; from: string }
 interface Work { items: WorkItem[]; failed: string[] }
@@ -53,7 +53,7 @@ export function changesConcern(keys: ReadonlySet<string>, records: ReadonlyMap<s
   return false;
 }
 
-export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: string; conversation: string; csrf: string; replySeq: number }) {
+export function WorkPanel({ thread, conversation, csrf, replySeq, heading = false }: { thread: string; conversation: string; csrf: string; replySeq: number; heading?: boolean }) {
   const [work, setWork] = useState<Work | null>(null);
   const [error, setError] = useState(false);
   const shown = useRef<WorkItem[]>([]);
@@ -106,7 +106,7 @@ export function WorkPanel({ thread, conversation, csrf, replySeq }: { thread: st
   );
   return (
     <section className="comms-work" data-open={open || undefined} aria-label="Work in this thread">
-      <h2 className="comms-work-label loom-data">WORK IN THIS THREAD</h2>
+      {heading && <ListTitle>WORK IN THIS THREAD</ListTitle>}
       <button type="button" className="comms-work__toggle" aria-expanded={open} aria-controls={`work-${thread}`} onClick={() => setOpen(!open)}>
         <span>{workLabel(items)}</span><span aria-hidden>{open ? '▴' : '▾'}</span>
       </button>

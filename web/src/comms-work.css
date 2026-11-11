@@ -1,7 +1,6 @@
 /* Work in this thread (docs/specs/comms.md, "The panel"). In a desktop thread's band it's a framed panel, always open,
    under who's in the conversation; on a phone it's the folded "Work (N)" strip. Status is in words; the tone adds colour. */
 .comms-work { --tone: var(--v-text-2); border: 1px solid var(--comms-line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 8px 12px 0; }
-.comms-work-label { display: none; margin: 0; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
 .comms-work__toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0; border: 0; background: none; color: var(--v-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .comms-work-content { display: none; min-width: 0; }
 .comms-work[data-open] .comms-work-content { display: block; }
@@ -9,7 +8,6 @@
 /* A desktop thread's band: a panel, always open (its title, no fold), under who's in the conversation; the band's side
    scrolls, not the list. */
 .comms-band__side .comms-work { margin: 0; }
-.comms-band__side .comms-work-label { display: block; }
 .comms-band__side .comms-work__toggle { display: none; }
 .comms-band__side .comms-work-content { display: block; }
 .comms-band__side .comms-work__list { max-height: none; overflow: visible; }

@@ -8,8 +8,7 @@ export default function ConversationView({ page }: { page: Page }) {
   const { ctx, go } = useEnv();
   return <AppFrame header={false} title={page.title} where={ctx.path} go={go}>
     {!page.sections.length && <Empty title="No conversation entries yet" />}
-    {page.sections.map((section) => <List key={section.id} label={section.title ?? 'Conversation entries'}>
-      {section.title && <h2 className="px-4 py-3 text-sm font-semibold">{section.title}</h2>}
+    {page.sections.map((section) => <List key={section.id} label={section.title ?? 'Conversation entries'} title={section.title}>
       {section.blocks.map((block, index) => {
         if (block.type !== 'list') return <div key={index} className="px-4 py-2"><BlockView b={block} /></div>;
         const items = (block as { items: ListItem[] }).items;

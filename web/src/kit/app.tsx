@@ -12,8 +12,10 @@ export function AppFrame({ children, filters, about, header: showHeader = true, 
   </section>;
 }
 
-export function List({ children, label }: { children: ReactNode; label: string }) {
-  return <div className="loom-kit-list" role="group" aria-label={label}>{children}</div>;
+export function ListTitle({ className = '', ...props }: ComponentProps<'h2'>) { return <h2 {...props} className={`loom-kit-list-title ${className}`} />; }
+
+export function List({ children, label, title }: { children: ReactNode; label: string; title?: ReactNode }) {
+  return <div className="loom-kit-list" role="group" aria-label={label}>{title !== undefined && title !== null && title !== false && title !== '' && <ListTitle>{title}</ListTitle>}{children}</div>;
 }
 
 type WordsProps = { title: ReactNode; meta?: ReactNode; status?: ReactNode; tone?: 'bad' | 'warn' | 'ok' };

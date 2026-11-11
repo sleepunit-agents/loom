@@ -30,3 +30,5 @@
 .loom-kit-status[data-tone="bad"] { color: var(--v-pink); border-color: currentColor; }
 .loom-kit-status[data-tone="warn"] { color: var(--v-yellow); border-color: currentColor; }
 .loom-kit-status[data-tone="ok"] { color: var(--v-text-3); border-color: currentColor; }
+
+.loom-kit-list-title { min-width: 0; overflow-wrap: anywhere; margin: 0; padding: 8px 12px; font-family: var(--loom-font-data); font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--v-text-2); }

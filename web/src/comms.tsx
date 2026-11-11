@@ -26,7 +26,7 @@ import { refBits, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
 import { AppHeader } from './app-header';
-import { List, Row, Empty, Loading, Error as LoadError } from './kit';
+import { List, ListTitle, Row, Empty, Loading, Error as LoadError } from './kit';
 import { attentionNow, onAttention } from './attention';
 import { useOtherThreads, useThreads } from './threads-live';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatThread } from '@/components/ui/agent-chat';
@@ -444,8 +444,7 @@ function ThreadList({ threads, live, marks, current, csrf, onOpen, onNew, reload
     <nav className="comms-list" aria-label="Threads">
       <AppHeader title="Comms" where="/comms" go={() => {}} actions={<button type="button" className="comms-new" onClick={onNew}>+ New thread</button>} />
       {list.map(([label, rows]) => rows.length ? (
-        <List key={label} label={label}>
-          <h3 className="loom-data px-3 py-2 text-xs opacity-70">{label.toUpperCase()}</h3>
+        <List key={label} label={label} title={label.toUpperCase()}>
           <ul className="m-0 list-none p-0" data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
             onAction={(action) => void act(t, action)} onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </List>
@@ -931,7 +930,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             {!into && screen}
             <div className="comms-band__side">
               <section className="comms-people" aria-labelledby={`people-${thread.id}`}>
-                <h2 id={`people-${thread.id}`} className="loom-data text-xs opacity-70">IN THIS CONVERSATION</h2>
+                <ListTitle id={`people-${thread.id}`}>IN THIS CONVERSATION</ListTitle>
                 <ul>
                   <li><span className="loom-letter" aria-hidden style={{ '--c': markColor(mark.bg), '--ls': '24px' } as React.CSSProperties}>{mark.label[0]}</span>
                     <span className="comms-people__name">{mark.label}</span><span className="comms-people__what loom-data">{channelWord(face, link).toLowerCase()}</span></li>
@@ -939,7 +938,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                     <span className="comms-people__name">{member.split('-').map((w) => (w[0]?.toUpperCase() ?? '') + w.slice(1)).join(' ')}</span><span className="comms-people__what loom-data">you</span></li>
                 </ul>
               </section>
-              <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} />
+              <WorkPanel thread={thread.id} conversation={thread.conversation} csrf={csrf} replySeq={lastReply?.seq ?? 0} heading />
             </div>
           </div>
         )}
