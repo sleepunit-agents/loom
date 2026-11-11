@@ -32,15 +32,26 @@ const timer = setInterval(() => {
     const requests: Promise<unknown>[] = [];
     const bounded = async (at = Date.now(), concurrent = false) => {
       let done = 0;
-      const calls = Array.from({length: concurrent ? 2 : 1}, () => {
+      const start = () => {
         const pending = pieceManifests(env, at).then(r => { done++; return r; });
         requests.push(pending);
         return pending;
-      });
-      await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS - 1);
+      };
+      const calls = [start()];
+      if (concurrent) {
+        await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS / 2);
+        calls.push(start());
+      }
+      await vi.advanceTimersByTimeAsync((concurrent ? PIECE_TIMEOUT_MS / 2 : PIECE_TIMEOUT_MS) - 1);
       expect(done).toBe(0);
       await vi.advanceTimersByTimeAsync(1);
-      expect(done).toBe(calls.length);
+      expect(done).toBe(1);
+      if (concurrent) {
+        await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS / 2 - 1);
+        expect(done).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(done).toBe(2);
+      }
       for (const call of calls) expect(await call).toMatchObject({
         pieces: [], skipped: Array.from({length: count}, (_, i) => ({piece:`probe${i}`,reason:'timed out'})),
       });
