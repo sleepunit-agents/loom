@@ -595,6 +595,26 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
+  it('a slow action waits on the receipt database and keeps one result for retries', async () => {
+    const op = 'receipt-slow-body-12345678';
+    const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;
+    const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
+    await upload.started;
+    const path = join(h.home, 'collections', 'live.db');
+    const held = await hold(path, 'exclusive');
+    try {
+      const began = performance.now(); upload.finish(); await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
+      await held.release(); expect(await upload.result).toBe(200);
+      const answer = JSON.parse(upload.text());
+      expect(answer).toMatchObject({ ok: true, receipt: { op, state: 'done' } });
+      expect(markIndexOf(loadHousehold(h.home)!, 'art')).toBe(4);
+      const retry = await fetch(`${base}/act/loom`, { method: 'POST', headers: { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' }, body });
+      expect(await retry.json()).toEqual(answer);
+    } finally { await held.release(); }
+  }, 20_000);
+
   it('a slow collection query rechecks its caller after its body arrives', async () => {
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'slow-query' }).token;
     const upload = uploading('/collections/query', JSON.stringify({ queries: [] }), { authorization: `Bearer ${token}`, 'content-type': 'application/json' });
@@ -611,7 +631,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const source = vi.spyOn(comms, 'messagesOf').mockImplementation(async (...args) => {
       if (args[2].id !== t.id) return original(...args);
       const after = args[3]?.after ?? 0;
-      return Array.from({ length: after === 0 ? comms.SINCE_MAX : 1 }, (_, i) => ({ ...first, seq: after + i + 1 }));
+      return Array.from({ length: after === 0 ? comms.SINCE_MAX : 1 }, (_, i) => ({ ...first, seq: after + i + 1, text: after === 0 ? 'first page t-4242' : 'last page t-4243' }));
     });
     const index = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
     index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.prepare('DELETE FROM comms_refs').run(); index.close();
@@ -621,7 +641,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       await delay(100); expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(performance.now() - began).toBeLessThan(1000); expect(await pending(backfill)).toBe(true);
       await held.release(); expect(await backfill).toBeGreaterThan(comms.SINCE_MAX);
-      expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4242', seq: comms.SINCE_MAX + 1 }));
+      expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4242', seq: comms.SINCE_MAX }));
+      expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4243', seq: comms.SINCE_MAX + 1 }));
       expect(backfilled(h.home)).toBe(true);
     } finally { source.mockRestore(); await held.release(); }
   }, 20_000);

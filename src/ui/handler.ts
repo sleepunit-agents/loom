@@ -86,7 +86,7 @@ import { registerCoreSource } from '../collections/core-types.js';
 import type { MemRecord } from '../collections/memory.js';
 import { AGENT_STATUS_DOMAIN, ATTENTION_DOMAIN, closeStream as subsClose, openStream as subsOpen, pullAfterAction, pullSoon } from '../collections/subs.js';
 import { GAP_MS, nudge } from '../collections/pull.js';
-import { beginOp, finishOp, withLog } from '../collections/log.js';
+import { beginOp, finishOp, liveDbPath, withLog } from '../collections/log.js';
 
 const COOKIE = 'loom_ui';
 /** Knowledge's Add a fact (its reader draws it over the list). */
@@ -1983,7 +1983,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const waitForWrite = async (): Promise<boolean> => {
     // Check at admission too: a credential revoked during upload must not join the authenticated lock line.
     if (changedAuthority()) return false;
-    await waitForLocks({ files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+    await waitForLocks({ write: full ? [liveDbPath(full.home)] : [], files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
     // Scope captured before the upload/wait is used only if it still holds. A changed scope reloads the page.
     return !changedAuthority();
   };
@@ -2269,6 +2269,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // which would sign whoever read the file in (sessions.ts keeps only hashes for the same reason).
     const opSession = createHmac('sha256', storeFor(opts).key).update(`loom-op\0${streamOwner(req, who)}`).digest('base64url');
     const opHome = (opts.household?.() ?? hh)?.home;
+    // Completion can follow a slow piece call: its receipt waits again, without re-running the accepted action.
+    const finishReceipt = async (state: 'done' | 'failed', answer: string, onlyAccepted = false): Promise<void> => {
+      if (op === null || !opHome) return;
+      await waitForLocks({ write: [liveDbPath(opHome)], budgetMs: WRITE_WAIT_MS });
+      withLog(opHome, (db) => finishOp(db, op, opSession, state, answer, onlyAccepted));
+    };
     // Without a household there's no shared store for receipts: the action runs as one without an id.
     if (op !== null && opHome) {
       if (!/^[A-Za-z0-9_-]{16,64}$/.test(op)) return send(res, 400, 'text/plain', 'bad operation id');
@@ -2283,7 +2289,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // ran that never answered stays accepted, and becomes unknown: never run again.
       res.once('finish', () => {
         if ([400, 403, 404, 413].includes(res.statusCode)) {
-          try { withLog(opHome, (db) => finishOp(db, op, opSession, 'failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true)); } catch { /* it stays accepted, then unknown */ }
+          void finishReceipt('failed', JSON.stringify({ ok: false, message: 'That didn\'t run.', receipt: { op, state: 'failed', why: 'it didn\'t run' } }), true).catch(() => { /* it stays accepted, then unknown */ });
         }
       });
     }
@@ -2470,10 +2476,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // A retry gets this same answer, never a second run. A one-time message (a secret, a link: `keep`) is never written
       // down: a retry hears it was done, and that it was shown once.
       const kept = result.keep ? JSON.stringify({ ok: result.ok, message: result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.', ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }) : answer;
-      if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', kept));
+      await finishReceipt(result.ok ? 'done' : 'failed', kept);
       return send(res, 200, 'application/json', answer);
     }
-    if (op !== null && opHome) withLog(opHome, (db) => finishOp(db, op, opSession, result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } })));
+    await finishReceipt(result.ok ? 'done' : 'failed', JSON.stringify({ ok: result.ok, message: result.keep ? (result.ok ? 'Done. What it showed was shown once.' : 'That didn\'t go through.') : result.message, ...(from ? { from } : {}), receipt: { op, state: result.ok ? 'done' : 'failed' } }));
     return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 
