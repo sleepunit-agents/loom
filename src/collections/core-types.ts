@@ -22,7 +22,7 @@ import type { Viewer } from './viewer.js';
  * member's read state), which registers itself for the household it serves. Answers the records that viewer gets, the
  * viewer's own choice already made (as any provider decides first); none registered: no records.
  */
-export type CoreSource = (viewer: Viewer, now: number, ids?: readonly string[]) => Promise<MemRecord[]>;
+export type CoreSource = (viewer: Viewer, now: number) => Promise<MemRecord[]>;
 const sources = new Map<string, Map<string, CoreSource>>();
 /** The core types whose records only a registered source makes. */
 const SOURCED = new Set(['attention', 'agent-status']);
@@ -213,7 +213,7 @@ export const CORE_TYPES: Readonly<Record<string, TypeDecl>> = {
 };
 
 /** Core's records of `type` that core, as the provider, answers this viewer: it decides first, as any provider does. */
-function recordsFor(h: Household, type: string, viewer: Viewer, now = Date.now(), ids?: readonly string[]): MemRecord[] {
+function recordsFor(h: Household, type: string, viewer: Viewer, now = Date.now()): MemRecord[] {
   if (type === 'project') {
     if (viewer.kind !== 'core' && !(viewer.kind === 'member' && viewer.household)) return [];
     return h.agents.flatMap((agent) => listProjects(agentDir(h, agent), { nowMs: now }).map((p) => ({
@@ -227,7 +227,7 @@ function recordsFor(h: Household, type: string, viewer: Viewer, now = Date.now()
   if (type === 'thread' || type === 'message') {
     if (viewer.kind === 'agent') return [];
     const mine = allThreads(h.home)
-      .filter((t) => (!ids || type === 'message' || ids.includes(t.id)) && h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
+      .filter((t) => h.agents.includes(t.agent) && (viewer.kind === 'core' || (t.member === viewer.person && viewer.agents.includes(t.agent))));
     if (type === 'message') return messageRecords(h.home, mine);
     const state = threadRowStates(h, mine);
     return mine.map((t) => ({ id: t.id, agent: t.agent, title: t.title, updated: t.last, opened: t.opened, pinned: t.pinned, archived: t.archived, project: t.project,
@@ -244,18 +244,15 @@ export async function coreAnswers(h: Household, viewer: Viewer, queries: readonl
   for (const q of queries) {
     const decl = CORE_TYPES[q.type];
     if (!decl) { out.push({ id: q.id, rows: [], more: false, error: 'unsupported-version' }); continue; }
-    const idClause = q.where.find(c => c[0] === 'id' && c[1] === 'in');
-    const ids = idClause ? idClause[2] as string[] : undefined;
-    const cacheKey = JSON.stringify([q.type, ids ?? null]);
-    if (!held.has(cacheKey)) {
+    if (!held.has(q.type)) {
       const src = sources.get(h.home)?.get(q.type);
       // A source that fails says unavailable for this answer, never "none" (which would read as everything gone).
       // A type whose records come from a source no one has registered yet (loom just started, no page asked yet): not
       // "none", which would read as nothing needing anyone, but unavailable until it is.
-      held.set(cacheKey, src ? await src(viewer, now, ids).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
-        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer, now, ids));
+      held.set(q.type, src ? await src(viewer, now).catch((e: unknown) => { process.stderr.write(`loom: collections ${q.type} failed: ${(e as Error).message}\n`); return 'unavailable' as const; })
+        : SOURCED.has(q.type) ? 'unavailable' : recordsFor(h, q.type, viewer, now));
     }
-    const recs = held.get(cacheKey)!;
+    const recs = held.get(q.type)!;
     if (q.type === 'message' && recs !== 'unavailable') {
       const answer = answerFrom(recs, { ...q, fields: [...new Set([...q.fields, 'thread', 'seq'])] }, decl, now);
       if (!q.fields.includes('message') || viewer.kind !== 'member') {

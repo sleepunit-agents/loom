@@ -29,7 +29,7 @@ import type { Household } from '../household.js';
 import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
-import { domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
+import { domainHead, domainOf, domainRow, nudgedSince, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
 import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
@@ -90,8 +90,6 @@ interface Sub {
   sent: Map<string, string>;
   /** An `ask` type's re-ask that went unanswered: asked again on the next pass. */
   retry?: boolean;
-  /** Changed keys for a complete core agent card window; other ask types keep full reconciliation. */
-  dirty?: Set<string>;
   /** A refused core message payload read was reported; recovery must be said even if rows are unchanged. */
   unavailable?: boolean;
   /** When it was last asked again (reaskSoon): the next waits out AGG_GAP_MS from then, never from the change. */
@@ -120,6 +118,7 @@ interface HomeState {
   puller: Puller;
   watcher?: FSWatcher;
   poll?: NodeJS.Timeout;
+  nudgeSeen: number;
   passing: Promise<void> | undefined;
   again: boolean;
   offBump?: () => void;
@@ -145,7 +144,7 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
   let h = homes.get(home);
   if (h) return h;
   const state: HomeState = {
-    household, env, streams: new Map(), passing: undefined, again: false,
+    household, env, streams: new Map(), nudgeSeen: Date.now(), passing: undefined, again: false,
     puller: new Puller(() => ({ env: env(), household: household() }), () => wantedOf(state)),
   };
   h = state;
@@ -173,7 +172,7 @@ function ensureRunning(h: HomeState): void {
   // Core's own threads move through comms.ts: their domain is pulled when they do, here (onBump) and in any other
   // process (a reply the runtime posts through another listener, a CLI), by the tick file every write leaves (comms.ts
   // bump). A tick that still holds this process's own stamp is that bump's echo: one write, one pull.
-  const commsMoved = () => pass(h);
+  const commsMoved = () => { void h.puller.soon('loom/thread'); if (wantedOf(h).has('loom/message')) void h.puller.soon('loom/message'); };
   h.offBump ??= onBump(commsMoved);
   if (!h.commsWatcher) {
     try {
@@ -228,7 +227,6 @@ export function unsubscribe(home: string, stream: string, session: string, ids: 
 export async function prepare(household: () => Household, env: () => NodeJS.ProcessEnv, p: Provider, type: string): Promise<{ startSeq: number }> {
   const h = homeOf(household, env);
   const domain = domainOfType(p, type);
-  h.puller.observed(domain);
   const home = h.household().home;
   const row = withLog(home, (db) => domainOf(db, domain, sourceOf(h.env(), p)).row);
   if (p.piece && p.changes && row.mode === 'log' && row.rev === null) await h.puller.now(domain);
@@ -432,11 +430,13 @@ async function passOnceWork(h: HomeState): Promise<void> {
   const home = h.household().home;
   const now = Date.now();
   // A nudge said a domain moved: pull it soon, if a subscription here reads it.
-  const nudged = withLog(home, pendingRefreshes);
-  const wanted = wantedOf(h);
-  // Pending hints remain visible until their owner commits. A busy listener must not lose them
-  // merely because it saw a tick: the owner may have been suspended or died.
-  for (const n of nudged) if (wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
+  const nudged = withLog(home, (db) => nudgedSince(db, h.nudgeSeen));
+  if (nudged.length) {
+    h.nudgeSeen = Math.max(h.nudgeSeen, ...nudged.map((n) => n.nudged));
+    const wanted = wantedOf(h);
+    // One word, one pull: a nudge a pull since then has already read (this listener's own, heard back) isn't pulled again.
+    for (const n of nudged) if (wanted.has(n.domain)) h.puller.nudged(n.domain, n.nudged);
+  }
   const installed = providers(h.env());
   for (const s of [...h.streams.values()]) {
     // The viewer, again, before anything is sent: gone is closed; changed is a new scope and every subscription resets.
@@ -478,12 +478,12 @@ async function passOnceWork(h: HomeState): Promise<void> {
           if (r.domain !== sub.domain) continue;
           if (r.epoch !== sub.epoch) { reset(s, sub, 'epoch'); gone = true; break; }
           // A type whose audience the provider decides per viewer is never routed by audience: it's asked again.
-          if (ask) { if (r.key.startsWith(`${sub.provider}/${sub.type}/`) && mayMoveAskedPage(sub, p, r, v)) { domainMoved = true; (sub.dirty ??= new Set()).add(r.key); } } else apply(sub, v, r, now);
+          if (ask) { if (r.key.startsWith(`${sub.provider}/${sub.type}/`) && mayMoveAskedPage(sub, p, r)) domainMoved = true; } else apply(sub, v, r, now);
         }
       }
       if (gone || !s.subs.has(sub.id)) continue;
       trim(sub);
-      if (ask && (domainMoved || sub.retry || sub.dirty?.size)) {
+      if (ask && (domainMoved || sub.retry)) {
         sub.retry = false;
         if (!sub.waiting) reaskSoon(h, sub.reask, s, sub, p);
         continue;
@@ -504,16 +504,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
  * authority on every re-ask. A delivered key always asks again (including deletion or a row moving out of range).
  * Other ask providers can keep viewer-dependent copies, so their log records cannot make this decision.
  */
-function mayMoveAskedPage(sub: Sub, p: Provider, row: LogRow, viewer: Viewer): boolean {
-  // Core's snapshot records the union of the members' copies. A change outside that union
-  // cannot change an undelivered row for this viewer. Delivered rows must still be removed.
-  if (!p.piece && sub.provider === 'loom' && !sub.delivered.has(row.key)) {
-    if (row.op === 'delete') return false;
-    if (row.audience) {
-      try { const a = parseAudience(JSON.parse(row.audience)); if (a && !admits(viewer, a, row.agent ?? undefined, sub.decl)) return false; } catch { /* conservative */ }
-    }
-    if (sub.type === 'agent-status' && row.agent && !matches({ agent: row.agent }, sub.query.where.filter(c => c[0] === 'agent'))) return false;
-  }
+function mayMoveAskedPage(sub: Sub, p: Provider, row: LogRow): boolean {
   if (p.piece || sub.provider !== 'loom' || sub.type !== 'message') return true;
   if (sub.delivered.has(row.key)) return true;
   // An unseen deletion can't add anything to this page. A missing/malformed upsert is conservative.
@@ -549,21 +540,14 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     if (wait) await new Promise((r) => setTimeout(r, wait));
     sub.askedAt = Date.now();
     const v = still();
-    // Only complete agent-card windows have a stable id-to-agent mapping and no tail to refill.
-    // Other ask types (viewer-dependent fields/ordering) still reconcile their bounded page.
-    const dirty = new Set(sub.dirty); sub.dirty?.clear();
-    const targeted = !p.piece && sub.type === 'agent-status' && !sub.partial && sub.boundary === null
-      && dirty.size > 0 && dirty.size <= sub.query.limit && !sub.query.aggregates.length;
-    const q: Query = targeted ? { ...sub.query, where: [...sub.query.where, ['id', 'in', [...dirty].map(k => k.slice(`${sub.provider}/${sub.type}/`.length))]] } : sub.query;
-    const got = v ? await reask(v, p, q).catch(() => undefined) : undefined;
+    const got = v ? await reask(v, p, sub.query).catch(() => undefined) : undefined;
     sub.waiting = false;
     if (s.subs.get(sub.id) !== sub || !v || !still()) return;
     // Not answered: what it holds stays as it was (a reset here would say the provider was busy with something), and
     // it's asked again on the next pass.
-    if (!got) { sub.retry = true; for (const key of dirty) (sub.dirty ??= new Set()).add(key); return; }
+    if (!got) { sub.retry = true; return; }
     if ('error' in got) {
       sub.retry = true;
-      for (const key of dirty) (sub.dirty ??= new Set()).add(key);
       if (!sub.unavailable) s.port.frame('rows', { sub: sub.id, scope: s.scope, status: 'unavailable' });
       sub.unavailable = true;
       return;
@@ -581,10 +565,9 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
       sub.delivered.set(key, orderKey(r, r.id as string, sub.query));
       sub.frame.upserts.set(key, got.rows[i]);
     });
-    for (const key of [...sub.delivered.keys()]) if ((!targeted || dirty.has(key)) && !now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.leaves.add(key); }
+    for (const key of [...sub.delivered.keys()]) if (!now.has(key)) { sub.delivered.delete(key); sub.byVals.delete(key); sub.sent.delete(key); sub.frame.leaves.add(key); }
     // Recovery and any changed rows arrive atomically; an unchanged recovery still sends its status.
     send(s, sub, recovered ? 'live' : undefined);
-    if (sub.dirty?.size) pass(h);
   })();
 }
 
@@ -656,17 +639,19 @@ export function pullPieceSoon(home: string, env: NodeJS.ProcessEnv, piece: strin
 /** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
  * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
 export function pullSoon(home: string, domains: readonly string[]): void {
-  for (const d of domains) void nudge(home, d).then(() => {
-    const h = homes.get(home);
-    if (h && wantedOf(h).has(d)) return h.puller.soon(d).then(() => deliverNow(home));
-  }).catch(() => undefined);
+  for (const d of domains) nudge(home, d);
+  const h = homes.get(home);
+  if (!h) return;
+  const wanted = wantedOf(h);
+  // Delivered as soon as each lands, not on the next pass.
+  for (const d of domains) if (wanted.has(d)) void h.puller.soon(d).then(() => deliverNow(home)).catch(() => undefined);
 }
 
 /** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them
  * for every other listener. */
 export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
-  await Promise.all(domains.map(d => nudge(home, d)));
+  for (const d of domains) nudge(home, d);
   const h = homes.get(home);
   if (!h) return;
   const wanted = wantedOf(h);
