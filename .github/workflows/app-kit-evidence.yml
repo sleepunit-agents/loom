@@ -68,6 +68,9 @@ jobs:
               test -s "$LOOM_SHOTS/conversation-$width-$look.png"
             done
           done
+          for look in neon daylight; do
+            test -s "$LOOM_SHOTS/comms-560-$look-drawer.png"
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:

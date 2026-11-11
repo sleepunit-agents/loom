@@ -40,12 +40,11 @@
 :root[data-look] .loom-tile__page .loom-state{background:none;box-shadow:none;border-radius:0}
 
 /* ---- apps that scroll their own panes fill the body, and the body holds still ---- */
-:root[data-look] .loom-tile__body:has(>.loom-tile__page>:is(.loom-split,.comms[data-wide],.loom-find-page)){overflow:hidden;scrollbar-gutter:auto}
-:root[data-look] .loom-tile__page>.comms[data-wide]{height:100cqh;min-height:300px;border:0;border-radius:0;background:none}
+:root[data-look] .loom-tile__body:has(>.loom-tile__page>:is(.loom-split,.loom-drawer-split,.loom-find-page)){overflow:hidden;scrollbar-gutter:auto}
 :root[data-look] .loom-tile__page>.loom-find-page{height:100cqh;border-radius:0;box-shadow:none;background:none}
 
 /* ---- anything else on a page (Projects' cards, Profile, a skeleton, a note that loom is out of reach): inset on the surface ---- */
-:root[data-look] .loom-tile__page>:not(.loom-pv,.loom-dash,.loom-split,.comms,.loom-find-page,.loom-agentwin){padding:16px var(--card-pad,24px) 24px}
+:root[data-look] .loom-tile__page>:not(.loom-pv,.loom-dash,.loom-split,.loom-drawer-split,.comms,.loom-find-page,.loom-agentwin){padding:16px var(--card-pad,24px) 24px}
 
 /* ---- an agent's window: its sections down the side the tile's height, past a line; its header a band ---- */
 :root[data-look] .loom-tile__page>.loom-agentwin[data-rail]{gap:0;min-height:100cqh}

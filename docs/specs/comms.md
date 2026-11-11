@@ -675,7 +675,7 @@ inside the band, so its height never changes however much work there is. The cha
 takes the rest of the height and scrolls on its own. Wherever there's width to spare, the people-and-work side takes
 it, never the comm screen.
 
-**Two panes** (the list at the left, 320 px, beside the thread) where Comms' box is 1100 px or wider: the list's 320,
+**Two panes** (the list at the left, 320 px, beside the thread) where Comms' box is 1151 px or wider (931 px beside the agents' rail): the list's 320,
 the comm screen's 224 and a people-and-work side of 320 or more, with room around them. **Narrower** (a mid-size
 window, Comms beside the widgets at 1280, a narrow tile): one pane, the thread with its band, the list a drawer from the
 menu button in its header; with no thread open the list fills the pane. The list stays as you move between threads. ⌘K's Find lists threads by title.
@@ -726,7 +726,7 @@ Neon OS's own, not copied from any game.
   the messages ("Art is working · Ran the tests · 0:12", or "is thinking…") show as they arrive.
 - **The composer's hint** (Enter to send · Shift+Enter for a new line) is faint, shows only while the composer has
   focus, and takes no line of its own (t-1925 C).
-- **In a box too narrow for two panes** (under 1100 px: a narrow tile, a mid-size desktop), the threads fold out as a drawer over the
+- **In a box too narrow for two panes** (under 1151 px, or 931 px beside the agents’ rail: a narrow tile, a mid-size desktop), the threads fold out as a drawer over the
   thread from the menu button in its header (t-1925 C): focus goes into it, Tab stays in it, Esc or the scrim closes it
   and gives focus back to the button, picking a thread closes it. With no thread open the list fills the pane. A phone
   keeps its list, then the thread with its way back.
@@ -1192,8 +1192,8 @@ A thread filed under a project already feeds its hub (section "Project" above). 
     - The desktop's band shows who's in the conversation (the agent, you) and a phone's thread has no band.
 18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
     the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes,
-    and one at a time when the Comms box is narrower than 1100 px (a narrow tile, a mid-size window): the list, then a
-    thread or New thread with the list in a drawer; 1099 px is one pane, 1100 two, and an open thread stays mounted
+    and one at a time when the Comms box is narrower than 1151 px (931 px beside the agents’ rail) (a narrow tile, a mid-size window): the list, then a
+    thread or New thread with the list in a drawer; 1150 px is one pane, 1151 two (930/931 beside the agents’ rail), and an open thread stays mounted
     across the edge.
     The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
     none.

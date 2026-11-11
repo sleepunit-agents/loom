@@ -1,0 +1,19 @@
+.loom-drawer-split { position: relative; display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: calc(100dvh - 300px); min-height: 440px; border: 1px solid var(--v-border); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
+.loom-drawer-split[data-one] { grid-template-columns: minmax(0, 1fr); }
+.loom-drawer-split__list { min-height: 0; display: flex; border-right: 1px solid var(--v-border); overflow-y: auto; }
+.loom-drawer-split[data-one] > .loom-drawer-split__list { border-right: 0; }
+.loom-drawer-split__list > *, .loom-drawer-split__panel > * { flex: 1; }
+.loom-drawer-split__reader { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.loom-drawer-split__reader[hidden] { display: none; }
+.loom-drawer-split__reader > * { flex: 1; }
+.loom-drawer-split__button { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px; color: var(--v-text-2); flex: none; }
+.loom-drawer-split__button[aria-expanded="true"] { background: color-mix(in srgb, var(--v-text) 8%, transparent); color: var(--v-text); }
+.loom-drawer-split__drawer { position: absolute; inset: 0; z-index: 40; display: grid; grid-template-columns: min(300px, 85%) 1fr; }
+.loom-drawer-split__panel { min-height: 0; overflow-y: auto; display: flex; background: var(--v-paper); box-shadow: 1px 0 0 var(--v-border), var(--shadow-float); animation: loom-drawer-in .18s ease-out; }
+.loom-drawer-split__scrim { background: var(--v-scrim); animation: loom-drawer-fade .18s ease-out; }
+@keyframes loom-drawer-in { from { transform: translateX(-24px); opacity: .4; } }
+@keyframes loom-drawer-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .loom-drawer-split__panel, .loom-drawer-split__scrim { animation: none; } }
+:root[data-look] .loom-tile__page > .loom-drawer-split { height: 100cqh; min-height: 300px; border: 0; border-radius: 0; background: none; }
+
+@media (hover: hover) and (pointer: fine) { .loom-drawer-split__button:hover { background: color-mix(in srgb, var(--v-text) 8%, transparent); color: var(--v-text); } }

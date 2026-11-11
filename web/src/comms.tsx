@@ -26,7 +26,7 @@ import { refBits, ThreadRefs, useHtmlRefs } from './comms-refs';
 import { ThreadAskCard, type ThreadAsk } from './comms-asks';
 import { onLive } from './page';
 import { AppHeader } from './app-header';
-import { List, ListTitle, Row, Empty, Loading, Error as LoadError } from './kit';
+import { List, ListTitle, Row, Empty, Loading, Error as LoadError, DrawerSplit, useDrawerSplit, SplitDrawerButton, type SplitDrawer } from './kit';
 import { attentionNow, onAttention } from './attention';
 import { useOtherThreads, useThreads } from './threads-live';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatThread } from '@/components/ui/agent-chat';
@@ -546,44 +546,6 @@ function ThreadModelChoice({ thread, csrf }: { thread: string; csrf: string }) {
   </>;
 }
 
-/** In a box too narrow for two panes, the threads fold out over the thread from a menu button, as chat apps do. */
-type Drawer = { open: boolean; toggle: () => void };
-function DrawerButton({ open, toggle }: Drawer) {
-  return (
-    <button type="button" className="comms-drawer-btn" onClick={toggle} aria-label="Threads" aria-expanded={open} aria-controls="comms-drawer" data-drawer-btn="">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-    </button>
-  );
-}
-
-/** The drawer itself: the list over the pane, a scrim beside it. Focus goes in when it opens and back to the menu
- * button when it closes; Tab stays inside it; Esc and the scrim close it. */
-function ThreadsDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  const panel = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const first = panel.current?.querySelector<HTMLElement>('[aria-current="true"][data-split-row]') ?? panel.current?.querySelector<HTMLElement>('[data-split-row], button');
-    first?.focus();
-    // Back to this Comms' own menu button (the panel's box holds both).
-    const box = panel.current?.closest('.comms');
-    return () => { box?.querySelector<HTMLElement>('[data-drawer-btn]')?.focus(); };
-  }, []);
-  const keys = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-    if (e.key !== 'Tab' || !panel.current) return;
-    const all = [...panel.current.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,[tabindex]:not([tabindex="-1"])')];
-    if (!all.length) return;
-    const i = all.indexOf(document.activeElement as HTMLElement);
-    if (i < 0) { e.preventDefault(); all[0].focus(); return; }
-    if (e.shiftKey && i <= 0) { e.preventDefault(); all[all.length - 1].focus(); } else if (!e.shiftKey && i === all.length - 1) { e.preventDefault(); all[0].focus(); }
-  };
-  return (
-    <div className="comms-drawer" id="comms-drawer" role="dialog" aria-modal="true" aria-label="Threads" onKeyDown={keys}>
-      <div ref={panel} className="comms-drawer__panel">{children}</div>
-      <button type="button" className="comms-drawer__scrim" aria-label="Close threads" tabIndex={-1} onClick={onClose} />
-    </div>
-  );
-}
-
 // ---- one thread ----------------------------------------------------------------------------------
 
 /** The runtime's trace of a thread's replies (comms.md, "Tracing a reply"): its page, for the owner, by conversation. */
@@ -673,7 +635,7 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
 
 function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChanged, github, drawer }: {
   /** One pane in a narrow box (t-1925 C): the threads fold out from a menu button, not a way back. */
-  drawer?: Drawer;
+  drawer?: SplitDrawer;
   initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[]; asks?: ThreadAsk[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
   /** Whether it shows its own way back to the list: a phone's, or one pane at a time in a narrow window or tile. */
   back: boolean;
@@ -901,7 +863,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
       }}>
         <AppHeader title={thread.title ?? `New thread with ${mark.label}`} where={threadPath(thread.id)} go={() => {}} onTitle={rename}
           context={thread.project ?? undefined}
-          lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined}
+          lead={drawer ? <SplitDrawerButton {...drawer} label="Threads" /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined}
           actions={<div className="flex items-center gap-2">
             {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
             <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button></div>} />
@@ -991,11 +953,11 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
 
 /** A thread on its way (t-1925 F): what the list knows of it (its name, who with), at once, until its page lands and
  * the thread itself takes this place. Only the pane changes: the list beside it stays as it was. */
-function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; marks: Record<string, Mark>; wide: boolean; back: boolean; onBack: () => void; drawer?: Drawer }) {
+function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; marks: Record<string, Mark>; wide: boolean; back: boolean; onBack: () => void; drawer?: SplitDrawer }) {
   const mark = marks[t.agent] ?? { label: agentName(t.agent, marks), bg: 'pink', fg: '#000' };
   return (
     <article className="comms-thread comms-thread--opening" data-wide={wide || undefined} aria-busy="true">
-      <AppHeader title={t.title ?? `New thread with ${mark.label}`} where={threadPath(t.id)} go={() => {}} lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
+      <AppHeader title={t.title ?? `New thread with ${mark.label}`} where={threadPath(t.id)} go={() => {}} lead={drawer ? <SplitDrawerButton {...drawer} label="Threads" /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
       <div className="comms-thread__body">
         <Loading label="Opening conversation…" />
       </div>
@@ -1006,7 +968,7 @@ function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; ma
 
 // ---- a new thread ------------------------------------------------------------------------------
 
-function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (t: Thread) => void; onBack: () => void; wide: boolean; back: boolean; drawer?: Drawer }) {
+function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (t: Thread) => void; onBack: () => void; wide: boolean; back: boolean; drawer?: SplitDrawer }) {
   const [agent, setAgent] = useState(agents[0]);
   const [error, setError] = useState<string | null>(null);
   const id = useRef(newId());
@@ -1019,7 +981,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
   };
   return (
     <article className="comms-thread comms-new-thread" data-wide={wide || undefined}>
-      <AppHeader title="New thread" where="/comms/new" go={() => {}} lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
+      <AppHeader title="New thread" where="/comms/new" go={() => {}} lead={drawer ? <SplitDrawerButton {...drawer} label="Threads" /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined} />
       <div className="comms-pick" role="radiogroup" aria-label="Who with">
         {agents.map((a) => (
           <button key={a} type="button" role="radio" aria-checked={a === agent} className="comms-pick__agent" data-on={a === agent || undefined}
@@ -1082,46 +1044,21 @@ export function CommsView({ data }: { data: CommsData }) {
   const [opening, setOpening] = useState<Thread | null>(null);
   useEffect(() => { setMaking(false); setOpening(null); }, [data.thread?.id, data.which]);
   // The thread itself, not its id: one just started, or an archived one, isn't in the list's threads.
-  const open = (t: Thread) => { setMaking(false); setDrawerOpen(false); setOpening(t.id === data.thread?.id ? null : t); go(threadPath(t.id)); };
+  const open = (t: Thread) => { setMaking(false); layout.close(); setOpening(t.id === data.thread?.id ? null : t); go(threadPath(t.id)); };
   const back = () => { setMaking(false); setOpening(null); go('/comms'); };
-  // A desktop's Comms in a box narrower than two panes fit (a narrow window, a tile): one pane at a time, the list, then
-  // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
-  const box = useRef<HTMLDivElement>(null);
-  const [one, setOne] = useState(false);
-  // Beside a shown agents' rail the thread's comm screen is the rail's, so two panes fit narrower (ONE_PANE_BELOW_RAIL).
   const shownRail = !!useContext(RailContext)?.shown;
-  const hosted = useRef(shownRail);
-  hosted.current = shownRail;
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!wide || !el) return;
-    // Its border box, both times: the first read and every resize after measure the same edge.
-    const fit = (w: number) => setOne(w > 0 && w < (hosted.current ? ONE_PANE_BELOW_RAIL : ONE_PANE_BELOW));
-    fit(el.getBoundingClientRect().width);
-    const ro = new ResizeObserver(([e]) => fit(e.borderBoxSize?.[0]?.inlineSize ?? el.getBoundingClientRect().width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [wide, shownRail]);
+  const layout = useDrawerSplit({ active: wide, twoFrom: shownRail ? ONE_PANE_BELOW_RAIL : ONE_PANE_BELOW,
+    resetKey: `${data.thread?.id}:${data.which}:${making}` });
+  const { one, drawer } = layout;
   const asked = opening && opening.id !== (data.which === 'thread' ? data.thread?.id : undefined) ? opening : undefined;
-  // One pane (t-1925 C): the threads are a drawer over it, from the menu button in its header; picking one closes it.
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  useEffect(() => { setDrawerOpen(false); }, [data.thread?.id, data.which, making, one]);
-  const drawer: Drawer | undefined = wide && one ? { open: drawerOpen, toggle: () => setDrawerOpen((o) => !o) } : undefined;
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} drawer={drawer} />
     : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} drawer={drawer} />
     : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={changed} github={data.github} drawer={drawer} />
       : null;
   const list = <ThreadList threads={live ?? threads} live={isLive} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} onRemoved={back} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
-  // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
-  // draft, its live messages), only the list comes and goes.
-  return (
-    <div ref={box} className="comms" data-wide="" data-one={one ? '' : undefined}>
-      {one && pane ? null : list}
-      {pane ?? (one ? null : <Empty framed={false} title="Pick a thread, or start one" />)}
-      {one && pane && drawerOpen && <ThreadsDrawer onClose={() => setDrawerOpen(false)}>{list}</ThreadsDrawer>}
-    </div>
-  );
+  return <DrawerSplit className="comms" data-wide="" layout={layout} label="Threads" list={list} reader={pane}
+    blank={<Empty framed={false} title="Pick a thread, or start one" />} />;
 }
 
 export default CommsView;

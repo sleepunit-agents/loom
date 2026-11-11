@@ -124,6 +124,14 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         await p.getByRole('button', { name: 'Conversation header evidence', exact: true }).waitFor();
         expect(await noSideways(p)).toBe(true);
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-thread.png`) });
+        if (width === 1440) {
+          await p.locator('.comms').evaluate((el) => { (el as HTMLElement).style.width = '560px'; });
+          await p.locator('.comms[data-one]').waitFor();
+          await p.getByRole('button', { name: 'Threads', exact: true }).click();
+          await p.getByRole('dialog', { name: 'Threads', exact: true }).waitFor();
+          if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-560-${look}-drawer.png`) });
+          await p.keyboard.press('Escape');
+        }
         const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'session', place: `kit-${width}-${look}`, label: 'Conversation kit evidence', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art');
         await p.goto(`${base}/conversation/${cv.conversation}`);
         await p.locator('main [data-band], main .loom-kit-list').first().waitFor();
@@ -545,8 +553,11 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         if (w === null) return;
         const s = document.createElement('style'); s.id = 'hold'; s.textContent = `.comms { width: ${w}px !important; max-width: none !important; box-sizing: border-box; }`; document.head.append(s);
       }, w);
+      const alternate = openThread(h, process.env, h.members[0], { agent: 'art', id: 'drawerotherabcde', text: 'A distinct drawer destination' }).thread;
+      setTitle(h, alternate, 'Distinct drawer destination', 'member');
       const back = page.locator('.comms-thread .comms-back');
       await page.goto(`${base}/comms`);
+      await page.locator('.loom-drawer-split__list').waitFor();
       await page.locator('.comms-list').waitFor();
       await hold(560);
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
@@ -556,34 +567,49 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(rows).toBeGreaterThan(0);
       expect(await page.locator('.comms-list li .loom-letter').count()).toBe(rows);
       // A thread: the list makes way, and the threads fold out from the menu button in its header (t-1925 C).
-      const menu = page.locator('.comms-thread .comms-drawer-btn');
-      await page.locator('.comms-list [data-split-row]').first().click();
+      const menu = page.locator('.comms-thread .loom-drawer-split__button');
+      await page.locator(`[data-prefetch="/comms/${thread.id.replace(/^th:/, '')}"]`).click();
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-list').count()).toBe(0);
       expect(await back.count()).toBe(0);
       expect(await menu.getAttribute('aria-expanded')).toBe('false');
+      const target = await menu.boundingBox();
+      expect(target!.width).toBeGreaterThanOrEqual(44); expect(target!.height).toBeGreaterThanOrEqual(44);
       await menu.click();
-      const drawer = page.locator('.comms-drawer[role="dialog"]');
+      const drawer = page.locator('.loom-drawer-split__drawer[role="dialog"]');
       await drawer.waitFor();
       expect(await menu.getAttribute('aria-expanded')).toBe('true');
+      expect(await page.locator('.loom-drawer-split__reader').getAttribute('inert')).not.toBeNull();
+      expect(await drawer.getAttribute('id')).toBe(await menu.getAttribute('aria-controls'));
       // Focus goes in (the open thread's row), Tab stays in, Esc closes and gives focus back to the menu button.
-      expect(await page.evaluate(() => !!document.activeElement?.closest('.comms-drawer'))).toBe(true);
+      expect(await page.evaluate(() => !!document.activeElement?.closest('.loom-drawer-split__drawer'))).toBe(true);
+      const focusables = drawer.locator('.loom-drawer-split__panel').locator('button:not([disabled]),a[href],input,[tabindex]:not([tabindex="-1"])');
+      await focusables.first().focus();
+      await page.keyboard.press('Shift+Tab');
+      expect(await focusables.last().evaluate((el) => el === document.activeElement)).toBe(true);
+      await page.keyboard.press('Tab');
+      expect(await focusables.first().evaluate((el) => el === document.activeElement)).toBe(true);
       for (let n = 0; n < 12; n++) await page.keyboard.press('Tab');
-      expect(await page.evaluate(() => !!document.activeElement?.closest('.comms-drawer'))).toBe(true);
+      expect(await page.evaluate(() => !!document.activeElement?.closest('.loom-drawer-split__drawer'))).toBe(true);
       await page.keyboard.press('Escape');
       await expect.poll(() => drawer.count()).toBe(0);
       expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Threads');
       // The scrim closes it too; New thread from it opens in the pane, with the menu button.
       await menu.click(); await drawer.waitFor();
-      await page.locator('.comms-drawer__scrim').click();
+      await page.locator('.loom-drawer-split__scrim').click();
       await expect.poll(() => drawer.count()).toBe(0);
+      expect(await menu.evaluate((el) => el === document.activeElement)).toBe(true);
       await menu.click(); await drawer.waitFor();
       await drawer.locator('.comms-new').click();
       await page.locator('.comms[data-one] .comms-new-thread').waitFor({ timeout: 8000 });
-      expect(await page.locator('.comms-new-thread .comms-drawer-btn').isVisible()).toBe(true);
+      expect(await page.locator('.comms-new-thread .loom-drawer-split__button').isVisible()).toBe(true);
       // Picking a thread in it opens that thread and closes it.
-      await page.locator('.comms-new-thread .comms-drawer-btn').click(); await drawer.waitFor();
-      await drawer.locator('.comms-list [data-split-row]').first().click();
+      await page.locator('.comms-new-thread .loom-drawer-split__button').click(); await drawer.waitFor();
+      const picked = drawer.locator(`[data-prefetch="/comms/${alternate.id.replace(/^th:/, '')}"]`);
+      const destination = await picked.getAttribute('data-prefetch');
+      await picked.click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe(destination);
+      await page.locator('.comms-thread').getByRole('button', { name: 'Distinct drawer destination', exact: true }).waitFor();
       await page.locator('.comms[data-one] .comms-thread:not(.comms-new-thread)').waitFor({ timeout: 8000 });
       await expect.poll(() => drawer.count()).toBe(0);
       // /comms itself, one pane: the list, as before.
@@ -597,18 +623,37 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms-thread:not(.comms-thread--opening) .comms-composer').waitFor();
       await page.locator('.loom-rscreen .comms-screen').waitFor();
       await page.locator('.comms-composer textarea').fill('a draft kept across the width');
+      await page.locator('.comms-thread').evaluate((el) => { (window as unknown as Record<string, unknown>).__heldReader = el; });
       await hold(930);
       await page.waitForFunction(() => document.querySelector('.comms')?.hasAttribute('data-one'));
       await hold(931);
       await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-thread').count()).toBe(1);
+      expect(await page.locator('.comms-thread').evaluate((el) => el === (window as unknown as Record<string, unknown>).__heldReader)).toBe(true);
       expect(await back.count()).toBe(0);
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
       await hold(930);
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-thread').evaluate((el) => el === (window as unknown as Record<string, unknown>).__heldReader)).toBe(true);
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
       await hold(null);
       await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
+      const surface = await page.locator('.comms').evaluate((el) => {
+        const style = getComputedStyle(el); const tile = el.closest('.loom-tile__page')!;
+        return { border: style.borderTopWidth, radius: style.borderTopLeftRadius, background: style.backgroundColor,
+          height: el.getBoundingClientRect().height, tileHeight: tile.getBoundingClientRect().height };
+      });
+      expect(surface.border).toBe('0px'); expect(surface.radius).toBe('0px'); expect(surface.background).toBe('rgba(0, 0, 0, 0)');
+      expect(Math.abs(surface.height - surface.tileHeight)).toBeLessThanOrEqual(1);
+      // The same unchanged reader must survive the boundary without the agents' rail too.
+      await page.locator('.loom-arail').click({ button: 'right', position: { x: 2, y: 2 } });
+      await page.getByRole('menuitem', { name: 'Minimize to strip', exact: true }).click();
+      await hold(1150);
+      await page.locator('.comms[data-one] .comms-thread').waitFor();
+      expect(await page.locator('.comms-thread').evaluate((el) => el === (window as unknown as Record<string, unknown>).__heldReader)).toBe(true);
+      await hold(1151);
+      await page.locator('.comms:not([data-one]) .comms-list').waitFor();
+      expect(await page.locator('.comms-thread').evaluate((el) => el === (window as unknown as Record<string, unknown>).__heldReader)).toBe(true);
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }
   }, 45_000);
