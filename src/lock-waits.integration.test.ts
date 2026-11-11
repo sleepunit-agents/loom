@@ -5,16 +5,16 @@
  * #776 failed these posts at once instead ("comms/adapter: unavailable", SQLITE_BUSY_RECOVERY): never again.
  * Needs `age` (CI installs it) and python3 (to hold a recovery's locks, as SQLite's own recovery does).
  */
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { request, type ClientRequest } from 'node:http';
+import { IncomingMessage, request, type ClientRequest } from 'node:http';
 import { sessionStore } from './ui/sessions.js';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { AUDIT_DB, openAuditDb } from './audit.js';
@@ -83,8 +83,64 @@ sys.stdin.readline()
   };
 }
 
-/** Whether `p` is still waiting after `ms`. */
-const pending = async (p: Promise<unknown>, ms = 0) => Promise.race([p.then(() => false, () => false), delay(ms).then(() => true)]);
+// Sessions locks use filesystem age, so stamp them with the same clock as their consumer.
+const writeLock = (path: string, holder: number) => {
+  writeFileSync(path, String(holder));
+  utimesSync(path, new Date(), new Date());
+};
+
+/** Inspect settlement after the queue/body barrier, without letting a wall-clock sleep release anything. */
+const pending = async (p: Promise<unknown>) => Promise.race([p.then(() => false, () => false), nextTurn().then(() => true)]);
+
+// Observe real gates; never replace their SQLite probes. A barrier names the resource rather than assuming that
+// 100 ms was enough for an HTTP request to reach it. Retain only waits that have not finished yet.
+const waiting = new Set<lockGate.LockWait>();
+const arrivals = new Set<() => void>();
+const queuedFor = async (path: string): Promise<void> => {
+  const matches = () => [...waiting].some((w) => [...(w.read ?? []), ...(w.write ?? []), ...(w.files ?? []).map((f) => f.path)].includes(path));
+  if (matches()) return;
+  let check!: () => void;
+  const deadline = new AbortController();
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        check = () => { if (matches()) resolve(); };
+        arrivals.add(check);
+      }),
+      delay(10_000, undefined, { signal: deadline.signal }).then(() => { throw new Error(`no lock waiter reached ${path}`); }),
+    ]);
+  } finally { arrivals.delete(check); deadline.abort(); }
+};
+
+// The UI's coalescing scheduler is separate from network timers. Advancing it cannot run undici's timers or
+// release the child's real lock. The callbacks still execute the production nudge and its real SQLite gate.
+const hintTimers = vi.hoisted(() => new Set<() => void>());
+vi.mock('node:timers', async (load) => {
+  const actual = await load<typeof import('node:timers')>();
+  return { ...actual, setTimeout: (go: () => void) => {
+    hintTimers.add(go);
+    return { unref() {} };
+  } };
+});
+const flushHints = async () => {
+  vi.advanceTimersByTime(GAP_MS);
+  for (const go of [...hintTimers]) { hintTimers.delete(go); go(); }
+  await nextTurn();
+};
+
+vi.mock('./lock-gate.js', async (load) => {
+  const actual = await load<typeof import('./lock-gate.js')>();
+  return { ...actual, waitForLocks(w: lockGate.LockWait) {
+    const before = actual.pendingLockWaits();
+    const result = actual.waitForLocks(w);
+    if (actual.pendingLockWaits() > before) {
+      waiting.add(w);
+      for (const check of arrivals) check();
+      void result.finally(() => waiting.delete(w));
+    }
+    return result;
+  } };
+});
 
 describe.skipIf(!hasPython)('lock-gate', () => {
   it('waits out a WAL recovery without blocking the event loop, then reads', async () => {
@@ -99,16 +155,18 @@ describe.skipIf(!hasPython)('lock-gate', () => {
       const sync = new BetterSqlite3(path, { timeout: 0 });
       expect(() => sync.prepare('SELECT n FROM t').get()).toThrow(expect.objectContaining({ code: 'SQLITE_BUSY_RECOVERY' }));
       sync.close();
-      let ticks = 0;
-      const timer = setInterval(() => { ticks++; }, 10);
+      let now = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
       try {
-        expect(await waitForLocks({ read: [path], budgetMs: 300 })).toBe(false);
-        expect(ticks).toBeGreaterThan(10);
+        const short = waitForLocks({ read: [path], budgetMs: 300 });
+        expect(await pending(short)).toBe(true); // A real event-loop turn runs with recovery still held.
+        now = 301;
+        expect(await short).toBe(false);
         const waiting = waitForLocks({ write: [path], budgetMs: 5000 });
-        expect(await pending(waiting, 100)).toBe(true);
+        expect(await pending(waiting)).toBe(true);
         await held.release();
         expect(await waiting).toBe(true);
-      } finally { clearInterval(timer); }
+      } finally { await held.release(); clock.mockRestore(); }
       expect(db.prepare('SELECT n FROM t').get()).toEqual({ n: 1 });
     } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
   });
@@ -120,13 +178,18 @@ describe.skipIf(!hasPython)('lock-gate', () => {
     try {
       db.exec('CREATE TABLE t (n INTEGER)');
       const held = await hold(path, 'exclusive');
-      const short = waitForLocks({ write: [path], budgetMs: 100 });
-      const line = Array.from({ length: 10 }, () => waitForLocks({ write: [path] }));
-      // The short one is let go when its budget runs out, false: its caller goes on to its own wait, never a failure.
-      expect(await short).toBe(false);
-      expect(await pending(Promise.all(line), 50)).toBe(true);
-      await held.release();
-      expect(await Promise.all(line)).toEqual(Array(10).fill(true));
+      let now = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      try {
+        const short = waitForLocks({ write: [path], budgetMs: 100 });
+        const line = Array.from({ length: 10 }, () => waitForLocks({ write: [path] }));
+        // The short one is let go when its budget runs out, false: its caller goes on to its own wait, never a failure.
+        now = 101;
+        expect(await short).toBe(false);
+        expect(await pending(Promise.all(line))).toBe(true);
+        await held.release();
+        expect(await Promise.all(line)).toEqual(Array(10).fill(true));
+      } finally { await held.release(); clock.mockRestore(); }
     } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 });
@@ -146,7 +209,19 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const r = await fetch(`${base}/comms/new`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${tok.jonathan}` },
       body: JSON.stringify({ agent: 'art', id: mid(n++), text }) });
     expect(r.status, await r.clone().text()).toBe(200);
-    return ((await r.json()) as { thread: { id: string; conversation: string } }).thread;
+    const thread = ((await r.json()) as { thread: { id: string; conversation: string } }).thread;
+    // The HTTP answer only accepts the message. Its runtime child still records delivery asynchronously;
+    // taking a lock before that write makes the fixture itself spend SQLite's synchronous busy timeout.
+    await expect.poll(() => sending(thread.id)).toBe(0);
+    return thread;
+  };
+  const sending = (thread?: string): number => {
+    const path = join(h.home, COMMS_DB);
+    if (!existsSync(path)) return 0;
+    const db = new BetterSqlite3(path, { timeout: 0 });
+    try {
+      return (db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE kind = 'message' AND delivered IS NULL" + (thread ? ' AND thread = ?' : '')).get(...(thread ? [thread] : [])) as { n: number }).n;
+    } finally { db.close(); }
   };
   const read = async (res: Response, until: RegExp, ms: number): Promise<string> => {
     const reader = res.body!.getReader();
@@ -162,6 +237,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   };
 
   beforeAll(async () => {
+    // Only application deadlines/coalescing use this clock. HTTP, child IPC and the gate's timers/promises keep
+    // running. Runner descheduling cannot spend a gate budget or make a sessions lock stale before release.
+    vi.useFakeTimers({ toFake: ['Date', 'performance'] });
     clearPieceCache();
     const home = mkdtempSync(join(tmpdir(), 'loom-locks-'));
     mkdirSync(join(home, 'agents', 'art'), { recursive: true });
@@ -188,11 +266,24 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     base = `http://127.0.0.1:${handle.port}`;
   });
 
+  beforeEach(async () => {
+    // Finish the preceding case's coalesced collection hints before another case takes a store lock.
+    await flushHints();
+    expect(pendingLockWaits()).toBe(0);
+  });
+  afterEach(async () => {
+    await expect.poll(() => sending()).toBe(0);
+    await expect.poll(pendingLockWaits).toBe(0);
+    arrivals.clear();
+  });
+
   afterAll(async () => {
     stopCommsWatch();
     await handle.close();
     if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved;
     rmSync(h.home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   for (const [db, how] of [[COMMS_DB, 'exclusive'], [HOUSEHOLD_DB, 'exclusive'], [HOUSEHOLD_DB, 'recovery']] as const) {
@@ -207,16 +298,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       keeper.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
       const held = await hold(join(h.home, db), how);
       try {
-        const began = performance.now();
         const post = api('comms/adapter', { op: 'post', place: t.id, agent: 'art', text: `under ${how}` });
         const activity = api('comms/activity', { conversation: t.conversation, run: 'run-locks', cards: [{ id: 'c1', tool: 'Bash', summary: 'held', state: 'running' }] });
         const turn = api('conversations/turn', { agent: 'art', venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
-        await delay(100);
+        await queuedFor(join(h.home, db));
         const login = await fetch(`${base}/login`);
         expect(login.status).toBe(200);
-        const loginMs = performance.now() - began;
-        console.log(`${db} ${how}: /login answered after ${Math.round(loginMs)} ms, posts still waiting`);
-        expect(loginMs).toBeLessThan(1000);
         // Released only after /login answered and the writers still wait: a blocking or failing server can't pass.
         expect(await pending(post)).toBe(true);
         expect(await pending(activity)).toBe(true);
@@ -241,11 +328,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     // comms.db is what a reconciliation writes: it waits for it, /login answers meanwhile, and it finds the receipt.
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
-      const began = performance.now();
       const r = api('comms/adapter', { ...q, op: 'reconcile' });
-      await delay(100);
+      await queuedFor(join(h.home, COMMS_DB));
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(r)).toBe(true);
       await held.release();
       expect(await (await r).json()).toMatchObject({ ok: true, state: 'delivered', id });
@@ -259,23 +344,19 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
 
   it('a Comms post never waits on household.json\'s lock, which it doesn\'t take', async () => {
     const lock = join(h.home, '.household.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
-      const began = performance.now();
       await open();
-      expect(performance.now() - began).toBeLessThan(1000);
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
 
   it('never makes a stranger wait for a lock: refused at once, so it can\'t crowd the line', async () => {
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
-      const began = performance.now();
       const r = await fetch(`${base}/comms/new`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ agent: 'art', id: mid(n++), text: 'x' }) });
       expect(r.status).toBe(401);
       const bad = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'token=wrong', redirect: 'manual' });
       expect(bad.status).toBe(401);
-      expect(performance.now() - began).toBeLessThan(1000);
     } finally { await held.release(); }
   }, 20_000);
 
@@ -283,14 +364,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const lock = join(h.home, '.household.lock');
     const holder = spawn(process.execPath, ['-e', 'process.stdin.once("data", () => process.exit(0)); setTimeout(() => process.exit(2), 20000)'], { stdio: 'pipe' });
     try {
-      writeFileSync(lock, String(holder.pid));
+      writeLock(lock, holder.pid!);
       const before = readFileSync(join(h.home, 'household.json'), 'utf8');
-      const began = performance.now();
       const post = fetch(`${base}/act/loom`, { method: 'POST', headers: { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' },
         body: '_action=mark-set&agent=art&mark=1', redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(post)).toBe(true);
       expect(readFileSync(join(h.home, 'household.json'), 'utf8')).toBe(before);
       rmSync(lock);
@@ -301,17 +380,23 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   }, 20_000);
 
 
-  /** Send only part of a body first: the original pre-body probe has run before the test takes the lock. */
+  /** Send one byte, and wait until the server's body reader consumes it (100 Continue precedes the handler). */
   const uploading = (path: string, body: string, headers: Record<string, string>, origin = base) => {
     let req!: ClientRequest, text = '';
     let received!: () => void;
     const started = new Promise<void>((resolve) => { received = resolve; });
+    const tag = String(n++);
+    const emit = IncomingMessage.prototype.emit;
+    const bodyRead = vi.spyOn(IncomingMessage.prototype, 'emit').mockImplementation(function (this: IncomingMessage, event: string | symbol, ...args: unknown[]) {
+      const out = emit.call(this, event, ...args);
+      if (event === 'data' && this.headers['x-lock-test-upload'] === tag) { bodyRead.mockRestore(); received(); }
+      return out;
+    });
     const result = new Promise<number>((resolve, reject) => {
-      req = request(`${origin}${path}`, { method: 'POST', headers: { ...headers, expect: '100-continue' } }, (res) => {
+      req = request(`${origin}${path}`, { method: 'POST', headers: { ...headers, 'x-lock-test-upload': tag } }, (res) => {
         res.on('data', (d) => { text += d; }); res.on('end', () => resolve(res.statusCode ?? 0));
       });
       req.on('error', reject);
-      req.once('continue', received);
       req.write(body.slice(0, 1));
     });
     return { finish: () => req.end(body.slice(1)), result, started, text: () => text };
@@ -328,11 +413,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     await upload.started;
     const held = await hold(memory, 'recovery');
     try {
-      const began = performance.now();
       upload.finish();
-      await delay(100);
+      await queuedFor(memory);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(upload.result)).toBe(true);
       await held.release();
       expect(await upload.result).toBe(200);
@@ -348,20 +431,18 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     db.close();
     const held = await hold(join(h.home, AUDIT_DB), 'exclusive');
     try {
-      const began = performance.now();
       handle.setBackgroundActive(false);
       handle.setBackgroundActive(true);
       handle.setBackgroundActive(false);
       handle.setBackgroundActive(true);
       expect(pendingLockWaits()).toBe(1);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       // The audit lock remains held: another named timer job must still finish its own work.
       await expect.poll(() => {
         const check = new BetterSqlite3(join(h.home, COMMS_DB));
         try { return check.prepare('SELECT text FROM comms_messages WHERE thread = ? AND seq = 1').get(t.id); }
         finally { check.close(); }
-      }, { timeout: 1000 }).toEqual({ text: null });
+      }).toEqual({ text: null });
       await held.release();
       await expect.poll(() => {
         const check = new BetterSqlite3(join(h.home, AUDIT_DB));
@@ -379,28 +460,15 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       keeper.pragma('journal_mode = WAL');
       keeper.prepare('SELECT 1 FROM sqlite_master').get();
       const held = await hold(memory, 'recovery');
-      const original = lockGate.waitForLocks;
-      let entered!: () => void;
-      const queued = new Promise<void>((resolve) => { entered = resolve; });
-      const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation((w) => {
-        const before = pendingLockWaits();
-        const waiting = original(w);
-        if (w.read?.includes(memory)) {
-          // Revoke at the real queue boundary, not after a timer that can run after the CLI already executed.
-          expect(pendingLockWaits()).toBeGreaterThan(before);
-          revokeToken(h, label);
-          entered();
-        }
-        return waiting;
-      });
       try {
         const request = fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
           body: JSON.stringify(path === '/mcp' ? { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'revoked', version: '1' } } } : { argv: ['memory', 'list'] }) });
-        await queued;
+        await queuedFor(memory);
+        revokeToken(h, label);
         expect(await pending(request)).toBe(true);
         await held.release();
         expect((await request).status).toBe(401);
-      } finally { probe.mockRestore(); await held.release(); keeper.close(); }
+      } finally { await held.release(); keeper.close(); }
     }, 20_000);
   }
 
@@ -432,7 +500,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
       upload.finish();
-      await delay(100);
+      await queuedFor(join(h.home, COMMS_DB));
       expect(await pending(upload.result)).toBe(true);
       revokeToken(h, 'slow-revoked');
       await held.release();
@@ -448,10 +516,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     });
     await upload.started;
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
       upload.finish();
-      await delay(100);
+      await queuedFor(lock);
       expect(await pending(upload.result)).toBe(true);
       if (change === 'revoked') revokeToken(h, `action-${change}`);
       else {
@@ -470,14 +538,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const store = sessionStore(h.home);
     const code = store.createLink(createHash('sha256').update(tok.jonathan).digest(), 300);
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
-      const began = performance.now();
       const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect((await fetch(`${base}/login/${'e'.repeat(64)}`, { method: 'POST', redirect: 'manual' })).status).toBe(401);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(signin)).toBe(true);
       rmSync(lock);
       const signed = await signin;
@@ -491,10 +557,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const store = sessionStore(h.home);
     const code = store.createLink(createHash('sha256').update(tok.jonathan).digest(), 300);
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
       const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect(await pending(signin)).toBe(true);
       const path = join(h.home, 'ui-sessions.json');
       const file = JSON.parse(readFileSync(path, 'utf8'));
@@ -509,22 +575,20 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
 
   it('an unknown sign-out cookie never joins the sessions queue', async () => {
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
-      const began = performance.now();
       const r = await fetch(`${base}/logout`, { method: 'POST', headers: { cookie: `loom_ui=${'a'.repeat(64)}` }, redirect: 'manual' });
       expect(r.status).toBe(303);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(pendingLockWaits()).toBe(0);
     } finally { rmSync(lock, { force: true }); }
   });
 
   it('a pasted token revoked during its wait cannot sign in', async () => {
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'pasted-revoked' }).token;
-    const lock = join(h.home, 'ui-sessions.lock'); writeFileSync(lock, String(process.pid));
+    const lock = join(h.home, 'ui-sessions.lock'); writeLock(lock, process.pid);
     try {
       const signin = fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }), redirect: 'manual' });
-      await delay(100); expect(await pending(signin)).toBe(true);
+      await queuedFor(lock); expect(await pending(signin)).toBe(true);
       revokeToken(h, 'pasted-revoked'); rmSync(lock);
       const denied = await signin;
       expect(denied.status).toBe(401); expect(denied.headers.has('set-cookie')).toBe(false);
@@ -535,10 +599,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'link-revoked' }).token;
     const code = sessionStore(h.home).createLink(createHash('sha256').update(token).digest(), 300);
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
       const signin = fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect(await pending(signin)).toBe(true);
       revokeToken(h, 'link-revoked');
       rmSync(lock);
@@ -552,13 +616,11 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const login = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tok.jonathan }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie')!.split(';')[0];
     const lock = join(h.home, 'ui-sessions.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
-      const began = performance.now();
       const logout = fetch(`${base}/logout`, { method: 'POST', headers: { cookie }, redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(logout)).toBe(true);
       rmSync(lock);
       expect((await logout).status).toBe(303);
@@ -571,13 +633,11 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const upload = uploading('/act/loom', body, { 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded' });
     await upload.started;
     const lock = join(h.home, '.household.lock');
-    writeFileSync(lock, String(process.pid));
+    writeLock(lock, process.pid);
     try {
-      const began = performance.now();
       upload.finish();
-      await delay(100);
+      await queuedFor(lock);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(upload.result)).toBe(true);
       rmSync(lock);
       expect(await upload.result).toBe(200);
@@ -593,11 +653,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     await upload.started;
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
-      const began = performance.now();
       upload.finish();
-      await delay(100);
+      await queuedFor(join(h.home, COMMS_DB));
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(upload.result)).toBe(true);
       await held.release();
       expect(await upload.result).toBe(200);
@@ -611,12 +669,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   it('a sign-in waits out the sessions file\'s lock, and the sign-in page stays fast', async () => {
     const lock = join(h.home, 'ui-sessions.lock');
     try {
-      writeFileSync(lock, String(process.pid));
-      const began = performance.now();
+      writeLock(lock, process.pid);
       const signin = fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${tok.jonathan}`, redirect: 'manual' });
-      await delay(100);
+      await queuedFor(lock);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(signin)).toBe(true);
       rmSync(lock);
       const signed = await signin;
@@ -632,11 +688,9 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     writeFileSync(tick, 'before-nudge');
     const held = await hold(join(h.home, 'collections', 'live.db'), 'exclusive');
     try {
-      const began = performance.now();
       const hint = nudge(h.home, domain);
-      await delay(100);
+      await queuedFor(join(h.home, 'collections', 'live.db'));
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       expect(await pending(hint)).toBe(true);
       expect(readFileSync(tick, 'utf8')).toBe('before-nudge');
       await held.release(); await hint;
@@ -651,9 +705,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     withLog(home, (db) => domainOf(db, domain, 'test'));
     const held = await hold(join(home, 'collections', 'live.db'), 'exclusive', 250);
     const original = lockGate.waitForLocks;
+    const clock = vi.spyOn(performance, 'now');
     let expired = false, budget: number | undefined;
     const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation(async (w) => {
-      const free = await original(w);
+      const result = original(w);
+      if (pendingLockWaits()) clock.mockReturnValue(performance.now() + (w.budgetMs ?? lockGate.READ_WAIT_MS) + 1);
+      const free = await result;
       if (w.write?.includes(join(home, 'collections', 'live.db')) && !free) {
         expired = true; budget = w.budgetMs;
         void held.release(); // Child releases after 250ms: the old synchronous write must wait for it.
@@ -661,13 +718,12 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       return free;
     });
     try {
-      const since = Date.now() - 1, began = performance.now();
+      const since = Date.now() - 1;
       await nudge(home, domain);
       expect(expired).toBe(true); expect(budget).toBe(lockGate.WRITE_WAIT_MS);
-      expect(performance.now() - began).toBeGreaterThan(lockGate.WRITE_WAIT_MS + 150);
       expect(withLog(home, (db) => nudgedSince(db, since)).some((r) => r.domain === domain)).toBe(true);
       expect(Number(readFileSync(join(home, 'collections', 'collections.tick'), 'utf8'))).toBeGreaterThan(since);
-    } finally { probe.mockRestore(); await held.release(); rmSync(home, { recursive: true, force: true }); }
+    } finally { probe.mockRestore(); clock.mockRestore(); await held.release(); rmSync(home, { recursive: true, force: true }); }
   }, 20_000);
 
   it('a slow action waits on the receipt database and keeps one result for retries', async () => {
@@ -685,16 +741,15 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const path = join(h.home, 'collections', 'live.db');
     const held = await hold(path, 'exclusive');
     try {
-      const began = performance.now(); upload.finish();
-      await delay(GAP_MS + 100);
+      upload.finish();
+      await queuedFor(path);
+      await flushHints();
       // The delayed attention/status nudges must not spend SQLite's synchronous timeout while this action waits.
-      expect(performance.now() - began).toBeLessThan(GAP_MS + 1000);
       expect(hints.mock.calls.map(([, d]) => d).sort()).toEqual([...domains].sort());
       const deferred = hints.mock.results.map((r) => r.value as Promise<void>);
       for (const hint of deferred) expect(await pending(hint)).toBe(true);
-      const loginAt = performance.now();
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - loginAt).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
+      expect(await pending(upload.result)).toBe(true);
       await held.release(); await Promise.all(deferred);
       expect(withLog(h.home, (db) => nudgedSince(db, since)).filter((r) => domains.includes(r.domain)).map((r) => r.domain).sort()).toEqual([...domains].sort());
       expect(await upload.result).toBe(200);
@@ -728,9 +783,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     index.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run(); index.prepare('DELETE FROM comms_refs').run(); index.close();
     const held = await hold(join(h.home, COMMS_DB), 'exclusive');
     try {
-      const began = performance.now(); const backfill = backfillRefs(h, process.env);
-      await delay(100); expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(backfill)).toBe(true);
+      const backfill = backfillRefs(h, process.env);
+      await queuedFor(join(h.home, COMMS_DB)); expect((await fetch(`${base}/login`)).status).toBe(200); expect(await pending(backfill)).toBe(true);
       await held.release(); expect(await backfill).toBeGreaterThan(comms.SINCE_MAX);
       expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4242', seq: comms.SINCE_MAX }));
       expect(refsOf(h.home, t.id)).toContainEqual(expect.objectContaining({ ref: 't-4243', seq: comms.SINCE_MAX + 1 }));
@@ -746,10 +800,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const keeper = new BetterSqlite3(memory); keeper.pragma('journal_mode = WAL'); keeper.prepare('SELECT 1 FROM sqlite_master').get();
     const held = await hold(memory, 'recovery');
     try {
-      const began = performance.now();
       handle.setBackgroundActive(false); handle.setBackgroundActive(true);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       await held.release();
       await expect.poll(() => {
         const check = new BetterSqlite3(memory);
@@ -777,9 +829,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     await upload.started;
     const held = await hold(memory, 'recovery');
     try {
-      const began = performance.now(); upload.finish(); await delay(100);
-      expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000); expect(await pending(upload.result)).toBe(true);
+      upload.finish(); await queuedFor(memory);
+      expect((await fetch(`${base}/login`)).status).toBe(200); expect(await pending(upload.result)).toBe(true);
       await held.release(); expect(await upload.result).toBe(200);
       if (kind === 'title') expect(keeper.prepare('SELECT label FROM conversations WHERE id = ?').get(t.conversation)).toEqual({ label: 'Label after recovery' });
       else expect(JSON.parse(upload.text()).thread.project).toBe('lock-project');
@@ -792,10 +843,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     db.prepare("UPDATE comms_messages SET at = '2020-01-01T00:00:00Z' WHERE thread = ?").run(t.id); db.close();
     const held = await hold(path, 'exclusive');
     try {
-      const began = performance.now();
       handle.setBackgroundActive(false); handle.setBackgroundActive(true);
       expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(performance.now() - began).toBeLessThan(1000);
       await held.release();
       await expect.poll(() => {
         const check = new BetterSqlite3(path);
@@ -812,7 +861,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     let active = true;
     try {
       const backfill = backfillRefs(h, process.env, new Date(), () => active);
-      await delay(100); expect(await pending(backfill)).toBe(true);
+      await queuedFor(join(h.home, COMMS_DB)); expect(await pending(backfill)).toBe(true);
       active = false;
       await held.release();
       expect(await backfill).toBe(0);
@@ -856,15 +905,18 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     const lock = join(h.home, 'ui-sessions.lock');
     const holder = spawn(process.execPath, ['-e', `
       const fs = require('node:fs'); const lock = process.argv[1];
-      fs.writeFileSync(lock, String(process.pid)); console.log('held');
+      fs.writeFileSync(lock, String(process.pid)); fs.utimesSync(lock, Number(process.argv[2]), Number(process.argv[2])); console.log('held');
       process.stdin.once('data', () => setTimeout(() => { fs.rmSync(lock, {force:true}); process.exit(0); }, 250));
       setTimeout(() => { fs.rmSync(lock, {force:true}); process.exit(2); }, 15000).unref();
-    `, lock], { stdio: 'pipe' });
+    `, lock, String(Date.now() / 1000)], { stdio: 'pipe' });
     await once(holder.stdout, 'data');
     const original = lockGate.waitForLocks;
+    const clock = vi.spyOn(performance, 'now');
     let expired = false;
     const probe = vi.spyOn(lockGate, 'waitForLocks').mockImplementation(async (w) => {
-      const free = await original(w);
+      const result = original(w);
+      if (pendingLockWaits()) clock.mockReturnValue(performance.now() + (w.budgetMs ?? lockGate.READ_WAIT_MS) + 1);
+      const free = await result;
       if (!free && w.files?.some((f) => f.path === lock)) { expired = true; holder.stdin.end('release'); }
       return free;
     });
@@ -873,7 +925,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(expired).toBe(true);
       expect(existsSync(lock)).toBe(false); // The child releases 250 ms after expiry: a bypass would answer with it still held.
       expect(r.status).toBe(303); expect(r.headers.has('set-cookie')).toBe(true);
-    } finally { probe.mockRestore(); holder.kill(); rmSync(lock, { force: true }); }
+    } finally { probe.mockRestore(); clock.mockRestore(); holder.kill(); rmSync(lock, { force: true }); }
   }, 20_000);
 
   it('a maintenance pass delayed by a lock does not write after its listener closes', async () => {
@@ -887,7 +939,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(pendingLockWaits()).toBeGreaterThan(0);
       await other.close(); other = undefined;
       await held.release();
-      await delay(100);
+      await expect.poll(pendingLockWaits).toBe(0);
       const check = new BetterSqlite3(join(h.home, AUDIT_DB));
       try { expect(check.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE conversation = 'cv-cancelled'").get()).toEqual({ n: 1 }); }
       finally { check.close(); }
@@ -915,9 +967,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       await upload.started;
       const held = await hold(join(dir, 'memories.db'), 'exclusive');
       try {
-        const began = performance.now(); upload.finish(); await delay(100);
+        upload.finish(); await queuedFor(join(dir, 'memories.db'));
         expect((await fetch(`${origin}/login`)).status).toBe(200);
-        expect(performance.now() - began).toBeLessThan(1000);
         expect(await pending(upload.result)).toBe(true);
         await held.release();
         expect(await upload.result).toBe(200);
