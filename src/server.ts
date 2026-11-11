@@ -190,6 +190,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'The identity defines who you are and how you should behave.',
       inputSchema:
       {
+        profile: z.enum(['full', 'work']).optional().describe('Work uses the agent-authored work-identity.md and omits boot tape, salience, preferences and harness boilerplate. Missing work identity keeps full identity. Owners, project and room still load.'),
         project: z.string().optional().describe(
           'Project context to load (loads project-specific memories). A project card\'s name (slug or alias) also adds a ' +
           '"# This project" block with its rendered card.',
@@ -219,7 +220,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people, conversation, run }) => {
+    async ({ project, client, model, role, people, conversation, run, profile }) => {
       // The body's conversation and run (docs/specs/conversations.md): kept for this session's
       // conversation_digest. Both or neither; a later identity call replaces them.
       if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
@@ -231,7 +232,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const effectiveClient =
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
       // From a house, the tape carries only the digests of the conversation it holds (t-2118).
-      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller));
+      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller), profile);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
