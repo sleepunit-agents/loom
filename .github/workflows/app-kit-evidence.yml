@@ -48,8 +48,11 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
+          sudo apt-get install -y age
       - name: Capture the migrated apps only
         run: |
+          command -v age
+          command -v age-keygen
           cp "$RUNNER_TEMP/kit-fixtures/"*.ts src/ui/
           mkdir -p artifacts/app-kit
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
@@ -58,6 +61,13 @@ jobs:
           nice -n 19 npx vitest run src/ui/inbox-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
           nice -n 19 npx vitest run src/ui/comms-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
           nice -n 19 npx vitest run src/ui/changes-app.integration.test.ts --testNamePattern='1440|390' --maxWorkers=1
+          for width in 1440 390; do
+            for look in neon daylight; do
+              test -s "$LOOM_SHOTS/comms-$width-$look-list.png"
+              test -s "$LOOM_SHOTS/comms-$width-$look-thread.png"
+              test -s "$LOOM_SHOTS/conversation-$width-$look.png"
+            done
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:
