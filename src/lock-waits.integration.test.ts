@@ -28,6 +28,7 @@ import { HOUSEHOLD_DB } from './household-store.js';
 import * as lockGate from './lock-gate.js';
 import { pendingLockWaits, waitForLocks } from './lock-gate.js';
 import { clearPieceCache } from './ui/pieces.js';
+import { propose, listProposals } from './backends/proposals.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
@@ -604,6 +605,26 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       expect(signed.headers.get('set-cookie')).toContain('HttpOnly');
     } finally { rmSync(lock, { force: true }); }
   }, 20_000);
+  it('a slow Reject waits on its memory database', async () => {
+    const dir = agentDir(h, 'art');
+    const proposal = propose(dir, { category: 'feedback', title: 'Reject under contention', content: 'test', source: 'test' });
+    const upload = uploading('/a/art/act/loom', `_action=reject&id=${proposal.id}`, {
+      'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}`, 'content-type': 'application/x-www-form-urlencoded',
+    });
+    await upload.started;
+    const held = await hold(join(dir, 'memories.db'), 'exclusive');
+    try {
+      const began = performance.now(); upload.finish(); await delay(100);
+      expect((await fetch(`${base}/login`)).status).toBe(200);
+      expect(performance.now() - began).toBeLessThan(1000);
+      expect(await pending(upload.result)).toBe(true);
+      await held.release();
+      expect(await upload.result).toBe(200);
+      expect(JSON.parse(upload.text())).toMatchObject({ ok: true });
+      expect(listProposals(dir).some((p) => p.id === proposal.id)).toBe(false);
+    } finally { await held.release(); }
+  }, 20_000);
+
   it('a slow action waits on the receipt database and keeps one result for retries', async () => {
     const op = 'receipt-slow-body-12345678';
     const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;

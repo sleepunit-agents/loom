@@ -45,7 +45,7 @@ import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:z
 import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
-import { resolveRepoRoot } from '../config.js';
+import { resolveRepoRoot, resolveSqliteDbPath } from '../config.js';
 import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionsLock, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
 import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
@@ -1980,10 +1980,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     sendJson(res, 403, { error: 'this sign-in or its permissions changed; reload and try again' });
     return true;
   };
-  const waitForWrite = async (): Promise<boolean> => {
+  const waitForWrite = async (write: string[] = []): Promise<boolean> => {
     // Check at admission too: a credential revoked during upload must not join the authenticated lock line.
     if (changedAuthority()) return false;
-    await waitForLocks({ write: full ? [liveDbPath(full.home)] : [], files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
+    await waitForLocks({ write: [...(full ? [liveDbPath(full.home)] : []), ...write], files: [...(full && tokens ? [householdLock(full.home)] : []), sessionsLock(full?.home ?? unscoped.contextDir)] });
     // Scope captured before the upload/wait is used only if it still holds. A changed scope reloads the page.
     return !changedAuthority();
   };
@@ -2257,7 +2257,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) {
       return send(res, 403, 'text/plain', 'forbidden: this form is stale or not from loom\'s page; reload and try again');
     }
-    if (!await waitForWrite()) return;
+    // Core memory mutations use the selected agent's store, including the unscoped core route.
+    const memory = sourceId === 'loom' ? [resolveSqliteDbPath(agentAct ? agentDir(hh!, agentAct[1]) : opts.contextDir)] : [];
+    if (!await waitForWrite(memory)) return;
     const action = form.get('_action') ?? '';
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');
