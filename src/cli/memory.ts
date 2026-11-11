@@ -156,8 +156,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       io.stderr(`memory recompute-salience takes no arguments.\n${USAGE}`);
       return 2;
     }
-    const n = recomputeSalienceForContext(env.contextDir, Date.now());
-    io.stdout(`recomputed salience for ${n ?? 0} memories\n`);
+    const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+    const n = recomputeSalienceForContext(env.contextDir, Date.now(), counts);
+    io.stdout(`recomputed salience for ${n ?? 0} memories; invalid timestamps: ${counts.invalidTimestamps}; future timestamps: ${counts.futureTimestamps}\n`);
     return 0;
   }
   // digest — preview the assembled boot digest (the same view injected at identity-load).

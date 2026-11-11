@@ -539,8 +539,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
-      const n = recomputeSalienceForContext(contextDir, Date.now());
-      return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories` }] };
+      const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+      const n = recomputeSalienceForContext(contextDir, Date.now(), counts);
+      return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories; invalid timestamps: ${counts.invalidTimestamps}; future timestamps: ${counts.futureTimestamps}` }] };
     },
   );
 

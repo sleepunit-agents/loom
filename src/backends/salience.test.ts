@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   temperature,
+  recomputeSalience,
+  pickForDigest,
   tierOf,
   assembleDigest,
   recomputeSalienceForContext,
@@ -173,6 +175,7 @@ describe('recompute + digest through the real store', () => {
     await remember(tmpDir, { category: 'project', title: 'New thread', content: 'today' });
     // Age the first one's timestamps by 60 days (simulate the passage of time).
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    db.prepare('UPDATE memories SET created = ?, updated = NULL WHERE title = ?').run(daysAgo(0), 'New thread');
     db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL WHERE title = ?')
       .run(daysAgo(60), 'Old thread');
     db.close();
@@ -193,6 +196,7 @@ describe('recompute + digest through the real store', () => {
     await remember(tmpDir, { category: 'project', title: 'Old thread', content: 'last month' });
     await remember(tmpDir, { category: 'project', title: 'New thread', content: 'today' });
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    db.prepare('UPDATE memories SET created = ?, updated = NULL WHERE title = ?').run(daysAgo(0), 'New thread');
     // Stored salience still says 1.0 for both, as if the lane never ran.
     db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL, salience = 1 WHERE title = ?')
       .run(daysAgo(60), 'Old thread');
@@ -276,4 +280,42 @@ describe('recall heat', () => {
     expect(data.atoms[0].tier).toBe('Hot');
     expect(data.atoms.at(-1)!.tier).not.toBe('Hot');
   });
+});
+
+
+describe('timestamp hardening', () => {
+  it('reads malformed and future timestamps as cold without poisoning valid recall heat', () => {
+    for (const at of ['', 'NaN', 'not-a-date', daysAgo(-100)]) {
+      expect(temperature(at, 'project', NOW)).toBe(0);
+      expect(heatOf({ category: 'project', created: daysAgo(60), updated: at }, NOW)).toBe(0);
+      expect(heatOf({ category: 'project', created: at, updated: null,
+        recall_heat: 0.5, recall_heat_at: daysAgo(0) }, NOW)).toBe(0.5);
+      expect(heatOf({ category: 'project', created: daysAgo(10), updated: null,
+        recall_heat: 1, recall_heat_at: at }, NOW)).toBeCloseTo(0.5);
+    }
+  });
+
+  it('breaks equal heat ties independently of input order and handles NaN scalars', () => {
+    const rows = ['z', 'a', 'm'].map(title => ({ title, content: title, category: 'project', sourcing: null, salience: 1 }));
+    expect(pickForDigest(rows).map(r => r.title)).toEqual(['a', 'm', 'z']);
+    expect(pickForDigest([...rows].reverse())).toEqual(pickForDigest(rows));
+    expect(pickForDigest([{ ...rows[0], salience: NaN }, rows[1]]).map(r => r.title)).toEqual(['a', 'z']);
+  });
+
+  it('counts malformed and future timestamp fields and stores finite heat', () => {
+    const db = new BetterSqlite3(':memory:');
+    try {
+      db.exec(`CREATE TABLE memories (id INTEGER PRIMARY KEY, category TEXT, created TEXT, updated TEXT,
+        recall_heat REAL, recall_heat_at TEXT, salience REAL, archived INTEGER DEFAULT 0)`);
+      const insert = db.prepare('INSERT INTO memories (category, created, updated, recall_heat, recall_heat_at) VALUES (?, ?, ?, ?, ?)');
+      insert.run('project', 'NaN', daysAgo(-2), 1, 'bad');
+      insert.run('project', daysAgo(10), null, null, null);
+      const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+      expect(recomputeSalience(db, NOW, counts)).toBe(2);
+      expect(counts).toEqual({ invalidTimestamps: 2, futureTimestamps: 1 });
+      expect(db.prepare('SELECT salience FROM memories ORDER BY id').all()).toEqual([{ salience: 0 }, { salience: 0.5 }]);
+    } finally { db.close(); }
+  });
+
+  it.todo('metadata-only update preserves authored heat while still advancing the audit timestamp (requires a separate authored-write anchor)');
 });
