@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadIdentity, IDENTITY_PIECES, IDENTITY_CORE_BUDGET_BYTES } from './identity.js';
+import { FAILURE_THRESHOLD } from '../backends/recorder-health.js';
 import { run as wake } from '../cli/wake.js';
 
 vi.mock('../backends/salience.js', () => ({ digestForContext: () => 'TOP-OF-MIND\n' + 'd'.repeat(4774) }));
@@ -32,7 +33,8 @@ describe('identity core and pieces', () => {
 
   it('keeps measured Art core under budget with verbatim core and requested mode/project', async () => {
     const core = await load();
-    expect(Buffer.byteLength(core)).toBeLessThan(IDENTITY_CORE_BUDGET_BYTES);
+    expect(IDENTITY_CORE_BUDGET_BYTES).toBe(24_000);
+    expect(Buffer.byteLength(core)).toBeLessThan(24_000);
     expect(core).toContain('CREED\n' + 'c'.repeat(8056));
     expect(core).toContain('PREFERENCES\n' + 'p'.repeat(9230));
     for (const text of ['TOP-OF-MIND', 'RETRO PLAYBOOK', 'PROJECT BRIEF', '# Pieces']) expect(core).toContain(text);
@@ -41,10 +43,21 @@ describe('identity core and pieces', () => {
   });
 
   it('retrieves every indexed piece, containing only its sections', async () => {
-    const markers = { 'self-model': 'SELF-MODEL', harness: 'HARNESS', model: 'MODEL\n', 'last-24h': 'TAPE:cv-held', memories: 'LEGACY MEMORY' };
+    const markers = {
+      'self-model': '# Self-Model\n\nSELF-MODEL\n' + 's'.repeat(17760),
+      harness: '# Harness: claude-code\n\nHARNESS\n' + 'h'.repeat(15233) + '\n\n---\n\n## Runtime: Test\nCLIENT RESTRICTIONS',
+      model: '# Model: test-model\n\nMODEL\n' + 'm'.repeat(2593),
+      'last-24h': 'TAPE:cv-held\n' + 't'.repeat(6350),
+      memories: 'LEGACY MEMORY',
+    };
+    const headings = { 'self-model': '# Self-Model', harness: '# Harness:', model: '# Model:', 'last-24h': '# Last 24h', memories: '# Memories' };
     for (const name of Object.keys(IDENTITY_PIECES) as (keyof typeof markers)[]) {
       const piece = await load(name);
       expect(piece).toContain(markers[name]);
+      for (const [other, heading] of Object.entries(headings)) {
+        if (other !== name) expect(piece).not.toContain(heading);
+      }
+      if (name === 'self-model' || name === 'harness' || name === 'model') expect(piece).toBe(markers[name]);
       for (const text of ['# Identity', '# Preferences', '# Top of Mind', '# Mode:', '# Project:', '# Pieces']) expect(piece).not.toContain(text);
     }
     expect(await load('harness')).toContain('CLIENT RESTRICTIONS');
@@ -57,10 +70,26 @@ describe('identity core and pieces', () => {
     expect(selected).not.toContain('HARNESS');
     const all = await load('all');
     for (const text of ['CREED', 'PREFERENCES', 'TOP-OF-MIND', 'SELF-MODEL', 'HARNESS', 'MODEL\n', 'TAPE:cv-held', 'LEGACY MEMORY', 'RETRO PLAYBOOK', 'PROJECT BRIEF', 'CLIENT RESTRICTIONS']) expect(all).toContain(text);
+    for (const [label, body] of [['SELF-MODEL', 's'.repeat(17760)], ['HARNESS', 'h'.repeat(15233)], ['MODEL', 'm'.repeat(2593)], ['TAPE:cv-held', 't'.repeat(6350)]]) {
+      expect(all).toContain(label + '\n' + body);
+    }
     expect(all).not.toContain('# Pieces');
     const headings = ['# Identity', '# Preferences', '# Last 24h', '# Top of Mind', '# Self-Model', '# Mode:', '# Project:', '# Harness:', '# Model:', '# Memories', '## Runtime:'];
     const positions = headings.map(h => all.indexOf(h));
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('keeps recorder health warnings in default core and full, after the index', async () => {
+    await writeFile(join(dir, 'recorder-health.json'), JSON.stringify({
+      consecutiveFailures: FAILURE_THRESHOLD, failingSince: '2026-11-11T10:00:00.000Z',
+      lastError: 'disk full', lastSuccess: null,
+    }));
+    const core = await load();
+    expect(core).toContain('⚠️ Recorder Health Warning');
+    expect(core).toContain('disk full');
+    expect(core.indexOf('⚠️ Recorder Health Warning')).toBeGreaterThan(core.indexOf('# Pieces'));
+    expect(await load('all')).toContain('⚠️ Recorder Health Warning');
+    expect(await load('self-model')).not.toContain('Recorder Health Warning');
   });
 
   it('rejects unknown pieces and treats an explicit empty selection as no sections', async () => {
@@ -75,6 +104,7 @@ describe('identity core and pieces', () => {
     });
     expect(code).toBe(0);
     for (const text of ['CREED', 'SELF-MODEL', 'HARNESS', 'MODEL\n', 'TAPE:cv-held', 'CLIENT RESTRICTIONS']) expect(stdout).toContain(text);
+    for (const body of ['s'.repeat(17760), 'h'.repeat(15233), 'm'.repeat(2593), 't'.repeat(6350)]) expect(stdout).toContain(body);
     expect(stdout).not.toContain('# Pieces');
   });
 });
