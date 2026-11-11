@@ -131,7 +131,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     }, 45_000);
   }
 
-  it('keeps long conversation digests whole and follows Earlier steps', async () => {
+  it('keeps source-rendered conversation rows whole and follows Earlier steps', async () => {
     const dir = agentDir(h, 'art');
     const cv = recordTurn(dir, 'art', { venue: 'session', place: 'kit-full-content', label: 'Full conversation content', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art').conversation;
     const summary = Array.from({ length: 9 }, (_, i) => `Detail ${i}: every line of this conversation remains readable.`).join('\n') + '\nEND_OF_COMPLETE_DIGEST';
@@ -141,9 +141,10 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     try {
       await page.setViewportSize({ width: 390, height: 900 });
       await page.goto(`${base}/conversation/${cv}`);
-      const digest = page.locator('.loom-kit-title').filter({ hasText: 'END_OF_COMPLETE_DIGEST' });
+      const expected = summary.replace(/\s+/g, ' ').slice(0, 200); // the generic source's title (its full body is separate)
+      const digest = page.locator('.loom-kit-title').filter({ hasText: 'Detail 0:' });
       await digest.waitFor();
-      expect(await digest.textContent()).toBe(summary);
+      expect(await digest.textContent()).toBe(expected);
       const style = await digest.evaluate((el) => { const css = getComputedStyle(el); return { clamp: css.webkitLineClamp, whitespace: css.whiteSpace, clipped: el.scrollHeight > el.clientHeight + 1 }; });
       expect(style.clamp).toBe('none'); expect(style.whitespace).toBe('pre-line'); expect(style.clipped).toBe(false);
       await page.getByText('Read evidence step 100', { exact: true }).waitFor();
