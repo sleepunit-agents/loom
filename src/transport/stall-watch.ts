@@ -11,7 +11,60 @@
  *
  * Off with LOOM_STALL_MS=0. It never throws and never keeps the process alive.
  */
+import { AsyncLocalStorage, createHook } from 'node:async_hooks';
 import { monitorEventLoopDelay, performance, PerformanceObserver } from 'node:perf_hooks';
+
+/** Only code-owned labels belong here: never a path, viewer, query, token or request payload. */
+const jobContext = new AsyncLocalStorage<string>();
+const listeners = new Set<(label: string, at: number, ms: number) => void>();
+const resources = new Map<number, string>();
+interface JobFrame { label: string; at: number; resumed: number; own: number }
+const starts = new Map<number, JobFrame>();
+const stack: JobFrame[] = [];
+let hookEvents = 0, frames = 0;
+function enter(label: string): JobFrame {
+  frames++;
+  const at = performance.now(), parent = stack.at(-1);
+  if (parent) parent.own += at - parent.resumed;
+  const frame = { label, at, resumed: at, own: 0 };
+  stack.push(frame);
+  return frame;
+}
+function leave(frame: JobFrame): void {
+  const end = performance.now();
+  frame.own += end - frame.resumed;
+  stack.pop();
+  const parent = stack.at(-1);
+  if (parent) parent.resumed = end;
+  record(frame.label, frame.at, frame.own);
+}
+const record = (label: string, at: number, ms: number) => {
+  for (const listener of listeners) { try { listener(label, at, ms); } catch { /* evidence must never break work */ } }
+};
+// Time each continuation, not the lifetime of its promise (which includes I/O and lock waits). Only named work is
+// retained. One hook per process, disabled when the last watch stops; completed promises leave no retained entries.
+const jobHook = createHook({
+  init(id) { hookEvents++; const label = jobContext.getStore(); if (label) resources.set(id, label); },
+  before(id) { const label = resources.get(id); if (label) starts.set(id, enter(label)); },
+  after(id) {
+    const started = starts.get(id);
+    starts.delete(id);
+    if (started) leave(started);
+  },
+  destroy(id) { resources.delete(id); starts.delete(id); },
+  promiseResolve(id) { resources.delete(id); },
+});
+
+/** Counts only, for leak checks; never resource ids or the data a callback carries. */
+export const backgroundAttributionState = () => ({ resources: resources.size, running: starts.size, watches: listeners.size, hookEvents, frames, context: jobContext.getStore() });
+
+/** Name a background operation, including its later callbacks. Async sleep and child time are never loop time. */
+export function backgroundJob<T>(label: string, fn: () => T): T {
+  if (!listeners.size) return fn();
+  const frame = enter(label);
+  try { return jobContext.run(label, fn); }
+  finally { leave(frame); }
+}
 
 export type StallWatch = {
   /** A request began: returns its end. Only the method and the first path segment are kept. */
@@ -47,7 +100,21 @@ export function watchStalls(o: Opts = {}): StallWatch {
 
   const inFlight = new Map<number, { route: string; at: number }>();
   let nextId = 0;
-  const jobs: { label: string; at: number; ms: number }[] = [];
+  // Keep the slowest callback per label per tick: a burst of cheap callbacks can't evict the actual blocker.
+  const jobs = new Map<string, { label: string; at: number; ms: number }>();
+  const onJob = (label: string, at: number, ms: number) => {
+    const before = jobs.get(label);
+    if (!before || ms > before.ms) {
+      if (!before && jobs.size >= 128) {
+        const smallest = [...jobs.values()].reduce((a, b) => a.ms < b.ms ? a : b);
+        if (smallest.ms >= ms) return;
+        jobs.delete(smallest.label);
+      }
+      jobs.set(label, { label, at, ms });
+    }
+  };
+  if (!listeners.size) jobHook.enable();
+  listeners.add(onJob);
   const gcs: { at: number; ms: number }[] = [];
   let observer: PerformanceObserver | undefined;
   try {
@@ -60,24 +127,29 @@ export function watchStalls(o: Opts = {}): StallWatch {
   delay.enable();
 
   let last = now();
+  let cpu = process.cpuUsage();
   const tick = setInterval(() => {
     try {
       const t = now();
       const late = t - last - tickMs;
+      const spent = process.cpuUsage(cpu);
+      cpu = process.cpuUsage();
       const from = last;
+      const ran = [...jobs.values()].filter((j) => j.at + j.ms >= from).sort((a, b) => b.ms - a.ms);
+      jobs.clear();
       last = t;
       if (late < thresholdMs) return;
       // A stream open for minutes (an SSE feed, a held MCP session) didn't do it: counted, not listed.
       const recent = [...inFlight.values()].filter((r) => t - r.at <= late + 10_000);
       const streams = inFlight.size - recent.length;
       const flying = recent.sort((a, b) => a.at - b.at).map((r) => `${r.route} ${fmt(t - r.at)}`).slice(0, 12);
-      const ran = jobs.filter((j) => j.at + j.ms >= from).map((j) => `${j.label} ${fmt(j.ms)}`).slice(-12);
       const gc = gcs.filter((g) => g.at + g.ms >= from).reduce((s, g) => s + g.ms, 0);
       const mem = process.memoryUsage();
       log(`loom: event loop stalled ${fmt(late)}` +
         `; in flight: ${flying.length ? flying.join(', ') : 'none'}${streams ? ` (+${streams} long-lived)` : ''}` +
-        `; jobs: ${ran.length ? ran.join(', ') : 'none'}` +
-        `; gc ${fmt(gc)}; rss ${Math.round(mem.rss / 1e6)} MB, heap ${Math.round(mem.heapUsed / 1e6)} MB` +
+        `; jobs: ${ran.length ? ran.slice(0, 12).map((j) => `${j.label} ${fmt(j.ms)}`).join(', ') : 'none'}` +
+        `; slowest: ${ran.length ? `${ran[0].label} ${fmt(ran[0].ms)}` : 'unattributed'}` +
+        `; process cpu ${fmt((spent.user + spent.system) / 1000)}; gc ${fmt(gc)}; rss ${Math.round(mem.rss / 1e6)} MB, heap ${Math.round(mem.heapUsed / 1e6)} MB` +
         `; loop delay max ${fmt(delay.max / 1e6)}, p99 ${fmt(delay.percentile(99) / 1e6)}`);
       delay.reset();
     } catch { /* evidence never breaks the listener */ }
@@ -92,14 +164,15 @@ export function watchStalls(o: Opts = {}): StallWatch {
     },
     timed(label, fn) {
       const at = now();
-      try { return fn(); } finally {
+      try { return backgroundJob(label, fn); } finally {
         const ms = now() - at;
-        jobs.push({ label, at, ms });
-        if (jobs.length > 50) jobs.shift();
         if (ms >= jobMs) log(`loom: ${label} held the event loop ${fmt(ms)}`);
       }
     },
-    stop() { clearInterval(tick); delay.disable(); observer?.disconnect(); },
+    stop() {
+      clearInterval(tick); delay.disable(); observer?.disconnect(); listeners.delete(onJob);
+      if (!listeners.size) { jobHook.disable(); jobContext.disable(); resources.clear(); starts.clear(); stack.length = 0; }
+    },
   };
 }
 

@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 import { sameAskWords } from './ask-words.js';
 import { agentJobs } from './agent-jobs.js';
 /**
@@ -537,7 +538,7 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  */
 // The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at
 // start, off the event loop (zlib's thread pool), so nothing waits on it.
-setTimeout(async () => {
+setTimeout(() => backgroundJob('asset warmup', async () => {
   const dir = join(WEB_DIR, 'assets');
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
@@ -548,7 +549,7 @@ setTimeout(async () => {
     // Enqueuing the entire build here can hold fetch().json() behind Brotli11.
     await packAsset(file, body).catch(() => {});
   }
-}, 1_000).unref();
+}), 1_000).unref();
 function encoded(req: IncomingMessage, body: Buffer): { body: Buffer; headers: Record<string, string> } {
   const accepts = String(req.headers['accept-encoding'] ?? '');
   const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
@@ -1262,7 +1263,7 @@ function nudgeLive(home: string, domain: string): void {
   const k = `${home}\0${domain}`;
   if (liveNudgeLater.has(k)) return;
   const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
-  const go = () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); nudge(home, domain); };
+  const go = () => backgroundJob(`collection nudge ${domain}`, () => { liveNudgeLater.delete(k); liveNudgedAt.set(k, Date.now()); nudge(home, domain); });
   if (!wait) { go(); return; }
   const t = setTimeout(go, wait);
   t.unref?.();
@@ -1272,7 +1273,7 @@ function nudgeLive(home: string, domain: string): void {
 function nudgeAttention(home: string): void {
   if (nudgeLater.has(home)) return;
   const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
-  const go = () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); };
+  const go = () => backgroundJob('collection attention nudge', () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); nudge(home, ATTENTION_DOMAIN); });
   if (!wait) { go(); return; }
   const t = setTimeout(go, wait);
   t.unref?.();

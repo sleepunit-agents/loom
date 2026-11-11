@@ -1,3 +1,4 @@
+import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * A Comms thread's own live stream (docs/specs/comms.md, "Live" and rule 4): GET /comms/<thread>/events, server-sent
  * events, open while the thread is on screen. It sends one event, `message`, with `{seq}` (the thread's newest seq),
@@ -90,7 +91,7 @@ function ensure(home: string): void {
   const tick = () => {
     if (running) { again = true; return; }
     running = true;
-    void (async () => {
+    void backgroundJob('comms live tick', async () => {
       do {
         again = false;
         if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] })) { waiting(); return; }
@@ -109,7 +110,7 @@ function ensure(home: string): void {
           return;
         }
       } while (again);
-    })().finally(() => {
+    }).finally(() => {
       running = false;
       if (again) tick();
     });
@@ -117,7 +118,7 @@ function ensure(home: string): void {
   let watcher: FSWatcher | undefined;
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
-  const beat = setInterval(() => { for (const s of streams) write(s, ': beat\n\n'); }, BEAT_MS); beat.unref();
+  const beat = setInterval(() => backgroundJob('comms heartbeat', () => { for (const s of streams) write(s, ': beat\n\n'); }), BEAT_MS); beat.unref();
   homes.set(home, { watcher, poll, beat, seen: Date.now(), off: onBump(tick) });
 }
 
