@@ -20,9 +20,9 @@ import { agentDir, createToken, loadHousehold, revokeToken, type Household } fro
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from '../ui/pieces.js';
 import { clearOutOfContract, providers } from './serve.js';
-import { pullDomain } from './pull.js';
+import { nudge, pullDomain } from './pull.js';
 import { deliverNow, pullNow } from './subs.js';
-import { withLog, seedIndex, setCursor } from './log.js';
+import { withLog, seedIndex, setCursor, pendingRefreshes, refreshRequest } from './log.js';
 
 // A provider with a commit log: plog.json is [{rev, txn, op, id, record?, audience?}], records.json its current state.
 const PROVIDER_BIN = `#!${process.execPath}
@@ -249,6 +249,18 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
     ], aggregates: { count: { n: 3, exact: true } } });
     const text = JSON.stringify(ev.frames);
     for (const word of ['rev', 'txn', 'epoch']) expect(text).not.toContain(`"${word}"`);
+  });
+
+  it('keeps a paged backlog pending until its final transaction has been pulled', async () => {
+    const p = providers(process.env).get('tasks')!;
+    await pullDomain({ env: process.env, household: h }, p, 'tasks/task');
+    writeFileSync(join(h.home, 'change-page.json'), '2');
+    for (let i = 0; i < 40; i++) commit([{ op: 'upsert', id: `batch-${i}`, record: { title: `batch ${i}`, status: 'open', agent: 'art' }, audience: { owners: true } }]);
+    await nudge(h.home, 'tasks/task');
+    await pullDomain({ env: process.env, household: h }, p, 'tasks/task');
+    expect(withLog(h.home, pendingRefreshes).some(r => r.domain === 'tasks/task')).toBe(true);
+    await pullDomain({ env: process.env, household: h }, p, 'tasks/task');
+    expect(withLog(h.home, db => refreshRequest(db, 'tasks/task')).through).toBe(0);
   });
 
   it.each([1001, 35])('a %i-row transaction advances through pages and commits whole, even beyond the round budget', async (n) => {

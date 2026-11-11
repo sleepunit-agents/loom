@@ -1344,7 +1344,7 @@ function attentionFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
   return s.next;
 }
 
-async function buildAttention(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+async function buildAttention(base: UiOptions, full: Household, viewer: Viewer, ids?: readonly string[]): Promise<MemRecord[]> {
   if (viewer.kind === 'member') {
     const m = full.members.find((x) => x.person === viewer.person);
     if (!m) return [];
@@ -1384,7 +1384,7 @@ async function buildAttention(base: UiOptions, full: Household, viewer: Viewer):
  * viewer: each agent once, its audience exactly the members who own it, with a digest of every member's own copy (two
  * members' copies differ by their threads' jobs), so a change to any copy moves it and that member is asked again.
  */
-async function memberCards(base: UiOptions, full: Household, m: Member): Promise<Array<AgentCard & { activity?: unknown; activityUnavailable?: true }>> {
+async function memberCards(base: UiOptions, full: Household, m: Member, ids?: readonly string[]): Promise<Array<AgentCard & { activity?: unknown; activityUnavailable?: true }>> {
   const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
   const hh = own ? narrowed(full, own) : full;
   const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
@@ -1394,7 +1394,7 @@ async function memberCards(base: UiOptions, full: Household, m: Member): Promise
   // pieces), or that loom can't say what it's doing. "Active 4m ago" is said again in the window from `seen.at`.
   const runtime = pieces.some((p) => p.piece === 'runtime');
   // `activity` is always said (null: nothing fresh), so a window tells a 1.2 card with nothing to report from an older one.
-  return agentCards(hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, activity: tickerActivityOf(pieces, c.id, now).activity ?? null,
+  return agentCards(ids ? narrowed(hh, hh.agents.filter(a => ids.includes(a))) : hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, activity: tickerActivityOf(pieces, c.id, now).activity ?? null,
     ...(!runtime || c.state === 'unavailable' || c.state === 'broken' ? { activityUnavailable: true } : {}) }));
 }
 
@@ -1429,12 +1429,12 @@ function agentStatusFor(base: UiOptions, viewer: Viewer): Promise<MemRecord[]> {
   return s.next;
 }
 
-async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer): Promise<MemRecord[]> {
+async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer, ids?: readonly string[]): Promise<MemRecord[]> {
   if (viewer.kind === 'member') {
     const m = full.members.find((x) => x.person === viewer.person);
     if (!m) return [];
     // This member's own copy of each card (their threads' jobs): theirs alone.
-    return (await memberCards(base, full, m)).map((c) => statusRecord(c, { members: [viewer.person] }));
+    return (await memberCards(base, full, m, ids)).map((c) => statusRecord(c, { members: [viewer.person] }));
   }
   // The snapshot holds no member's card, only that one moved: a card carries its member's own threads' jobs (their titles
   // and links), and the snapshot's audience is every owner of the agent. What anyone is shown is asked again as them.
@@ -1443,7 +1443,7 @@ async function buildAgentStatus(base: UiOptions, full: Household, viewer: Viewer
   const whose = new Map<string, string[]>();
   const copies = new Map<string, ReturnType<typeof createHash>>();
   for (const m of full.members) {
-    for (const c of await memberCards(base, full, m)) {
+    for (const c of await memberCards(base, full, m, ids)) {
       const rec = statusRecord({ ...c, readings: c.readings.filter((r) => r.label !== 'Last seen') }, {});
       whose.set(c.id, [...(whose.get(c.id) ?? []), m.person]);
       if (!copies.has(c.id)) copies.set(c.id, createHash('sha256'));
@@ -1917,10 +1917,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // (never an agent owner's narrowed ones: each viewer's are made from their own membership).
   if (full) {
     const base = opts, home = full.home;
-    registerCoreSource(home, 'attention', (v) => attentionFor(base, v));
+    registerCoreSource(home, 'attention', async (v, _now, ids) => { const rows = await attentionFor(base, v); return ids ? rows.filter(r => ids.includes(r.id)) : rows; });
     // Each agent's card (t-2028), made by Home's own code for each viewer.
-    registerCoreSource(home, 'agent-status', (v) => agentStatusFor(base, v));
-    onChanged(home, () => { nudgeAttention(home); nudgeLive(home, AGENT_STATUS_DOMAIN); });
+    registerCoreSource(home, 'agent-status', (v, _now, ids) => ids ? buildAgentStatus(base, base.household!(), v, ids) : agentStatusFor(base, v));
+    onChanged(home, about => { nudgeAttention(home); if (about === '*') nudgeLive(home, AGENT_STATUS_DOMAIN); else for (const agent of about) void nudge(home, AGENT_STATUS_DOMAIN, agent); });
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
@@ -2462,6 +2462,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         .find((p) => pieceSource(p.piece).id === source.id)?.manifest.tab?.label;
       storeFor(opts).noteDone({ at: Math.floor(Date.now() / 1000), ok: result.ok, text: result.message.trim().slice(0, 300), source,
         ...(label ? { sourceLabel: label } : {}), ...(backLink ? { page: backLink } : {}) }, readerFor(opts, who));
+      if (opHome) nudgeAttention(opHome);
     }
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.

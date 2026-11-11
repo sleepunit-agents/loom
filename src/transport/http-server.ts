@@ -710,7 +710,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const raw = await collectBody(req, 1024);
     if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a nudge is a domain name');
-    let body: { domain?: unknown };
+    let body: { domain?: unknown; key?: unknown };
     try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     // Per token: the credential itself, as roleFor reads it, so another spelling of the header is the same token.
     const who = createHash('sha256').update(bearer.replace(/^Bearer\s+/i, '').trim()).digest('hex');
@@ -720,7 +720,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     nudgedAt.set(who, now);
     // Oldest first (a Map keeps insertion order): past the cap, the oldest go, whatever their age.
     for (const k of nudgedAt.keys()) { if (nudgedAt.size <= 4096) break; nudgedAt.delete(k); }
-    if (typeof body?.domain === 'string') collectionsNudge(h.home, body.domain);
+    if (typeof body?.domain === 'string') collectionsNudge(h.home, body.domain, typeof body.key === 'string' ? body.key : undefined);
     res.writeHead(202, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end('{"ok":true}');
   }
