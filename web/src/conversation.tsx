@@ -17,7 +17,7 @@ export default function ConversationView({ page }: { page: Page }) {
         {!items.length && <Empty title="No entries yet" />}
         {items.map((item, i) => {
           const href = item.page ? pageHref(item.page, ctx.source) : item.href;
-          return <LinkRow wrap key={i} href={href} title={<>{item.person && <Who person={item.person} />} {item.text}</>}
+          return <LinkRow wrap key={i} href={href} title={<>{item.person && <><Who person={item.person} /> </>}{item.text}</>}
             meta={item.meta} status={item.badge}
             onClick={(event) => { if (!item.page || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); if (href) go(href); }} />;
         })}
