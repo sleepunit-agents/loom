@@ -124,7 +124,7 @@ process.stdin.on('end', () => {
     // The face: a pixel canvas drawn at a whole scale, its CSS size its own pixels (never stretched by layout).
     const cv = document.querySelector<HTMLCanvasElement>(`${scr} .comms-screen__glass canvas`);
     const face = cv ? { k: cv.getBoundingClientRect().width / cv.width, ky: cv.getBoundingClientRect().height / cv.height } : null;
-    const list = document.querySelector('.comms > .comms-list')?.getBoundingClientRect();
+    const list = document.querySelector('.comms > .loom-drawer-split__list')?.getBoundingClientRect();
     const thread = document.querySelector('.comms-thread')!.getBoundingClientRect();
     return { inRail, band: Math.round(b.height), side: { scroll: side.scrollHeight, client: side.clientHeight }, glass: [glass.width, glass.height],
       chatFills: Math.abs(chat.top - b.bottom) <= 2 && Math.abs(chat.bottom - composer.top) <= 2 && chat.height > 120, inside,
