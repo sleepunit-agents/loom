@@ -9,7 +9,7 @@
  *    title); an agent owner never gets another agent's card;
  *  - live: a job that starts reaches a live subscription as a change of that agent's record, and `running` counts it.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +21,8 @@ import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { createConversationTables } from '../backends/conversations.js';
 import { openThread } from '../comms.js';
 import { nudge } from './pull.js';
+import { deliverNow, pullNow, pullsSettled } from './subs.js';
+import * as cardData from '../ui/data.js';
 import { clearPieceCache } from '../ui/pieces.js';
 import { stopCommsWatch } from '../ui/comms-live.js';
 import { closeAllBackends } from '../backends/index.js';
@@ -187,6 +189,42 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     expect(samArt.running).toBe(1);
   });
 
+  it('shares one log connection across a delivery pass with six subscribed windows', async () => {
+    await home('jonathan');
+    for (let n = 0; n < 6; n++) {
+      const ev = await openEvents(base, tok.jonathan); streams.push(ev);
+      expect((await ask('jonathan', { subscribe: true, stream: ev.hello.stream })).error).toBeUndefined();
+    }
+    await pullNow(h.home, 'loom/agent-status'); await pullsSettled(h.home);
+    const close = vi.spyOn(BetterSqlite3.prototype, 'close');
+    try {
+      await deliverNow(h.home);
+      const logConnections = close.mock.contexts.filter(db => db.name === join(h.home, 'collections', 'live.db'));
+      expect(logConnections).toHaveLength(1);
+    } finally { close.mockRestore(); }
+  }, 20_000);
+
+  it('coalesces keyed card rebuilds across six windows of the same viewer', async () => {
+    await home('jonathan');
+    const windows = [];
+    for (let n = 0; n < 6; n++) {
+      const ev = await openEvents(base, tok.jonathan); streams.push(ev); windows.push(ev);
+      expect((await ask('jonathan', { subscribe: true, stream: ev.hello.stream })).error).toBeUndefined();
+    }
+    await pullNow(h.home, 'loom/agent-status'); await pullsSettled(h.home);
+    await new Promise(r => setTimeout(r, 1700));
+    const tape = vi.spyOn(cardData, 'tapeRows');
+    try {
+      report({ mark: { state: 'working', readings: [], jobs: [{ id: 'new-mark-job', text: 'A new job', kind: 'lane', status: 'running', since }] } });
+      clearPieceCache();
+      await nudge(h.home, 'loom/agent-status', 'mark');
+      expect(await until(() => windows.every(ev => ev.frames.some(f => f.event === 'rows' &&
+        (f.data.upserts as Data[] | undefined)?.some(r => r.key === 'loom/agent-status/mark' && r.running === 1))))).toBe(true);
+      // One core snapshot plus at most two shared viewer builds (current and queued), never six per-window builds.
+      expect(tape.mock.calls.filter(([dir]) => dir === agentDir(h, 'mark')).length).toBeLessThanOrEqual(3);
+    } finally { tape.mockRestore(); }
+  }, 20_000);
+
   it('a job that starts reaches a live subscription as its agent\'s change; sam never hears a thread of jonathan\'s', async () => {
     await home('jonathan');
     const jon = await openEvents(base, tok.jonathan); streams.push(jon);
@@ -196,10 +234,12 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     report({ mark: { state: 'working', readings: [], jobs: [{ id: 'job-mark', text: 'Tidying the notes', kind: 'lane', status: 'running', since }] } });
     clearPieceCache();
     const t0 = Date.now();
-    nudge(h.home, 'loom/agent-status');
+    nudge(h.home, 'loom/agent-status', 'mark');
     const key = 'loom/agent-status/mark';
     expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.key === key && u.running === 1)))).toBe(true);
-    expect(Date.now() - t0).toBeLessThan(4_000);
+    const elapsed = Date.now() - t0;
+    process.stdout.write(`targeted agent-status seam: mark reached its viewer in ${elapsed} ms\n`);
+    expect(elapsed).toBeLessThan(2_000);
     // sam owns art only: mark's card never reaches them.
     await new Promise((r) => setTimeout(r, 300));
     expect(sam.frames.some((f) => JSON.stringify(f.data).includes('agent-status/mark'))).toBe(false);
