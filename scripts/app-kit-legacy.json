@@ -115,5 +115,21 @@
   ],
   "tiling/surface.css": [
     "loom-panel-rows"
+  ],
+  "work-steps.css": [
+    "work-plan__head",
+    "work-row",
+    "work-row__chev",
+    "work-row__count",
+    "work-row__exit",
+    "work-row__head",
+    "work-row__icon",
+    "work-row__more",
+    "work-row__name",
+    "work-row__over",
+    "work-row__result",
+    "work-row__time",
+    "work-row__toggle",
+    "work-rows"
   ]
 }

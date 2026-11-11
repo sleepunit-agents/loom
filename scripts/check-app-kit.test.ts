@@ -36,3 +36,11 @@ it('also flags underscore spellings', () => {
 it('flags camelCase row, header and empty names', () => {
   expect(structuralClasses('.customRow {} .customHeader {} .customEmpty {}')).toEqual(['customEmpty', 'customHeader', 'customRow']);
 });
+
+it('accepts the checked-in app styles while rejecting additions to work steps', async () => {
+  const { readFileSync } = await import('node:fs');
+  const baseline = JSON.parse(readFileSync(new URL('./app-kit-legacy.json', import.meta.url), 'utf8'));
+  const current = scan(new URL('../web/src', import.meta.url).pathname);
+  expect(additions(current, baseline)).toEqual([]);
+  expect(additions({ 'work-steps.css': [...current['work-steps.css'], 'work-new-row'] }, baseline)).toEqual(['work-steps.css: .work-new-row']);
+});

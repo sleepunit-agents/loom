@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'web/src/kit/**'
+      - 'scripts/app-kit-legacy.json'
+      - 'src/ui/*app*.test.ts'
       - 'web/src/inbox*'
       - 'web/src/changes*'
       - '.github/workflows/app-kit-evidence.yml'
