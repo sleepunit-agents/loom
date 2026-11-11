@@ -10,7 +10,7 @@ describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-  it.each([1, 8])('bounds concurrent cold, after-timeout and stale pending callers with %i producers', async (count) => {
+  it.each([[1, false], [8, false], [1, true], [8, true]] as const)('bounds concurrent cold, after-timeout and stale pending callers with %i producers (invalidated: %s)', async (count, invalidate) => {
     const root = mkdtempSync(join(tmpdir(), 'loom-deadline-'));
     dirs.push(root);
     const bin = join(root, 'bin');
@@ -62,6 +62,7 @@ const timer = setInterval(() => {
       // The first caller has timed out, but its producer is still pending. Neither
       // a fresh hit nor a synthetically stale hit is a last good answer.
       await bounded();
+      if (invalidate) expirePieceManifests();
       await bounded(Date.now() + CACHE_MS + 1);
     } finally {
       vi.useRealTimers();
@@ -70,7 +71,7 @@ const timer = setInterval(() => {
     }
     // An ordinary page read must see the late answer without a live refresh repairing it.
     await expect.poll(async () => (await pieceManifests(env)).pieces.length).toBe(count);
-    expect(readFileSync(join(root, 'started'), 'utf8').trim().split('\n')).toHaveLength(count);
+    expect(readFileSync(join(root, 'started'), 'utf8').trim().split('\n')).toHaveLength(count * (invalidate ? 2 : 1));
   }, 25_000);
 
   it('failed UI offers start only once per freshness window, or on that piece moving', async () => {
