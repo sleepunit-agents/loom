@@ -157,7 +157,7 @@ function RefPopover({ card, at, onClose }: { card: RefCard; at: HTMLElement; onC
   return createPortal(
     <div ref={box} className="comms-refcard" role="dialog" aria-label={`${KIND_WORD[card.kind]}: ${card.title}`} data-kind={card.kind}
       style={pos ? { left: pos.left, top: pos.top } : { visibility: 'hidden' }}>
-      <List label="Reference preview"><LinkRow title={card.title} meta={KIND_WORD[card.kind]} status={card.status} /></List>
+      <List label="Reference preview"><LinkRow title={card.title} meta={KIND_WORD[card.kind]} status={card.status} tone={card.tone} /></List>
       {page ? <a className="comms-refcard__open" href={page} onClick={(e) => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); onClose(); go(page); }}>Open</a>
         : href ? <a className="comms-refcard__open" href={href} target="_blank" rel="noopener noreferrer" onClick={onClose}>Open on GitHub ↗</a>
           : <span className="loom-data text-xs opacity-70">{card.kind === 'note' ? 'Notes have no page yet' : ''}</span>}

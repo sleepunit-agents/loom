@@ -44,9 +44,9 @@ function useMore(where: string, context?: string, more?: string) {
   return { open, toggle: () => setOpen((o) => !o), extra };
 }
 
-export function AppHeader({ title, lead, context, more, crumb, go, actions, where }: {
+export function AppHeader({ title, lead, context, more, crumb, go, actions, where, onTitle }: {
   title: string; lead?: ReactNode; context?: string; more?: string; crumb?: { label: string; href: string };
-  go: (href: string) => void; actions?: ReactNode; where: string;
+  go: (href: string) => void; actions?: ReactNode; where: string; onTitle?: () => void;
 }) {
   const { open, toggle, extra } = useMore(where, context, more);
   return (
@@ -62,7 +62,7 @@ export function AppHeader({ title, lead, context, more, crumb, go, actions, wher
             </BreadcrumbList></Breadcrumb>
           )}
           {/* A long title (a task's, a secret's name) wraps, a size down, rather than being cut. */}
-          {title && <h1 className={`line-clamp-3 break-words text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{title}</h1>}
+          {title && <h1 className={`line-clamp-3 break-words text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{onTitle ? <button type="button" className="text-left" onClick={onTitle} title="Rename">{title}</button> : title}</h1>}
           {context && <p className="line-clamp-2 break-words text-sm opacity-70">{context}</p>}
         </div>
         {extra && <InfoButton open={open} toggle={toggle} />}

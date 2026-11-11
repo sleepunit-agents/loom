@@ -36,7 +36,7 @@ function Row({ it }: { it: WorkItem }) {
   const url = safeUrl(it.url);
   return <li data-tone={it.tone} data-made={it.made || undefined}><LinkRow href={url}
     {...(url?.startsWith('https://') ? { target: '_blank', rel: 'noreferrer' } : {})}
-    title={it.title} status={<span data-tone={it.tone}>{it.status}</span>} meta={`${shortRef(it.ref)}${it.made ? ' · made here' : ''}`} /></li>;
+    title={it.title} status={it.status} tone={it.tone} meta={`${shortRef(it.ref)}${it.made ? ' · made here' : ''}`} /></li>;
 }
 
 /** Whether these moved tasks concern the panel: one it shows, or one made in its conversation. */

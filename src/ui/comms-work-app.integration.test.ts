@@ -134,6 +134,9 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
         ['Done', 't-12'],
       ]);
       expect(await tile.locator('.comms-work .loom-kit-row[href]').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
+      const tones = await tile.locator('.loom-kit-status[data-tone]').evaluateAll((els) => Object.fromEntries(els.map((el) => [el.getAttribute('data-tone'), getComputedStyle(el).color])));
+      expect(Object.keys(tones).sort()).toEqual(['bad', 'ok', 'warn']);
+      expect(new Set(Object.values(tones)).size).toBe(3);
       // Its rows inside the tile: nothing past its edge.
       const t = (await tile.boundingBox())!;
       expect(await widest(page)).toBeLessThanOrEqual(t.x + t.width + 1);

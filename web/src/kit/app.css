@@ -25,3 +25,8 @@
 .loom-kit-state[data-compact] { padding: 8px; border: 0; gap: 4px; text-align: left; justify-items: start; }
 .loom-kit-state[data-compact] [data-slot="empty-title"] { font-size: 14px; }
 .loom-kit-state[data-compact] [data-slot="empty-description"] { max-width: none; font-size: 12px; }
+
+.loom-kit-row[data-wrap] .loom-kit-title, .loom-kit-row[data-wrap] .loom-kit-meta { display: block; white-space: pre-line; -webkit-line-clamp: unset; overflow: visible; }
+.loom-kit-status[data-tone="bad"] { color: var(--v-pink); border-color: currentColor; }
+.loom-kit-status[data-tone="warn"] { color: var(--v-yellow); border-color: currentColor; }
+.loom-kit-status[data-tone="ok"] { color: var(--v-text-3); border-color: currentColor; }

@@ -900,10 +900,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
       <header className="relative border-b border-[var(--v-border)] p-3" onContextMenu={(e) => {
         e.preventDefault(); setMenu(false); setContext({ x: e.clientX, y: e.clientY });
       }}>
-        <AppHeader title={thread.title ?? `New thread with ${mark.label}`} where={threadPath(thread.id)} go={() => {}}
+        <AppHeader title={thread.title ?? `New thread with ${mark.label}`} where={threadPath(thread.id)} go={() => {}} onTitle={rename}
           context={thread.project ?? undefined}
           lead={drawer ? <DrawerButton {...drawer} /> : back ? <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button> : undefined}
-          actions={<div className="flex items-center gap-2"><button type="button" onClick={rename} title="Rename" aria-label="Rename conversation">Rename</button>
+          actions={<div className="flex items-center gap-2">
             {thread.state.working && !watching && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
             <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button></div>} />
         {context && <ThreadContextMenu thread={thread} at={context} close={closeContext} act={(action) => {

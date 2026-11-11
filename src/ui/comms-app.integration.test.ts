@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
-import { createConversationTables, recordTurn } from '../backends/conversations.js';
+import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { adapterCall, COMMS_DB, openThread, postActivity, recordDelivery, setTitle, threadFor } from '../comms.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { clearPieceCache } from './pieces.js';
@@ -118,6 +118,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-list.png`) });
         await row.click();
         await p.getByText('Sure. A framed portrait, a signal meter, and the channel line. See t-12.', { exact: false }).first().waitFor();
+        const dialog = p.waitForEvent('dialog').then((d) => d.dismiss());
+        await Promise.all([dialog, p.getByRole('button', { name: 'New thread with Art E Fish', exact: true }).click()]);
         expect(await noSideways(p)).toBe(true);
         if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `comms-${width}-${look}-thread.png`) });
         const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'session', place: `kit-${width}-${look}`, label: 'Conversation kit evidence', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art');
@@ -128,6 +130,30 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       } finally { await ctx.close(); }
     }, 45_000);
   }
+
+  it('keeps long conversation digests whole and follows Earlier steps', async () => {
+    const dir = agentDir(h, 'art');
+    const cv = recordTurn(dir, 'art', { venue: 'session', place: 'kit-full-content', label: 'Full conversation content', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'art').conversation;
+    const summary = Array.from({ length: 9 }, (_, i) => `Detail ${i}: every line of this conversation remains readable.`).join('\n') + '\nEND_OF_COMPLETE_DIGEST';
+    writeDigest(dir, { conversation: cv, run: 'kit-history' }, { summary });
+    for (let start = 0; start < 101; start += 25) postActivity(h, process.env, { conversation: cv, run: 'kit-history', cards: Array.from({ length: Math.min(25, 101 - start) }, (_, n) => ({ id: `step-${start + n}`, tool: 'Read', summary: `Read evidence step ${start + n}`, state: 'done' })) });
+    const { ctx, page } = await open(true);
+    try {
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.goto(`${base}/conversation/${cv}`);
+      const digest = page.locator('.loom-kit-title').filter({ hasText: 'END_OF_COMPLETE_DIGEST' });
+      await digest.waitFor();
+      expect(await digest.textContent()).toBe(summary);
+      const style = await digest.evaluate((el) => { const css = getComputedStyle(el); return { clamp: css.webkitLineClamp, whitespace: css.whiteSpace, clipped: el.scrollHeight > el.clientHeight + 1 }; });
+      expect(style.clamp).toBe('none'); expect(style.whitespace).toBe('pre-line'); expect(style.clipped).toBe(false);
+      await page.getByText('Read evidence step 100', { exact: true }).waitFor();
+      const earlier = page.getByRole('link', { name: 'Earlier steps', exact: true });
+      expect(await earlier.getAttribute('href')).toContain('?before=');
+      await earlier.click();
+      await page.getByText('Read evidence step 0', { exact: true }).waitFor();
+      expect(await page.getByText('Read evidence step 100', { exact: true }).count()).toBe(0);
+    } finally { await ctx.close(); }
+  }, 45_000);
 
   it('keeps its list live: a thread renamed elsewhere moves in the open list, and /comms isn\'t asked again (t-2027)', async () => {
     const { ctx, page, errors } = await open(false);

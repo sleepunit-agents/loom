@@ -16,16 +16,21 @@ export function List({ children, label }: { children: ReactNode; label: string }
   return <div className="loom-kit-list" role="group" aria-label={label}>{children}</div>;
 }
 
+type WordsProps = { title: ReactNode; meta?: ReactNode; status?: ReactNode; tone?: 'bad' | 'warn' | 'ok' };
+function Words({ title, meta, status, tone }: WordsProps) {
+  return <span className="loom-kit-words"><span className="loom-kit-title">{title}</span>{meta && <span className="loom-kit-meta">{meta}</span>}{status && <span className="loom-kit-status" data-tone={tone}>{status}</span>}</span>;
+}
+
 type RowProps = Omit<ComponentProps<'button'>, 'title'> & {
   title: ReactNode; meta?: ReactNode; icon?: ReactNode; status?: ReactNode; trailing?: ReactNode; actions?: ReactNode;
-  selected?: boolean; unread?: boolean; layout?: 'stack' | 'inline';
+  selected?: boolean; unread?: boolean; layout?: 'stack' | 'inline'; tone?: 'bad' | 'warn' | 'ok';
 };
 /** Open target and optional trailing controls are siblings, so actions never nest inside a button. */
-export const Row = forwardRef<HTMLButtonElement, RowProps>(function Row({ title, meta, icon, status, trailing, actions, selected, unread, layout = 'inline', className = '', ...props }, ref) {
+export const Row = forwardRef<HTMLButtonElement, RowProps>(function Row({ title, meta, icon, status, trailing, actions, selected, unread, tone, layout = 'inline', className = '', ...props }, ref) {
   const target = <button {...props} ref={ref} type="button" data-split-row="" className={`loom-kit-row ${className}`} data-layout={layout} data-icon={!!icon || undefined}
     data-unread={unread || undefined} aria-current={selected ? 'true' : undefined}>
     {unread && <span className="loom-kit-dot" aria-label="Unread" />}{icon}
-    <span className="loom-kit-words"><span className="loom-kit-title">{title}</span>{meta && <span className="loom-kit-meta">{meta}</span>}{status && <span className="loom-kit-status">{status}</span>}</span>
+    <Words title={title} meta={meta} status={status} tone={tone} />
     {trailing && <span className="loom-kit-trailing">{trailing}</span>}
   </button>;
   return actions ? <div className="loom-kit-row-shell">{target}<div className="loom-kit-row-actions">{actions}</div></div> : target;
@@ -43,7 +48,7 @@ export function Error({ title = 'Couldn’t load this', text, retry }: { title?:
 }
 
 /** A row with ordinary link semantics (modifier click, new tab and copy address). */
-export function LinkRow({ title, meta, status, href, ...props }: Omit<ComponentProps<'a'>, 'title'> & { title: ReactNode; meta?: ReactNode; status?: ReactNode }) {
-  const content = <span className="loom-kit-words"><span className="loom-kit-title">{title}</span>{meta && <span className="loom-kit-meta">{meta}</span>}{status && <span className="loom-kit-status">{status}</span>}</span>;
-  return href ? <a {...props} href={href} className={`loom-kit-row ${props.className ?? ''}`}>{content}</a> : <div className="loom-kit-row">{content}</div>;
+export function LinkRow({ title, meta, status, tone, href, wrap, ...props }: Omit<ComponentProps<'a'>, 'title'> & WordsProps & { wrap?: boolean }) {
+  const content = <Words title={title} meta={meta} status={status} tone={tone} />;
+  return href ? <a {...props} href={href} data-wrap={wrap || undefined} className={`loom-kit-row ${props.className ?? ''}`}>{content}</a> : <div data-wrap={wrap || undefined} className="loom-kit-row">{content}</div>;
 }
