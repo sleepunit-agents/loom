@@ -99,12 +99,11 @@ describe('c-loom-identity: harness from the handshake', () => {
     expect(out).not.toContain('DESKTOP-HARNESS-MARKER');
   });
 
-  // An unknown runtime gets the self-describe onboarding prompt (via its own
-  // normalized name) — NOT silently served someone else's harness.
-  it('an unknown peer gets the harness onboarding prompt', async () => {
+  // Missing manifests are absent; a peer never receives another runtime's manifest.
+  it('an unknown peer has no harness section', async () => {
     const out = await identityAs('mystery-x-runtime');
-    expect(out).toMatch(/harness_describe/);
-    expect(out).toMatch(/unknown/i);
+    expect(out).not.toContain('# Harness:');
+    expect(out).not.toContain('harness_describe');
     expect(out).not.toContain('DESKTOP-HARNESS-MARKER');
     expect(out).not.toContain('CODE-HARNESS-MARKER');
   });

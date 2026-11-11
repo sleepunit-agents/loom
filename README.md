@@ -39,13 +39,21 @@ an agent's persistent state:
   preferences, owners, Top of Mind, and requested project/room/mode context.
   Call this first. A short **Pieces** index points to on-demand sections:
   `identity({piece: "self-model"})`, `"harness"` (including the client adapter),
-  `"last-24h"`, `"model"`, or `"memories"` (legacy index). Pass `client` or
+  `"last-24h"`, or `"model"`. Any standard section (including core names such as
+  `"creed"`) can be selected. Pass `client` or
   `model` when loading their manifests; their environment defaults still apply.
   `identity({pieces: ["self-model", "harness"]})` loads only those sections;
   `piece` and `pieces` combine when both are given. `piece: "all"` returns the
-  historical full output. `loom wake` keeps that full output for shell fallbacks.
+  full output, including the legacy memory-index appendix. `loom wake` keeps
+  that full output for shell fallbacks. Missing sections are omitted, including
+  missing creed/model/harness files; no placeholder or onboarding error is emitted.
   Identity text is never summarized or truncated; the 24,000-byte core budget
   test guards the measured Art baseline, not arbitrary agent-authored files.
+  The shared contract in [`src/identity/sections.ts`](src/identity/sections.ts)
+  defines each section’s name, purpose, writer, boot policy, load trigger and
+  advisory UTF-8 byte budget. Every agent uses this table; the core/index/selection
+  are derived from it. Requested room/project/mode blocks and recorder warnings
+  remain supplements. Section budgets never truncate text.
 - **`dossier`** — loads Art's operating brief for a **worker body** — a body
   that executes tasks on Art's behalf but is NOT Art. Returns preferences and
   self-model reframed in the third person, plus an explicit push-back mandate:

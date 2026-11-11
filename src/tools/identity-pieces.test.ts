@@ -2,10 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadIdentity, IDENTITY_PIECES, IDENTITY_CORE_BUDGET_BYTES } from './identity.js';
+import { loadIdentity } from './identity.js';
+import { IDENTITY_SECTIONS, IDENTITY_CORE_BUDGET_BYTES } from '../identity/sections.js';
 import { PeopleStore, openPeopleStore } from '../backends/people.js';
 import { FAILURE_THRESHOLD } from '../backends/recorder-health.js';
 import { run as wake } from '../cli/wake.js';
+
+const pieces = IDENTITY_SECTIONS.filter(section => section.boot === 'piece');
 
 vi.mock('../backends/salience.js', () => ({ digestForContext: () => 'TOP-OF-MIND\n' + 'd'.repeat(4774) }));
 vi.mock('../backends/episodes.js', () => ({
@@ -39,10 +42,10 @@ describe('identity core and pieces', () => {
     expect(core).toContain('CREED\n' + 'c'.repeat(8056));
     expect(core).toContain('PREFERENCES\n' + 'p'.repeat(9230));
     expect(core).toContain('TOP-OF-MIND\n' + 'd'.repeat(4774));
-    expect(Object.keys(IDENTITY_PIECES).sort()).toEqual(['harness', 'last-24h', 'memories', 'model', 'self-model']);
+    expect(pieces.map(section => section.name).sort()).toEqual(['harness', 'last-24h', 'model', 'self-model']);
     for (const text of ['TOP-OF-MIND', 'RETRO PLAYBOOK', 'PROJECT BRIEF', '# Pieces']) expect(core).toContain(text);
     for (const text of ['# Self-Model', '# Harness:', '# Model:', '# Last 24h', '# Memories', 'CLIENT RESTRICTIONS']) expect(core).not.toContain(text);
-    for (const [name, when] of Object.entries(IDENTITY_PIECES)) expect(core).toContain(`- ${name} — load ${when}`);
+    for (const section of pieces) expect(core).toContain(`- ${section.name} — load ${section.loadWhen}`);
   });
 
   it('retrieves every indexed piece, containing only its sections', async () => {
@@ -51,16 +54,15 @@ describe('identity core and pieces', () => {
       harness: '# Harness: claude-code\n\nHARNESS\n' + 'h'.repeat(15233) + '\n\n---\n\n## Runtime: Test\nCLIENT RESTRICTIONS',
       model: '# Model: test-model\n\nMODEL\n' + 'm'.repeat(2593),
       'last-24h': 'TAPE:cv-held\n' + 't'.repeat(6350),
-      memories: '# Memories\n\n1 memories stored (1 project).\nUse `recall()` to search by relevance.\n\n**Recent:**\n- [project] LEGACY MEMORY',
     };
-    const headings = { 'self-model': '# Self-Model', harness: '# Harness:', model: '# Model:', 'last-24h': '# Last 24h', memories: '# Memories' };
-    for (const name of Object.keys(IDENTITY_PIECES) as (keyof typeof markers)[]) {
+    const headings = { 'self-model': '# Self-Model', harness: '# Harness:', model: '# Model:', 'last-24h': '# Last 24h' };
+    for (const { name } of pieces) {
       const piece = await load(name);
-      expect(piece).toContain(markers[name]);
+      expect(piece).toContain(markers[name as keyof typeof markers]);
       for (const [other, heading] of Object.entries(headings)) {
         if (other !== name) expect(piece).not.toContain(heading);
       }
-      if (name !== 'last-24h') expect(piece).toBe(markers[name]);
+      if (name !== 'last-24h') expect(piece).toBe(markers[name as keyof typeof markers]);
       for (const text of ['# Identity', '# Preferences', '# Top of Mind', '# Mode:', '# Project:', '# Pieces']) expect(piece).not.toContain(text);
     }
     expect(await load('harness')).toContain('CLIENT RESTRICTIONS');

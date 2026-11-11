@@ -21,10 +21,10 @@ describe('loadIdentity', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it('returns graceful placeholder when IDENTITY.md is missing (non-default path)', async () => {
+  it('omits a missing creed', async () => {
     const result = await loadIdentity(tempDir);
-    expect(result).toContain('# Identity');
-    expect(result).toContain('No IDENTITY.md found');
+    expect(result).not.toContain('# Identity');
+    expect(result).not.toContain('No IDENTITY.md found');
   });
 
   it('loads IDENTITY.md when present', async () => {
@@ -102,16 +102,12 @@ describe('loadIdentity', () => {
 
   it('works with a completely empty context directory (non-default path)', async () => {
     const result = await loadIdentity(tempDir);
-    // Non-default path → graceful placeholder, not an error
-    expect(result).toContain('# Identity');
-    expect(result).toBeTruthy();
+    expect(result).not.toContain('# Identity');
   });
 
-  it('throws when contextDir equals the default path and IDENTITY.md is missing', async () => {
-    // tempDir has no IDENTITY.md; pass tempDir as the default path override
-    await expect(
-      loadIdentity(tempDir, undefined, undefined, undefined, undefined, undefined, tempDir),
-    ).rejects.toThrow(/no loom context configured/);
+  it('omits a missing creed even at the default path', async () => {
+    const result = await loadIdentity(tempDir, undefined, undefined, undefined, undefined, undefined, tempDir);
+    expect(result).not.toContain('# Identity');
   });
 
   it('does not throw when contextDir equals the default path but IDENTITY.md exists', async () => {
@@ -172,13 +168,12 @@ describe('loadIdentity — model manifest', () => {
     expect(result).not.toContain('# Model:');
   });
 
-  it('emits a nudge when LOOM_MODEL is set but no manifest exists', async () => {
+  it('omits the model section when its manifest is missing', async () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), 'Creed');
     process.env.LOOM_MODEL = 'claude-opus';
     const result = await loadIdentity(tempDir);
-    expect(result).toContain('# Model: claude-opus (manifest missing)');
-    expect(result).toContain('model: claude-opus');
-    expect(result).toContain('## Capability notes');
+    expect(result).not.toContain('# Model:');
+    expect(result).not.toContain('manifest missing');
   });
 
   it('emits manifest body when the file is present', async () => {
@@ -198,8 +193,13 @@ describe('loadIdentity — model manifest', () => {
   it('accepts a model param that overrides LOOM_MODEL', async () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), 'Creed');
     process.env.LOOM_MODEL = 'claude-opus';
+    await mkdir(join(tempDir, 'models'));
+    await writeFile(join(tempDir, 'models', 'claude-haiku.md'), 'Haiku capability');
+    await writeFile(join(tempDir, 'models', 'claude-opus.md'), 'Opus capability');
     const result = await loadIdentity(tempDir, undefined, undefined, 'claude-haiku');
-    expect(result).toContain('# Model: claude-haiku (manifest missing)');
+    expect(result).toContain('# Model: claude-haiku');
+    expect(result).toContain('Haiku capability');
+    expect(result).not.toContain('Opus capability');
     expect(result).not.toContain('# Model: claude-opus');
   });
 });
@@ -229,12 +229,12 @@ describe('loadIdentity — harness manifest', () => {
     expect(result).not.toContain('# Harness:');
   });
 
-  it('emits a self-describe onboarding block when client is set but no manifest exists', async () => {
+  it('omits a missing harness manifest and adapter', async () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), 'Creed');
     const result = await loadIdentity(tempDir, undefined, 'mystery-runtime');
-    expect(result).toContain('# Harness: mystery-runtime (unknown)');
-    expect(result).toContain('harness_describe');
-    expect(result).toContain('Describe yourself');
+    expect(result).not.toContain('# Harness:');
+    expect(result).not.toContain('harness_describe');
+    expect(result).not.toContain('Describe yourself');
     // The bare "(manifest missing)" placeholder is gone.
     expect(result).not.toContain('manifest missing');
   });

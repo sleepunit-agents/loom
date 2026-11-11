@@ -1,3 +1,4 @@
+import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
  * Loom — MCP Server Factory
  *
@@ -212,7 +213,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Adds an "# In the room" block with their person cards. Omit for no block.',
         ),
         piece: z.string().optional().describe(
-          'Return only this identity piece: self-model, harness, last-24h, model, memories; "all" returns the historical full output. Omit for core + index.',
+          'Return only this identity section: ' + IDENTITY_SECTIONS.map(section => section.name).join(', ') + '; "all" returns full output. Missing content is omitted. Omit for core + index.',
         ),
         pieces: z.array(z.string()).optional().describe('Return only these identity pieces. Combined with piece when both are given.'),
         conversation: z.string().max(64).optional().describe(
