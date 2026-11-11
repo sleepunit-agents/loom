@@ -98,6 +98,17 @@ export function resolveClientFromPeer(peerName?: string): string | undefined {
   return PEER_CLIENT_ALIASES[normalized];
 }
 
+/** On-demand context, indexed at boot without loading its contents. */
+export const IDENTITY_PIECES = {
+  'self-model': 'before reflection, retro or identity work',
+  harness: 'before scheduling, delegation, hooks, or harness-specific gotchas (pass client)',
+  'last-24h': 'when you need what other bodies did recently',
+  model: 'when choosing or describing models (pass model)',
+  memories: 'when you need the legacy memory index',
+} as const;
+export type IdentityPiece = keyof typeof IDENTITY_PIECES;
+export const IDENTITY_CORE_BUDGET_BYTES = 24_000;
+
 export async function loadIdentity(
   contextDir: string,
   project?: string,
@@ -110,7 +121,16 @@ export async function loadIdentity(
   _defaultPathForTest?: string,
   /** Whose digests the tape carries (TapeOptions.onlyConversation): a house's, only the conversation it holds (t-2118). */
   onlyConversation?: string | null,
+  /** Omit for core + index; all preserves the historical full output. */
+  pieces?: string | readonly string[],
 ): Promise<string> {
+  const requested = pieces === undefined ? [] : typeof pieces === 'string' ? [pieces] : pieces;
+  for (const name of requested) {
+    if (name !== 'all' && !Object.hasOwn(IDENTITY_PIECES, name)) return `Invalid identity piece: ${name}`;
+  }
+  const full = requested.includes('all');
+  const core = pieces === undefined || full;
+  const wants = (name: IdentityPiece) => full || requested.includes(name);
   const parts: string[] = [];
   const effectiveClient = client ?? process.env.LOOM_CLIENT;
   const effectiveModel = model ?? process.env.LOOM_MODEL;
@@ -132,166 +152,190 @@ export async function loadIdentity(
 
   const defaultPath = _defaultPathForTest ?? resolveDefaultContextPath();
 
-  // Terminal creed — the immutable identity
-  const creed = await readOptional(join(contextDir, 'IDENTITY.md'));
-  if (creed) {
-    parts.push('# Identity\n\n' + creed.trim());
-  } else if (contextDir === defaultPath) {
-    // Default fallback path with no creed: refuse to serve a blank identity.
-    // An explicit LOOM_CONTEXT_DIR pointing at an empty dir is allowed (opt-in);
-    // a silent default fallback is not.
-    throw new Error(
-      'no loom context configured — refusing to serve a blank identity. ' +
-      'Set LOOM_CONTEXT_DIR or run `loom bootstrap` to initialize an agent.',
-    );
-  } else {
-    parts.push(
-      '# Identity\n\n' +
-      '*No IDENTITY.md found. Create one in your context directory to define who this agent is.*'
-    );
-  }
-
-  // Preferences — how the user likes to work
-  const preferences = await readOptional(join(contextDir, 'preferences.md'));
-  if (preferences) {
-    parts.push('# Preferences\n\n' + preferences.trim());
-  }
-
-  // Owners (docs/specs/owners.md): in a household, the members who own this agent, by name.
-  const owners = ownersBlock(contextDir);
-  if (owners) parts.push(owners);
-
-  // Episode tape (t-142) — the short-term cross-body tier: what happened across
-  // ALL sleeves in the last 24h, time-ordered and unconditional. Injected right
-  // after preferences so a fresh body knows what the last body did before it
-  // reads anything ranked. Best-effort: no store / no episodes → no block.
-  try {
-    const tape = tapeForContext(contextDir, { onlyConversation });
-    if (tape) {
-      parts.push(
-        '# Last 24h across bodies\n\n' +
-        '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
-        'conversations. This is the tape, oldest first — what just happened, not what is ' +
-        'important. Write your own before you end: in a conversation (identity was given ' +
-        'conversation and run), a `conversation_digest`; otherwise an episode (category ' +
-        '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' +
-        tape,
+  if (core) {
+    // Terminal creed — the immutable identity
+    const creed = await readOptional(join(contextDir, 'IDENTITY.md'));
+    if (creed) {
+      parts.push('# Identity\n\n' + creed.trim());
+    } else if (contextDir === defaultPath) {
+      // Default fallback path with no creed: refuse to serve a blank identity.
+      // An explicit LOOM_CONTEXT_DIR pointing at an empty dir is allowed (opt-in);
+      // a silent default fallback is not.
+      throw new Error(
+        'no loom context configured — refusing to serve a blank identity. ' +
+        'Set LOOM_CONTEXT_DIR or run `loom bootstrap` to initialize an agent.',
       );
-    }
-  } catch (tapeErr) {
-    // The tape must never block identity load, but a failure here means the
-    // episode store may be broken — log it and record it so the next body sees a warning.
-    console.error('[loom:identity] tape read failed:', tapeErr);
-    recordFailure(contextDir, tapeErr);
-  }
-
-  // This project (project cards, docs/specs/projects.md) — after the tape,
-  // before the room and Top of Mind. The block is the heading and the
-  // rendered card (≤ 2,015 chars, the card's cap is checked at write), or a
-  // placeholder line for a missing, archived or unreadable card. Never a failure.
-  try {
-    const block = projectBlock(contextDir, project, { onFailure: (e) => recordFailure(contextDir, e) });
-    if (block) parts.push(block);
-  } catch (projectErr) {
-    console.error('[loom:identity] project block failed:', projectErr);
-    recordFailure(contextDir, projectErr);
-  }
-
-  // The room (person cards, docs/specs/person-cards.md) — after the tape and
-  // before Top of Mind, so the body knows who it is talking to before it reads
-  // anything ranked. Best-effort like the tape: no store, an unmigrated store or
-  // no people gives no block; one unreadable card only affects its own slug.
-  try {
-    const room = roomBlock(contextDir, people, { onFailure: (e) => recordFailure(contextDir, e) });
-    if (room) parts.push(room);
-  } catch (roomErr) {
-    console.error('[loom:identity] room block failed:', roomErr);
-    recordFailure(contextDir, roomErr);
-  }
-
-  // Boot digest — the salience-tiered view of episodic memory, so a fresh sleeve
-  // wakes knowing what is top-of-mind vs settled background without fishing via
-  // recall. ASSEMBLED from authored atoms (never generated); injected after
-  // preferences. Best-effort — a missing/empty store just omits the block.
-  try {
-    const digest = digestForContext(contextDir);
-    if (digest) parts.push('# Top of Mind\n\n' + digest);
-  } catch {
-    // a digest failure must never block identity load
-  }
-
-  // Self-model — what the agent knows about its own capabilities
-  const selfModel = await readOptional(join(contextDir, 'self-model.md'));
-  if (selfModel) {
-    parts.push('# Self-Model\n\n' + selfModel.trim());
-  }
-
-  // Mode addendum — when Art is dispatched into a reflection mode (wonder,
-  // tend, retro, consolidate, identity), append that mode's playbook. The SAME
-  // mechanism dossier() uses for worker roles; lives in roles/<role>.md.
-  if (role) {
-    const modeBrief = await readOptional(join(contextDir, 'roles', `${role}.md`));
-    if (modeBrief) {
-      parts.push(`# Mode: ${role}\n\n` + modeBrief.trim());
-    }
-  }
-
-  // Project-specific context
-  if (project) {
-    const projectBrief = await readOptional(join(contextDir, 'projects', `${project}.md`));
-    if (projectBrief) {
-      parts.push(`# Project: ${project}\n\n` + projectBrief.trim());
-    }
-  }
-
-  // Harness manifest — the shape of the current runtime (stack spec §4.7).
-  if (effectiveClient) {
-    const block = await harnessBlock.read(contextDir, effectiveClient);
-    if (block) {
-      parts.push(`# Harness: ${effectiveClient}\n\n${block.body}`);
-    } else {
-      // Genuinely unknown runtime: instead of a bare "(manifest missing)" stub,
-      // instruct the connected harness to self-describe via harness_describe.
-      parts.push(
-        `# Harness: ${effectiveClient} (unknown)\n\n` +
-        `I don't have a manifest for this runtime. Describe yourself by calling ` +
-        `the harness_describe tool with a manifest covering: tool surface / ` +
-        `prefixes, sandbox & filesystem, delegation primitive, scheduling, ` +
-        `session search, memory layers, and gotchas.`,
-      );
-    }
-  }
-
-  // Model manifest — model-family-specific capability notes (stack spec §4.8).
-  if (effectiveModel) {
-    const block = await modelBlock.read(contextDir, effectiveModel);
-    if (block) {
-      parts.push(`# Model: ${effectiveModel}\n\n${block.body}`);
     } else {
       parts.push(
-        `# Model: ${effectiveModel} (manifest missing)\n\n` +
-        `No manifest found at ${contextDir}/models/${effectiveModel}.md. ` +
-        `Write one — here's the template:\n\n` +
-        modelBlock.template(effectiveModel),
+        '# Identity\n\n' +
+        '*No IDENTITY.md found. Create one in your context directory to define who this agent is.*'
       );
     }
-  }
 
-  // Optional recent-memory summary. The memory store of record is
-  // memories.db (sqlite-vec); navigate it via recall(). If a legacy
-  // memories/INDEX.md sidecar exists from FS-backend days, surface a
-  // brief summary as a hint — full content lives in the DB.
-  const memoryIndex = await readOptional(join(contextDir, 'memories', 'INDEX.md'));
-  if (memoryIndex) {
-    parts.push('# Memories\n\n' + summarizeMemoryIndex(memoryIndex));
-  }
-
-  // Runtime-specific context (tool name prefix, notes) — legacy `## Runtime:` block.
-  if (effectiveClient) {
-    const adapter = await loadClientAdapter(contextDir, effectiveClient);
-    if (adapter) {
-      parts.push(adapter);
+    // Preferences — how the user likes to work
+    const preferences = await readOptional(join(contextDir, 'preferences.md'));
+    if (preferences) {
+      parts.push('# Preferences\n\n' + preferences.trim());
     }
+
+    // Owners (docs/specs/owners.md): in a household, the members who own this agent, by name.
+    const owners = ownersBlock(contextDir);
+    if (owners) parts.push(owners);
+  }
+
+  if (wants('last-24h')) {
+    // Episode tape (t-142) — the short-term cross-body tier: what happened across
+    // ALL sleeves in the last 24h, time-ordered and unconditional. Injected right
+    // after preferences so a fresh body knows what the last body did before it
+    // reads anything ranked. Best-effort: no store / no episodes → no block.
+    try {
+      const tape = tapeForContext(contextDir, { onlyConversation });
+      if (tape) {
+        parts.push(
+          '# Last 24h across bodies\n\n' +
+          '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
+          'conversations. This is the tape, oldest first — what just happened, not what is ' +
+          'important. Write your own before you end: in a conversation (identity was given ' +
+          'conversation and run), a `conversation_digest`; otherwise an episode (category ' +
+          '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' +
+          tape,
+        );
+      }
+    } catch (tapeErr) {
+      // The tape must never block identity load, but a failure here means the
+      // episode store may be broken — log it and record it so the next body sees a warning.
+      console.error('[loom:identity] tape read failed:', tapeErr);
+      recordFailure(contextDir, tapeErr);
+    }
+  }
+
+  if (core) {
+    // This project (project cards, docs/specs/projects.md) — after the tape,
+    // before the room and Top of Mind. The block is the heading and the
+    // rendered card (≤ 2,015 chars, the card's cap is checked at write), or a
+    // placeholder line for a missing, archived or unreadable card. Never a failure.
+    try {
+      const block = projectBlock(contextDir, project, { onFailure: (e) => recordFailure(contextDir, e) });
+      if (block) parts.push(block);
+    } catch (projectErr) {
+      console.error('[loom:identity] project block failed:', projectErr);
+      recordFailure(contextDir, projectErr);
+    }
+
+    // The room (person cards, docs/specs/person-cards.md) — after the tape and
+    // before Top of Mind, so the body knows who it is talking to before it reads
+    // anything ranked. Best-effort like the tape: no store, an unmigrated store or
+    // no people gives no block; one unreadable card only affects its own slug.
+    try {
+      const room = roomBlock(contextDir, people, { onFailure: (e) => recordFailure(contextDir, e) });
+      if (room) parts.push(room);
+    } catch (roomErr) {
+      console.error('[loom:identity] room block failed:', roomErr);
+      recordFailure(contextDir, roomErr);
+    }
+
+    // Boot digest — the salience-tiered view of episodic memory, so a fresh sleeve
+    // wakes knowing what is top-of-mind vs settled background without fishing via
+    // recall. ASSEMBLED from authored atoms (never generated); injected after
+    // preferences. Best-effort — a missing/empty store just omits the block.
+    try {
+      const digest = digestForContext(contextDir);
+      if (digest) parts.push('# Top of Mind\n\n' + digest);
+    } catch {
+      // a digest failure must never block identity load
+    }
+  }
+
+  if (wants('self-model')) {
+    // Self-model — what the agent knows about its own capabilities
+    const selfModel = await readOptional(join(contextDir, 'self-model.md'));
+    if (selfModel) {
+      parts.push('# Self-Model\n\n' + selfModel.trim());
+    }
+  }
+
+  if (core) {
+    // Mode addendum — when Art is dispatched into a reflection mode (wonder,
+    // tend, retro, consolidate, identity), append that mode's playbook. The SAME
+    // mechanism dossier() uses for worker roles; lives in roles/<role>.md.
+    if (role) {
+      const modeBrief = await readOptional(join(contextDir, 'roles', `${role}.md`));
+      if (modeBrief) {
+        parts.push(`# Mode: ${role}\n\n` + modeBrief.trim());
+      }
+    }
+
+    // Project-specific context
+    if (project) {
+      const projectBrief = await readOptional(join(contextDir, 'projects', `${project}.md`));
+      if (projectBrief) {
+        parts.push(`# Project: ${project}\n\n` + projectBrief.trim());
+      }
+    }
+  }
+
+  if (wants('harness')) {
+    // Harness manifest — the shape of the current runtime (stack spec §4.7).
+    if (effectiveClient) {
+      const block = await harnessBlock.read(contextDir, effectiveClient);
+      if (block) {
+        parts.push(`# Harness: ${effectiveClient}\n\n${block.body}`);
+      } else {
+        // Genuinely unknown runtime: instead of a bare "(manifest missing)" stub,
+        // instruct the connected harness to self-describe via harness_describe.
+        parts.push(
+          `# Harness: ${effectiveClient} (unknown)\n\n` +
+          `I don't have a manifest for this runtime. Describe yourself by calling ` +
+          `the harness_describe tool with a manifest covering: tool surface / ` +
+          `prefixes, sandbox & filesystem, delegation primitive, scheduling, ` +
+          `session search, memory layers, and gotchas.`,
+        );
+      }
+    }
+  }
+
+  if (wants('model')) {
+    // Model manifest — model-family-specific capability notes (stack spec §4.8).
+    if (effectiveModel) {
+      const block = await modelBlock.read(contextDir, effectiveModel);
+      if (block) {
+        parts.push(`# Model: ${effectiveModel}\n\n${block.body}`);
+      } else {
+        parts.push(
+          `# Model: ${effectiveModel} (manifest missing)\n\n` +
+          `No manifest found at ${contextDir}/models/${effectiveModel}.md. ` +
+          `Write one — here's the template:\n\n` +
+          modelBlock.template(effectiveModel),
+        );
+      }
+    }
+  }
+
+  if (wants('memories')) {
+    // Optional recent-memory summary. The memory store of record is
+    // memories.db (sqlite-vec); navigate it via recall(). If a legacy
+    // memories/INDEX.md sidecar exists from FS-backend days, surface a
+    // brief summary as a hint — full content lives in the DB.
+    const memoryIndex = await readOptional(join(contextDir, 'memories', 'INDEX.md'));
+    if (memoryIndex) {
+      parts.push('# Memories\n\n' + summarizeMemoryIndex(memoryIndex));
+    }
+  }
+
+  if (wants('harness')) {
+    // Runtime-specific context (tool name prefix, notes) — legacy `## Runtime:` block.
+    if (effectiveClient) {
+      const adapter = await loadClientAdapter(contextDir, effectiveClient);
+      if (adapter) {
+        parts.push(adapter);
+      }
+    }
+  }
+
+  if (core && !full) {
+    parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client/model for their manifests.\n' +
+      'Use piece: "all" for the full identity.\n\n' +
+      Object.entries(IDENTITY_PIECES).map(([name, when]) => `- ${name} — load ${when}`).join('\n'));
   }
 
   // Recorder health warning (t-562) — appended LAST so it is closest to the
@@ -301,7 +345,7 @@ export async function loadIdentity(
   try {
     const health = readHealth(contextDir);
     const warning = warningBlock(health);
-    if (warning) parts.push(warning);
+    if (core && warning) parts.push(warning);
   } catch {
     // health ledger read must never block identity load
   }

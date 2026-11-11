@@ -2,8 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadIdentity } from './identity.js';
+import { loadIdentity as load } from './identity.js';
 import { FAILURE_THRESHOLD } from '../backends/recorder-health.js';
+
+const loadIdentity: typeof load = (...args) => {
+  args[8] = 'all';
+  return load(...args);
+};
 
 describe('loadIdentity', () => {
   let tempDir: string;

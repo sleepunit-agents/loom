@@ -57,6 +57,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     undefined,
     undefined,
     heldFromEnv(io.env),
+    'all', // Shell fallback retains the complete historical identity.
   );
   io.stdout(md.endsWith('\n') ? md : md + '\n');
   return 0;
