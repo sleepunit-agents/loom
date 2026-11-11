@@ -135,6 +135,8 @@ export interface HeatInput {
   category: string;
   created: string;
   updated: string | null;
+  /** Known authored write; legacy rows fall back to creation, never audit updates. */
+  authored_at?: string | null;
   recall_heat?: number | null;
   recall_heat_at?: string | null;
 }
@@ -146,14 +148,15 @@ export interface HeatInput {
  * turning up once at the bottom of someone's results.
  */
 export function heatOf(r: HeatInput, nowMs: number): number {
-  const written = temperature(r.updated ?? r.created, r.category, nowMs);
+  const written = temperature(r.authored_at ?? r.created, r.category, nowMs);
   return Math.max(written, decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs));
 }
 
-/** Columns heatOf reads; older stores without the recall columns read them as null. */
+/** Legacy stores read missing heat columns as null; no writes on digest reads. */
 export function heatColumns(db: Database): string {
   const have = hasColumn(db, 'memories', 'recall_heat');
-  return have ? 'created, updated, recall_heat, recall_heat_at' : 'created, updated, NULL AS recall_heat, NULL AS recall_heat_at';
+  const authored = hasColumn(db, 'memories', 'authored_at') ? 'authored_at' : 'NULL AS authored_at';
+  return `created, updated, ${authored}, ${have ? 'recall_heat, recall_heat_at' : 'NULL AS recall_heat, NULL AS recall_heat_at'}`;
 }
 
 /**
@@ -173,7 +176,7 @@ export function recomputeSalience(db: Database, nowMs: number, counts?: Timestam
     counts.futureTimestamps = 0;
     for (const r of rows) {
       // Count timestamp fields, not rows; absent optional fields are not invalid.
-      for (const value of [r.created, r.updated, r.recall_heat_at]) {
+      for (const value of [r.created, r.updated, r.authored_at, r.recall_heat_at]) {
         if (value == null) continue;
         const ms = Date.parse(value);
         if (!Number.isFinite(ms)) counts.invalidTimestamps++;
@@ -323,9 +326,9 @@ function liveRows(db: Database, nowMs: number): Array<DigestRow & { stored: numb
     )
     .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
   return rows
-    .map(({ created, updated, recall_heat, recall_heat_at, ...r }) => ({
+    .map(({ created, updated, authored_at, recall_heat, recall_heat_at, ...r }) => ({
       ...r,
-      salience: heatOf({ category: r.category, created, updated, recall_heat, recall_heat_at }, nowMs),
+      salience: heatOf({ category: r.category, created, updated, authored_at, recall_heat, recall_heat_at }, nowMs),
     }))
     .sort(compareDigestRows);
 }

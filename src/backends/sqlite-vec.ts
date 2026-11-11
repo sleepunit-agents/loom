@@ -199,9 +199,9 @@ export class SqliteVecBackend implements MemoryBackend {
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
-        created, ttl, expires_at, salience, sourcing, provenance,
+        created, ttl, expires_at, salience, sourcing, provenance, authored_at,
         confidence, evidence_count, observed_at, scope, uniq
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -226,6 +226,7 @@ export class SqliteVecBackend implements MemoryBackend {
         1.0, // a freshly authored memory is hot; the lane decays it from here
         input.sourcing ?? null,
         input.provenance ?? null,
+        timestamp,
         confidence,
         evidenceCount,
         isFeedback ? timestamp : null,
@@ -430,10 +431,10 @@ export class SqliteVecBackend implements MemoryBackend {
         // knowledge wing added after the 2026-06-01 verify run stomped 13
         // pages with no recovery. Only on a real change, to keep history quiet.
         snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
-        sets.push('content = ?', 'uniq = ?');
+        sets.push('content = ?', 'uniq = ?', 'authored_at = ?');
         // The dedup key describes the current body — a stale one would make
         // remember() of the OLD body return this row (PR120 review).
-        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }));
+        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }), updatedAt);
       }
 
       if (input.metadata) {
@@ -890,7 +891,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const vector = await this.embedder.embed(`${mem.title}\n\n${rev.content}`);
 
     const updateStmt = this.db.prepare(
-      'UPDATE memories SET content = ?, uniq = ?, updated = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, uniq = ?, updated = ?, authored_at = CASE WHEN content != ? THEN ? ELSE authored_at END WHERE id = ?',
     );
     const updateVec = this.db.prepare(
       'UPDATE vec_memories SET embedding = ? WHERE rowid = ?',
@@ -899,6 +900,8 @@ export class SqliteVecBackend implements MemoryBackend {
       updateStmt.run(
         rev.content,
         this.claimableUniq(mem.id, { ...mem, content: rev.content }),
+        timestamp,
+        rev.content,
         timestamp,
         mem.id,
       );
@@ -1013,7 +1016,7 @@ export class SqliteVecBackend implements MemoryBackend {
     }
 
     const updateTarget = this.db.prepare(
-      'UPDATE memories SET content = ?, times_seen = ?, updated = ?, uniq = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, times_seen = ?, updated = ?, uniq = ?, authored_at = CASE WHEN content != ? THEN ? ELSE authored_at END WHERE id = ?',
     );
     const updateVec = this.db.prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?');
     const repointRevisions = this.db.prepare(
@@ -1055,7 +1058,7 @@ export class SqliteVecBackend implements MemoryBackend {
         newContent !== targetRow.content
           ? this.claimableUniq(targetRow.id, { ...targetRow, content: newContent })
           : targetRow.uniq;
-      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
+      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, newContent, timestamp, targetRow.id);
       if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
     });
     retryWrite(() => tx.immediate());
@@ -1091,8 +1094,8 @@ export class SqliteVecBackend implements MemoryBackend {
         .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
       if (!existing) return undefined;
       this.db
-        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ? WHERE id = ?')
-        .run(timestamp, existing.id);
+        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ?, authored_at = ? WHERE id = ?')
+        .run(timestamp, timestamp, existing.id);
       const slashIdx = existing.ref.indexOf('/');
       return {
         ref: existing.ref,
