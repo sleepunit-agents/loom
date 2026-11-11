@@ -5,9 +5,9 @@
  * hold what a Tasks page holds (tasks-live.ts: open and recently moved, of each). Simulated minutes (the clock is moved,
  * the 15 s poll round is run by hand), real provider processes, counted by the stubs themselves.
  *
- * What's pinned: a quiet piece is pulled less often (15, 30, then every 60 s) and the windows' own queries are one run a
+ * What's pinned: a quiet piece is pulled less often (five minutes, then stops when no real reader remains) and the windows' own queries are one run a
  * provider a window; a piece's word (an API call that wrote) still reaches both windows at once, and a write nobody
- * said anything about reaches them by the next due poll.
+ * said anything about reaches them by the next slow consistency check.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -200,17 +200,20 @@ describe('snapshot providers are pulled once per freshness window (t-2110)', () 
     process.stdout.write(`t-2110 bench: window opens ${opened} runs (${runs('tasks').filter((v) => v === 'member').length} tasks, ${runs('changes').filter((v) => v === 'member').length} changes); poll runs per minute ${perMinute.join(', ')}\n`);
     // The windows' own queries: one run a provider a window.
     expect(opened).toBe(4);
-    // Quiet: after the first minute, one tasks snapshot (5 pages) and one changes snapshot (1 page) a minute.
-    expect.soft(perMinute.slice(1).every((n) => n <= 6), perMinute.join(', ')).toBe(true);
+    // Quiet: one initial snapshot (six processes), then no provider processes for the rest of five minutes.
+    expect(perMinute).toEqual([6, 0, 0, 0, 0]);
 
-    // A write nobody said anything about (a local CLI's): by the next poll that's due, at most a minute.
+    // A write nobody said anything about (a local CLI's): by the next slow check, at most five minutes.
+    // Run the due check, then write immediately after it: measure the full worst-case repair interval.
+    step(15_000); await roundNow(h.home);
+    await window(); // A real reader keeps the fallback active for the next five-minute check.
     write('t-00011', 'moved by hand');
     let seen = -1;
     // (Frames are on the wire when delivery's done: a moment for them to land.)
-    for (let s = 1; s <= 4 && seen < 0; s++) { step(15_000); await roundNow(h.home); if (await until(() => has('tasks/task/t-00011'), 1_000)) seen = s * 15; }
+    for (let s = 1; s <= 20 && seen < 0; s++) { step(15_000); await roundNow(h.home); if (await until(() => has('tasks/task/t-00011'), 100)) seen = s * 15; }
     process.stdout.write(`t-2110 bench: an unannounced write reached both windows after ${seen} s\n`);
     expect(seen).toBeGreaterThan(0);
-    expect.soft(seen).toBeLessThanOrEqual(60);
+    expect(seen).toBe(300);
 
     // A piece's word (an API call that wrote, pullPieceSoon): both windows have it at once, with no round, and it costs
     // one snapshot (its echo from the tick file is the same word).

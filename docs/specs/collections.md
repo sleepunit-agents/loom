@@ -1191,3 +1191,40 @@ restarts paging even when the first page has the same length as before.
 This is directory coverage only. Project summaries, waiting counts, piece feeds, card gists and hub consumers
 still come from their pages. Their piece-owned membership and status rules must remain authoritative; do not derive
 them by copying those rules into core or by adding per-request piece commands.
+
+### Change-driven refresh and ownership (2026-11-11)
+
+`POST /api/loom/collections/nudge` also accepts an optional `key`, the provider's record id (the
+same bounded `RECORD_ID` used in collection keys). The response remains identical for unknown
+domains/keys. Omitting `key` preserves the domain invalidation used by existing pieces. A piece
+with a `changes` offer continues to provide its delta log; a legacy snapshot piece still uses
+a full snapshot when nudged. Core thread and agent-card hints can read just the named records;
+thread writers emit their thread id, and scoped UI changes emit the affected agent ids.
+
+Hints live in `collections/live.db` in a bounded, coalesced queue. Each refresh acknowledges only
+requests present before its read, by monotonically increasing request sequence, including when
+two writes occur in the same millisecond. Failures and lease contention never acknowledge them.
+Repeated provider failures back off exponentially, up to five minutes; a new write retries promptly.
+A burst of more than 1,000 distinct pending keys becomes one full invalidation.
+
+One process holds each domain's existing 30-second lease and computes its shared index/log. The
+other listeners deliver that log; they do not need an HTTP relay or a second copy of records.
+Completed full checks have a shared epoch-bound timestamp, so a successor skips a recent check.
+Bridge commits compare their epoch and starting log head as well as their lease: a suspended
+snapshot cannot overwrite a successor's newer rows. A dead process's pending hints survive and
+can be processed after its lease expires (recovery can take 30 seconds).
+
+The lightweight 15-second maintenance round still handles expiry, but full provider reads now
+run only as consistency checks, defaulting to five minutes. `LOOM_COLLECTIONS_CHECK_MS` sets
+that interval (minimum one minute; invalid values use the default). After two intervals with no
+real subscribed query, even those full checks stop. Targeted hints still update stale readers.
+An unannounced legacy write is repaired by the next check while there is a recent reader; a
+subsequent query always reads its provider as before. The desktop's collection contracts and
+frames are unchanged. The separate manifest round for legacy page consumers remains in place.
+
+A complete agent-card subscription without aggregates reconciles only changed ids and keeps
+other delivered rows. Partial/ordered windows and other `ask` types retain the conservative
+bounded-page re-ask. Core snapshot audiences exclude unrelated viewers before re-asking;
+agent-card agent filters exclude unrelated cards too. Every re-ask still uses the viewer's
+authorization checks. Attention currently accepts keyed hints but its legacy Inbox source still
+builds the bounded Inbox before filtering; job-specific piece hints remain a provider migration.

@@ -41,6 +41,17 @@ CREATE TABLE IF NOT EXISTS domains (
   nudged     INTEGER NOT NULL DEFAULT 0,
   pruned     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS refresh_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain TEXT NOT NULL,
+  key TEXT NOT NULL,
+  UNIQUE(domain, key)
+);
+CREATE TABLE IF NOT EXISTS refresh_checks (
+  domain TEXT PRIMARY KEY,
+  epoch TEXT NOT NULL,
+  checked INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS log (
   seq      INTEGER PRIMARY KEY AUTOINCREMENT,
   domain   TEXT NOT NULL,
@@ -259,7 +270,15 @@ export function prunedThrough(db: Database, domain: string): number {
 }
 
 /** Someone said `domain` moved (a nudge): every listener pulling it sees the time. Unknown domains change nothing. */
-export function markNudged(db: Database, domain: string, now = Date.now()): void {
+export function markNudged(db: Database, domain: string, now = Date.now(), key = '*'): void {
+  // Replace to get a new sequence even for two writes in the same millisecond. A pull only acknowledges
+  // requests it saw before reading, so a write during a slow snapshot is never swallowed.
+  db.prepare(`INSERT OR REPLACE INTO refresh_requests (domain, key)
+    SELECT ?, ? WHERE EXISTS (SELECT 1 FROM domains WHERE domain = ?)`).run(domain, key, domain);
+  if ((db.prepare('SELECT COUNT(*) AS n FROM refresh_requests WHERE domain = ?').get(domain) as { n: number }).n > 1000) {
+    db.prepare('DELETE FROM refresh_requests WHERE domain = ?').run(domain);
+    db.prepare("INSERT INTO refresh_requests (domain, key) VALUES (?, '*')").run(domain);
+  }
   db.prepare('UPDATE domains SET nudged = ? WHERE domain = ?').run(now, domain);
 }
 
@@ -334,4 +353,22 @@ export function beginOp(db: Database, op: string, session: string, what: string,
 /** An operation's outcome and the answer a retry gets. */
 export function finishOp(db: Database, op: string, session: string, state: 'done' | 'failed', answer: string, onlyIfOpen = false): void {
   db.prepare(`UPDATE receipts SET state = ?, answer = ? WHERE op = ? AND session = ?${onlyIfOpen ? ' AND answer IS NULL' : ''}`).run(state, answer, op, session);
+}
+
+/** Durable work shared by listeners. Only the lease holder reads providers; every listener delivers the log. */
+export function pendingRefreshes(db: Database): Array<{ domain: string; id: number }> {
+  return db.prepare('SELECT domain, MAX(id) AS id FROM refresh_requests GROUP BY domain').all() as Array<{ domain: string; id: number }>;
+}
+export function refreshRequest(db: Database, domain: string): { through: number; keys?: string[] } {
+  const rows = db.prepare('SELECT id, key FROM refresh_requests WHERE domain = ?').all(domain) as Array<{ id: number; key: string }>;
+  return { through: Math.max(0, ...rows.map(r => r.id)),
+    ...(rows.length && !rows.some(r => r.key === '*') ? { keys: rows.map(r => r.key) } : {}) };
+}
+export function checkedAt(db: Database, domain: string, epoch: string): number {
+  return (db.prepare('SELECT checked FROM refresh_checks WHERE domain = ? AND epoch = ?').get(domain, epoch) as { checked: number } | undefined)?.checked ?? 0;
+}
+export function finishRefresh(db: Database, domain: string, epoch: string, through: number, checked: number, full: boolean): void {
+  if (domainRow(db, domain)?.epoch !== epoch) return;
+  db.prepare('DELETE FROM refresh_requests WHERE domain = ? AND id <= ?').run(domain, through);
+  if (full) db.prepare('INSERT OR REPLACE INTO refresh_checks (domain, epoch, checked) VALUES (?, ?, ?)').run(domain, epoch, checked);
 }
