@@ -1055,3 +1055,13 @@ loom into a larger product freely; fork it and go proprietary, no.
 `loom fixture <dir>` creates a disposable, empty-home web foundation fixture with
 Jonathan, Pollock, Art, Mark and Pond-bot sharing examples. It refuses to overwrite
 an existing home. The present page is unchanged by this foundation slice.
+
+### Foundation tasks (before cutover)
+
+The built-in tasks piece registers `tasks.*` operations and the `task` live record.
+`loom-taskstore` is its opt-in API client: set `LOOM_URL` and `LOOM_TOKEN_FILE`; it
+uses the same verbs and JSON/exit codes as `taskstore`. It never opens a taskstore
+file. Existing `taskstore`, `loom tasks` and the Tasks page keep using the legacy
+piece until the coordinated cutover. The offline importer is
+`loom migrate tasks --from <source-copy.db> --home <stopped-home>`; project mappings,
+verification and owner-present cutover steps are in [the tasks implementation guide](docs/tasks-piece.md).

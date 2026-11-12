@@ -4,14 +4,16 @@ import { createFoundation, httpDoor, type Foundation } from './core/app.js';
 import type { Clock } from './core/clock.js';
 import type { Authentication } from './core/live/index.js';
 import type { IncomingMessage } from 'node:http';
+import { installTasks } from './pieces/tasks/index.js';
+import type { Sharing } from './core/index.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate }: {
-  home: string; clock?: Clock;
+export async function startLoom({ home, clock, install, authenticate, sharing }: {
+  home: string; clock?: Clock; sharing?: () => Sharing;
   install?: (app: ReturnType<typeof createFoundation>) => void;
   authenticate?: (req: IncomingMessage) => Authentication | undefined;
 }): Promise<Foundation & { url: string; close(): Promise<void> }> {
   const app = createFoundation({ home, clock });
-  try { install?.(app); } catch (e) { app.close(); throw e; }
+  try { install?.(app); if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => ({ members: {}, projects: {}, services: {} }))); } catch (e) { app.close(); throw e; }
   const auth = authenticate ?? (() => undefined);
   const http = createServer(httpDoor(app, auth));
   const detach = app.live.attach(http, auth);

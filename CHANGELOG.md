@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an in-repo tasks piece, opt-in `loom-taskstore` API client, and offline verified tasks importer; existing taskstore and Tasks screens stay on their current path until cutover.
+
 - Add the first web foundation slice: an app database, operation registry, central permission rule, live feed and
   in-process fixture harness beside the present page. Caller-owned operation ids replay stored results for 30 days;
   a failed live read closes its subscriber. No existing app data or screens move in this slice.

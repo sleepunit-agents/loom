@@ -1,3 +1,5 @@
+import { registerOperationTools } from './operation-tools.js';
+import { installTasks } from '../pieces/tasks/index.js';
 import { createFoundation, httpDoor, type Foundation } from '../core/app.js';
 import type { Authentication } from '../core/live/index.js';
 import { sessionStore } from '../ui/sessions.js';
@@ -120,7 +122,7 @@ const HEARTBEAT_MISSES_BEFORE_CLOSE = 2;
 
 export interface HttpServeOptions {
   contextDir: string;
-  /** Composition root may supply the registry; production has no migrated pieces yet. */
+  /** Composition root may supply an installed registry; otherwise production installs built-in pieces. */
   foundation?: Foundation;
   host: string | string[];
   port: number;
@@ -496,6 +498,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     : legacyUiAuth(opts.token ? [opts.token] : Object.values(opts.tokens ?? {}));
 
   const foundation = opts.foundation ?? (household && !opts.createServer ? createFoundation({ home: household.home }) : undefined);
+  if (foundation && !foundation.operations.has('tasks.list')) installTasks(foundation.db, foundation.operations, foundation.live, () => {
+    const h = live?.();
+    return { members: Object.fromEntries((h?.members ?? []).map(m => [m.person, { owner: m.agents === '*', agents: m.agents === '*' ? h!.agents : m.agents }])), projects: {}, services: {} };
+  });
   const foundationAuth = (req: IncomingMessage, csrf = false): Authentication | undefined => {
     if (!live) return;
     const uiOptions = { contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live };
@@ -546,6 +552,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   async function openSession(identity: string, caller?: Caller): Promise<WebStandardStreamableHTTPServerTransport> {
     const { server } = serverFor(caller, identity);
+    if (foundation && caller && (caller.role.kind === 'agent' || caller.role.kind === 'owner')) {
+      const viewer = caller.role.kind === 'agent' ? { kind: 'agent' as const, id: caller.role.agent }
+        : { kind: 'member' as const, id: caller.role.member ?? firstOwner(live!()).person };
+      registerOperationTools(server, foundation.operations, viewer);
+    }
     // Fires AFTER the initialize handshake completes — getClientVersion() is
     // populated here (it is not yet at onsessioninitialized). Logging the peer
     // makes the resolved harness observable and reveals an unmapped client's
