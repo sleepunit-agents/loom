@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -16,9 +16,11 @@ function snapshot(home: string) {
 
 it('marks a known local domain through core, with the same answer for an unknown domain', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-cli-nudge-'));
-  withLog(home, db => domainOf(db, 'tasks/task', 'fixture'));
+  withLog(home, db => { domainOf(db, 'tasks/task', 'fixture'); db.prepare('UPDATE domains SET nudged = ?').run(Date.now() - 1000); });
+  const watermark = withLog(home, db => nudgedSince(db, 0))[0].nudged;
   const known = await runCliCaptured(['collections', 'nudge', 'tasks/task'], { env: { LOOM_HOME: home } });
   expect(known).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(withLog(home, db => nudgedSince(db, watermark))).toHaveLength(1);
   expect(Number(readFileSync(join(home, 'collections', TICK), 'utf8'))).toBeGreaterThan(0);
   expect(withLog(home, db => nudgedSince(db, 0))).toEqual([{ domain: 'tasks/task', nudged: expect.any(Number) }]);
   const held = withLog(home, db => nudgedSince(db, 0));
@@ -33,11 +35,15 @@ it('marks a known local domain through core, with the same answer for an unknown
 
 it('help and invalid arguments do not create a store', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-cli-nudge-'));
+  const absent = mkdtempSync(join(tmpdir(), 'loom-cli-nudge-empty-'));
   seed(home); const before = snapshot(home);
   for (const args of [['--help'], ['nudge'], ['nudge', '../bad'], ['nudge', 'tasks/task', 'extra'], ['nudge', 'tasks/task', '--typo'], ...['--client', '--model', '--context-dir', '--url'].map(f => ['nudge', 'tasks/task', f])]) {
     const r = await runCliCaptured(['collections', ...args], { env: { LOOM_HOME: home } });
     expect(r.code).toBe(args[0] === '--help' ? 0 : 2);
     expect(snapshot(home)).toEqual(before);
+    const empty = await runCliCaptured(['collections', ...args], { env: { LOOM_HOME: absent } });
+    expect(empty.code).toBe(r.code);
+    expect(existsSync(join(absent, 'collections'))).toBe(false);
   }
 });
 
@@ -66,6 +72,9 @@ it('remote houses use only the existing nudge API and token file, preserving pro
   expect(snapshot(home)).toEqual(before);
   expect(seen).toEqual([['POST', '/prefix/api/loom/collections/nudge', 'Bearer test-token', { domain: 'tasks/task' }], ['POST', '/prefix/api/loom/collections/nudge', 'Bearer test-token', { domain: 'tasks/*' }]]);
   expect(snapshot(home)).toEqual(before);
+  const absent = mkdtempSync(join(tmpdir(), 'loom-cli-nudge-empty-'));
+  expect((await runCliCaptured(['collections', 'nudge', 'tasks/task'], { env: { ...env, LOOM_HOME: absent } })).code).toBe(0);
+  expect(existsSync(join(absent, 'collections'))).toBe(false);
 });
 
 it('remote failures never fall back to a local store', async () => {
@@ -77,5 +86,8 @@ it('remote failures never fall back to a local store', async () => {
   for (const target of [url, 'bad']) {
     expect((await runCliCaptured(['collections', 'nudge', 'tasks/task'], { env: { LOOM_URL: target, LOOM_HOME: home } })).code).not.toBe(0);
     expect(snapshot(home)).toEqual(before);
+    const absent = mkdtempSync(join(tmpdir(), 'loom-cli-nudge-empty-'));
+    expect((await runCliCaptured(['collections', 'nudge', 'tasks/task'], { env: { LOOM_URL: target, LOOM_HOME: absent } })).code).not.toBe(0);
+    expect(existsSync(join(absent, 'collections'))).toBe(false);
   }
 });
