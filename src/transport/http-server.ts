@@ -62,7 +62,7 @@ import { askGrant } from '../grants.js';
 import { grantsAuthority } from '../offers-registry.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_NUDGE_ROUTE, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { nudge as collectionsNudge } from '../collections/pull.js';
-import { pullPieceSoon } from '../collections/subs.js';
+import { configureCollectionBackground, pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
@@ -457,7 +457,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   commsTimer?.unref();
   if (live && !opts.createServer) {
     void commsSweep();
-    watchComms(live().home);
+    watchComms(live().home, () => periodic);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
     void refsBackfill();
   }
@@ -1335,6 +1335,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
     });
   });
+  const stopCollections = live && !opts.createServer ? configureCollectionBackground(live, () => process.env, periodic) : undefined;
   if (!opts.createServer) periodic.setEligible(!workerSocket);
 
   return {
@@ -1348,6 +1349,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       closing = true;
       backgroundActive = false;
       await periodic?.close();
+      await stopCollections?.();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);

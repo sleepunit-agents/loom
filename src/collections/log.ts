@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS refresh_requests (
   key TEXT NOT NULL,
   UNIQUE(domain, key)
 );
+CREATE TABLE IF NOT EXISTS comms_scan (
+  id INTEGER PRIMARY KEY CHECK(id = 1),
+  through INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS comms_member_moves (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  member TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS listener_demand (
+  listener TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  read_at INTEGER NOT NULL,
+  until INTEGER NOT NULL,
+  PRIMARY KEY(listener, domain)
+);
 CREATE TABLE IF NOT EXISTS refresh_checks (
   domain TEXT PRIMARY KEY,
   epoch TEXT NOT NULL,
@@ -371,4 +386,18 @@ export function finishRefresh(db: Database, domain: string, epoch: string, throu
   if (domainRow(db, domain)?.epoch !== epoch) return;
   db.prepare('DELETE FROM refresh_requests WHERE domain = ? AND id <= ?').run(domain, through);
   if (full) db.prepare('INSERT OR REPLACE INTO refresh_checks (domain, epoch, checked) VALUES (?, ?, ?)').run(domain, epoch, checked);
+}
+
+/** Demand contains domain names and real-read times only, never viewers, scopes, or environments. */
+export const DEMAND_TTL_MS = 30_000;
+export function publishDemand(db: Database, listener: string, wanted: ReadonlyMap<string, number>, now = Date.now()): void {
+  db.transaction(() => {
+    db.prepare('DELETE FROM listener_demand WHERE listener = ? OR until <= ?').run(listener, now);
+    const put = db.prepare('INSERT INTO listener_demand(listener, domain, read_at, until) VALUES (?, ?, ?, ?)');
+    for (const [domain, readAt] of wanted) put.run(listener, domain, readAt, now + DEMAND_TTL_MS);
+  }).immediate();
+}
+export function sharedDemand(db: Database, now = Date.now()): Map<string, number> {
+  const rows = db.prepare('SELECT domain, MAX(read_at) AS read_at FROM listener_demand WHERE until > ? GROUP BY domain').all(now) as Array<{ domain: string; read_at: number }>;
+  return new Map(rows.map(r => [r.domain, r.read_at]));
 }

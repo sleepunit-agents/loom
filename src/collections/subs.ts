@@ -1,3 +1,5 @@
+import type { PeriodicOwner } from '../transport/periodic-owner.js';
+import { randomUUID } from 'node:crypto';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Subscriptions: core to window (docs/specs/collections.md, "Core to window").
@@ -29,7 +31,7 @@ import type { Household } from '../household.js';
 import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
-import { domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
+import { publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
 import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
@@ -118,6 +120,14 @@ interface HomeState {
   env: () => NodeJS.ProcessEnv;
   streams: Map<string, Stream>;
   puller: Puller;
+  closed: boolean;
+  listener: string;
+  reads: Map<string, number>;
+  demand: Map<string, number>;
+  published: string;
+  publishedAt: number;
+  owned: boolean;
+  background?: PeriodicOwner;
   watcher?: FSWatcher;
   poll?: NodeJS.Timeout;
   passing: Promise<void> | undefined;
@@ -146,11 +156,48 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
   if (h) return h;
   const state: HomeState = {
     household, env, streams: new Map(), passing: undefined, again: false,
-    puller: new Puller(() => ({ env: env(), household: household() }), () => wantedOf(state)),
+    closed: false, listener: randomUUID(), reads: new Map(), demand: new Map(), published: '', publishedAt: 0, owned: false,
+    puller: new Puller(() => ({ env: env(), household: household() }),
+      () => state.background ? new Set(state.demand.keys()) : wantedOf(state), {
+        listener: () => state.background ? `periodic:${state.listener}` : undefined,
+        active: () => !state.background || state.background.active,
+        run: async (domain, job) => {
+          if (!state.background) return job();
+          let out: Awaited<ReturnType<typeof job>> | undefined;
+          await state.background.run(`collection pull ${domain}`, async () => { out = await job(); });
+          return out;
+        },
+      }),
   };
   h = state;
   homes.set(home, h);
   return h;
+}
+
+/** A full HTTP listener participates even when all subscriptions are on a follower. */
+export function configureCollectionBackground(household: () => Household, env: () => NodeJS.ProcessEnv, owner: PeriodicOwner): () => Promise<void> {
+  const h = homeOf(household, env);
+  h.background = owner;
+  ensureRunning(h);
+  pass(h);
+  return async () => {
+    h.closed = true;
+    h.streams.clear();
+    h.background = undefined;
+    stopIfIdle(h);
+    await h.puller.settle();
+    await h.passing;
+  };
+}
+
+function publishWanted(h: HomeState): void {
+  if (!h.background) return;
+  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
+  const serialized = JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b)));
+  const now = Date.now();
+  if (serialized === h.published && now - h.publishedAt < 10_000) return;
+  withLog(h.household().home, db => publishDemand(db, h.listener, wanted, now));
+  h.published = serialized; h.publishedAt = now;
 }
 
 function wantedOf(h: HomeState): Set<string> {
@@ -185,7 +232,8 @@ function ensureRunning(h: HomeState): void {
 }
 
 function stopIfIdle(h: HomeState): void {
-  if (h.streams.size) return;
+  if (h.streams.size || h.background) return;
+  withLog(h.household().home, db => publishDemand(db, h.listener, new Map()));
   h.puller.stop();
   h.watcher?.close(); h.watcher = undefined;
   clearInterval(h.poll); h.poll = undefined;
@@ -229,6 +277,7 @@ export async function prepare(household: () => Household, env: () => NodeJS.Proc
   const h = homeOf(household, env);
   const domain = domainOfType(p, type);
   h.puller.observed(domain);
+  h.reads.set(domain, Date.now());
   const home = h.household().home;
   const row = withLog(home, (db) => domainOf(db, domain, sourceOf(h.env(), p)).row);
   if (p.piece && p.changes && row.mode === 'log' && row.rev === null) await h.puller.now(domain);
@@ -418,6 +467,7 @@ function send(s: Stream, sub: Sub, status?: 'live'): void {
 
 /** One delivery pass over this listener's streams: new log rows, the viewer checked again, frames out. */
 function pass(h: HomeState): void {
+  if (h.closed) return;
   if (h.passing) { h.again = true; return; }
   h.passing = (async () => {
     try { await passOnce(h); } catch (e) { process.stderr.write(`loom: collections delivery failed: ${(e as Error).message}\n`); }
@@ -429,17 +479,30 @@ async function passOnce(h: HomeState): Promise<void> {
 }
 
 async function passOnceWork(h: HomeState): Promise<void> {
+  if (h.closed) return;
   const home = h.household().home;
   const now = Date.now();
+  publishWanted(h);
   // One read connection per delivery pass, shared across all streams/subscriptions. Opening
   // and closing WAL connections for each metadata/log lookup made hint fan-out CPU-bound.
   withLog(home, db => {
     // A nudge said a domain moved: pull it soon, if a subscription here reads it.
     const nudged = pendingRefreshes(db);
-    const wanted = wantedOf(h);
+    if (h.background?.active) {
+      if (!h.owned) {
+        // The lifetime owner lock proves any previous background owner is gone or fully drained.
+        // Request-scoped leases use a different namespace and must never be displaced here.
+        db.prepare("UPDATE domains SET lease = NULL, lease_until = 0 WHERE lease LIKE 'periodic:%'").run();
+        h.owned = true;
+      }
+      h.demand = sharedDemand(db, now);
+      for (const [domain, readAt] of h.demand) h.puller.observed(domain, readAt);
+    }
+    if (h.background && !h.background.active) h.owned = false;
+    const wanted = h.background ? new Set(h.demand.keys()) : wantedOf(h);
     // Pending hints remain visible until their owner commits. A busy listener must not lose them
     // merely because it saw a tick: the owner may have been suspended or died.
-    for (const n of nudged) if (wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
+    for (const n of nudged) if ((!h.background || h.background.active) && wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
     const installed = providers(h.env());
     for (const s of [...h.streams.values()]) {
       // The viewer, again, before anything is sent: gone is closed; changed is a new scope and every subscription resets.
@@ -657,12 +720,11 @@ export function pullPieceSoon(home: string, env: NodeJS.ProcessEnv, piece: strin
   if (domains.length) pullSoon(home, domains);
 }
 
-/** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
- * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
+/** Nudge these domains for the background owner. Standalone callers without an owner also pull locally. */
 export function pullSoon(home: string, domains: readonly string[]): void {
   for (const d of domains) void nudge(home, d).then(() => {
     const h = homes.get(home);
-    if (h && wantedOf(h).has(d)) return h.puller.soon(d).then(() => deliverNow(home));
+    if (h && !h.background && wantedOf(h).has(d)) return h.puller.soon(d).then(() => deliverNow(home));
   }).catch(() => undefined);
 }
 
@@ -682,7 +744,7 @@ export async function pullNowAll(home: string, domains: readonly string[]): Prom
 
 /** For tests: forget every stream and stop. */
 export function stopAll(): void {
-  for (const h of homes.values()) { h.streams.clear(); stopIfIdle(h); }
+  for (const h of homes.values()) { h.background = undefined; h.streams.clear(); stopIfIdle(h); }
 }
 
 /** For a provider's answer: the {rev, txn} it read the domain at, if it said. */

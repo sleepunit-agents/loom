@@ -1,6 +1,12 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PeriodicOwner } from '../transport/periodic-owner.js';
+import { withLog } from '../collections/log.js';
+import { changedFor } from './live.js';
 import { afterEach, expect, it, vi } from 'vitest';
 
-const reads = vi.hoisted(() => ({ COMMS_DB: 'comms.db', movedSince: vi.fn((_home: string, _since: number) => []), seqsOf: vi.fn(), threadState: vi.fn(), onBump: vi.fn(() => () => {}) }));
+const reads = vi.hoisted(() => ({ COMMS_DB: 'comms.db', movedSince: vi.fn((_home: string, _since: number): Array<{ id: string; member: string; updated: number }> => []), seqsOf: vi.fn(), threadState: vi.fn(), onBump: vi.fn(() => () => {}) }));
 vi.mock('../comms.js', () => reads);
 vi.mock('./live.js', () => ({ changedFor: vi.fn() }));
 import { stopCommsWatch, watchComms } from './comms-live.js';
@@ -47,3 +53,20 @@ it('names the actual Comms timer continuation after its async database probe', a
     await expect.poll(() => lines.some((l) => /slowest: comms live tick 2\d\d ms/.test(l))).toBe(true);
   } finally { w.stop(); }
 });
+
+it('followers read shared member markers without scanning Comms, then scan on ownership takeover', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-owner-'));
+  const owner = new PeriodicOwner(home, () => undefined);
+  reads.movedSince.mockReset();
+  vi.mocked(changedFor).mockClear();
+  watchComms(home, () => owner);
+  try {
+    withLog(home, db => db.prepare('INSERT INTO comms_member_moves(member) VALUES (?)').run('jonathan'));
+    await expect.poll(() => vi.mocked(changedFor).mock.calls).toContainEqual(['jonathan', false]);
+    expect(reads.movedSince).not.toHaveBeenCalled();
+    reads.movedSince.mockReturnValueOnce([{ id: 'thread', member: 'jonathan', updated: Date.now() + 10 }]);
+    owner.setEligible(true);
+    await expect.poll(() => vi.mocked(changedFor).mock.calls).toContainEqual(['jonathan', true]);
+    expect(reads.movedSince).toHaveBeenCalledTimes(1);
+  } finally { stopCommsWatch(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
+}, 15_000);

@@ -87,8 +87,8 @@ function tell(about: Sees): void {
  * Tell only `member`'s open apps that something of theirs changed: a Comms thread is its member's alone
  * (docs/specs/comms.md, rule 4), so another owner of the same agent never hears of it, not even as a bare change.
  */
-export function changedFor(member: string): void {
-  hooks();
+export function changedFor(member: string, notifyHooks = true): void {
+  if (notifyHooks) hooks();
   for (const c of clients) if (c.member === member) nudge(c);
 }
 
