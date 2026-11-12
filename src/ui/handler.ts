@@ -737,7 +737,7 @@ function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): Ag
 /** Your call for a lone agent (no household): every piece's asks that need the owner. For the push watch. */
 async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
-  return pieceAsks(pieces, opts.env).filter((a) => a.attention !== false);
+  return pieceAsks(asksFor(pieces, undefined, undefined), opts.env).filter((a) => a.attention !== false);
 }
 
 /** Who loom's pushes are from (VAPID's subject): its public address, else a placeholder. */

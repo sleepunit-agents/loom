@@ -226,6 +226,25 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))['a-0000006f'].state).toBe('Allowed');
   }, 30_000);
 
+  it('a lone-agent push also selects only ten of the eligible candidates', async () => {
+    const store = sessionStore(h.home);
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), { endpoint: 'https://fcm.googleapis.com/fcm/send/solo', keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+    const sent: string[] = [];
+    const minute = async () => {
+      const f = join(h.home, 'ui-sessions.json');
+      try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+      return pushWatch({ contextDir: h.home, auth: { enabled: true, check: () => null, live: () => false }, env: process.env } as never,
+        (async (_s: unknown, payload: string) => { sent.push(JSON.parse(payload).body); return {}; }) as never);
+    };
+    await minute();
+    cards(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`a-${i.toString(16).padStart(8, '0')}`, { agent: 'art', text: `Solo permission ${i}?`, at: '2026-11-12T10:00:00Z' }])));
+    // Push drains five at a time. A third round distinguishes ten selected from twelve candidates.
+    await minute(); await minute(); await minute();
+    expect(sent).toHaveLength(10);
+    expect(sent).not.toContain('Solo permission 10?');
+    expect(sent).not.toContain('Solo permission 11?');
+  }, 30_000);
+
   it('what core holds for the core viewer names the thread\'s member alone', async () => {
     needs(thread('sam').conversation, 'Sam: OK to ship the comm screen?');
     needs(bridge(), 'Loren wants the WAF exception: OK?');
