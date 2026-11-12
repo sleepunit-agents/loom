@@ -274,3 +274,7 @@ CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
 `harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `sessions`, `export`, `restore`, `store`, `backup`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).
+
+## Application foundation (first slice)
+
+`src/core/` owns the kept-open app database, operation registry, Hono HTTP door and `/live` WebSocket. `src/policy.ts` owns the ordered sharing rule. The composition root installs pieces; core imports none. `fixture` builds a disposable home with the test-only example piece. Existing page paths remain active until their apps cut over.

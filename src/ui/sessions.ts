@@ -22,6 +22,7 @@
  *
  * Writes are read-modify-write under a lock file and land by rename.
  */
+import { EventEmitter } from 'node:events';
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
@@ -246,6 +247,8 @@ const LOCK_STALE_MS = 10_000;
 const hashId = (id: string) => createHash('sha256').update(id).digest('hex');
 
 export class SessionStore {
+  private readonly changes = new EventEmitter();
+  onChange(fn: () => void): () => void { this.changes.on('changed', fn); return () => { this.changes.off('changed', fn); }; }
   private readonly file: string;
   private readonly lockFile: string;
   readonly key: Buffer;
@@ -301,6 +304,7 @@ export class SessionStore {
       const tmp = `${this.file}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(f), { mode: 0o600 });
       renameSync(tmp, this.file);
+      queueMicrotask(() => this.changes.emit('changed'));
       return out;
     } finally {
       closeSync(fd);
