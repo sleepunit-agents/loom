@@ -10,6 +10,25 @@ describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
+  it.each([0, 1])('enforces the default 512 KiB manifest limit at the boundary (+%i byte)', async (extra) => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-manifest-bytes-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    const body = JSON.stringify({ v: 2, asks: Array.from({ length: 1000 }, (_, i) => ({ text: `Permission ${i}?`, page: '' })) });
+    // JSON permits trailing whitespace: test exact transport bytes without violating any string-field limit.
+    const payload = body + ' '.repeat(512 * 1024 + extra - Buffer.byteLength(body));
+    writeFileSync(join(root, 'answer'), payload);
+    const path = join(bin, 'loom-probe');
+    writeFileSync(path, `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(${JSON.stringify(join(root, 'answer'))}));\n`);
+    chmodSync(path, 0o755);
+    const r = await pieceManifests({ PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') });
+    if (extra === 0) {
+      expect(r.skipped).toEqual([]);
+      expect(r.pieces[0].manifest.asks).toHaveLength(1000);
+    } else expect(r).toEqual({ pieces: [], skipped: [{ piece: 'probe', reason: 'answer too large' }] });
+  });
+
   it.each([[1, false], [8, false], [1, true], [8, true]] as const)('bounds concurrent cold, after-timeout and stale pending callers with %i producers (invalidated: %s)', async (count, invalidate) => {
     const root = mkdtempSync(join(tmpdir(), 'loom-deadline-'));
     dirs.push(root);

@@ -737,7 +737,7 @@ function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): Ag
 /** Your call for a lone agent (no household): every piece's asks that need the owner. For the push watch. */
 async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
-  return pieceAsks(pieces, opts.env).filter((a) => a.attention !== false);
+  return pieceAsks(asksFor(pieces, undefined, undefined), opts.env).filter((a) => a.attention !== false);
 }
 
 /** Who loom's pushes are from (VAPID's subject): its public address, else a placeholder. */
@@ -906,15 +906,18 @@ function hiddenFrom(sees: (cv: string, agent?: string) => boolean, who: Looker) 
  * a notice or an answered one naming it, are the thread's member's; a household owner sees a lead card from it too (a
  * grant, a vouch, a reset: only they may give one), as the one who answers it. Everything else is as forOwner left it.
  */
-export function asksFor(pieces: PieceInfo[], h: Household | undefined, who: Looker | undefined): PieceInfo[] {
+function visiblePieceItems(pieces: PieceInfo[], h: Household | undefined, who: Looker | undefined): PieceInfo[] {
   const named = (p: PieceInfo) => [...p.manifest.asks, ...(p.manifest.notices ?? []), ...(p.manifest.answered ?? [])].some((a) => a.conversation);
-  if (!h || !who || !pieces.some(named)) return pieces;
   return pieces.map((p) => {
-    if (!named(p)) return p;
-    const hidden = hiddenFrom(seesConversation(h, who, reachesPiece(p)), who);
+    const hidden = h && who && named(p) ? hiddenFrom(seesConversation(h, who, reachesPiece(p)), who) : () => false;
     const keep = <T extends { conversation?: string; agent?: string; lead?: true }>(xs: T[] | undefined) => xs?.filter((x) => !hidden(x));
     return { ...p, manifest: { ...p.manifest, asks: keep(p.manifest.asks)!, notices: keep(p.manifest.notices), answered: keep(p.manifest.answered) } };
   });
+}
+
+/** Choose ten only after the member's thread checks. Private candidates elsewhere consume none of this quota. */
+export function asksFor(pieces: PieceInfo[], h: Household | undefined, who: Looker | undefined): PieceInfo[] {
+  return visiblePieceItems(pieces, h, who).map((p) => ({ ...p, manifest: { ...p.manifest, asks: p.manifest.asks.slice(0, LIMITS.asks) } }));
 }
 
 /** The approval kinds only a household owner answers (the approvals piece's OWNER_ANSWERED): its lead cards' kinds. */
@@ -932,7 +935,8 @@ const HOUSEHOLD_KINDS: ReadonlySet<string> = new Set([...OWNER_KINDS, 'host']);
 async function actOnHidden(pieces: PieceInfo[], piece: string, action: string, fields: Record<string, string>, h: Household, who: Looker, env: NodeJS.ProcessEnv): Promise<boolean> {
   const names = (a: Ask) => (a.actions ?? []).some((b) => b.action === action && Object.entries(b.fields ?? {}).every(([k, v]) => fields[k] === v));
   const all = pieces.find((p) => p.piece === piece)?.manifest.asks ?? [];
-  const seen = asksFor(pieces.filter((p) => p.piece === piece), h, who)[0]?.manifest.asks ?? [];
+  // A visible candidate below the display quota is still theirs to answer (as an unlisted approval was before).
+  const seen = visiblePieceItems(pieces.filter((p) => p.piece === piece), h, who)[0]?.manifest.asks ?? [];
   if (seen.some(names)) return false;
   if (all.some(names)) return true;
   const id = fields.id ?? '';
