@@ -189,3 +189,33 @@ it('a failed shared publication keeps the cursor and retries its member marker',
     expect(withLog(home, db => db.prepare('SELECT member FROM comms_member_moves').all())).toEqual([{ member: 'jonathan' }]);
   } finally { off(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+it('an idle follower does not probe databases again until publication or fallback', async () => {
+  vi.useFakeTimers();
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-idle-follower-'));
+  const follower = new PeriodicOwner(home, () => {});
+  const off = watchComms(home, () => follower);
+  vi.mocked(waitForLocks).mockClear();
+  vi.mocked(changedFor).mockClear();
+  try {
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(waitForLocks).toHaveBeenCalledTimes(1);
+    vi.mocked(waitForLocks).mockClear();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(waitForLocks).not.toHaveBeenCalled();
+    // Publication follows the durable marker, as in the owner's real scan.
+    withLog(home, db => db.prepare('INSERT INTO comms_member_moves(member) VALUES (?)').run('jonathan'));
+    const { writeFileSync } = await import('node:fs');
+    const { COMMS_LIVE_TICK } = await import('./comms-live.js');
+    writeFileSync(join(home, COMMS_LIVE_TICK), 'new-publication');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(changedFor).toHaveBeenCalledWith('jonathan', false);
+    expect(waitForLocks).toHaveBeenCalledTimes(1);
+    vi.mocked(waitForLocks).mockClear();
+    // A missing signal is repaired by the bounded fallback, even without a watcher event.
+    withLog(home, db => db.prepare('INSERT INTO comms_member_moves(member) VALUES (?)').run('other'));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(changedFor).toHaveBeenCalledWith('other', false);
+    expect(waitForLocks).toHaveBeenCalledTimes(1);
+  } finally { off(); await follower.close(); rmSync(home, { recursive: true, force: true }); }
+});

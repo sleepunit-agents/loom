@@ -1,3 +1,4 @@
+import { queueCollectionNudge } from '../collections/subs.js';
 import { builtinWatchRegistry } from '../watch-sources.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 import { sameAskWords } from './ask-words.js';
@@ -1263,6 +1264,7 @@ export const attentionBuilds = (home: string): number => builds.get(home) ?? 0;
 const liveNudgedAt = new Map<string, number>();
 const liveNudgeLater = new Map<string, NodeJS.Timeout>();
 function nudgeLive(home: string, domain: string): void {
+  if (queueCollectionNudge(home, domain)) return;
   const k = `${home}\0${domain}`;
   if (liveNudgeLater.has(k)) return;
   const wait = Math.max(0, (liveNudgedAt.get(k) ?? 0) + GAP_MS - Date.now());
@@ -1274,6 +1276,7 @@ function nudgeLive(home: string, domain: string): void {
 }
 
 function nudgeAttention(home: string): void {
+  if (queueCollectionNudge(home, ATTENTION_DOMAIN)) return;
   if (nudgeLater.has(home)) return;
   const wait = Math.max(0, (nudgedAt.get(home) ?? 0) + GAP_MS - Date.now());
   const go = () => backgroundJob('collection attention nudge', () => { nudgeLater.delete(home); nudgedAt.set(home, Date.now()); return nudge(home, ATTENTION_DOMAIN); });
@@ -1922,7 +1925,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     registerCoreSource(home, 'attention', async (v, _now, ids) => { const rows = await attentionFor(base, v); return ids ? rows.filter(r => ids.includes(r.id)) : rows; });
     // Each agent's card (t-2028), made by Home's own code for each viewer.
     registerCoreSource(home, 'agent-status', (v, _now, ids) => agentStatusFor(base, v, ids));
-    onChanged(home, about => { nudgeAttention(home); if (about === '*') nudgeLive(home, AGENT_STATUS_DOMAIN); else for (const agent of about) void nudge(home, AGENT_STATUS_DOMAIN, agent); });
+    onChanged(home, about => { nudgeAttention(home); if (about === '*') nudgeLive(home, AGENT_STATUS_DOMAIN); else for (const agent of about) if (!queueCollectionNudge(home, AGENT_STATUS_DOMAIN, agent)) void nudge(home, AGENT_STATUS_DOMAIN, agent); });
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };

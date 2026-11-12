@@ -1,3 +1,5 @@
+import { waitForLocks } from '../lock-gate.js';
+import { liveDbPath } from './log.js';
 import { withManifestReads } from '../ui/manifest-shared.js';
 import type { Database } from 'better-sqlite3';
 import type { PeriodicOwner } from '../transport/periodic-owner.js';
@@ -33,7 +35,7 @@ import type { Household } from '../household.js';
 import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
-import { publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
+import { markNudged, publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
 import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
@@ -126,6 +128,7 @@ interface HomeState {
   listener: string;
   reads: Map<string, number>;
   demand: Map<string, number>;
+  hints: Map<string, Set<string>>;
   published: string;
   publishedAt: number;
   owned: boolean;
@@ -162,7 +165,7 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
     household, env, streams: new Map(), passing: undefined, again: false,
     backgrounds: new Set(), reasks: new Set(),
     get background() { return [...state.backgrounds].find(o => o.active) ?? state.backgrounds.values().next().value; },
-    closed: false, listener: randomUUID(), reads: new Map(), demand: new Map(), published: '', publishedAt: 0, owned: false,
+    closed: false, listener: randomUUID(), reads: new Map(), demand: new Map(), hints: new Map(), published: '', publishedAt: 0, owned: false,
     puller: new Puller(() => ({ env: env(), household: household() }),
       () => state.background ? new Set(state.demand.keys()) : wantedOf(state), {
         listener: () => state.background ? `periodic:${state.listener}` : undefined,
@@ -193,12 +196,45 @@ export function configureCollectionBackground(household: () => Household, env: (
     h.backgrounds.delete(owner);
     if (h.backgrounds.size) return;
     h.closed = true;
+    await h.passing;
+    if (h.hints.size && await waitForLocks({ write: [liveDbPath(h.household().home)] })) withLog(h.household().home, db => publishHints(h, db));
     h.streams.clear();
     stopIfIdle(h);
     await h.puller.settle();
     await h.passing;
     await Promise.allSettled(h.reasks);
   };
+}
+
+/** Local changes are hints for the machine's owner, never a reason for every listener to rebuild. */
+export function queueCollectionNudge(home: string, domain: string, key = '*'): boolean {
+  const h = homes.get(home);
+  if (!h?.background) return false;
+  let keys = h.hints.get(domain);
+  if (!keys) h.hints.set(domain, keys = new Set());
+  if (key === '*') { keys.clear(); keys.add('*'); }
+  else if (!keys.has('*')) keys.add(key);
+  return true;
+}
+
+function publishHints(h: HomeState, db: Database): void {
+  if (!h.hints.size) return;
+  db.transaction(() => {
+    const put = db.prepare('INSERT OR IGNORE INTO nudge_requests(domain, key) VALUES (?, ?)');
+    for (const [domain, keys] of h.hints) for (const key of keys) put.run(domain, key);
+  }).immediate();
+  h.hints.clear();
+}
+
+function consumeHints(h: HomeState, db: Database): void {
+  const owner = h.background;
+  if (!owner?.active) return;
+  if (!db.prepare('SELECT 1 FROM nudge_requests LIMIT 1').get()) return;
+  void owner.run('collection hints', () => backgroundJob('collection owner nudges', () => db.transaction(() => {
+    const hints = db.prepare("SELECT domain, key FROM nudge_requests n WHERE key = '*' OR NOT EXISTS (SELECT 1 FROM nudge_requests broad WHERE broad.domain = n.domain AND broad.key = '*')").all() as Array<{ domain: string; key: string }>;
+    for (const { domain, key } of hints) markNudged(db, domain, Date.now(), key);
+    db.prepare('DELETE FROM nudge_requests').run();
+  }).immediate()));
 }
 
 function publishWanted(h: HomeState, db: Database): void {
@@ -493,10 +529,14 @@ async function passOnceWork(h: HomeState): Promise<void> {
   if (h.closed) return;
   const home = h.household().home;
   const now = Date.now();
+  if ((h.hints.size || h.background?.active) && !await waitForLocks({ write: [liveDbPath(home)] })) return;
+  if (h.closed) return;
   // One read connection per delivery pass, shared across all streams/subscriptions. Opening
   // and closing WAL connections for each metadata/log lookup made hint fan-out CPU-bound.
   withLog(home, db => withManifestReads(home, db, () => {
     publishWanted(h, db);
+    publishHints(h, db);
+    consumeHints(h, db);
     // A nudge said a domain moved: pull it soon, if a subscription here reads it.
     const nudged = pendingRefreshes(db);
     if (h.background?.active) {
@@ -514,6 +554,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
     // Pending hints remain visible until their owner commits. A busy listener must not lose them
     // merely because it saw a tick: the owner may have been suspended or died.
     for (const n of nudged) if ((!h.background || h.background.active) && wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
+    if (!h.streams.size) return;
     const installed = providers(h.env());
     for (const s of [...h.streams.values()]) {
       // The viewer, again, before anything is sent: gone is closed; changed is a new scope and every subscription resets.

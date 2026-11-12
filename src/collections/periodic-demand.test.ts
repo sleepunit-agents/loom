@@ -179,3 +179,31 @@ it.each(['viewer', 'install', 'scope', 'epoch'])('withdrawn %s authority while a
     expect(frames.mock.calls.slice(before).map(([event]) => event)).not.toContain('rows');
   } finally { release(); registry.mockRestore(); }
 });
+
+it('followers publish coalesced collection hints and only the owner consumes them after takeover', async () => {
+  const { queueCollectionNudge } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); domainOf(db, 'loom/attention', 'loom'); });
+  await deliverNow(home);
+  for (let i = 0; i < 20; i++) {
+    expect(queueCollectionNudge(home, 'loom/agent-status', 'art')).toBe(true);
+    queueCollectionNudge(home, 'loom/attention');
+  }
+  await deliverNow(home);
+  const hints = () => withLog(home, db => db.prepare('SELECT * FROM nudge_requests ORDER BY domain, key').all());
+  const refreshes = () => withLog(home, db => db.prepare('SELECT domain, key FROM refresh_requests ORDER BY domain, key').all());
+  expect(hints()).toEqual([{ domain: 'loom/agent-status', key: 'art' }, { domain: 'loom/attention', key: '*' }]);
+  expect(refreshes()).toEqual([]);
+  // Broad local hints subsume keyed ones before publication; all remain durable until an owner exists.
+  queueCollectionNudge(home, 'loom/agent-status', 'art');
+  queueCollectionNudge(home, 'loom/agent-status');
+  queueCollectionNudge(home, 'loom/agent-status', 'other');
+  await deliverNow(home);
+  expect(hints()).toContainEqual({ domain: 'loom/agent-status', key: '*' });
+  owner.setEligible(true);
+  await deliverNow(home);
+  expect(hints()).toEqual([]);
+  expect(refreshes()).toEqual([{ domain: 'loom/agent-status', key: '*' }, { domain: 'loom/attention', key: '*' }]);
+});

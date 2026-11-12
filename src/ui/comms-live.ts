@@ -13,13 +13,21 @@ import { backgroundJob } from '../transport/stall-watch.js';
  * tells the thread's member's shared stream (src/ui/live.ts changedFor), so the dock's count refreshes, and only theirs.
  * Full HTTP listeners share the owner's scan results through collections/live.db; stream delivery remains local.
  */
-import { watch, type FSWatcher } from 'node:fs';
+import { readFileSync, writeFileSync, watch, type FSWatcher } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { COMMS_DB, movedSince, onBump, seqsOf, threadState } from '../comms.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
 import { isSqliteBusy, waitForLocks } from '../lock-gate.js';
 import { changedFor } from './live.js';
+
+/** Derived publication signal only: no thread or member information. */
+export const COMMS_LIVE_TICK = 'comms-live.tick';
+const SHARED_FALLBACK_MS = 30_000;
+function sharedWord(home: string): string {
+  try { return readFileSync(join(home, COMMS_LIVE_TICK), 'utf8'); } catch { return ''; }
+}
 
 const BEAT_MS = 25_000;
 const POLL_MS = 2_000;
@@ -29,7 +37,7 @@ const PER_SESSION = 4;
 /** `state`: the thread's state this stream last told of (comms.ts threadState: working, a delivery's outcome; t-1881). */
 interface Stream { home: string; res: ServerResponse; thread: string; session: string; sent: number; state: string; may: () => boolean }
 const streams = new Set<Stream>();
-const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; owner?: () => PeriodicOwner | undefined; owners: Map<object, (() => PeriodicOwner | undefined) | undefined>; off: () => void }>();
+const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; sharedWord?: string; sharedAt: number; owner?: () => PeriodicOwner | undefined; owners: Map<object, (() => PeriodicOwner | undefined) | undefined>; off: () => void }>();
 
 /** A stream closed or cut off. The home's watch stays: the shared stream's members still hear of their threads. */
 function drop(s: Stream): void {
@@ -91,6 +99,8 @@ async function tellShared(home: string): Promise<void> {
       for (const member of new Set(moved.map(m => m.member))) put.run(member);
       db.prepare('UPDATE comms_scan SET through = ? WHERE id = 1').run(Math.max(...moved.map(m => m.updated)));
     }).immediate());
+    // Commit before publishing. A failed hint is recovered by the bounded fallback read.
+    try { writeFileSync(join(home, COMMS_LIVE_TICK), randomBytes(12).toString('hex'), { mode: 0o600 }); } catch { /* fallback */ }
   });
   if (homes.get(home) !== h) return;
   const moved = withLog(home, db => db.prepare('SELECT seq, member FROM comms_member_moves WHERE seq > ? ORDER BY seq').all(h.sharedSeen) as Array<{ seq: number; member: string }>);
@@ -137,19 +147,24 @@ function ensure(home: string): void {
     if (running) { again = true; return; }
     const registration = homes.get(home);
     if (!registration) return;
+    const follower = !!registration.owner && !registration.owner()?.active;
+    const word = sharedWord(home);
+    if (follower && registration.sharedWord === word && Date.now() - registration.sharedAt < SHARED_FALLBACK_MS) return;
     running = true;
-    void backgroundJob('comms live tick', async () => {
+    void backgroundJob(follower ? 'comms shared delivery' : 'comms live tick', async () => {
       do {
         again = false;
         const sharedOwner = registration.owner?.();
         // The owner writes shared scan results; a WAL reader probe cannot detect another writer.
-        const read = [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)];
+        const localThreads = [...streams].some(s => s.home === home);
+        const read = sharedOwner?.active || !registration.owner || localThreads ? [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] : [];
         if (registration.owner && !sharedOwner?.active) read.push(liveDbPath(home));
         if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home)] : [] })) { waiting(); return; }
         if (homes.get(home) !== registration) return;
         try {
           if (homes.get(home)?.owner) await tellShared(home); else tellMembers(home);
           pass(home);
+          registration.sharedWord = word; registration.sharedAt = Date.now();
           busy = false;
         } catch (error) {
           // Watchers and timers have no request error boundary. A transient lock
@@ -168,10 +183,10 @@ function ensure(home: string): void {
     });
   };
   let watcher: FSWatcher | undefined;
-  try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
+  try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick' || (String(file) === COMMS_LIVE_TICK && !homes.get(home)?.owner?.()?.active)) tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
   const beat = setInterval(() => backgroundJob('comms heartbeat', () => { for (const s of streams) if (s.home === home) write(s, ': beat\n\n'); }), BEAT_MS); beat.unref();
-  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, owners: new Map(), off: onBump(tick) });
+  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, sharedAt: 0, owners: new Map(), off: onBump(tick) });
 }
 
 /**
