@@ -40,8 +40,9 @@ const server=createServer(async(req,res)=>{if(req.url==='/events'){openStream(re
     await expect.poll(cached, { timeout: 10_000 }).toContain('one:art:art');
     expect(await read()).toContain('one:art:art'); expect(calls()).toBe(1);
     // Changed results reach the follower's own stream; delivery never moves to the owner.
+    const boundary = frames.length;
     writeFileSync(join(home, 'value'), 'two'); await fetch(`${follower}/records`);
-    await expect.poll(() => frames.includes('event: page'), { timeout: 15_000 }).toBe(true);
+    await expect.poll(() => frames.slice(boundary).includes('event: page'), { timeout: 15_000 }).toBe(true);
     await expect.poll(cached, { timeout: 15_000 }).toContain('two:art:art');
     expect(await read()).toContain('two:art:art'); expect(calls()).toBe(2);
     await fetch(`${leader}/retire`); await fetch(`${follower}/activate`);

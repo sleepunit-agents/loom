@@ -462,7 +462,12 @@ function hydrateManifest(piece: string, path: string, env: NodeJS.ProcessEnv): v
   const identity = JSON.stringify([shared.home, path, scopeKey(env)]);
   const previous = observedTokens.get(identity);
   observedTokens.set(identity, shared.token);
-  if (previous !== undefined && previous !== shared.token) expirePieceManifests(path);
+  if (previous !== shared.token && (previous !== undefined || shared.token !== '[]')) {
+    // An invalidation may be an action in another listener. A pre-action socket answer
+    // must not be republished under its new token, including this listener's first read.
+    movedAt.set(path, Date.now());
+    expirePieceManifests(path);
+  }
   const hit = sharedManifest(shared.home, shared.key);
   if (!hit || Date.now() - hit.at >= STALE_MAX_MS) return;
   // This store holds core's already parsed Manifest, rather than the piece's wire format (which has v:2).

@@ -14,7 +14,7 @@ vi.mock('../backup-tick.js', async original => {
   return { ...actual, runBackupTick: (...args: Parameters<typeof actual.runBackupTick>) => { jobs.backup(); return actual.runBackupTick(args[0], args[1], args[2], { wanted: () => true, entry: jobs.entry }); } };
 });
 
-it.each(['retire', 'close'])('HTTP %s stops timer admission and retains ownership until push, Needs and backup drain', async mode => {
+it.each(['retire', 'close'].flatMap(mode => ['push', 'needs', 'backup'].map(last => ({ mode, last }))))('HTTP $mode retains ownership with $last finishing last', async ({ mode, last }) => {
   const home = mkdtempSync(join(tmpdir(), 'loom-http-jobs-'));
   mkdirSync(join(home, 'agents', 'art'), { recursive: true });
   writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
@@ -43,9 +43,12 @@ it.each(['retire', 'close'])('HTTP %s stops timer admission and retains ownershi
     contender.setEligible(true); expect(contender.active).toBe(false);
     for (const c of timers) c.f();
     expect(jobs.push).toHaveBeenCalledTimes(1); expect(jobs.needs).toHaveBeenCalledTimes(1); expect(jobs.backup).toHaveBeenCalledTimes(1);
-    releasePush(); await new Promise(r => setImmediate(r)); expect(contender.active).toBe(false);
-    releaseNeeds(); await new Promise(r => setImmediate(r)); expect(contender.active).toBe(false);
-    writeFileSync(join(home, 'release'), 'yes');
+    const releases = { push: releasePush, needs: releaseNeeds, backup: () => { writeFileSync(join(home, 'release'), 'yes'); } };
+    for (const [name, release] of Object.entries(releases)) if (name !== last) release();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    contender.setEligible(true); // Try now, while this particular job is still blocked.
+    expect(contender.active).toBe(false);
+    releases[last as keyof typeof releases]();
     await expect.poll(() => contender.active).toBe(true);
     await closing;
   } finally {
