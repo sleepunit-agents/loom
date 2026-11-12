@@ -301,6 +301,7 @@ export function inFolder(f: InboxFolder, it: InboxItem): boolean {
 
 /** An agent's card on Home: its state (the worst any piece reports), why, and the pieces' readings. */
 export interface AgentCard {
+  watches?: import('../watch-sources.js').WatchGroup[];
   id: string;
   label: string;
   bg: string;

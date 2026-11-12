@@ -1,3 +1,4 @@
+import { builtinWatchRegistry } from '../watch-sources.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 import { sameAskWords } from './ask-words.js';
 import { agentJobs } from './agent-jobs.js';
@@ -1159,7 +1160,8 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
  * Each agent's card: the worst state any piece reports for it (and that piece's reason), every piece's readings,
  * and what loom itself knows: when it was last on the tape, and where.
  */
-function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number): AgentCard[] {
+function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number, env: NodeJS.ProcessEnv): AgentCard[] {
+  const watches = builtinWatchRegistry(pieces, Object.fromEntries(['runtime', 'tasks', 'approvals', 'clock'].map((r) => [r, pieceWithRole(env, r)?.name])));
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
     const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
@@ -1183,7 +1185,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
     // What's moving (Home's list): each piece that says it's working, in the pieces' order.
     const moving = reports.filter((x) => x.r.state === 'working').map((x) => ({ agent: a, text: x.r.reason ?? `${marks[a].label} is working`, meta: x.p.manifest.tab?.label ?? x.p.piece }));
-    return { id: a, ...marks[a], state, reason, doing, jobs, moving, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
+    return { id: a, ...marks[a], state, reason, doing, jobs, watches: watches.list(a), moving, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6), steps: recentSteps.map((s) => ({ text: s.title, at: s.created, where: whereLabel(s.where) })) };
   });
 }
 
@@ -1388,13 +1390,13 @@ async function memberCards(base: UiOptions, full: Household, m: Member, ids?: re
   const own = m.agents === '*' ? undefined : m.agents.filter((a) => full.agents.includes(a));
   const hh = own ? narrowed(full, own) : full;
   const env = own ? { ...base.env, LOOM_OWNER_SCOPE: own.join(',') } : base.env;
-  const pieces = atWorkFor(forOwner((await pieceManifests(env)).pieces, own), full, m);
+  const pieces = asksFor(atWorkFor(forOwner((await pieceManifests(env)).pieces, own), full, m), full, { person: m.person, householdOwner: m.agents === '*' });
   const now = Date.now();
   // The system bar's ticker for each (agent-status 1.2): its fresh activity (tickerActivityOf, over this member's
   // pieces), or that loom can't say what it's doing. "Active 4m ago" is said again in the window from `seen.at`.
   const runtime = pieces.some((p) => p.piece === 'runtime');
   // `activity` is always said (null: nothing fresh), so a window tells a 1.2 card with nothing to report from an older one.
-  return agentCards(ids ? narrowed(hh, hh.agents.filter(a => ids.includes(a))) : hh, pieces, agentsOf(hh)!, now).map((c) => ({ ...c, activity: tickerActivityOf(pieces, c.id, now).activity ?? null,
+  return agentCards(ids ? narrowed(hh, hh.agents.filter(a => ids.includes(a))) : hh, pieces, agentsOf(hh)!, now, env).map((c) => ({ ...c, activity: tickerActivityOf(pieces, c.id, now).activity ?? null,
     ...(!runtime || c.state === 'unavailable' || c.state === 'broken' ? { activityUnavailable: true } : {}) }));
 }
 
@@ -2666,7 +2668,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const waiting = inboxItems(hh, pieces, opts.env, [], lookerOf(opts, hh)).filter((it) => it.attention);
       // Unread as the Inbox says it: Home's banner is the first one's row there.
       { const opened = storeFor(opts).openedKeys(readerFor(opts, who)); for (const w of waiting.slice(0, HOME_STACK)) w.unread = !opened.has(w.key); }
-      const cards = agentCards(hh, pieces, agents, nowMs);
+      const cards = agentCards(hh, asksFor(pieces, hh, lookerOf(opts, hh)), agents, nowMs, opts.env);
       const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
       const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
       const broken = down('broken');

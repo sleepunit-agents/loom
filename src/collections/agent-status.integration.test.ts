@@ -181,9 +181,14 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     const jon = (await ask('jonathan')).rows as Data[];
     const art = jon.find((r) => r.agent === 'art');
     expect(art.running).toBe(2);
+    expect(art.watches[0]).toMatchObject({ kind: 'runtime.lane', count: 1 });
+    expect(art.watches[0].items.map((i: Data) => i.id)).toEqual(['job-lane']);
+    expect(art.watches[1].count).toBeNull();
     expect(art.jobs.map((j: Data) => j.id).sort()).toEqual(['job-lane', 'job-next', 'job-thread']);
     // The Comms thread's job is jonathan's: sam (another owner of art) gets neither it nor its thread.
     const samArt = (sam.rows as Data[])[0];
+    expect(samArt.watches[0].items.map((i: Data) => i.id)).toEqual(['job-lane']);
+    expect(JSON.stringify(samArt.watches)).not.toContain(mine.conversation);
     expect(samArt.jobs.map((j: Data) => j.id).sort()).toEqual(['job-lane', 'job-next']);
     expect(JSON.stringify(sam.rows)).not.toContain(mine.id.replace(/^th:/, ''));
     expect(samArt.running).toBe(1);
