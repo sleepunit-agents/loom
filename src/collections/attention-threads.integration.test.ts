@@ -183,6 +183,49 @@ describe.skipIf(!hasAge)('a Comms thread\'s asks are its member\'s alone (t-2084
     expect((await get('jonathan', `/inbox?i=${key}`)).open ?? null).toBeNull();
   }, 30_000);
 
+  it('more than ten private approvals cannot crowd out another member on Inbox, Home or push', async () => {
+    const own = thread('jonathan');
+    const other = thread('sam');
+    const store = sessionStore(h.home);
+    const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'));
+    store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('sam'), undefined, 'sam');
+    const sent: Array<{ to: string; url: string }> = [];
+    const minute = async () => {
+      const f = join(h.home, 'ui-sessions.json');
+      try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+      return pushWatch({ contextDir: agentDir(h, 'art'), auth: { enabled: true, check: () => null, live: () => false }, env: process.env, household: () => h } as never,
+        (async (s2: { endpoint: string }, payload: string) => { const p = JSON.parse(payload); if (p.url.startsWith('/inbox')) sent.push({ to: s2.endpoint.split('/').pop()!, url: p.url }); return {}; }) as never);
+    };
+    await minute();
+    const privateCards = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`a-${(100 + i).toString(16).padStart(8, '0')}`,
+      { agent: 'art', text: `Private Sam permission ${i}?`, conversation: other.conversation, at: `2026-11-12T10:${String(30 - i).padStart(2, '0')}:00Z` }]));
+    cards({ ...privateCards, 'a-00000001': { agent: 'art', text: 'Jonathan eligible permission?', conversation: own.conversation, at: '2026-11-12T09:00:00Z' } });
+    const jon = await get('jonathan', '/inbox');
+    expect(texts(jon.items)).toContain('Jonathan eligible permission?');
+    expect(JSON.stringify(jon)).not.toContain('Private Sam permission');
+    const home = await get('jonathan', '/');
+    expect(home.home.needs).toBe(1);
+    expect(JSON.stringify(home.home.stack)).toContain('Jonathan eligible permission?');
+    expect(JSON.stringify(home)).not.toContain('Private Sam permission');
+    expect(JSON.stringify(await get('jonathan', '/pieces.json'))).not.toContain('Private Sam permission');
+    const sam = await get('sam', '/inbox');
+    expect(sam.items.filter((i: Data) => i.kind === 'permission')).toHaveLength(10);
+    expect(texts(sam.items)).not.toContain('Jonathan eligible permission?');
+    const a = await live('jonathan');
+    expect(texts(a.rows)).toContain('Jonathan eligible permission?');
+    await minute();
+    const pushed = sent.filter((p) => p.to === 'jon');
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0].url).toBe(`/inbox?i=${jon.items.find((i: Data) => i.text === 'Jonathan eligible permission?').key}`);
+    // Knowing a hidden candidate's id never permits answering it; the original record stays pending.
+    expect((await act('jonathan', '/act/approvals', { _action: 'allow', id: 'a-00000064' })).ok).toBe(false);
+    expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))['a-00000064'].state).toBeUndefined();
+    // The display quota never narrows authority: Sam may answer their eligible 12th candidate by its id.
+    expect((await act('sam', '/act/approvals', { _action: 'allow', id: 'a-0000006f' })).ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf8'))['a-0000006f'].state).toBe('Allowed');
+  }, 30_000);
+
   it('what core holds for the core viewer names the thread\'s member alone', async () => {
     needs(thread('sam').conversation, 'Sam: OK to ship the comm screen?');
     needs(bridge(), 'Loren wants the WAF exception: OK?');
