@@ -131,8 +131,8 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   // so the knowledge-mine script can surface them as expansion candidates.
   const gapsDir = process.env.LOOM_GAPS_DIR || undefined;
 
+  const host = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
   if (values.http && values.scope === 'knowledge') {
-    const host = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
     const port = Number(values.port ?? process.env.LOOM_KNOWLEDGE_HTTP_PORT ?? 8788);
     const rawTokens = process.env.LOOM_KNOWLEDGE_BEARER_TOKENS ?? '';
     let tokens: Record<string, string>;
@@ -161,7 +161,6 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   }
 
   if (values.http) {
-    const host = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     const token = process.env.LOOM_BEARER_TOKEN || undefined;
     // A context dir at <home>/agents/<name> next to a household.json serves

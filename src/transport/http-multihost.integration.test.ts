@@ -1,8 +1,9 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import { PeriodicOwner } from './periodic-owner.js';
 import { startHttpServer } from './http-server.js';
 
 it('shares an MCP session across sockets and checks every bind before startup', async () => {
@@ -31,9 +32,34 @@ it('closes all sockets after a partial bind failure so startup can be retried', 
   const blocker = createServer();
   await new Promise<void>(resolve => blocker.listen(0, '127.0.0.2', resolve));
   const port = (blocker.address() as { port: number }).port;
+  const eligibility = vi.spyOn(PeriodicOwner.prototype, 'setEligible');
   try {
     await expect(startHttpServer({ contextDir, host: ['127.0.0.1', '127.0.0.2'], port })).rejects.toThrow(/EADDRINUSE/);
+    expect(eligibility).not.toHaveBeenCalledWith(true);
     const retry = await startHttpServer({ contextDir, host: '127.0.0.1', port });
     await retry.close();
-  } finally { await new Promise<void>(resolve => blocker.close(() => resolve())); rmSync(contextDir, { recursive: true, force: true }); }
+  } finally { eligibility.mockRestore(); await new Promise<void>(resolve => blocker.close(() => resolve())); rmSync(contextDir, { recursive: true, force: true }); }
+});
+
+it('registers and executes the same periodic jobs once regardless of socket count', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+  const run = vi.spyOn(PeriodicOwner.prototype, 'run').mockResolvedValue();
+  const timers = vi.spyOn(globalThis, 'setInterval');
+  const eligibility = vi.spyOn(PeriodicOwner.prototype, 'setEligible');
+  const dirs: string[] = [];
+  async function measure(host: string | string[]) {
+    const contextDir = mkdtempSync(join(tmpdir(), 'loom-job-count-')); dirs.push(contextDir);
+    run.mockClear(); timers.mockClear(); eligibility.mockClear();
+    const handle = await startHttpServer({ contextDir, host, port: 0 });
+    const registrations = timers.mock.calls.map(call => call[1]);
+    expect(eligibility.mock.calls.filter(call => call[0])).toHaveLength(1);
+    run.mockClear();
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    const jobs = run.mock.calls.map(call => call[0]);
+    expect(jobs.filter(name => name === 'audit and measures sweep')).toHaveLength(1);
+    await handle.close();
+    return { registrations, jobs };
+  }
+  try { expect(await measure(['127.0.0.1', '127.0.0.2'])).toEqual(await measure('127.0.0.1')); }
+  finally { vi.restoreAllMocks(); vi.useRealTimers(); dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })); }
 });
