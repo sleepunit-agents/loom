@@ -205,6 +205,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       hh.prepare('DELETE FROM comms_refs WHERE thread = ?').run(t.id);
       hh.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run();
       hh.close();
+      handle.setBackgroundActive(false);
       const second = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
       try {
         for (let i = 0; i < 100 && !refsOf(h.home, t.id).length; i++) await new Promise((r) => setTimeout(r, 50));

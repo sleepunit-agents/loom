@@ -48,7 +48,7 @@ import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../
 import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
-import { spawnBackupTick } from '../backup-tick.js';
+import { runBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
@@ -70,7 +70,7 @@ import { ConversationError, foldConversations } from '../backends/conversations.
 import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
-import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { watchComms } from '../ui/comms-live.js';
 import { piecesMoved } from '../ui/live.js';
 import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
@@ -264,6 +264,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
   let backgroundActive = false;
   let periodic: PeriodicOwner | undefined;
+  let stopComms: (() => void) | undefined;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -458,7 +459,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   commsTimer?.unref();
   if (live && !opts.createServer) {
     void commsSweep();
-    watchComms(live().home, () => periodic);
+    stopComms = watchComms(live().home, () => periodic);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
     void refsBackfill();
   }
@@ -1094,7 +1095,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
-  const backupTick = () => { try { if (backgroundActive && live) stalls.timed('backup tick', () => spawnBackupTick(live!(), process.env)); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTick = () => {
+    if (backgroundActive && live && periodic) void stalls.timed('backup tick', () => runBackupTick(periodic!, live!(), process.env));
+  };
   const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
   const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
@@ -1361,7 +1364,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
-      if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
+      if (commsTimer) { clearInterval(commsTimer); stopComms?.(); }
       stopPieceServers();
       closePieceSockets();
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);

@@ -1,3 +1,4 @@
+import type { PeriodicOwner } from './transport/periodic-owner.js';
 /**
  * The daemon's side of the nightly backup (src/backup.ts): start `loom backup tick` as a detached child, so a
  * backup's minutes (and any crash in one) never touch a listener. Only when the household has a backup set; the
@@ -15,7 +16,7 @@ import type { Household } from './household.js';
 export const ENTRY = [new URL('./index.js', import.meta.url), new URL('../dist/index.js', import.meta.url)].map((u) => fileURLToPath(u)).find((p) => existsSync(p))
   ?? fileURLToPath(new URL('./index.js', import.meta.url));
 
-export function spawnBackupTick(h: Household, env: NodeJS.ProcessEnv, o: { spawnImpl?: typeof spawn; entry?: string; wanted?: (h: Household) => boolean } = {}): boolean {
+export function spawnBackupTick(h: Household, env: NodeJS.ProcessEnv, o: { spawnImpl?: typeof spawn; entry?: string; wanted?: (h: Household) => boolean; onDone?: () => void } = {}): boolean {
   try {
     // Nothing to do (not set, not due, no miss to say): no child at all.
     if (!(o.wanted ?? tickWanted)(h)) return false;
@@ -30,9 +31,17 @@ export function spawnBackupTick(h: Household, env: NodeJS.ProcessEnv, o: { spawn
       const child = (o.spawnImpl ?? spawn)(process.execPath, [o.entry ?? ENTRY, 'backup', 'tick'], {
         detached: true, stdio: ['ignore', log, log], env: { ...env, LOOM_HOME: h.home },
       });
-      child.on('error', () => {});
+      child.on('error', () => o.onDone?.());
+      child.on('exit', () => o.onDone?.());
       child.unref();
     } finally { closeSync(log); }
     return true;
   } catch { return false; }
+}
+
+/** The child is independent on hard death, but graceful retirement drains it before releasing the owner. */
+export function runBackupTick(owner: PeriodicOwner, h: Household, env: NodeJS.ProcessEnv, o: Parameters<typeof spawnBackupTick>[2] = {}): Promise<void> {
+  return owner.run('backup tick', () => new Promise<void>(resolve => {
+    if (!spawnBackupTick(h, env, { ...o, onDone: () => { o.onDone?.(); resolve(); } })) resolve();
+  }));
 }

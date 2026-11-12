@@ -28,7 +28,7 @@ const t=setInterval(()=>{if(fs.existsSync(p+'/release')){clearInterval(t);fs.unl
     successor.setEligible(true); expect(successor.active).toBe(true);
     let result: Awaited<ReturnType<typeof runPieceBin>> | undefined;
     await successor.run('probe', async () => { result = await runPieceBin(path, ['ui'], env, { timeoutMs: 5000 }); });
-    expect(result).toMatchObject({ ok: false, exit: 75 });
+    expect(result).toMatchObject({ ok: false, reason: 'busy' });
     expect(readFileSync(join(home, 'starts'), 'utf8')).toBe('start\n');
     writeFileSync(join(home, 'release'), 'yes');
     await expect.poll(() => existsSync(join(home, 'active')), { timeout: 5000 }).toBe(false);

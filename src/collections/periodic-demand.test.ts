@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEMAND_TTL_MS, domainOf, indexOf, publishDemand, sharedDemand, withLog } from './log.js';
-import { configureCollectionBackground, stopAll } from './subs.js';
+import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, stopAll } from './subs.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
-import { registerCoreSource } from './core-types.js';
+import { CORE_TYPES, registerCoreSource } from './core-types.js';
 import { nudge } from './pull.js';
 import type { Household } from '../household.js';
 
@@ -13,7 +13,7 @@ let home: string;
 let stop: (() => Promise<void>) | undefined;
 let owner: PeriodicOwner | undefined;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'loom-periodic-demand-')); });
-afterEach(async () => { await owner?.close(); await stop?.(); stopAll(); rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { vi.useRealTimers(); await owner?.close(); await stop?.(); stopAll(); rmSync(home, { recursive: true, force: true }); });
 
 it('combines follower demand without letting heartbeats become reads; disconnects and death expire demand', () => {
   withLog(home, db => {
@@ -69,3 +69,51 @@ it('holds ownership until an admitted background pull drains during retirement',
     await expect.poll(() => successor.active).toBe(true);
   } finally { release(); await successor.close(); }
 }, 15_000);
+
+it('publishes actual follower subscriptions, renews demand without a read, and withdraws disconnects', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => undefined);
+  const env = () => ({ LOOM_HOME: home });
+  stop = configureCollectionBackground(() => h, env, owner);
+  const provider = { name: 'loom', owners2: true, types: { 'agent-status': CORE_TYPES['agent-status'] } };
+  const viewer = { kind: 'core' } as const;
+  const port = { id: 'actual-stream', session: 'session', viewer: () => viewer, frame: () => 1, seq: () => 0, behind: () => 0, close: () => {} };
+  openStream(() => h, env, port, viewer);
+  const { startSeq } = await prepare(() => h, env, provider, 'agent-status');
+  const q = { id: 'q', type: 'agent-status', version: 1, where: [], order: [], limit: 100, after: null, fields: ['agent', 'reason'], aggregates: [] };
+  expect(await attach(() => h, env, { stream: port.id, session: port.session }, viewer, provider, q,
+    { next: null, complete: true }, [], undefined, undefined, startSeq, async () => ({ rows: [], admitted: [] }))).toHaveProperty('scope');
+  await deliverNow(home);
+  const demand = () => withLog(home, db => db.prepare('SELECT read_at, until FROM listener_demand').get() as { read_at: number; until: number });
+  const first = demand(); expect(first.read_at).toBeGreaterThan(0);
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + 11_000);
+  await deliverNow(home);
+  expect(demand().read_at).toBe(first.read_at); expect(demand().until).toBeGreaterThan(first.until);
+  closeStream(home, port.id); await deliverNow(home);
+  expect(withLog(home, db => db.prepare('SELECT * FROM listener_demand').all())).toEqual([]);
+});
+
+it('a second ineligible registration does not replace or tear down the active owner', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0;
+  registerCoreSource(home, 'agent-status', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => undefined); owner.setEligible(true);
+  const follower = new PeriodicOwner(home, () => undefined);
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  const off = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), follower);
+  try {
+    withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); publishDemand(db, 'remote', new Map([['loom/agent-status', Date.now()]])); });
+    await nudge(home, 'loom/agent-status'); await expect.poll(() => calls).toBe(1);
+    await off(); await nudge(home, 'loom/agent-status'); await expect.poll(() => calls).toBe(2);
+  } finally { await follower.close(); await off(); }
+}, 15_000);
+
+it('a completed request pull does not retain its lease against the background owner', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0; registerCoreSource(home, 'agent-status', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await pullNow(home, 'loom/agent-status'); expect(calls).toBe(1);
+  withLog(home, db => publishDemand(db, 'remote', new Map([['loom/agent-status', Date.now()]])));
+  await nudge(home, 'loom/agent-status'); await expect.poll(() => calls, { timeout: 5000 }).toBe(2);
+}, 10_000);

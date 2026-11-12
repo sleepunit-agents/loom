@@ -65,23 +65,34 @@ let roundAgain = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
 
-let sharedBackground: { home: string; env: NodeJS.ProcessEnv; owner: PeriodicOwner; listener: string; scopes: NodeJS.ProcessEnv[] } | undefined;
+const sharedBackgrounds = new Map<string, { home: string; env: NodeJS.ProcessEnv; owner: PeriodicOwner; listener: string; scopes: NodeJS.ProcessEnv[] }>();
+const sharedFor = (home: string) => [...sharedBackgrounds.values()].find(s => s.home === home && s.owner.active) ?? [...sharedBackgrounds.values()].find(s => s.home === home);
 /** Keep the owner polling follower demand even when it has no local browser streams. */
 export function configureManifestBackground(home: string, env: NodeJS.ProcessEnv, owner: PeriodicOwner): () => Promise<void> {
   const stopSharing = sharePieceManifests(home);
-  const state = { home, env, owner, listener: randomBytes(12).toString('hex'), scopes: [] as NodeJS.ProcessEnv[] };
-  sharedBackground = state;
+  const state = { home, env: { ...env, LOOM_HOME: home }, owner, listener: randomBytes(12).toString('hex'), scopes: [] as NodeJS.ProcessEnv[] };
+  sharedBackgrounds.set(state.listener, state);
   const poll = () => {
-    if (sharedBackground !== state) return;
+    if (!sharedBackgrounds.has(state.listener)) return;
     state.scopes = manifestDemand(home, state.listener, [...clients].filter(c => c.home === home).map(c => c.env));
+    if (owner.active) {
+      const word = tickWord(home);
+      if (word.fresh) {
+        if (word.paths) for (const p of word.paths) invalidateManifest(home, p); else invalidateManifest(home);
+        void tick(true, word.paths); return;
+      }
+    }
     void tick();
   };
   const timer = setInterval(() => backgroundJob('manifest demand', poll), 2_000);
   timer.unref();
   poll();
+  let stopped = false;
   return async () => {
+    if (stopped) return;
+    stopped = true;
     clearInterval(timer);
-    if (sharedBackground === state) sharedBackground = undefined;
+    sharedBackgrounds.delete(state.listener);
     manifestDemand(home, state.listener, []);
     await tickRunning;
     stopSharing();
@@ -163,7 +174,7 @@ function drop(c: Client): void {
   seen.clear();
 }
 
-const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
+const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_HOME ?? ''}\0${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
 /**
  * Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change.
@@ -174,6 +185,9 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
 }
 
 function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
+  // Empty owner polls must not delay the first browser's baseline (or its first producer hint has nothing to compare).
+  if (!clients.size && ![...sharedBackgrounds.values()].some(s => s.owner.active && s.scopes.length)) return Promise.resolve();
+  const first = [...clients].some(c => !seen.has(scopeOf(c.env)));
   // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
   if (now && tickRunning) {
     tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
@@ -181,7 +195,7 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
   }
   // The regular round, due while one piece's round runs: it comes straight after, never skipped.
   if (!now && tickRunning && Date.now() - ticked >= TICK_MIN_MS) { roundAgain = true; return tickRunning; }
-  if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
+  if (tickRunning || (!now && !first && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
   // A round of every piece resets the clock; one piece's word doesn't, so the round every WATCH_MS still comes.
   if (!only) ticked = Date.now();
   // A piece's own word: its kept answer goes in every scope (the open ones are asked again just below).
@@ -189,12 +203,12 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
   tickRunning = (async () => {
     const scopes = new Map<string, NodeJS.ProcessEnv>();
     for (const c of clients) scopes.set(scopeOf(c.env), c.env);
-    const shared = sharedBackground;
-    if (shared?.owner.active) for (const scope of shared.scopes) {
+    for (const shared of sharedBackgrounds.values()) if (shared.owner.active) for (const scope of shared.scopes) {
       const env = { ...shared.env, LOOM_SCOPE: scope.LOOM_SCOPE, LOOM_OWNER_SCOPE: scope.LOOM_OWNER_SCOPE };
       scopes.set(scopeOf(env), env);
     }
     for (const [scope, env] of scopes) {
+      const shared = sharedFor(env.LOOM_HOME ?? '');
       let now: Map<string, string> | undefined;
       if (!shared) now = await refreshPieceManifests(env, only).catch(() => undefined);
       else {
@@ -237,15 +251,15 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
  * What a tick file says: its time, and the piece paths it names (one per line after its time), or none: every piece.
  * One write is often two or three watch events; each word is heard once (t-2110: each event ran the piece again).
  */
-let lastWord = '';
+const lastWords = new Map<string, string>();
 function tickWord(home: string): { fresh: boolean; paths?: Set<string> } {
   try {
     const [at, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
     const word = [at, ...paths].join('\n');
-    const fresh = word !== lastWord;
-    lastWord = word;
+    const fresh = word !== lastWords.get(home);
+    lastWords.set(home, word);
     return { fresh, ...(paths.length ? { paths: new Set(paths) } : {}) };
-  } catch { return { fresh: true }; }
+  } catch { return { fresh: false }; }
 }
 
 /**
@@ -259,7 +273,7 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { home, res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
+  const c: Client = { home, res, env: { ...env, LOOM_HOME: home }, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
   // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
   const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
   if (held) c.onClose = held.onClose;
@@ -271,7 +285,10 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => backgroundJob('live files watch', () => {
-        if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) void tick(true, w.paths); }
+        if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) {
+          if (sharedFor(home)) { if (w.paths) for (const p of w.paths) invalidateManifest(home, p); else invalidateManifest(home); }
+          void tick(true, w.paths);
+        } }
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
         else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
@@ -299,7 +316,7 @@ export const listening = () => clients.size;
  * and each word used to re-run every piece's `ui --json`); none, every piece.
  */
 export function piecesMoved(home: string, path?: string): void {
-  if (sharedBackground?.home === home) invalidateManifest(home, path);
+  if (sharedFor(home)) invalidateManifest(home, path);
   // A producer's new observation also matters when no stream is open to watch the tick file.
   expirePieceManifests(path);
   try { writeFileSync(join(home, PIECES_TICK), `${Date.now()}\n${path ?? ''}\n`); } catch { /* the pieces' own tick finds it */ }

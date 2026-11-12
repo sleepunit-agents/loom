@@ -29,7 +29,7 @@ const PER_SESSION = 4;
 /** `state`: the thread's state this stream last told of (comms.ts threadState: working, a delivery's outcome; t-1881). */
 interface Stream { home: string; res: ServerResponse; thread: string; session: string; sent: number; state: string; may: () => boolean }
 const streams = new Set<Stream>();
-const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; owner?: () => PeriodicOwner | undefined; off: () => void }>();
+const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; owner?: () => PeriodicOwner | undefined; owners: Set<() => PeriodicOwner | undefined>; off: () => void }>();
 
 /** A stream closed or cut off. The home's watch stays: the shared stream's members still hear of their threads. */
 function drop(s: Stream): void {
@@ -80,7 +80,10 @@ async function tellShared(home: string): Promise<void> {
   if (!h) return;
   const owner = h.owner?.();
   await owner?.run('comms shared changes', () => {
-    const since = withLog(home, db => (db.prepare('SELECT through FROM comms_scan WHERE id = 1').get() as { through: number }).through);
+    const since = withLog(home, db => {
+      db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, 0)').run();
+      return (db.prepare('SELECT through FROM comms_scan WHERE id = 1').get() as { through: number }).through;
+    });
     const moved = movedSince(home, since);
     if (!moved.length) return;
     withLog(home, db => db.transaction(() => {
@@ -98,8 +101,20 @@ async function tellShared(home: string): Promise<void> {
  * Start telling `home`'s members of thread moves, without any thread stream open (the shared stream's count): the
  * daemon calls it once per household at start.
  */
-export function watchComms(home: string, owner?: () => PeriodicOwner | undefined): void {
-  ensure(home, owner);
+export function watchComms(home: string, owner?: () => PeriodicOwner | undefined): () => void {
+  ensure(home);
+  const h = homes.get(home)!;
+  if (owner) {
+    withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, ?)').run(Date.now()));
+    h.owners.add(owner);
+    h.owner = () => [...h.owners].map(get => get()).find(o => o?.active) ?? [...h.owners].map(get => get()).find(Boolean);
+  }
+  return () => {
+    if (owner) h.owners.delete(owner);
+    if (h.owners.size || homes.get(home) !== h) return;
+    h.watcher?.close(); clearInterval(h.poll); clearInterval(h.beat); h.off(); homes.delete(home);
+    for (const s of [...streams]) if (s.home === home) drop(s);
+  };
 }
 
 function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
@@ -120,7 +135,7 @@ function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
     void backgroundJob('comms live tick', async () => {
       do {
         again = false;
-        if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB), ...(owner ? [liveDbPath(home)] : [])] })) { waiting(); return; }
+        if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB), ...(homes.get(home)?.owner ? [liveDbPath(home)] : [])] })) { waiting(); return; }
         if (!homes.has(home)) return;
         try {
           if (homes.get(home)?.owner) await tellShared(home); else tellMembers(home);
@@ -146,7 +161,7 @@ function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
   const beat = setInterval(() => backgroundJob('comms heartbeat', () => { for (const s of streams) if (s.home === home) write(s, ': beat\n\n'); }), BEAT_MS); beat.unref();
-  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, owner, off: onBump(tick) });
+  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, owner, owners: new Set(), off: onBump(tick) });
 }
 
 /**

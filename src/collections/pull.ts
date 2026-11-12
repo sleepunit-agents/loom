@@ -479,7 +479,7 @@ export class Puller {
         this.failures.set(domain, { count, until: Date.now() + Math.min(CONSISTENCY_MS, 2000 * 2 ** Math.min(count, 8)) });
       } else if (out !== 'busy') this.failures.delete(domain);
       return out;
-    }).finally(() => { this.running.delete(domain); if (this.stopped || c.listener?.startsWith('periodic:')) this.release(domain, c.listener ?? LISTENER); });
+    }).finally(() => { this.running.delete(domain); this.release(domain, c.listener ?? LISTENER); });
     this.running.set(domain, run);
     return run;
   }

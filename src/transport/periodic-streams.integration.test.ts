@@ -21,9 +21,9 @@ console.log(JSON.stringify({v:2,scope:true,owners:2,tile:{label:'Probe',value:fs
   const owner = new URL('./periodic-owner.ts', import.meta.url).href;
   const children: ChildProcess[] = [];
   const start = async (eligible: boolean) => {
-    const code = `import {createServer} from 'node:http';import {PeriodicOwner} from ${JSON.stringify(owner)};import {configureManifestBackground,openStream,piecesMoved} from ${JSON.stringify(live)};import {pieceManifests,sharedPiecePrints} from ${JSON.stringify(pieces)};
+    const code = `import {createServer} from 'node:http';import {PeriodicOwner} from ${JSON.stringify(owner)};import {configureManifestBackground,openStream,piecesMoved} from ${JSON.stringify(live)};import {pieceManifests,sharedPiecePrints,forgetPiecePages} from ${JSON.stringify(pieces)};
 const env=${JSON.stringify(env)},owner=new PeriodicOwner(env.LOOM_HOME,()=>{});configureManifestBackground(env.LOOM_HOME,env,owner);owner.setEligible(${eligible});
-const server=createServer(async(req,res)=>{if(req.url==='/events'){openStream(res,env,env.LOOM_HOME,{}, {sees:'*',session:'probe',place:()=>'*'});return;}if(req.url==='/retire')owner.setEligible(false);if(req.url==='/activate')owner.setEligible(true);if(req.url==='/move')piecesMoved(env.LOOM_HOME,${JSON.stringify(piece)});res.end(req.url==='/read'?JSON.stringify(await pieceManifests(env)):req.url==='/cached'?JSON.stringify([...sharedPiecePrints(env)]):'ok');});server.listen(0,'127.0.0.1',()=>process.send(server.address().port));`;
+const server=createServer(async(req,res)=>{if(req.url==='/events'){openStream(res,env,env.LOOM_HOME,{}, {sees:'*',session:'probe',place:()=>'*'});return;}if(req.url==='/retire')owner.setEligible(false);if(req.url==='/activate')owner.setEligible(true);if(req.url==='/records')forgetPiecePages(${JSON.stringify(piece)});if(req.url==='/move')piecesMoved(env.LOOM_HOME,${JSON.stringify(piece)});res.end(req.url==='/read'?JSON.stringify(await pieceManifests(env)):req.url==='/cached'?JSON.stringify([...sharedPiecePrints(env)]):'ok');});server.listen(0,'127.0.0.1',()=>process.send(server.address().port));`;
     const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
     children.push(child); const [port] = await once(child, 'message'); return `http://127.0.0.1:${port}`;
   };
@@ -40,7 +40,7 @@ const server=createServer(async(req,res)=>{if(req.url==='/events'){openStream(re
     await expect.poll(cached, { timeout: 10_000 }).toContain('one:art:art');
     expect(await read()).toContain('one:art:art'); expect(calls()).toBe(1);
     // Changed results reach the follower's own stream; delivery never moves to the owner.
-    writeFileSync(join(home, 'value'), 'two'); await fetch(`${follower}/move`);
+    writeFileSync(join(home, 'value'), 'two'); await fetch(`${follower}/records`);
     await expect.poll(() => frames.includes('event: page'), { timeout: 15_000 }).toBe(true);
     await expect.poll(cached, { timeout: 15_000 }).toContain('two:art:art');
     expect(await read()).toContain('two:art:art'); expect(calls()).toBe(2);

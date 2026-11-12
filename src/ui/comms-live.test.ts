@@ -70,3 +70,15 @@ it('followers read shared member markers without scanning Comms, then scan on ow
     expect(reads.movedSince).toHaveBeenCalledTimes(1);
   } finally { stopCommsWatch(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
 }, 15_000);
+
+it('multiple listener registrations keep the active Comms owner and dispose independently', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-registrations-'));
+  const owner = new PeriodicOwner(home, () => {}), follower = new PeriodicOwner(home, () => {});
+  owner.setEligible(true); reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([]);
+  const first = watchComms(home, () => owner), second = watchComms(home, () => follower);
+  try {
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+    second(); const before = reads.movedSince.mock.calls.length;
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(before);
+  } finally { first(); second(); await owner.close(); await follower.close(); rmSync(home, { recursive: true, force: true }); }
+}, 15_000);

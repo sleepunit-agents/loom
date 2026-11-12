@@ -1,3 +1,5 @@
+import { withManifestReads } from '../ui/manifest-shared.js';
+import type { Database } from 'better-sqlite3';
 import type { PeriodicOwner } from '../transport/periodic-owner.js';
 import { randomUUID } from 'node:crypto';
 import { backgroundJob } from '../transport/stall-watch.js';
@@ -127,7 +129,9 @@ interface HomeState {
   published: string;
   publishedAt: number;
   owned: boolean;
-  background?: PeriodicOwner;
+  readonly background?: PeriodicOwner;
+  backgrounds: Set<PeriodicOwner>;
+  reasks: Set<Promise<void>>;
   watcher?: FSWatcher;
   poll?: NodeJS.Timeout;
   passing: Promise<void> | undefined;
@@ -156,6 +160,8 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
   if (h) return h;
   const state: HomeState = {
     household, env, streams: new Map(), passing: undefined, again: false,
+    backgrounds: new Set(), reasks: new Set(),
+    get background() { return [...state.backgrounds].find(o => o.active) ?? state.backgrounds.values().next().value; },
     closed: false, listener: randomUUID(), reads: new Map(), demand: new Map(), published: '', publishedAt: 0, owned: false,
     puller: new Puller(() => ({ env: env(), household: household() }),
       () => state.background ? new Set(state.demand.keys()) : wantedOf(state), {
@@ -177,26 +183,31 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
 /** A full HTTP listener participates even when all subscriptions are on a follower. */
 export function configureCollectionBackground(household: () => Household, env: () => NodeJS.ProcessEnv, owner: PeriodicOwner): () => Promise<void> {
   const h = homeOf(household, env);
-  h.background = owner;
+  h.backgrounds.add(owner);
   ensureRunning(h);
   pass(h);
+  let stopped = false;
   return async () => {
+    if (stopped) return;
+    stopped = true;
+    h.backgrounds.delete(owner);
+    if (h.backgrounds.size) return;
     h.closed = true;
     h.streams.clear();
-    h.background = undefined;
     stopIfIdle(h);
     await h.puller.settle();
     await h.passing;
+    await Promise.allSettled(h.reasks);
   };
 }
 
-function publishWanted(h: HomeState): void {
+function publishWanted(h: HomeState, db: Database): void {
   if (!h.background) return;
   const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
   const serialized = JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b)));
   const now = Date.now();
   if (serialized === h.published && now - h.publishedAt < 10_000) return;
-  withLog(h.household().home, db => publishDemand(db, h.listener, wanted, now));
+  publishDemand(db, h.listener, wanted, now);
   h.published = serialized; h.publishedAt = now;
 }
 
@@ -482,10 +493,10 @@ async function passOnceWork(h: HomeState): Promise<void> {
   if (h.closed) return;
   const home = h.household().home;
   const now = Date.now();
-  publishWanted(h);
   // One read connection per delivery pass, shared across all streams/subscriptions. Opening
   // and closing WAL connections for each metadata/log lookup made hint fan-out CPU-bound.
-  withLog(home, db => {
+  withLog(home, db => withManifestReads(home, db, () => {
+    publishWanted(h, db);
     // A nudge said a domain moved: pull it soon, if a subscription here reads it.
     const nudged = pendingRefreshes(db);
     if (h.background?.active) {
@@ -562,7 +573,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
         reset(s, biggest, 'gap');
       }
     }
-  });
+  }));
 }
 
 /**
@@ -602,6 +613,7 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
   // is the next pass's reset, never rows asked or sent under what was.
   let p = p0;
   const still = (): Viewer | undefined => {
+    if (h.closed) return;
     const v = s.port.viewer();
     if (!v || viewerId(v) !== s.vid) return undefined;
     const now = providers(h.env()).get(sub.provider);
@@ -609,7 +621,7 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     p = now;
     return v;
   };
-  void (async () => {
+  const pending = (async () => {
     // At most once per AGG_GAP_MS, and at once when the last ask is that long ago: the first change in a while reaches
     // the window without waiting, and a burst still costs one ask per gap (t-2025's measure: 1.7 s became ~0.2 s).
     const wait = Math.max(0, (sub.askedAt ?? 0) + AGG_GAP_MS - Date.now());
@@ -653,6 +665,8 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     send(s, sub, recovered ? 'live' : undefined);
     if (sub.dirty?.size) pass(h);
   })();
+  h.reasks.add(pending);
+  void pending.finally(() => h.reasks.delete(pending));
 }
 
 /** Run a delivery pass now and wait for it (tests). */
@@ -669,6 +683,7 @@ export async function pullsSettled(home: string): Promise<void> {
   if (!h) return;
   await h.puller.settle();
   await deliverNow(home);
+  while (h.reasks.size) { await Promise.allSettled(h.reasks); await deliverNow(home); }
 }
 
 /** One poll round now, its pulls done and delivered (tests). */
@@ -744,7 +759,7 @@ export async function pullNowAll(home: string, domains: readonly string[]): Prom
 
 /** For tests: forget every stream and stop. */
 export function stopAll(): void {
-  for (const h of homes.values()) { h.background = undefined; h.streams.clear(); stopIfIdle(h); }
+  for (const h of homes.values()) { h.backgrounds.clear(); h.streams.clear(); stopIfIdle(h); }
 }
 
 /** For a provider's answer: the {rev, txn} it read the domain at, if it said. */

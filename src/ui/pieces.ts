@@ -157,7 +157,7 @@ export function expirePieceManifests(path?: string): void {
 }
 
 export function clearPieceCache(path?: string): void {
-  for (const home of sharedHomes) invalidateManifest(home, path);
+  for (const home of sharedHomes.keys()) invalidateManifest(home, path);
   forgetFailures(path);
   manifestGeneration++;
   movedAt.set(path ?? '', Date.now());
@@ -172,6 +172,7 @@ export function clearPieceCache(path?: string): void {
  * for up to 5 s, then shown while revalidating, would answer with the old one). Its manifests stay.
  */
 export function forgetPiecePages(path: string): void {
+  for (const home of sharedHomes.keys()) invalidateManifest(home, path);
   // A run started before this write cannot consume the hint or restore a
   // failure cooldown when it lands. Invalidate it as a producer change.
   expirePieceManifests(path);
@@ -351,7 +352,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       const done = () => {
         // The last line, unterminated.
         if (opts.onLine && out.trim() && !settled) { const line = out; out = ''; if (opts.onLine(line) === 'stop') return finish({ ok: false, reason: 'stopped' }); }
-        finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+        finish(code === 0 ? { ok: true, stdout: out } : background && code === 75 ? { ok: false, reason: 'busy' } : { ok: false, reason: 'no ui', code, stdout: out });
       };
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
@@ -431,10 +432,11 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
 }
 
 /** Sharing is enabled only for full HTTP listeners, never scoped/test-only servers. */
-const sharedHomes = new Set<string>();
+const sharedHomes = new Map<string, number>();
 export function sharePieceManifests(home: string): () => void {
-  sharedHomes.add(home);
-  return () => { sharedHomes.delete(home); };
+  sharedHomes.set(home, (sharedHomes.get(home) ?? 0) + 1);
+  let stopped = false;
+  return () => { if (stopped) return; stopped = true; const n = (sharedHomes.get(home) ?? 1) - 1; if (n) sharedHomes.set(home, n); else sharedHomes.delete(home); };
 }
 const observedTokens = new Map<string, string>();
 function sharedKey(path: string, env: NodeJS.ProcessEnv): { home: string; key: string; token: string } | undefined {
@@ -528,7 +530,7 @@ function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Key
   if (under && under.generation === manifestGeneration) return under.result;
   const result = backgroundJob(`piece manifest ${piece}`, () => fetchManifest(piece, path, env).then((r): ManifestResult => {
     if (!('manifest' in r)) {
-      if (generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
+      if (r.reason !== 'busy' && generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
       return r;
     }
     const now = { scope: r.manifest.scope === true, owners: r.manifest.owners === 2 };
@@ -562,7 +564,7 @@ function keep(key: string, before: CacheEntry | undefined, generation: number, r
   if (!('manifest' in r)) {
     // A failure is no answer to compare: no print, so the round asks it again. The last good answer keeps its age, so
     // a piece that keeps failing still ages out (STALE_MAX_MS).
-    if (!before) { cache.set(key, { at: Date.now(), result, settled: r }); return; }
+    if (!before) { if (r.reason !== 'busy') cache.set(key, { at: Date.now(), result, settled: r }); return; }
     void before.result.then((last) => {
       if (cache.get(key) !== before || generation !== manifestGeneration) return;
       if ('manifest' in last) { before.refreshing = undefined; before.expired = false; before.same = 0; }
@@ -599,7 +601,11 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const result = runManifest(piece, path, env, k);
   const entry: CacheEntry = { at: nowMs, result };
   cache.set(key, entry);
-  void result.then((r) => { entry.settled = r; if ('manifest' in r) entry.print = printOf(r); });
+  void result.then((r) => {
+    entry.settled = r;
+    if ('manifest' in r) entry.print = printOf(r);
+    else if (r.reason === 'busy' && cache.get(key) === entry) cache.delete(key);
+  });
   return within(result, { piece, reason: 'timed out' }, PIECE_TIMEOUT_MS);
 }
 
