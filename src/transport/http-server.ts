@@ -115,7 +115,7 @@ const HEARTBEAT_MISSES_BEFORE_CLOSE = 2;
 
 export interface HttpServeOptions {
   contextDir: string;
-  host: string;
+  host: string | string[];
   port: number;
   /** Single-token mode: every request must present this bearer token. */
   token?: string;
@@ -164,6 +164,7 @@ export interface HttpServeHandle {
   /** The actually-bound port (resolves a 0 request to the OS-assigned port). */
   port: number;
   host: string;
+  hosts: string[];
   setBackgroundActive(active: boolean): void;
   close(): Promise<void>;
 }
@@ -260,8 +261,11 @@ function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof
 
 export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
-  assertSafeBind(opts.host);
+  const hosts = [...new Set((Array.isArray(opts.host) ? opts.host : [opts.host]).map(h => h.trim()))];
+  if (!hosts.length) throw new Error('HTTP requires at least one host');
+  hosts.forEach(assertSafeBind);
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
+  if (workerSocket && hosts.length !== 1) throw new Error('private workers require one host');
   let backgroundActive = false;
   let periodic: PeriodicOwner | undefined;
   let stopComms: (() => void) | undefined;
@@ -1314,20 +1318,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     });
   });
 
-  // Traefik keeps backend connections idle for up to 90 seconds. Close
-  // after its reuse window, so a reused POST cannot race Node's 5 s default.
-  http.keepAliveTimeout = 120_000;
-  http.headersTimeout = 125_000;
-
-  await new Promise<void>((resolve, reject) => {
-    http.once('error', reject);
-    // A supervised worker has a private Unix socket, inaccessible to other
-    // users. All request/auth handling stays in this server.
-    if (workerSocket) http.listen(workerSocket, () => resolve());
-    else http.listen(opts.port, opts.host, () => resolve());
-  });
-  const addr = http.address();
-  const port = typeof addr === 'object' && addr ? addr.port : opts.port;
+  // Every socket dispatches to this same handler and shares sessions and jobs.
+  const listeners = [http, ...hosts.slice(1).map(() => createServer((req, res) => http.emit('request', req, res)))];
+  for (const listener of listeners) {
+    listener.keepAliveTimeout = 120_000;
+    listener.headersTimeout = 125_000;
+  }
+  let port = opts.port;
 
   // All listeners for this home contend on one lifetime OS lock. A rolling-deploy standby is ineligible
   // until its supervisor activates it; retirement admits no work and drains the old owner before takeover.
@@ -1343,9 +1340,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const stopManifests = !opts.createServer ? configureManifestBackground(household?.home ?? opts.contextDir, process.env, periodic) : undefined;
   if (!opts.createServer) periodic.setEligible(!workerSocket);
 
-  return {
+  const handle: HttpServeHandle = {
     port,
-    host: opts.host,
+    host: hosts[0],
+    hosts,
     setBackgroundActive(active) {
       if (!active) backgroundActive = false;
       if (!opts.createServer) periodic!.setEligible(active);
@@ -1369,11 +1367,24 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       closePieceSockets();
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
-      await new Promise<void>((resolve) => {
-        // Force-close lingering keep-alive/SSE sockets so close() can't hang.
-        http.closeAllConnections?.();
-        http.close(() => resolve());
-      });
+      await Promise.all(listeners.map(listener => new Promise<void>((resolve) => {
+        listener.closeAllConnections();
+        listener.close(() => resolve());
+      })));
     },
   };
+  try {
+    for (const [i, listener] of listeners.entries()) {
+      await new Promise<void>((resolve, reject) => {
+        listener.once('error', reject);
+        const ready = () => { listener.off('error', reject); resolve(); };
+        if (workerSocket) listener.listen(workerSocket, ready);
+        else listener.listen(port, hosts[i], ready);
+      });
+      const addr = listener.address();
+      if (typeof addr === 'object' && addr) port = addr.port;
+    }
+    handle.port = port;
+    return handle;
+  } catch (error) { await handle.close(); throw error; }
 }

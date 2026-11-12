@@ -18,9 +18,21 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createLoomServer } from '../server.js';
 import { createKnowledgeOnlyServer } from '../transport/knowledge-server.js';
 import { householdOf } from '../household.js';
-import { startHttpServer } from '../transport/http-server.js';
+import { startHttpServer as startServer, type HttpServeOptions } from '../transport/http-server.js';
+import { acquireHttpLock } from '../transport/http-lock.js';
 import { resolveContextDir } from '../config.js';
 import type { IOStreams } from './io.js';
+
+/** CLI daemons are exclusive per home; embedded transport tests may share a store. */
+async function startHttpServer(opts: HttpServeOptions) {
+  const release = acquireHttpLock(opts.household?.home ?? householdOf(opts.contextDir)?.household.home ?? opts.contextDir);
+  try {
+    const handle = await startServer(opts);
+    const close = handle.close;
+    handle.close = async () => { try { await close(); } finally { release(); } };
+    return handle;
+  } catch (error) { release(); throw error; }
+}
 
 const USAGE = `Usage: loom serve [options]
 
@@ -31,7 +43,7 @@ Options:
   --http                 Serve over HTTP instead of stdio
   --scope <full|knowledge>  Tool surface for --http (default full);
                          knowledge without --http is rejected
-  --host <h>             HTTP bind host (env LOOM_HTTP_HOST, default 127.0.0.1)
+  --host <h>             HTTP bind host, repeatable (env LOOM_HTTP_HOST comma-separated, default 127.0.0.1)
   --port <n>             HTTP port (env LOOM_HTTP_PORT, or LOOM_KNOWLEDGE_HTTP_PORT
                          for --scope knowledge, default 8787 / 8788)
   --help, -h             Show this help
@@ -83,7 +95,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       options: {
         http: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'full' },
-        host: { type: 'string' },
+        host: { type: 'string', multiple: true },
         port: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -120,7 +132,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   const gapsDir = process.env.LOOM_GAPS_DIR || undefined;
 
   if (values.http && values.scope === 'knowledge') {
-    const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
+    const host = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
     const port = Number(values.port ?? process.env.LOOM_KNOWLEDGE_HTTP_PORT ?? 8788);
     const rawTokens = process.env.LOOM_KNOWLEDGE_BEARER_TOKENS ?? '';
     let tokens: Record<string, string>;
@@ -141,7 +153,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       contextDir, host, port, tokens, gapsDir, createServer: createKnowledgeOnlyServer,
     });
     io.stderr(
-      `loom: knowledge-only HTTP MCP daemon on http://${handle.host}:${handle.port} ` +
+      `loom: knowledge-only HTTP MCP daemon on http://${handle.hosts.join(',')}:${handle.port} ` +
         `(per-identity bearer: ${Object.keys(tokens).join(', ')})\n`,
     );
     await new Promise<void>(() => {});
@@ -149,7 +161,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   }
 
   if (values.http) {
-    const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
+    const host = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     const token = process.env.LOOM_BEARER_TOKEN || undefined;
     // A context dir at <home>/agents/<name> next to a household.json serves
@@ -158,7 +170,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const found = householdOf(contextDir);
     const handle = await startHttpServer({ contextDir, host, port, token, gapsDir, household: found?.household });
     io.stderr(
-      `loom: HTTP MCP daemon on http://${handle.host}:${handle.port} ` +
+      `loom: HTTP MCP daemon on http://${handle.hosts.join(',')}:${handle.port} ` +
         (found
           ? `(household of ${found.household.agents.join(', ')}; tokens in ${found.household.home}/tokens.json)\n`
           : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
@@ -175,7 +187,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     // A drained worker must close piece process groups and watchers before
     // exiting; the stable listener no longer restarts their whole systemd unit.
     await new Promise<void>((resolve) => {
-      if (!process.connected || !process.env.LOOM_WORKER_SOCKET) return;
+
       let closing = false;
       const shutdown = () => {
         if (closing) return;
@@ -187,7 +199,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       };
       process.on('SIGTERM', shutdown);
       process.on('SIGINT', shutdown);
-      process.on('disconnect', shutdown);
+      if (process.connected) process.on('disconnect', shutdown);
     });
     return 0;
   }

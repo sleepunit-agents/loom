@@ -160,7 +160,7 @@ jobs:
       - name: Package deploy build
         run: |
           printf '%s\n' "$GITHUB_SHA" > deploy-commit
-          printf 'loom-worker-v1\n' > deploy-protocol
+          printf 'loom-daemon-v2\n' > deploy-protocol
           # Install production dependencies in CI, including native modules.
           # No npm build/install runs on loom's machine.
           mkdir deploy-runtime
