@@ -138,6 +138,7 @@ interface HomeState {
   reasks: Set<Promise<void>>;
   watcher?: FSWatcher;
   poll?: NodeJS.Timeout;
+  publishing?: Promise<void>;
   passing: Promise<void> | undefined;
   again: boolean;
   offBump?: () => void;
@@ -199,6 +200,7 @@ export function configureCollectionBackground(household: () => Household, env: (
     h.closed = true;
     h.puller.stop();
     await h.passing;
+    await h.publishing;
     // Retirement retains queued hints and demand until the writer lets them commit.
     while (!await waitForLocks({ write: [liveDbPath(h.household().home)] })) await sleep(10);
     withLog(h.household().home, db => publishHints(h, db));
@@ -219,8 +221,21 @@ export function queueCollectionNudge(home: string, domain: string, key = '*'): b
   if (!keys) h.hints.set(domain, keys = new Set());
   if (key === '*') { keys.clear(); keys.add('*'); }
   else if (!keys.has('*')) keys.add(key);
+  // Bound local memory here and aggregate cross-listener keys again at publication.
   if (keys.size > 1000) { keys.clear(); keys.add('*'); }
   return true;
+}
+
+/** An acknowledged local change must leave its hints durable before its producer can disappear. */
+export function flushCollectionHints(home: string): Promise<void> {
+  const h = homes.get(home);
+  if (!h?.background || !h.hints.size) return Promise.resolve();
+  return h.publishing ??= (async () => {
+    while (h.hints.size) {
+      while (!await waitForLocks({ write: [liveDbPath(home)] })) await sleep(10);
+      withLog(home, db => publishHints(h, db));
+    }
+  })().finally(() => { h.publishing = undefined; });
 }
 
 function publishHints(h: HomeState, db: Database): void {

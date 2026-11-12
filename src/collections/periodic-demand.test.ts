@@ -353,3 +353,22 @@ it('a writer acquired while a core snapshot is pending cannot block its commit o
     writer.exec('ROLLBACK'); expect(await pending).toBe('quiet');
   } finally { release(); if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await pending; puller.stop(); await puller.settle(); }
 });
+
+it('the change acknowledgment waits for durable hints through writer budget exhaustion', async () => {
+  const { flushCollectionHints, queueCollectionNudge } = await import('./subs.js');
+  const { changed, onChanged } = await import('../ui/live.js');
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  onChanged(home, () => { queueCollectionNudge(home, 'loom/agent-status', 'art'); return flushCollectionHints(home); });
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  vi.mocked(waitForLocks).mockResolvedValueOnce(false);
+  let done = false; const acknowledgment = changed(['art']).then(() => { done = true; });
+  try {
+    const started = performance.now(); await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500); expect(done).toBe(false);
+    writer.exec('ROLLBACK'); await acknowledgment;
+    expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/agent-status', key: 'art' }]);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await acknowledgment; onChanged(home, () => {}); }
+});

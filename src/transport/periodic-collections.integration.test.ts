@@ -26,7 +26,7 @@ const provider={name:'loom',owners2:true,types:{'agent-status':CORE_TYPES['agent
 const answer=()=>withLog(home,db=>indexOf(db,'loom/agent-status').map(r=>JSON.parse(r.record)));
 const server=createServer(async(req,res)=>{try{
 if(req.url==='/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': open\\n\\n');const port={id:'stream',session:'session',viewer:()=>viewer,frame:(event,data)=>{res.write('event: '+event+'\\ndata: '+JSON.stringify(data)+'\\n\\n');return 1;},seq:()=>0,behind:()=>0,close:()=>res.end()};openStream(()=>h,()=>env,port,viewer);res.on('close',()=>closeStream(home,port.id));const {startSeq}=await prepare(()=>h,()=>env,provider,'agent-status');await attach(()=>h,()=>env,{stream:port.id,session:port.session},viewer,provider,q,{next:null,complete:true},[],undefined,undefined,startSeq,async()=>{const rows=answer();return {rows,admitted:rows};});await nudge(home,'loom/agent-status');await deliverNow(home);return;}
-if(req.url==='/hook'){req.headers.authorization='Bearer test';await handleUi(req,res,'/missing-test-page',{contextDir:home,household:()=>h,auth:legacyUiAuth(['test']),env});registerCoreSource(home,'agent-status',source);changed(['art']);await deliverNow(home);return;}
+if(req.url==='/hook'){req.headers.authorization='Bearer test';await handleUi(req,{writeHead(){},end(){}},'/logout',{contextDir:home,household:()=>h,auth:legacyUiAuth(['test']),env});registerCoreSource(home,'agent-status',source);await changed(['art']);res.end('ok');return;}
 if(req.url==='/nudge'){for(let i=0;i<20;i++)queueCollectionNudge(home,'loom/agent-status','art');await deliverNow(home);}if(req.url==='/retire')owner.setEligible(false);if(req.url==='/activate')owner.setEligible(true);res.end('ok');}catch(e){res.statusCode=500;res.end(String(e));}});server.listen(0,'127.0.0.1',()=>process.send(server.address().port));`;
     const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
     children.push(child); const [port] = await once(child, 'message'); return `http://127.0.0.1:${port}`;
@@ -45,6 +45,12 @@ if(req.url==='/nudge'){for(let i=0;i<20;i++)queueCollectionNudge(home,'loom/agen
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader:two');
     const log = new Database(join(home, 'collections', 'live.db'));
     try { expect(log.prepare("SELECT domain FROM refresh_requests WHERE domain = 'loom/attention'").get()).toEqual({ domain: 'loom/attention' }); } finally { log.close(); }
+    // Kill the hint producer immediately after its acknowledged production change, before its delivery poll.
+    const producer = await start('producer', false);
+    writeFileSync(join(home, 'value'), 'producer-died'); await fetch(`${producer}/hook`);
+    const producerGone = once(children[2], 'exit'); children[2].kill('SIGKILL'); await producerGone;
+    await expect.poll(() => frames, { timeout: 10_000 }).toContain('\"reason\":\"producer-died\"');
+    expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader:producer-died');
     // Persist a follower hint with no eligible owner, then kill the old process before takeover.
     await fetch(`${leader}/retire`);
     writeFileSync(join(home, 'value'), 'three'); await fetch(`${follower}/nudge`);

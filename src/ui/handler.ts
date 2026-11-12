@@ -1,4 +1,4 @@
-import { queueCollectionNudge } from '../collections/subs.js';
+import { flushCollectionHints, queueCollectionNudge } from '../collections/subs.js';
 import { builtinWatchRegistry } from '../watch-sources.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 import { sameAskWords } from './ask-words.js';
@@ -1925,7 +1925,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     registerCoreSource(home, 'attention', async (v, _now, ids) => { const rows = await attentionFor(base, v); return ids ? rows.filter(r => ids.includes(r.id)) : rows; });
     // Each agent's card (t-2028), made by Home's own code for each viewer.
     registerCoreSource(home, 'agent-status', (v, _now, ids) => agentStatusFor(base, v, ids));
-    onChanged(home, about => { nudgeAttention(home); if (about === '*') nudgeLive(home, AGENT_STATUS_DOMAIN); else for (const agent of about) if (!queueCollectionNudge(home, AGENT_STATUS_DOMAIN, agent)) void nudge(home, AGENT_STATUS_DOMAIN, agent); });
+    onChanged(home, about => { nudgeAttention(home); if (about === '*') nudgeLive(home, AGENT_STATUS_DOMAIN); else for (const agent of about) if (!queueCollectionNudge(home, AGENT_STATUS_DOMAIN, agent)) void nudge(home, AGENT_STATUS_DOMAIN, agent); return flushCollectionHints(home); });
   }
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
@@ -2467,7 +2467,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // What it changed is in the log before the answer (collections.md, "Commands"): its piece's domains (or core's) are
     // pulled now, and the other listeners nudged, so every window hears it through its stream, this one included.
     if (opHome && result.ok) await pullAfterAction(opHome, opts.env, source.id === 'loom' ? 'loom' : source.id);
-    changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
+    await changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
     // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
     if (hh && result.message?.trim() && !result.keep && !quiet) {
@@ -2477,6 +2477,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ...(label ? { sourceLabel: label } : {}), ...(backLink ? { page: backLink } : {}) }, readerFor(opts, who));
       if (opHome) nudgeAttention(opHome);
     }
+    if (opHome) await flushCollectionHints(opHome);
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
