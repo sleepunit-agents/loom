@@ -7,6 +7,8 @@ import { withLog } from '../collections/log.js';
 const reads = new AsyncLocalStorage<{ home: string; db: Database }>();
 /** Reuse the delivery pass's read connection until it closes; async continuations then open their own. */
 export function withManifestReads<T>(home: string, db: Database, f: () => T): T { return reads.run({ home, db }, f); }
+/** Automatic delivery consumes shared answers; admitted owner jobs may refresh them. */
+export function manifestDelivery(home: string): boolean { return reads.getStore()?.home === home; }
 function readShared<T>(home: string, f: (db: Database) => T): T {
   const held = reads.getStore();
   return held?.home === home && held.db.open ? f(held.db) : withLog(home, f);

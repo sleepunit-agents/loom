@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { withLog } from '../collections/log.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
 import { configureManifestBackground, piecesMoved } from './live.js';
-import { manifestDemand, invalidateManifest } from './manifest-shared.js';
+import { manifestDemand, invalidateManifest, withManifestReads } from './manifest-shared.js';
 import { CACHE_MS, STALE_MAX_MS, pieceManifests, refreshPieceManifests, sharePieceManifests, sharedPiecePrints } from './pieces.js';
 
 const dirs: string[] = [];
@@ -112,3 +112,24 @@ it('a second registration and its disposal leave the elected manifest owner runn
     await expect.poll(calls, { timeout: 10_000 }).toBe(2);
   } finally { await owner.close(); await follower.close(); await second(); await first(); }
 }, 15_000);
+
+it('automatic delivery never launches a manifest on a miss or expired answer; owner jobs and requests can refresh', async () => {
+  const { home, env, calls } = fixture(); const off = sharePieceManifests(home);
+  const delivery = () => withLog(home, db => withManifestReads(home, db, async () => {
+    await Promise.resolve(); // The connection has closed before a real asynchronous re-ask continues.
+    return pieceManifests(env);
+  }));
+  try {
+    expect((await delivery()).pieces).toEqual([]);
+    expect(existsSync(join(home, 'calls'))).toBe(false);
+    await pieceManifests(env); expect(calls()).toBe(1);
+    const start = Date.now(); vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(start + CACHE_MS + 1);
+    expect((await delivery()).pieces).toHaveLength(1); expect(calls()).toBe(1);
+    vi.setSystemTime(start + STALE_MAX_MS + 1);
+    expect((await delivery()).pieces).toEqual([]); expect(calls()).toBe(1);
+    const { periodicContext } = await import('../transport/periodic-context.js');
+    await periodicContext.run({ home, job: 'collection pull' }, delivery);
+    expect(calls()).toBe(2); expect((await delivery()).pieces).toHaveLength(1);
+  } finally { off(); }
+});

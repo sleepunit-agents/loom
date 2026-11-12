@@ -1,7 +1,8 @@
+import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PeriodicOwner } from './periodic-owner.js';
@@ -43,3 +44,25 @@ const t=setInterval(()=>{if(fs.existsSync(p+'/release')){clearInterval(t);fs.unl
     await successor.close(); rmSync(home, { recursive: true, force: true });
   }
 }, 20_000);
+
+it('the guardian kills an uncooperative provider on its own deadline after parent death and releases exclusion', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-deadline-'));
+  const path = join(home, 'provider');
+  writeFileSync(path, `#!${process.execPath}
+const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(join(home, 'pid'))},String(process.pid));setInterval(()=>{},100);
+`); chmodSync(path, 0o755);
+  const code = `import {PeriodicOwner} from ${JSON.stringify(new URL('./periodic-owner.ts', import.meta.url).href)};import {runPieceBin} from ${JSON.stringify(new URL('../ui/pieces.ts', import.meta.url).href)};const o=new PeriodicOwner(${JSON.stringify(home)},()=>{});o.setEligible(true);await o.run('deadline',()=>runPieceBin(${JSON.stringify(path)},[],{LOOM_HOME:${JSON.stringify(home)}},{timeoutMs:2000}));await o.close();`;
+  const parent = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: 'ignore' });
+  try {
+    await expect.poll(() => existsSync(join(home, 'pid')), { timeout: 5000 }).toBe(true);
+    const pid = Number(readFileSync(join(home, 'pid'), 'utf8'));
+    const exited = once(parent, 'exit'); parent.kill('SIGKILL'); await exited;
+    const lock = join(home, 'periodic-jobs', readdirSync(join(home, 'periodic-jobs')).find(p => p.endsWith('.db'))!);
+    const available = () => { const db = new Database(lock, { timeout: 0 }); try { db.exec('BEGIN EXCLUSIVE'); return true; } catch { return false; } finally { db.close(); } };
+    expect(available()).toBe(false);
+    await expect.poll(available, { timeout: 5000 }).toBe(true);
+    // Orphaned exits may remain as init's zombies, but no provider may still execute.
+    const executing = () => { try { return !readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].startsWith('Z'); } catch { return false; } };
+    expect(executing()).toBe(false);
+  } finally { parent.kill('SIGKILL'); rmSync(home, { recursive: true, force: true }); }
+}, 12_000);

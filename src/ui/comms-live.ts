@@ -131,12 +131,14 @@ function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
   // one still held after the wait is the next poll's. A move told meanwhile runs one more pass.
   const tick = () => {
     if (running) { again = true; return; }
+    const registration = homes.get(home);
+    if (!registration) return;
     running = true;
     void backgroundJob('comms live tick', async () => {
       do {
         again = false;
         if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB), ...(homes.get(home)?.owner ? [liveDbPath(home)] : [])] })) { waiting(); return; }
-        if (!homes.has(home)) return;
+        if (homes.get(home) !== registration) return;
         try {
           if (homes.get(home)?.owner) await tellShared(home); else tellMembers(home);
           pass(home);
@@ -154,7 +156,7 @@ function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
       } while (again);
     }).finally(() => {
       running = false;
-      if (again) tick();
+      if (again && homes.get(home) === registration) tick();
     });
   };
   let watcher: FSWatcher | undefined;

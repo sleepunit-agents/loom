@@ -2,7 +2,7 @@ import { periodicContext } from '../transport/periodic-context.js';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { invalidateManifest, manifestToken, saveManifest, sharedManifest } from './manifest-shared.js';
+import { invalidateManifest, manifestDelivery, manifestToken, saveManifest, sharedManifest } from './manifest-shared.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Talking to installed pieces for the page: each `loom-<piece>` on PATH is
@@ -583,6 +583,12 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const hit = cache.get(key);
   const timeout: ManifestResult = { piece, reason: 'timed out' };
   const last = hit?.settled;
+  // A stream's automatic re-ask must never become another manifest producer. The owner
+  // refreshes shared results; explicit requests and admitted snapshot jobs can still ask.
+  if (sharedHomes.has(householdHome(env)) && manifestDelivery(householdHome(env)) && !periodicContext.getStore()) {
+    return Promise.resolve(hit && nowMs - hit.at < STALE_MAX_MS && last && 'manifest' in last
+      ? last : { piece, reason: 'waiting for shared manifest' });
+  }
   if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return within(hit.result, last ?? timeout, PIECE_TIMEOUT_MS);
   const generation = manifestGeneration;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {

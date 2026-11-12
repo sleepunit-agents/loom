@@ -1,3 +1,4 @@
+import { waitForLocks } from '../lock-gate.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 const reads = vi.hoisted(() => ({ COMMS_DB: 'comms.db', movedSince: vi.fn((_home: string, _since: number): Array<{ id: string; member: string; updated: number }> => []), seqsOf: vi.fn(), threadState: vi.fn(), onBump: vi.fn(() => () => {}) }));
 vi.mock('../comms.js', () => reads);
+vi.mock('../lock-gate.js', async importOriginal => { const actual = await importOriginal<typeof import('../lock-gate.js')>(); return { ...actual, waitForLocks: vi.fn(actual.waitForLocks) }; });
 vi.mock('./live.js', () => ({ changedFor: vi.fn() }));
 import { stopCommsWatch, watchComms } from './comms-live.js';
 
@@ -82,3 +84,17 @@ it('multiple listener registrations keep the active Comms owner and dispose inde
     await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(before);
   } finally { first(); second(); await owner.close(); await follower.close(); rmSync(home, { recursive: true, force: true }); }
 }, 15_000);
+
+it('a lock probe from a disposed home cannot scan a replacement registration', async () => {
+  vi.useFakeTimers(); reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([]);
+  let release!: (ready: boolean) => void;
+  vi.mocked(waitForLocks).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const stop = watchComms('/missing-comms-restart');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(release).toBeTypeOf('function');
+  stop(); watchComms('/missing-comms-restart');
+  release(true); await vi.advanceTimersByTimeAsync(0);
+  expect(reads.movedSince).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(reads.movedSince).toHaveBeenCalledTimes(1);
+});
