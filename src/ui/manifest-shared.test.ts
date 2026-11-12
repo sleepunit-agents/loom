@@ -133,3 +133,23 @@ it('automatic delivery never launches a manifest on a miss or expired answer; ow
     expect(calls()).toBe(2); expect((await delivery()).pieces).toHaveLength(1);
   } finally { off(); }
 });
+it('an action in another listener invalidates shared answers before the owner refreshes', async () => {
+  const { home, path, env, calls } = fixture();
+  writeFileSync(path, `#!${process.execPath}
+const fs=require('node:fs'),home=${JSON.stringify(home)};
+if(process.argv[3]==='act'){fs.writeFileSync(home+'/acted','yes');console.log(JSON.stringify({ok:true}));}
+else {fs.appendFileSync(home+'/calls','call\\n');console.log(JSON.stringify({v:2,tile:{label:'Probe',value:fs.existsSync(home+'/acted')?'after':'before'}}));}
+`);
+  const off = sharePieceManifests(home);
+  const invoke = (action: boolean) => {
+    const code = `import {sharePieceManifests,refreshPieceManifests,pieceManifests,pieceAct} from ${JSON.stringify(new URL('./pieces.ts', import.meta.url).href)};const env=${JSON.stringify(env)};sharePieceManifests(env.LOOM_HOME);${action ? "const info=(await pieceManifests(env)).pieces[0];await pieceAct(info,{action:'go',path:'',fields:{}},env);" : 'await refreshPieceManifests(env);'}`;
+    const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 20_000 });
+    expect(r.status, r.stderr).toBe(0);
+  };
+  try {
+    invoke(false); expect([...sharedPiecePrints(env).values()][0]).toContain('before'); expect(calls()).toBe(1);
+    invoke(true); expect(calls()).toBe(1);
+    invoke(false); expect(calls()).toBe(2);
+    expect([...sharedPiecePrints(env).values()][0]).toContain('after');
+  } finally { off(); }
+}, 30_000);

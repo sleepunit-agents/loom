@@ -66,3 +66,51 @@ const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(join(home, 'pid'))
     expect(executing()).toBe(false);
   } finally { parent.kill('SIGKILL'); rmSync(home, { recursive: true, force: true }); }
 }, 12_000);
+
+it.each(['answer too large', 'line too long', 'stopped'])('cancels a background provider immediately on %s', async reason => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-cancel-')), path = join(home, 'provider');
+  writeFileSync(path, `#!${process.execPath}
+const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(join(home, 'pid'))},String(process.pid));process.stdout.on('error',()=>{});process.stdout.write(${JSON.stringify(reason === 'stopped' ? 'stop\n' : 'x'.repeat(1024))});setInterval(()=>{},100);
+`); chmodSync(path, 0o755);
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  try {
+    let result;
+    await owner.run('cancel', async () => { result = await runPieceBin(path, [], { LOOM_HOME: home }, { timeoutMs: 8000, maxBytes: 128,
+      ...(reason === 'answer too large' ? {} : { onLine: () => 'stop' as const }) }); });
+    expect(result).toMatchObject({ ok: false, reason });
+    const pid = Number(readFileSync(join(home, 'pid'), 'utf8'));
+    await expect.poll(() => { try { return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].startsWith('Z'); } catch { return true; } }, { timeout: 2000 }).toBe(true);
+  } finally { await owner.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+it('holds exclusion while terminating a descendant left behind by an exited provider', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-descendant-')), path = join(home, 'provider');
+  const descendant = `require('node:fs').writeFileSync(${JSON.stringify(join(home, 'descendant'))},String(process.pid));setInterval(()=>{},100);`;
+  writeFileSync(path, `#!${process.execPath}
+const fs=require('node:fs'),{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(home, 'descendant'))})){clearInterval(t);c.unref();console.log('done');}},10);
+`); chmodSync(path, 0o755);
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  try {
+    let result;
+    await owner.run('descendant', async () => { result = await runPieceBin(path, [], { LOOM_HOME: home }, { timeoutMs: 5000 }); });
+    expect(result).toMatchObject({ ok: true });
+    const pid = Number(readFileSync(join(home, 'descendant'), 'utf8'));
+    const lock = join(home, 'periodic-jobs', readdirSync(join(home, 'periodic-jobs')).find(p => p.endsWith('.db'))!);
+    const db = new Database(lock, { timeout: 0 });
+    try { db.exec('BEGIN EXCLUSIVE'); } finally { db.close(); }
+    try { expect(readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].startsWith('Z')).toBe(true); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  } finally { await owner.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+it('runs the compiled provider runner and guardian without a source loader', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-compiled-')), path = join(home, 'provider');
+  writeFileSync(path, `#!${process.execPath}\nconsole.log('compiled');\n`); chmodSync(path, 0o755);
+  const owner = new URL('../../dist/transport/periodic-owner.js', import.meta.url).href;
+  const runner = new URL('../../dist/ui/pieces.js', import.meta.url).href;
+  const code = `import {PeriodicOwner} from ${JSON.stringify(owner)};import {runPieceBin} from ${JSON.stringify(runner)};const o=new PeriodicOwner(${JSON.stringify(home)},()=>{},e=>{console.error(e);process.exitCode=1;});o.setEligible(true);await o.run('compiled',async()=>{const r=await runPieceBin(${JSON.stringify(path)},[],{LOOM_HOME:${JSON.stringify(home)}},{timeoutMs:5000});if(!r.ok||r.stdout.trim()!=='compiled')throw Error(JSON.stringify(r));});await o.close();`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let error = ''; child.stderr!.on('data', b => { error += b; });
+  try { const [exit] = await once(child, 'exit'); expect(exit, error).toBe(0); }
+  finally { child.kill('SIGKILL'); rmSync(home, { recursive: true, force: true }); }
+}, 10_000);

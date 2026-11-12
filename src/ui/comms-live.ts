@@ -29,7 +29,7 @@ const PER_SESSION = 4;
 /** `state`: the thread's state this stream last told of (comms.ts threadState: working, a delivery's outcome; t-1881). */
 interface Stream { home: string; res: ServerResponse; thread: string; session: string; sent: number; state: string; may: () => boolean }
 const streams = new Set<Stream>();
-const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; owner?: () => PeriodicOwner | undefined; owners: Set<() => PeriodicOwner | undefined>; off: () => void }>();
+const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; sharedSeen: number; owner?: () => PeriodicOwner | undefined; owners: Map<object, (() => PeriodicOwner | undefined) | undefined>; off: () => void }>();
 
 /** A stream closed or cut off. The home's watch stays: the shared stream's members still hear of their threads. */
 function drop(s: Stream): void {
@@ -104,23 +104,26 @@ async function tellShared(home: string): Promise<void> {
 export function watchComms(home: string, owner?: () => PeriodicOwner | undefined): () => void {
   ensure(home);
   const h = homes.get(home)!;
+  const registration = {};
+  h.owners.set(registration, owner);
   if (owner) {
     withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, ?)').run(Date.now()));
-    h.owners.add(owner);
-    h.owner = () => [...h.owners].map(get => get()).find(o => o?.active) ?? [...h.owners].map(get => get()).find(Boolean);
+    h.owner = () => [...h.owners.values()].map(get => get?.()).find(o => o?.active) ?? [...h.owners.values()].map(get => get?.()).find(Boolean);
   }
+  let stopped = false;
   return () => {
-    if (owner) h.owners.delete(owner);
+    if (stopped) return;
+    stopped = true;
+    h.owners.delete(registration);
     if (h.owners.size || homes.get(home) !== h) return;
     h.watcher?.close(); clearInterval(h.poll); clearInterval(h.beat); h.off(); homes.delete(home);
     for (const s of [...streams]) if (s.home === home) drop(s);
   };
 }
 
-function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
+function ensure(home: string): void {
   const existing = homes.get(home);
-  if (existing) { if (owner) existing.owner = owner; return; }
-  if (owner) withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, ?)').run(Date.now()));
+  if (existing) return;
   let busy = false, running = false, again = false;
   const waiting = () => {
     again = false;
@@ -163,7 +166,7 @@ function ensure(home: string, owner?: () => PeriodicOwner | undefined): void {
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
   const beat = setInterval(() => backgroundJob('comms heartbeat', () => { for (const s of streams) if (s.home === home) write(s, ': beat\n\n'); }), BEAT_MS); beat.unref();
-  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, owner, owners: new Set(), off: onBump(tick) });
+  homes.set(home, { watcher, poll, beat, seen: Date.now(), sharedSeen: 0, owners: new Map(), off: onBump(tick) });
 }
 
 /**
