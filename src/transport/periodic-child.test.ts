@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { PeriodicOwner } from './periodic-owner.js';
 import { runPieceBin } from '../ui/pieces.js';
 
-it('a provider surviving owner SIGKILL keeps its own lock until it exits; takeover never invokes it twice', async () => {
+it('a provider surviving owner SIGKILL keeps command exclusion across different scheduler jobs until it exits', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-periodic-child-'));
   const path = join(home, 'provider');
   writeFileSync(path, `#!${process.execPath}
@@ -28,14 +28,14 @@ const t=setInterval(()=>{if(fs.existsSync(p+'/release')){clearInterval(t);fs.unl
     const exited = once(parent, 'exit'); parent.kill('SIGKILL'); await exited;
     successor.setEligible(true); expect(successor.active).toBe(true);
     let result: Awaited<ReturnType<typeof runPieceBin>> | undefined;
-    await successor.run('probe', async () => { result = await runPieceBin(path, ['ui'], env, { timeoutMs: 5000 }); });
+    await successor.run('different scheduler job', async () => { result = await runPieceBin(path, ['ui'], env, { timeoutMs: 5000 }); });
     expect(result).toMatchObject({ ok: false, reason: 'busy' });
     expect(readFileSync(join(home, 'starts'), 'utf8')).toBe('start\n');
     writeFileSync(join(home, 'release'), 'yes');
     await expect.poll(() => existsSync(join(home, 'active')), { timeout: 5000 }).toBe(false);
     // The old guardian releases on exit, after the provider's final marker.
     await expect.poll(async () => {
-      await successor.run('probe', async () => { result = await runPieceBin(path, ['ui'], env, { timeoutMs: 5000 }); });
+      await successor.run('different scheduler job', async () => { result = await runPieceBin(path, ['ui'], env, { timeoutMs: 5000 }); });
       return result?.ok;
     }, { timeout: 5000 }).toBe(true);
     expect(existsSync(join(home, 'overlap'))).toBe(false);

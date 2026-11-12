@@ -160,3 +160,32 @@ it('an owner waits for a shared WAL writer without blocking the event loop', asy
     rmSync(home, { recursive: true, force: true });
   }
 });
+it('removing the last owner-backed watch returns remaining ownerless registrations to local scans', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-mixed-'));
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([]); vi.mocked(changedFor).mockClear();
+  const local = watchComms(home), shared = watchComms(home, () => owner);
+  try {
+    shared(); await owner.close();
+    reads.movedSince.mockReturnValue([{ id: 'thread', member: 'jonathan', updated: Date.now() + 10 }]);
+    await expect.poll(() => vi.mocked(changedFor).mock.calls).toContainEqual(['jonathan']);
+  } finally { local(); shared(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
+});
+it('a failed shared publication keeps the cursor and retries its member marker', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-failed-publish-'));
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  const through = Date.now() + 10;
+  reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([{ id: 'thread', member: 'jonathan', updated: through }]);
+  const off = watchComms(home, () => owner);
+  const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+  withLog(home, db => db.exec("CREATE TRIGGER reject_move BEFORE INSERT ON comms_member_moves BEGIN SELECT RAISE(ABORT, 'publish failed'); END"));
+  try {
+    const initial = withLog(home, db => db.prepare('SELECT through FROM comms_scan').get());
+    await expect.poll(() => report.mock.calls.length).toBeGreaterThan(0);
+    expect(withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual(initial);
+    expect(withLog(home, db => db.prepare('SELECT * FROM comms_member_moves').all())).toEqual([]);
+    withLog(home, db => db.exec('DROP TRIGGER reject_move'));
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual({ through });
+    expect(withLog(home, db => db.prepare('SELECT member FROM comms_member_moves').all())).toEqual([{ member: 'jonathan' }]);
+  } finally { off(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
+});
