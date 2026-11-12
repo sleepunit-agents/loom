@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEMAND_TTL_MS, domainOf, indexOf, publishDemand, sharedDemand, withLog } from './log.js';
-import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, stopAll } from './subs.js';
+import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, pullsSettled, stopAll } from './subs.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
 import { CORE_TYPES, registerCoreSource } from './core-types.js';
 import { nudge } from './pull.js';
@@ -143,4 +143,32 @@ it('shutdown withdraws demand, waits for an automatic reask and suppresses its l
     const before = frames.mock.calls.length; release(); await closing;
     expect(closed).toBe(true); expect(frames).toHaveBeenCalledTimes(before);
   } finally { release(); await closing; }
+});
+
+it('withdrawn authority while a reask is pending suppresses its late rows', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  const p = { name: 'loom', owners2: true, types: { 'agent-status': CORE_TYPES['agent-status'] } };
+  const viewer = { kind: 'core' } as const;
+  let current: typeof viewer | null = viewer;
+  const frames = vi.fn(() => 1);
+  const port = { id: 'authority-change', session: 'session', viewer: () => current, frame: frames, seq: () => 0, behind: () => 0, close: () => {} };
+  openStream(() => h, () => ({ LOOM_HOME: home }), port, viewer);
+  const { startSeq } = await prepare(() => h, () => ({ LOOM_HOME: home }), p, 'agent-status');
+  let entered = false, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const q = { id: 'q', type: 'agent-status', version: 1, where: [], order: [], limit: 100, after: null, fields: ['agent','reason'], aggregates: [] };
+  await attach(() => h, () => ({ LOOM_HOME: home }), { stream: port.id, session: port.session }, viewer, p, q,
+    { next: null, complete: true }, [], undefined, undefined, startSeq, async () => { entered = true; await gate; const rows = [{ id: 'art', agent: 'art', reason: 'late' }]; return { rows, admitted: rows }; });
+  const { writeTxn, domainRow } = await import('./log.js');
+  withLog(home, db => { const row = domainRow(db, 'loom/agent-status')!; writeTxn(db, 'loom/agent-status', row.epoch,
+    [{ key: 'loom/agent-status/art', type: 'agent-status', id: 'art', op: 'upsert' as const, audience: { members: ['jonathan'] }, agent: 'art', record: { id: 'art', agent: 'art', reason: 'late' } }], c => c); });
+  try {
+    await deliverNow(home); await expect.poll(() => entered).toBe(true);
+    current = null;
+    const before = frames.mock.calls.length;
+    release(); await pullsSettled(home);
+    expect(frames).toHaveBeenCalledTimes(before);
+  } finally { release(); }
 });

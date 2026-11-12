@@ -51,7 +51,7 @@ export type Sees = '*' | readonly string[];
  * `id` is the stream's name (its `hello`, docs/specs/collections.md: queries name it to subscribe on it); `seq` counts
  * the frames this stream was sent and nothing else; `behind` counts writes the socket hasn't drained.
  */
-interface Client { home: string; res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void }
+interface Client { home: string; res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void; authorized?: (event?: string) => boolean }
 const clients = new Set<Client>();
 let watcher: FSWatcher | undefined;
 let ticking: NodeJS.Timeout | undefined;
@@ -152,8 +152,9 @@ function nudge(c: Client): void {
   }), Math.max(0, (lastSent.get(c) ?? 0) + GAP_MS - Date.now())));
 }
 
-function send(c: Client, text: string): void {
+function send(c: Client, text: string, event?: string): void {
   try {
+    if (c.authorized && !c.authorized(event)) { c.res.end(); drop(c); return; }
     if (!c.res.write(text)) {
       if (!c.behind) c.res.once('drain', () => { c.behind = 0; });
       c.behind++;
@@ -164,7 +165,7 @@ function send(c: Client, text: string): void {
 /** A numbered frame on a stream (collections.md, "Core to window"): its seq is the stream's next. */
 function frame(c: Client, event: string, data: Record<string, unknown>): number {
   c.seq++;
-  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`);
+  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`, event);
   return c.seq;
 }
 
@@ -284,12 +285,12 @@ function tickWord(home: string): { fresh: boolean; paths?: Set<string> } {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; authorized?: (event?: string) => boolean; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { home, res, env: { ...env, LOOM_HOME: home }, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
+  const c: Client = { home, res, env: { ...env, LOOM_HOME: home }, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), authorized: opts.authorized, id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
   // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
   const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
   if (held) c.onClose = held.onClose;
