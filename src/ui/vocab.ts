@@ -1071,10 +1071,12 @@ export function parseManifest(value: unknown): Manifest | string {
           }),
           ...(r.jobs !== undefined ? { jobs: arr(r.jobs, `agents.${id}.jobs`, 10000).map((x): Job => {
             const j = obj(x, 'job');
+            if (j.kind !== undefined && (typeof j.kind !== 'string' || !DOING_KINDS.has(j.kind))) throw new Invalid(`job.kind must be one of ${[...DOING_KINDS].join(', ')}`);
             if (!['running', 'waiting', 'scheduled', 'backlog'].includes(String(j.status))) throw new Invalid('job.status is running, waiting, scheduled or backlog');
             const at = optStr(j.at, 'job.at'), since = optStr(j.since, 'job.since');
             if ([at, since].some((t) => t !== undefined && !Number.isFinite(Date.parse(t)))) throw new Invalid('job times are ISO 8601');
             return { id: str(j.id, 'job.id'), status: j.status as JobStatus, text: str(j.text, 'job.text'),
+              ...(j.kind !== undefined ? { kind: j.kind as DoingKind } : {}),
               ...(j.tasks !== undefined ? { tasks: arr(j.tasks, 'job.tasks', 1000).map((t) => str(t, 'job.task')) } : {}),
               ...(j.conversation !== undefined ? { conversation: conversationRef(j.conversation) } : {}),
               ...(j.page !== undefined ? { page: page(j.page, 'job.page') } : {}),

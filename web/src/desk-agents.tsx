@@ -1,3 +1,4 @@
+import type { WatchGroup } from '../../src/watch-sources';
 // The agent-centric desktop (docs/specs/agent-desk.md; t-1959, the owner's prototype of 2026-11-07): no widgets. With
 // nothing open, Home is a slim Needs you band and one big card per agent; with apps open, a fixed-width rail beside the
 // tiles holds Needs you and a compact card per agent. The agents are the viewer's own (loom narrows the household to
@@ -34,7 +35,7 @@ type Job = Doing & { id: string; status: 'running' | 'waiting' | 'scheduled' | '
 type Reading = { label: string; value: string; detail?: string; tone?: string };
 /** An agent as Home's page has it (src/ui/handler.ts agentCards). */
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
-  jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[];
+  watches?: WatchGroup[]; jobs?: Job[]; doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string }; readings?: Reading[]; steps?: { text: string; at: string; where: string }[];
   moving?: { agent: string; text: string; meta?: string }[];
   /** The system bar's ticker (agent-status 1.2; the live record's, not Home's card). */
   activity?: TickerActivity | null; activityUnavailable?: boolean };
@@ -82,6 +83,7 @@ export type DeskAgent = {
   talking: boolean;
   work: Doing[];
   jobs: Job[];
+  watches?: WatchGroup[];
   steps: { text: string; at: string; where: string }[];
 };
 
@@ -116,7 +118,7 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
       id: s.id, label: s.label, mark: s as unknown as Mark, color: markColor(s.bg), status: { word: st.word, tone: st.tone }, face: st.face, now: nowLine,
       ...(next ? { wake: [next.value, next.detail].filter(Boolean).join(' · ') } : {}),
       ...(last ? { last } : {}), unread: k?.unread ?? 0, ...(first ? { first } : {}), asks, ...(ask ? { ask } : {}),
-      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'), work: doing, jobs: c?.jobs ?? [], steps: c?.steps ?? [],
+      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'), work: doing, jobs: c?.jobs ?? [], watches: c?.watches, steps: c?.steps ?? [],
     };
   });
 }
@@ -372,13 +374,17 @@ const jobAbout = (a: DeskAgent, j: Job): About => {
 };
 
 function Jobs({ a, compact }: { a: DeskAgent; compact?: boolean }) {
-  if (!a.jobs.length) return null;
+  if (!a.jobs.length && !a.watches?.length) return null;
   const list = <ul className="loom-jobs">{a.jobs.map((j) => <li key={j.id} data-job-status={j.status} {...aboutAttr(jobAbout(a, j))}>
     <small>{({ running: 'Running', waiting: 'Waiting', scheduled: 'Scheduled', backlog: 'Backlog' })[j.status]}</small>
     {j.href ? <Go href={j.href}>{j.text}</Go> : <span>{j.text}</span>}{j.at && <small>{when(j.at)}</small>}
   </li>)}</ul>;
-  return compact ? <details className="loom-jobs-fold"><summary>All jobs · {a.jobs.length}</summary>{list}</details>
-    : <section aria-label="All jobs"><h3>All jobs · {a.jobs.length}</h3>{list}</section>;
+  const watches = <div className={compact ? "loom-watches loom-watches--compact" : "loom-watches"} aria-label="Reported items">{a.watches?.map((g) => <details key={g.kind} className="loom-jobs-fold" data-watch-kind={g.kind}>
+    <summary title={`${g.count === null ? 'Unavailable' : g.count} · ${g.label}`}>{g.count === null ? 'Unavailable' : g.count} · {g.label}</summary>
+    <ul className="loom-jobs">{g.items.map((i) => <li key={i.id}>{i.href ? <Go href={i.href}>{i.title}</Go> : <span>{i.title}</span>}<small>{i.state}</small></li>)}</ul>
+  </details>)}</div>;
+  return <>{watches}{a.jobs.length > 0 && (compact ? <details className="loom-jobs-fold"><summary>All jobs · {a.jobs.length}</summary>{list}</details>
+    : <section aria-label="All jobs"><h3>All jobs · {a.jobs.length}</h3>{list}</section>)}</>;
 }
 
 function Unread({ a }: { a: DeskAgent }) {
