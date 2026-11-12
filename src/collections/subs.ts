@@ -268,7 +268,10 @@ function publishHints(h: HomeState, db: Database): void {
 function consumeHints(h: HomeState, db: Database): void {
   const owner = h.background;
   if (!owner?.active) return;
-  consumeHintOutbox(h.household().home, db);
+  consumeHintOutbox(h.household().home, db, domain => {
+    const provider = providers(h.env()).get(domain.split('/')[0]);
+    if (provider && domainsOf(provider).has(domain)) domainOf(db, domain, sourceOf(h.env(), provider));
+  });
   if (!db.prepare('SELECT 1 FROM nudge_requests LIMIT 1').get()) return;
   void owner.run('collection hints', () => backgroundJob('collection owner nudges', () => db.transaction(() => {
     const hints = db.prepare("SELECT domain, key FROM nudge_requests n WHERE key = '*' OR NOT EXISTS (SELECT 1 FROM nudge_requests broad WHERE broad.domain = n.domain AND broad.key = '*')").all() as Array<{ domain: string; key: string }>;
@@ -602,7 +605,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
     const wanted = h.background ? new Set(h.demand.keys()) : wantedOf(h);
     // Pending hints remain visible until their owner commits. A busy listener must not lose them
     // merely because it saw a tick: the owner may have been suspended or died.
-    for (const n of nudged) if ((!h.background || h.background.active) && wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
+    for (const n of nudged) if ((!h.background || h.background.active) && (h.background || wanted.has(n.domain))) h.puller.pending(n.domain, n.id);
     if (!h.streams.size) return;
     const installed = providers(h.env());
     for (const s of [...h.streams.values()]) {
@@ -844,11 +847,16 @@ export async function pullNowAll(home: string, domains: readonly string[]): Prom
   // Retain acting-domain hints even if the bounded answer outlives this producer's pending SQL publication.
   if (homes.get(home)?.background) persistHints(home, new Map(domains.map(d => [d, new Set(['*'])])));
   const work = async () => {
-    const requests = await Promise.all(domains.map(async domain => ({ domain, through: await requestRefresh(home, domain) })));
     const h = homes.get(home);
+    const installed = h ? providers(h.env()) : undefined;
+    const requests = await Promise.all(domains.map(async domain => {
+      const provider = installed?.get(domain.split('/')[0]);
+      const source = provider && domainsOf(provider).has(domain) ? sourceOf(h!.env(), provider) : undefined;
+      return { domain, through: await requestRefresh(home, domain, undefined, source) };
+    }));
     if (!h || h.closed) return;
-    const wanted = wantedOf(h);
-    const local = requests.filter(r => wanted.has(r.domain) && r.through > 0);
+    // An action is demand even if its page currently has no collection subscription.
+    const local = requests.filter(r => r.through > 0);
     if (h.background) {
       // Completion, not queue disappearance: replacing/coalescing a pending hint is not an acknowledgment.
       while (!h.closed && Date.now() < deadline) {

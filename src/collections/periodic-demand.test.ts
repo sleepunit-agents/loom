@@ -445,8 +445,9 @@ it('the action wait includes publication contention in its three-second budget',
   try {
     const started = performance.now();
     await pullNowAll(home, ['loom/project']);
-    expect(performance.now() - started).toBeLessThan(PULL_WAIT_MS + 500);
-    expect(performance.now() - started).toBeGreaterThan(PULL_WAIT_MS - 100);
+    expect(PULL_WAIT_MS).toBe(3000);
+    expect(performance.now() - started).toBeLessThan(3500);
+    expect(performance.now() - started).toBeGreaterThan(2900);
   } finally { writer.exec('ROLLBACK'); writer.close(); }
   await expect.poll(() => withLog(home, db => db.prepare("SELECT domain FROM refresh_requests WHERE domain = 'loom/project'").get())).toEqual({ domain: 'loom/project' });
 }, 6000);
@@ -476,4 +477,36 @@ it('withdraws ownership while an admitted refresh is suspended in its writer pro
     release(true);
     expect(await pending).toBe('busy'); expect(calls).toBe(0);
   } finally { release(true); puller.stop(); await puller.settle(); }
+});
+
+it('an action with no subscriptions initializes its domain and waits for the owner refresh', async () => {
+  const { pullNowAll } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0, entered = false, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  registerCoreSource(home, 'project', async () => { calls++; entered = true; await gate; return []; });
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  let done = false;
+  const action = pullNowAll(home, ['loom/project']).then(() => { done = true; });
+  try {
+    await new Promise(r => setTimeout(r, 25)); expect(done).toBe(false); expect(calls).toBe(0);
+    owner.setEligible(true); await deliverNow(home);
+    await expect.poll(() => entered).toBe(true);
+    expect(done).toBe(false);
+    release(); await action;
+    expect(calls).toBe(1); expect(done).toBe(true);
+  } finally { release(); await action; }
+});
+
+it('the owner imports an action marker after its producer dies before domain initialization', async () => {
+  const { persistHints } = await import('./hint-outbox.js');
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0; registerCoreSource(home, 'project', async () => { calls++; return []; });
+  // All the dead producer left is its durable broad marker: no SQL domain, demand or request exists.
+  persistHints(home, new Map([['loom/project', new Set(['*'])]]));
+  owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  await expect.poll(() => calls).toBe(1);
 });

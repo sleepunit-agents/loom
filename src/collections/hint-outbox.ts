@@ -19,7 +19,7 @@ export function persistHints(home: string, hints: ReadonlyMap<string, ReadonlySe
 }
 
 /** Only the lifetime owner calls this. Claim before computing, commit before removing; producer writes stay pending. */
-export function consumeHintOutbox(home: string, db: Database): void {
+export function consumeHintOutbox(home: string, db: Database, initialize?: (domain: string) => void): void {
   const dir = join(home, 'collections', 'hint-outbox');
   let files: string[];
   try { files = readdirSync(dir).filter(f => NAME.test(f)); }
@@ -32,7 +32,7 @@ export function consumeHintOutbox(home: string, db: Database): void {
       catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
     }
     const domain = base.replace('.', '/');
-    db.transaction(() => markNudged(db, domain)).immediate();
+    db.transaction(() => { initialize?.(domain); markNudged(db, domain); }).immediate();
     unlinkSync(join(dir, claimed));
   }
 }
