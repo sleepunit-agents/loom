@@ -4,7 +4,9 @@ import { readFile } from 'node:fs/promises';
 import type { IOStreams } from './io.js';
 import { readStdin } from './io.js';
 import type { CliCommand } from '../core/operations/index.js';
-export async function runApiClient(piece: string, commands: readonly CliCommand[], argv: string[], io: IOStreams): Promise<number> {
+export interface ClientRuntime { request: typeof fetch; retry(ms: number): Promise<void> }
+const runtimeDefault: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
+export async function runApiClient(piece: string, commands: readonly CliCommand[], argv: string[], io: IOStreams, runtime: ClientRuntime = runtimeDefault): Promise<number> {
   const verb = argv[0], spec = commands.find(c => c.name === verb);
   const help = `usage: ${piece === 'tasks' ? 'taskstore' : `loom ${piece}`} <${commands.map(c => c.name).join('|')}> ...\n`;
   if (verb === '--help' || verb === '-h') { io.stdout(help); return 0; }
@@ -62,14 +64,14 @@ export async function runApiClient(piece: string, commands: readonly CliCommand[
   // Same operation id on every retry: a dropped response never repeats the write.
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const response = await fetch(new URL(`/api/${piece}/${verb}`, base), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(1500) });
+      const response = await runtime.request(new URL(`/api/${piece}/${verb}`, base), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(1500) });
       answer = await response.json();
       if (response.status !== 503 || attempt === 3) break;
     } catch { if (attempt === 3) return reject('E_UNAVAILABLE', 'loom daemon is unavailable'); }
-    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+    await runtime.retry(100 * (attempt + 1));
   }
-  const envelope = answer as { ok?: boolean; value?: { result?: Record<string, unknown>; stderr?: string[] }; code?: string; message?: string };
-  const result = envelope.ok === true && envelope.value?.result ? envelope.value.result : { ok: false, errors: [envelope.code ?? 'E_UNAVAILABLE'], message: envelope.message ?? 'Invalid daemon response' };
+  const envelope = (answer && typeof answer === 'object' ? answer : {}) as { ok?: boolean; value?: { result?: Record<string, unknown>; stderr?: string[] }; code?: string; message?: string };
+  const result = envelope.ok === true && envelope.value?.result && typeof envelope.value.result === 'object' && !Array.isArray(envelope.value.result) && typeof envelope.value.result.ok === 'boolean' ? envelope.value.result : { ok: false, errors: [envelope.code ?? 'E_UNAVAILABLE'], message: envelope.message ?? 'Invalid daemon response' };
   if (Array.isArray(result.warnings)) for (const w of result.warnings) io.stderr(`taskstore: warning: ${String(w)}\n`);
   for (const line of envelope.value?.stderr ?? []) io.stderr(`${line}\n`);
   io.stdout(JSON.stringify(result, null, 2) + '\n');

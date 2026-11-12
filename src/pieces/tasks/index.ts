@@ -11,7 +11,7 @@ const week = 7 * 86400_000;
 const verbOf = (registered: string, input: Record<string, unknown>): string => registered === 'command' ? (typeof input.op === 'string' ? input.op : '') : registered;
 const scope = (task: ScopedTask): RecordScope => ({ type: 'task', ...(task.project !== undefined ? { project: task.project } : {}), ...(task.agent !== undefined ? { agent: task.agent } : {}) });
 const get = (state: StoreState, id: unknown) => state.tasks.find(t => t.id === id) as ScopedTask | undefined;
-const fields = (raw: object) => { const value = raw as Record<string, unknown>; return Object.fromEntries(['project', 'agent'].filter(k => value[k] !== undefined).map(k => [k, value[k]])); };
+const scopeFields = (raw: object) => { const value = raw as Record<string, unknown>; return Object.fromEntries(['project', 'agent'].filter(k => value[k] !== undefined).map(k => [k, value[k]])); };
 /** Preserve domain errors for malformed references; hidden references are denied. */
 function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, unknown>, sharing: Sharing): boolean {
   const state = load(db), name = `tasks.${verb}`;
@@ -19,7 +19,7 @@ function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, u
   const access = (id: unknown, write: boolean) => { const t = get(state, id); return !t || (write ? mayAct(viewer, scope(t), sharing, 'act', name) : maySee(viewer, scope(t), sharing)); };
   if (verb === 'create') {
     const parent = get(state, input.parent);
-    const target = { type: 'task', ...(parent?.project !== undefined ? { project: parent.project } : {}), ...fields(input) };
+    const target = { type: 'task', ...(parent?.project !== undefined ? { project: parent.project } : {}), ...scopeFields(input) };
     if (!access(input.parent, true) || !mayCreate(viewer, target, sharing, name)) return false;
     // A linkage idempotency hit must not reveal a hidden existing id.
     const hit = state.tasks.find(t => input.specItemRef !== undefined && t.specItemRef === input.specItemRef && t.criterionId === input.criterionId);
@@ -27,7 +27,7 @@ function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, u
   }
   if (verb === 'import') {
     // Validate every proposed record and every existing link endpoint centrally.
-    return (!Array.isArray(input.tasks) || input.tasks.every(t => !t || typeof t !== 'object' || mayCreate(viewer, { type: 'task', ...fields(t) }, sharing, name)))
+    return (!Array.isArray(input.tasks) || input.tasks.every(t => !t || typeof t !== 'object' || mayCreate(viewer, { type: 'task', ...scopeFields(t) }, sharing, name)))
       && (!Array.isArray(input.links) || input.links.every(l => !l || typeof l !== 'object' || (access(l.id, true) && access(l.dependsOn, true))));
   }
   if (!reads.has(verb)) {
@@ -35,7 +35,7 @@ function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, u
     if ((verb === 'link' || verb === 'unlink') && !access(input.dependsOn, true)) return false;
     const before = get(state, input.id);
     if (verb === 'update' && before && input.set && typeof input.set === 'object' && !Array.isArray(input.set)) {
-      const after = { ...scope(before), ...fields(input.set as Record<string, unknown>) };
+      const after = { ...scope(before), ...scopeFields(input.set as Record<string, unknown>) };
       for (const k of ['project', 'agent'] as const) if (after[k] === '') delete after[k];
       return mayMove(viewer, scope(before), after, sharing, name);
     }
@@ -70,22 +70,22 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
       const plain = input.cli ? cliBefore(before, command) : undefined;
       if (plain?.rejected) return { result: plain.rejected, stderr: [`taskstore: refused: ${plain.refuse}`] };
       const set = command.set;
-      const scopeSet = verb === 'update' && set && typeof set === 'object' && !Array.isArray(set) ? fields(set as Record<string, unknown>) : {};
+      const scopeSet = verb === 'update' && set && typeof set === 'object' && !Array.isArray(set) ? scopeFields(set as Record<string, unknown>) : {};
       if (Object.keys(scopeSet).length) {
         command.set = Object.fromEntries(Object.entries(set as object).filter(([k]) => k !== 'project' && k !== 'agent'));
         // A scope-only move still receives all ordinary domain validation.
         if (!Object.keys(command.set as object).length) command.set = { title: get(before, command.id)?.title };
       }
-      if (verb === 'import' && Array.isArray(input.tasks) && input.tasks.some(t => t && typeof t === 'object' && Object.values(fields(t)).some(v => typeof v !== 'string'))) return { result: { ok: false, errors: ['E_BAD_FIELD'] } };
-      if ([...Object.values(fields(input)), ...Object.values(scopeSet)].some(v => typeof v !== 'string')) return { result: { ok: false, errors: ['E_BAD_FIELD'] } };
+      if (verb === 'import' && Array.isArray(input.tasks) && input.tasks.some(t => t && typeof t === 'object' && Object.values(scopeFields(t)).some(v => typeof v !== 'string'))) return { result: { ok: false, errors: ['E_BAD_FIELD'] } };
+      if ([...Object.values(scopeFields(input)), ...Object.values(scopeSet)].some(v => typeof v !== 'string')) return { result: { ok: false, errors: ['E_BAD_FIELD'] } };
       const { result, state } = apply(held, command);
       if (result.ok === true && !reads.has(verb)) {
-        if (verb === 'create' && result.created) Object.assign(get(state, result.id)!, get(before, command.parent)?.project !== undefined ? { project: get(before, command.parent)!.project } : {}, fields(input));
+        if (verb === 'create' && result.created) Object.assign(get(state, result.id)!, get(before, command.parent)?.project !== undefined ? { project: get(before, command.parent)!.project } : {}, scopeFields(input));
         if (verb === 'update') {
           const task = get(state, command.id)!;
           for (const [key, value] of Object.entries(scopeSet)) { if (value === '') delete task[key as 'project' | 'agent']; else task[key as 'project' | 'agent'] = value as string; }
         }
-        if (verb === 'import' && Array.isArray(input.tasks)) for (const raw of input.tasks) if (raw && typeof raw === 'object') { const t = get(state, raw.id); if (t) Object.assign(t, fields(raw)); }
+        if (verb === 'import' && Array.isArray(input.tasks)) for (const raw of input.tasks) if (raw && typeof raw === 'object') { const t = get(state, raw.id); if (t) Object.assign(t, scopeFields(raw)); }
         for (const id of persist(db, state, ctx.now)) ctx.changed('task', id);
       }
       // Ready must respect blockers even when a blocker is outside the caller's projects.

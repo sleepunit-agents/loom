@@ -87,8 +87,13 @@ describe('policy, live records, retry and role binding', () => {
     const hidden = app.command('create', { title: 'Hidden', project: 'other', agent: 'pond-bot', specItemRef: 'secret' }).id;
     const privateTask = app.command('create', { title: 'Personal', agent: 'pond-bot' }).id;
     expect(app.call('show', { id: child }, member)).toMatchObject({ task: { project: 'pond' } });
+    expect(app.call('show', { id: child }, member).task).not.toHaveProperty('agent');
+    const explicit = app.command('create', { title: 'Explicit agent', parent: pond, agent: 'pond-bot' }).id;
+    expect(app.call('show', { id: explicit }, member)).toMatchObject({ task: { agent: 'pond-bot' } });
     expect(app.call('show', { id: hidden }, member)).toMatchObject({ code: 'denied' });
     expect(app.command('close', { id: hidden }, member)).toMatchObject({ code: 'denied' });
+    expect(app.command('update', { id: hidden, set: { project: 'pond' } }, member)).toMatchObject({ code: 'denied' });
+    expect(app.call('show', { id: hidden })).toMatchObject({ task: { project: 'other' } });
     expect(app.command('create', { title: 'Leak id', project: 'pond', specItemRef: 'secret' }, member)).toMatchObject({ code: 'denied' });
     expect(app.command('create', { title: 'Smuggle agent', project: 'pond', agent: 'art' }, member)).toMatchObject({ code: 'denied' });
     expect(app.command('update', { id: child, set: { project: 'other' } }, member)).toMatchObject({ code: 'denied' });
@@ -110,6 +115,7 @@ describe('policy, live records, retry and role binding', () => {
   it('preserves malformed generic discriminator errors as domain values', async () => {
     const app = await loom();
     expect(app.call('command', { op: { toString: null } })).toEqual({ ok: false, errors: ['E_BAD_FIELD'] });
+    for (const input of [null, 'create', 42, []]) expect(app.operations.call('direct', owner, 'tasks.command', input, 'malformed')).toMatchObject({ ok: false, code: 'invalid' });
   });
   it('creates after deleting the first task without ordinal collisions', async () => {
     const app = await loom();
@@ -269,7 +275,7 @@ describe('generated client parity against the frozen legacy binding', () => {
     const app = await loom(), dir = home(), token = join(dir, 'token'); writeFileSync(token,'jonathan');
     const env = { LOOM_URL: app.url, LOOM_TOKEN_FILE: token, TASKSTORE_DB: join(dir,'must-not-exist.db'), LOOM_BODY_CONVERSATION: 'cv-0123456789ab' };
     const run = async (argv: string[], text = '') => {
-      let output = ''; const status = await runApiClient('tasks', taskCommands, argv, { env, stdin: Readable.from([text]), stdinIsTTY: false, stdout: s => { output += s; }, stderr: () => {} }); return { status, result: JSON.parse(output) };
+      let output = ''; const status = await runApiClient('tasks', taskCommands, argv, { env, stdin: Readable.from([text]), stdinIsTTY: false, stdout: s => { output += s; }, stderr: () => {} }, { request: fetch, retry: async ms => { app.clock.advance(ms); } }); return { status, result: JSON.parse(output) };
     };
     expect((await run(['create','From conversation','--goal','Ready'])).status).toBe(0);
     expect((await run(['comment','t-1','--file','-'],'Hello\n')).status).toBe(0);
@@ -278,5 +284,28 @@ describe('generated client parity against the frozen legacy binding', () => {
     await app.close(); closes.pop();
     expect((await run(['list'])).result).toMatchObject({ ok: false, errors: ['E_UNAVAILABLE'] });
     expect(existsSync(env.TASKSTORE_DB)).toBe(false);
+  });
+});
+
+describe('client retry transport', () => {
+  it('keeps one id across a lost committed response, bounds retries, and handles null responses', async () => {
+    const app = await loom(), token = join(home(),'token'); writeFileSync(token,'jonathan');
+    const requests: string[] = [], waits: number[] = []; let out = '';
+    const io = { env: { LOOM_URL: app.url, LOOM_TOKEN_FILE: token }, stdin: Readable.from([]), stdinIsTTY: false, stdout: (s:string) => { out += s; }, stderr: () => {} };
+    const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); requests.push(body.id);
+      const answer = app.operations.call('http', owner, 'tasks.create', body.input, body.id);
+      if (requests.length === 1) throw new Error('response lost after commit');
+      return Response.json(answer);
+    }) as unknown as typeof fetch;
+    const retry = async (ms:number) => { waits.push(ms); app.clock.advance(ms); };
+    expect(await runApiClient('tasks', taskCommands, ['create','Retry once','--goal','Saved once'], io, { request, retry })).toBe(0);
+    expect(requests).toHaveLength(2); expect(new Set(requests).size).toBe(1); expect(load(app.db).tasks).toHaveLength(1); expect(waits).toEqual([100]);
+    const failing = vi.fn(async () => { throw new Error('offline'); }); waits.length = 0; out = '';
+    expect(await runApiClient('tasks', taskCommands, ['list'], io, { request: failing, retry })).toBe(1);
+    expect(failing).toHaveBeenCalledTimes(4); expect(waits).toEqual([100,200,300]); expect(JSON.parse(out)).toMatchObject({ errors: ['E_UNAVAILABLE'] });
+    out = '';
+    expect(await runApiClient('tasks', taskCommands, ['list'], io, { request: async () => Response.json(null), retry })).toBe(1);
+    expect(JSON.parse(out)).toMatchObject({ ok: false, errors: ['E_UNAVAILABLE'] });
   });
 });

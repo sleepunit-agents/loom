@@ -33,5 +33,14 @@ export function fixture(home: string) {
       const result = app.operations.call('direct', { kind: 'member', id: input.member ?? 'jonathan' }, 'example.put', input, `fixture:${input.id}`);
       if (!result.ok) throw new Error(`fixture: ${result.message}`);
     }
+    for (const input of [
+      { title: 'Pond work', project: 'pond', agent: 'art' },
+      { title: 'Other project work', project: 'other', agent: 'pond-bot' },
+      { title: 'Pond-bot own work', agent: 'pond-bot' },
+      { title: 'Unfiled household work' },
+    ]) {
+      const result = app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'tasks.create', { ...input, actor: 'fixture', at: '2026-11-12T00:00:00.000Z' }, `fixture:task:${input.title}`);
+      if (!result.ok || !(result.value as { result: { ok: boolean } }).result.ok) throw new Error('fixture task creation failed');
+    }
   } finally { app.close(); }
 }
