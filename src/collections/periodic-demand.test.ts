@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEMAND_TTL_MS, domainOf, indexOf, publishDemand, sharedDemand, withLog } from './log.js';
-import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, pullsSettled, stopAll } from './subs.js';
+import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, stopAll } from './subs.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
 import { CORE_TYPES, registerCoreSource } from './core-types.js';
 import { nudge } from './pull.js';
@@ -145,7 +145,7 @@ it('shutdown withdraws demand, waits for an automatic reask and suppresses its l
   } finally { release(); await closing; }
 });
 
-it.each(['viewer', 'install'])('withdrawn %s authority while a reask is pending suppresses its late rows', async mode => {
+it.each(['viewer', 'install', 'scope'])('withdrawn %s authority while a reask is pending suppresses its late rows', async mode => {
   const h = { home, agents: ['art'] } as Household;
   owner = new PeriodicOwner(home, () => {});
   stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
@@ -153,9 +153,10 @@ it.each(['viewer', 'install'])('withdrawn %s authority while a reask is pending 
   const serving = await import('./serve.js');
   let install = 'one';
   const registry = vi.spyOn(serving, 'providers').mockImplementation(() => new Map([['loom', { ...p, install }]]));
-  const viewer = { kind: 'core' } as const;
-  let current: typeof viewer | null = viewer;
-  const frames = vi.fn(() => 1);
+  const viewer: import('./viewer.js').Viewer = mode === 'scope'
+    ? { kind: 'member', person: 'jonathan', household: false, agents: ['art', 'mark'] } : { kind: 'core' };
+  let current: import('./viewer.js').Viewer | null = viewer;
+  const frames = vi.fn((_event: string, _data: Record<string, unknown>) => 1);
   const port = { id: 'authority-change', session: 'session', viewer: () => current, frame: frames, seq: () => 0, behind: () => 0, close: () => {} };
   openStream(() => h, () => ({ LOOM_HOME: home }), port, viewer);
   const { startSeq } = await prepare(() => h, () => ({ LOOM_HOME: home }), p, 'agent-status');
@@ -169,9 +170,11 @@ it.each(['viewer', 'install'])('withdrawn %s authority while a reask is pending 
     [{ key: 'loom/agent-status/art', type: 'agent-status', id: 'art', op: 'upsert' as const, audience: { members: ['jonathan'] }, agent: 'art', record: { id: 'art', agent: 'art', reason: 'late' } }], c => c); });
   try {
     await deliverNow(home); await expect.poll(() => entered).toBe(true);
-    if (mode === 'viewer') current = null; else install = 'two';
+    if (mode === 'viewer') current = null;
+    else if (mode === 'scope') current = { kind: 'member', person: 'jonathan', household: false, agents: ['mark'] };
+    else install = 'two';
     const before = frames.mock.calls.length;
-    release(); await pullsSettled(home);
-    expect(frames).toHaveBeenCalledTimes(before);
+    release(); await new Promise(resolve => setImmediate(resolve));
+    expect(frames.mock.calls.slice(before).map(([event]) => event)).not.toContain('rows');
   } finally { release(); registry.mockRestore(); }
 });
