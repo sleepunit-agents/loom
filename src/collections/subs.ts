@@ -36,8 +36,8 @@ import type { Household } from '../household.js';
 import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
-import { markNudged, publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
-import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
+import { markNudged, publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, refreshCompleted, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
+import { domainOfType, domainsOf, nudge, requestRefresh, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
 import { isOutOfContract as outOfContract, providers, type Provider } from './serve.js';
@@ -202,8 +202,7 @@ export function configureCollectionBackground(household: () => Household, env: (
     await h.passing;
     await h.publishing;
     // Retirement retains queued hints and demand until the writer lets them commit.
-    while (!await waitForLocks({ write: [liveDbPath(h.household().home)] })) await sleep(10);
-    withLog(h.household().home, db => publishHints(h, db));
+    await publishPendingHints(h);
     h.streams.clear();
     h.backgrounds.delete(owner);
     stopIfIdle(h);
@@ -232,10 +231,15 @@ export function flushCollectionHints(home: string): Promise<void> {
   if (!h?.background || !h.hints.size) return Promise.resolve();
   return h.publishing ??= (async () => {
     while (h.hints.size) {
-      while (!await waitForLocks({ write: [liveDbPath(home)] })) await sleep(10);
-      withLog(home, db => publishHints(h, db));
+      await publishPendingHints(h);
     }
   })().finally(() => { h.publishing = undefined; });
+}
+
+async function publishPendingHints(h: HomeState): Promise<void> {
+  const home = h.household().home;
+  while (!await waitForLocks({ write: [liveDbPath(home)] })) await sleep(10);
+  withLog(home, db => publishHints(h, db));
 }
 
 function publishHints(h: HomeState, db: Database): void {
@@ -829,15 +833,31 @@ export function pullSoon(home: string, domains: readonly string[]): void {
  * (bounded by PULL_WAIT_MS). */
 export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
-  await Promise.all(domains.map(d => nudge(home, d)));
-  const h = homes.get(home);
-  if (!h || h.closed) return;
-  if (h.background) { await deliverNow(home); return; }
-  const wanted = wantedOf(h);
-  const pulls = domains.filter((d) => wanted.has(d)).map((d) => h.puller.now(d));
-  if (!pulls.length) return;
-  await Promise.race([Promise.all(pulls), new Promise((r) => setTimeout(r, PULL_WAIT_MS))]);
-  await deliverNow(home);
+  const deadline = Date.now() + PULL_WAIT_MS;
+  const work = async () => {
+    const requests = await Promise.all(domains.map(async domain => ({ domain, through: await requestRefresh(home, domain, undefined, deadline) })));
+    const h = homes.get(home);
+    if (!h || h.closed) return;
+    const wanted = wantedOf(h);
+    const local = requests.filter(r => wanted.has(r.domain) && r.through > 0);
+    if (h.background) {
+      // Completion, not queue disappearance: replacing/coalescing a pending hint is not an acknowledgment.
+      while (!h.closed && Date.now() < deadline) {
+        const complete = withLog(home, db => local.every(r => refreshCompleted(db, r.domain) >= r.through));
+        if (complete) break;
+        await sleep(Math.min(25, Math.max(0, deadline - Date.now())));
+      }
+    } else {
+      await Promise.all(local.map(r => h.puller.now(r.domain)));
+    }
+    if (!h.closed) await deliverNow(home);
+    // Ask-audience subscriptions reconcile asynchronously after their log change is delivered.
+    while (!h.closed && h.reasks.size && Date.now() < deadline) await Promise.allSettled([...h.reasks]);
+  };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([work(), new Promise<void>(resolve => { timer = setTimeout(resolve, PULL_WAIT_MS); })]);
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 /** For tests: forget every stream and stop. */

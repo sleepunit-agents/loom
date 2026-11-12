@@ -507,12 +507,23 @@ export class Puller {
  * pulls it hears of it from the tick file. Nothing is said back about whether it exists.
  */
 export async function nudge(home: string, domain: string, key?: string): Promise<void> {
-  if (typeof domain !== 'string' || !/^[a-z][a-z0-9-]{0,39}\/([a-z][a-z0-9-]{0,31}|\*)$/.test(domain)) return;
-  if (key !== undefined && (typeof key !== 'string' || !RECORD_ID.test(key))) return;
+  await requestRefresh(home, domain, key);
+}
+
+/** Internal receipt for a refresh request; external nudges reveal no domain information. */
+export async function requestRefresh(home: string, domain: string, key?: string, deadline = Infinity): Promise<number> {
+  if (typeof domain !== 'string' || !/^[a-z][a-z0-9-]{0,39}\/([a-z][a-z0-9-]{0,31}|\*)$/.test(domain)) return 0;
+  if (key !== undefined && (typeof key !== 'string' || !RECORD_ID.test(key))) return 0;
   try {
-    // A delayed change hint can land after the request's gate, while another request waits on this store.
-    // Keep the hint pending after a spent budget; never fall back to the synchronous busy timeout.
-    while (!await waitForLocks({ write: [liveDbPath(home)], budgetMs: WRITE_WAIT_MS })) await sleep(10);
-    withLog(home, db => db.transaction(() => markNudged(db, domain, Date.now(), key)).immediate()); tick(home);
+    // Share publication policy for hints and action receipts; bounded actions never enter a synchronous fallback.
+    while (Date.now() < deadline) {
+      if (await waitForLocks({ write: [liveDbPath(home)], budgetMs: Math.min(WRITE_WAIT_MS, deadline - Date.now()) })) {
+        const receipt = withLog(home, db => db.transaction(() => markNudged(db, domain, Date.now(), key)).immediate());
+        tick(home);
+        return receipt;
+      }
+      await sleep(10);
+    }
   } catch { /* a nudge is a hint; the poll still pulls */ }
+  return 0;
 }

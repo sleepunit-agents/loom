@@ -317,6 +317,40 @@ it('production action refreshes on a subscribed follower reach the owner without
   await expect.poll(() => calls).toBeGreaterThan(0);
 });
 
+it('an action waits for owner refresh completion and local rows, without follower compute', async () => {
+  const { pullNowAll } = await import('./subs.js');
+  const { finishRefresh, refreshRequest, writeTxn, tick } = await import('./log.js');
+  const h = { home, agents: ['art'] } as Household, env = () => ({ LOOM_HOME: home });
+  let calls = 0; registerCoreSource(home, 'project', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, env, owner);
+  const p = { name: 'loom', owners2: true, types: { project: CORE_TYPES.project } }, viewer = { kind: 'core' } as const;
+  const frames: unknown[] = [];
+  const port = { id: 'ordered-action', session: 'session', viewer: () => viewer, frame: (_e: string, data: unknown) => { frames.push(data); return frames.length; }, seq: () => frames.length, behind: () => 0, close: () => {} };
+  openStream(() => h, env, port, viewer);
+  const { startSeq } = await prepare(() => h, env, p, 'project');
+  const q = { id: 'q', type: 'project', version: 1, where: [], order: [], limit: 100, after: null, fields: ['name'], aggregates: [] };
+  await attach(() => h, env, { stream: port.id, session: port.session }, viewer, p, q,
+    { next: null, complete: true }, [], undefined, undefined, startSeq, async () => ({ rows: [], admitted: [] }));
+  let done = false;
+  const action = pullNowAll(home, ['loom/project']).then(() => { done = true; });
+  try {
+    await new Promise(r => setTimeout(r, 100));
+    expect(calls).toBe(0); expect(done).toBe(false);
+    // Model the separate owner's commit and acknowledgment while this listener remains ineligible.
+    withLog(home, db => {
+      const request = refreshRequest(db, 'loom/project');
+      const row = domainOf(db, 'loom/project', 'loom').row;
+      writeTxn(db, 'loom/project', row.epoch, [{ op: 'upsert', id: 'new', rev: null, txn: 'owner', audience: { household: true }, record: { id: 'new', name: 'owner committed' } }], () => ({ key: 'loom/project/new', type: 'project' }));
+      finishRefresh(db, 'loom/project', row.epoch, request.through, Date.now(), true);
+    });
+    tick(home);
+    await action;
+    expect(done).toBe(true); expect(calls).toBe(0);
+    expect(JSON.stringify(frames)).toContain('owner committed');
+  } finally { await action; }
+});
+
 it('an exhausted action-hint writer budget preserves the hint without synchronous fallback', async () => {
   const h = { home, agents: ['art'] } as Household;
   owner = new PeriodicOwner(home, () => {});
@@ -372,3 +406,34 @@ it('the change acknowledgment waits for durable hints through writer budget exha
     expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/agent-status', key: 'art' }]);
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await acknowledgment; onChanged(home, () => {}); }
 });
+
+it('replacing a pending hint and finishing an older pull cannot acknowledge the new action', async () => {
+  const { markNudged, refreshCompleted, finishRefresh, refreshRequest } = await import('./log.js');
+  withLog(home, db => {
+    const { row } = domainOf(db, 'loom/project', 'loom');
+    const first = markNudged(db, 'loom/project', 100);
+    const second = markNudged(db, 'loom/project', 100);
+    expect(second).toBeGreaterThan(first);
+    finishRefresh(db, 'loom/project', row.epoch, first, 101, true);
+    expect(refreshCompleted(db, 'loom/project')).toBe(first);
+    expect(refreshRequest(db, 'loom/project').through).toBe(second);
+    finishRefresh(db, 'loom/project', row.epoch, second, 102, true);
+    expect(refreshCompleted(db, 'loom/project')).toBe(second);
+  });
+});
+
+it('the action wait includes publication contention in its three-second budget', async () => {
+  const { pullNowAll, PULL_WAIT_MS } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  withLog(home, db => domainOf(db, 'loom/project', 'loom'));
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  try {
+    const started = performance.now();
+    await pullNowAll(home, ['loom/project']);
+    expect(performance.now() - started).toBeLessThan(PULL_WAIT_MS + 500);
+    expect(performance.now() - started).toBeGreaterThan(PULL_WAIT_MS - 100);
+  } finally { writer.exec('ROLLBACK'); writer.close(); }
+}, 6000);

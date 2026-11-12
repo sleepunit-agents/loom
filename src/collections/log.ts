@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS listener_demand (
   until INTEGER NOT NULL,
   PRIMARY KEY(listener, domain)
 );
+CREATE TABLE IF NOT EXISTS refresh_completed (
+  domain TEXT PRIMARY KEY, through INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS refresh_checks (
   domain TEXT PRIMARY KEY,
   epoch TEXT NOT NULL,
@@ -299,7 +302,7 @@ export function prunedThrough(db: Database, domain: string): number {
 }
 
 /** Someone said `domain` moved (a nudge): every listener pulling it sees the time. Unknown domains change nothing. */
-export function markNudged(db: Database, domain: string, now = Date.now(), key = '*'): void {
+export function markNudged(db: Database, domain: string, now = Date.now(), key = '*'): number {
   // Replace to get a new sequence even for two writes in the same millisecond. A pull only acknowledges
   // requests it saw before reading, so a write during a slow snapshot is never swallowed.
   db.prepare(`INSERT OR REPLACE INTO refresh_requests (domain, key)
@@ -309,6 +312,7 @@ export function markNudged(db: Database, domain: string, now = Date.now(), key =
     db.prepare("INSERT INTO refresh_requests (domain, key) VALUES (?, '*')").run(domain);
   }
   db.prepare('UPDATE domains SET nudged = ? WHERE domain = ?').run(now, domain);
+  return (db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM refresh_requests WHERE domain = ?').get(domain) as { id: number }).id;
 }
 
 /** Domains nudged after `since`. */
@@ -396,9 +400,15 @@ export function refreshRequest(db: Database, domain: string): { through: number;
 export function checkedAt(db: Database, domain: string, epoch: string): number {
   return (db.prepare('SELECT checked FROM refresh_checks WHERE domain = ? AND epoch = ?').get(domain, epoch) as { checked: number } | undefined)?.checked ?? 0;
 }
+export function refreshCompleted(db: Database, domain: string): number {
+  return (db.prepare('SELECT through FROM refresh_completed WHERE domain = ?').get(domain) as { through: number } | undefined)?.through ?? 0;
+}
 export function finishRefresh(db: Database, domain: string, epoch: string, through: number, checked: number, full: boolean): void {
   if (domainRow(db, domain)?.epoch !== epoch) return;
-  db.prepare('DELETE FROM refresh_requests WHERE domain = ? AND id <= ?').run(domain, through);
+  db.transaction(() => {
+    db.prepare('DELETE FROM refresh_requests WHERE domain = ? AND id <= ?').run(domain, through);
+    db.prepare('INSERT INTO refresh_completed (domain, through) VALUES (?, ?) ON CONFLICT(domain) DO UPDATE SET through = MAX(through, excluded.through)').run(domain, through);
+  }).immediate();
   if (full) db.prepare('INSERT OR REPLACE INTO refresh_checks (domain, epoch, checked) VALUES (?, ?, ?)').run(domain, epoch, checked);
 }
 

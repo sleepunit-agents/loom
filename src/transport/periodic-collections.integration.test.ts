@@ -64,3 +64,40 @@ if(req.url==='/nudge'){for(let i=0;i<20;i++)queueCollectionNudge(home,'loom/agen
     rmSync(home, { recursive: true, force: true });
   }
 }, 40_000);
+it('a follower action delivers owner changes before answering, with owner work held and released', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-action-'));
+  const url = (p: string) => JSON.stringify(new URL(p, import.meta.url).href);
+  const children: ChildProcess[] = [];
+  const start = async (name: string, eligible: boolean) => {
+    const code = `import {createServer} from 'node:http';import {existsSync,writeFileSync,appendFileSync} from 'node:fs';import {setTimeout as sleep} from 'node:timers/promises';
+import {PeriodicOwner} from ${url('./periodic-owner.ts')};import {configureCollectionBackground,openStream,prepare,attach,pullAfterAction} from ${url('../collections/subs.ts')};import {CORE_TYPES,registerCoreSource} from ${url('../collections/core-types.ts')};
+const home=${JSON.stringify(home)},name=${JSON.stringify(name)},h={home,agents:['art']},env={LOOM_HOME:home},viewer={kind:'core'};
+registerCoreSource(home,'project',async()=>{appendFileSync(home+'/calls',name+'\\n');writeFileSync(home+'/entered','yes');while(!existsSync(home+'/release'))await sleep(10);return [{id:'p',name:'owner update',audience:{household:true}}];});
+const owner=new PeriodicOwner(home,()=>{});configureCollectionBackground(()=>h,()=>env,owner);owner.setEligible(${eligible});
+const provider={name:'loom',owners2:true,types:{project:CORE_TYPES.project}},q={id:'q',type:'project',version:1,where:[],order:[],limit:100,after:null,fields:['name'],aggregates:[]};
+const server=createServer(async(req,res)=>{try{
+if(req.url==='/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': open\\n\\n');const port={id:'stream',session:'session',viewer:()=>viewer,frame:(event,data)=>{writeFileSync(home+'/delivered',JSON.stringify(data));res.write('event: '+event+'\\ndata: '+JSON.stringify(data)+'\\n\\n');return 1;},seq:()=>0,behind:()=>0,close:()=>res.end()};openStream(()=>h,()=>env,port,viewer);const {startSeq}=await prepare(()=>h,()=>env,provider,'project');await attach(()=>h,()=>env,{stream:port.id,session:port.session},viewer,provider,q,{next:null,complete:true},[],undefined,undefined,startSeq,async()=>({rows:[],admitted:[]}));writeFileSync(home+'/subscribed','yes');return;}
+if(req.url==='/action'){await pullAfterAction(home,env,'loom');res.end(existsSync(home+'/delivered')?'delivered':'early');return;}res.end('ok');}catch(e){res.statusCode=500;res.end(String(e));}});server.listen(0,'127.0.0.1',()=>process.send(server.address().port));`;
+    const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    children.push(child); const [port] = await once(child, 'message'); return `http://127.0.0.1:${port}`;
+  };
+  let stream: ReturnType<typeof request> | undefined;
+  try {
+    await start('owner', true); const follower = await start('follower', false);
+    stream = request(`${follower}/events`, res => res.resume()); stream.on('error', () => {}); stream.end();
+    await expect.poll(() => existsSync(join(home, 'subscribed'))).toBe(true);
+    let done = false;
+    const action = fetch(`${follower}/action`).then(r => r.text()).then(s => { done = true; return s; });
+    await expect.poll(() => existsSync(join(home, 'entered'))).toBe(true);
+    await new Promise(r => setTimeout(r, 100)); expect(done).toBe(false);
+    expect(readFileSync(join(home, 'calls'), 'utf8')).not.toContain('follower');
+    writeFileSync(join(home, 'release'), 'yes');
+    expect(await action).toBe('delivered');
+    expect(readFileSync(join(home, 'delivered'), 'utf8')).toContain('owner update');
+    expect(readFileSync(join(home, 'calls'), 'utf8')).not.toContain('follower');
+  } finally {
+    stream?.destroy();
+    await Promise.all(children.map(async c => { if (c.exitCode !== null || c.signalCode !== null) return; const gone = once(c, 'exit'); c.kill('SIGKILL'); await gone; }));
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 20_000);
