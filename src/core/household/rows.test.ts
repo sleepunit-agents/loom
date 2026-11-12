@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { openDb } from '../db/index.js';
 import { migrateHouseholdTables } from './schema.js';
 import { HouseholdRows } from './rows.js';
+import { loadHousehold } from '../../household.js';
 
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
@@ -22,7 +23,12 @@ describe('household database substrate (no cutover)', () => {
     try {
       const legacy = '{"v":1,"agents":["art"],"default":"art"}\n';
       writeFileSync(join(f.home, 'household.json'), legacy);
+      const before = loadHousehold(f.home);
       migrateHouseholdTables(f.db);
+      expect(loadHousehold(f.home)).toEqual(before);
+      const tables = f.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'household_%'").all() as { name: string }[];
+      for (const { name } of tables) expect(f.db.prepare(`SELECT count(*) AS n FROM ${name}`).get()).toEqual({ n: 0 });
+      expect(new HouseholdRows(f.db, 'imports').entries()).toEqual([]);
       expect(readFileSync(join(f.home, 'household.json'), 'utf8')).toBe(legacy);
       expect(readdirSync(f.home).sort()).toEqual(['household.json', 'loom.db', 'loom.db-shm', 'loom.db-wal']);
       expect(f.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='household'").get()).toEqual({ n: 1 });
