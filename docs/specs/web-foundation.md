@@ -11,24 +11,10 @@ earlier spec, this one wins; "What this replaces" lists them.*
 > "we keep having a ton of issues for something that's barely more complex than a heavy duty todo list." — the
 > owner, 2026-11-12
 
-The review found the product small and the system under it large. Four causes account for nearly all of the pain:
-
-1. **The server is the MCP program with a page bolted on.** Three listener processes share one home and each runs
-   every background job. Stores are opened and closed per call, with synchronous waits on the event loop. A
-   piece's data arrives by running its command-line program and reading JSON off its output. Around that sit about
-   15 cache layers, 9 process pools, 56 timeout constants, leases, tick files and a lock gate. After the last
-   round of fixes the listener still stalled 116 times in ten minutes.
-2. **First-party features pay a third-party plugin tax.** Tasks, approvals, the clock and Changes are separate
-   programs in separate repos behind a JSON contract that has nine coexisting generations. Core names their roles
-   in a dozen places and they call each other, so the independence isn't real. A change spanning one piece and
-   core is a piece PR, a pin PR, a deploy, and often another core PR; pin bumps are a quarter to a third of core's
-   commits.
-3. **The browser has no single data path.** Nine ways for data to reach the screen, five ways for a write to go
-   back, reconciled by hand per screen. Shared collections were added beside the page fetches, not instead of
-   them: `useCollection` has no callers.
-4. **Direction was set by reaction, then guarded by process.** The renderer was built three times, the desktop
-   four, live data five. The guard that followed (a merge queue, multi-round reviews on every merge) slowed every
-   change without removing a cause.
+The review found three listeners repeating jobs, child programs serving page data, and repeated cache and lock
+machinery. Separate first-party repos turn one change into several PRs. Nine delivery paths and five write paths
+coexist in the browser. Repeated renderers and desktops were followed by process that slowed work without
+removing those causes. The historical evidence is in the review note above; the acceptance measures are below.
 
 ## What the owner decided (2026-11-12)
 
@@ -62,7 +48,7 @@ The review found the product small and the system under it large. Four causes ac
 5. **One permission rule,** in one module.
 6. **Pieces are parts of one program** with declared seams, so one can be replaced without touching the rest.
 7. **Two shells:** the tiled desk and the phone.
-8. **A stranger installs it with one command** and no other software.
+8. **A stranger with Node and npm installs and starts it with the two commands below,** with no other software.
 9. **A change is tested in minutes against a loom the suite starts itself.**
 
 ## Non-goals
@@ -96,8 +82,11 @@ loom has two ways to run, and only the second is new.
   MCP over HTTP, and one WebSocket endpoint, and it runs every background job. There is one of it per home; a
   second `loom serve` on the same home refuses to start.
 
-**Deploying is a restart.** The daemon stops taking requests, finishes what is running (a few seconds at most),
-exits, and the new one starts. A window's socket reconnects and asks again for what it shows.
+**Deploying is a restart.** Stop accepting requests, finish transactions within five seconds, then roll back any
+unfinished transaction and exit. Persist job intent before starting work; on restart resume local work from its
+checkpoint or retry by operation id. Uncertain outside effects stay held for a person. Worker threads stop at the
+deadline; tests interrupt each phase and check committed work once, rolled-back work absent and held effects not
+resent. A window reconnects and subscribes again.
 
 **Nothing on a request's path starts a process or waits on a lock.** Slow work (embedding, backup, encrypting a
 large file) runs on a worker thread. A piece that must run a program (a body, `git`) does so asynchronously, as a
@@ -106,8 +95,8 @@ job, never inside a request.
 **The CLI is only a client.** `loom <piece> <operation>` calls the daemon's API with a token, from loom's machine
 or from a house on another one, and has no other way to reach app data. It holds no logic of its own: its
 commands and help are generated from the operation registry. With the daemon down it says so; across a restart it
-retries for a few seconds, which is safe because a write carries an operation id. The continuity commands (`loom
-wake`, `recall`, `remember`, `mcp`) keep working directly against an agent's stores, as now.
+retries for a few seconds, which is safe because a write carries an operation id. Only the continuity commands (`loom wake` to load identity, `recall`, `remember`, `mcp`) keep direct
+access to the mind stores. The separate `wake` command schedules work through the API and needs the daemon.
 
 The HTTP layer moves to Hono. The 2,900-line `src/ui/handler.ts` goes; its jobs split into the static files, the
 sign-in routes, and the API below.
@@ -130,7 +119,12 @@ keeps it open. It holds everything the page shows that isn't an agent's mind:
 **What stays where it is:** each agent's context directory (`memories.db`, `notes.db`, its identity files) and
 the commons' `knowledge.db` and `people.db`. They are the portable self, they must work with no daemon, and they
 are out of this spec's scope. Key files (`comms.key`, `store.key`, `ui-cookie.key`, the review key pair) stay
-files.
+files. Static JSON assets (faces and icons) are files too; the ban is on mutable app state.
+
+**Stdio reads household metadata without the daemon.** It opens `loom.db` read-only for agent names, the default
+agent, ownership and commons paths; it neither writes app tables nor starts jobs. This is the sole exception to
+API-only app reads. A standalone context directory still needs no `loom.db`. Migration tests remove the old JSON,
+stop the daemon, and check identity, owners, memory, knowledge and people for two agents and a standalone home.
 
 **SQLite calls stay synchronous.** In one process with a connection kept open a read takes microseconds; the
 stalls came from child processes, lock waits and opening a connection per call, and all three are removed.
@@ -140,20 +134,27 @@ start. A piece reads and writes only its own tables; another piece's data is rea
 interface ("Pieces").
 
 **Moving existing data** is one importer per old file or store, run by `loom migrate` with the daemon stopped,
-after a backup. Importing is a one-way door for that store: the owner is present for each.
+after a backup. Importing is a one-way door for that store: the owner is present for each. The importer commits
+its data and source checksum together, or neither; a retry of that checksum is a no-op and a different source is
+refused. The old writer stays stopped. Before cutover, compare ids, counts and canonical exported content (including
+links, ownership and timestamps), and read encrypted data with its existing keys. A failed check blocks cutover;
+restore the backup to resume the old version. Only a verified import retires its old store and writer.
+Comms uses a local maintenance snapshot of encrypted rows and keys, excluded from normal export/backup. Before
+import, save it with owner-only file access; compare decrypted rows locally in memory, never in exported reports.
+On failure restore it with the normal backup. Delete it after verified cutover. Tests prove both success and rollback.
 
-The ruling "loom owns the data" (`~/Art/notes/decisions/2026-10-28-loom-owns-the-data.md`) stands and this is its
-completion: a JSON or lock file holding state is a bug.
+The data rule is complete here: loom owns app data; pieces own tables inside its database. Mutable app state
+in a JSON or lock file is a bug. Historical review counts in "Why" are background, not acceptance measurements.
 
 ## The API
 
-**An operation** is the only way anything reads or changes app data:
+**An operation** is the only way to read or change app data, except stdio's read-only household metadata above:
 
 ```ts
 operation({
   name: 'tasks.close',
   input: z.object({ id: z.string(), reason: z.string().optional() }),
-  may: (viewer, input, db) => …,     // the permission rule; see "Who may see and do what"
+  may: (viewer, input, db) => …,     // calls the central policy; no local permission rule
   run: (ctx, input) => …,            // one transaction; returns a result
 })
 ```
@@ -171,8 +172,13 @@ operation({
   (below).
 - **A write is one transaction** and names what it changed (`ctx.changed(type, id)`), which is what feeds the live
   feed.
-- **A write carries an operation id** from the caller. The same id sent twice returns the first result, so a retry
-  after a dropped connection never acts twice.
+- **A write carries an operation id** scoped to the authenticated principal, shared across doors. In one transaction,
+  store the operation name, canonical input and result with the change. Same id and input returns that result;
+  different name or input returns `conflict`. Keep receipts until that principal is removed, including across
+  restarts. Recheck current permission before returning a receipt. Jobs use the id for any outside delivery too;
+  where the receiver cannot deduplicate, an uncertain delivery is held for a person, never retried blindly.
+  Comms receipts live in its encrypted, export-excluded tables; generic receipts keep only opaque ids and keyed
+  input hashes, never words or word-bearing results. Only the thread's authorized member/runtime may replay them.
 - **Errors are values:** `{ok: false, code, message}` with a small fixed set of codes (`denied`, `not-found`,
   `invalid`, `conflict`, `unavailable`). The app shows them inline; nothing uses `alert()`.
 
@@ -193,8 +199,9 @@ status, a change, a project. A piece declares each type with:
 
 1. An operation commits and has named `(type, id)` pairs.
 2. After the commit, the daemon's in-process emitter announces them.
-3. For each window subscribed to that type and scope, the daemon reads the record as that window's viewer and
-   sends `put` with the record, or `del` if it is gone or no longer visible.
+3. For every subscription of that type, compare its delivered ids with current visibility AND scope membership:
+   `put` in the new scope, `del` in any old scope. Each time-bounded type supplies its next departure time;
+   a daemon timer expires it without polling. Tests move a record between parents and advance past a time limit.
 
 **A window:**
 
@@ -256,21 +263,40 @@ household project behind it is shared with nobody.
 - **Importing:** an existing task takes the project of its epic where the epic names one; everything else arrives
   with no project and is the household owner's until someone files it.
 
-**The rule,** in one module (`src/policy.ts`), is the only place these decisions are made:
+**The rule,** in one module (`src/policy.ts`): the private row is a complete decision, not a filter before the
+other rows. With no private member, choose the viewer row; empty scope further limits members. Deny wins.
 
-- A **household owner** sees and does everything, except read another member's private records.
-- A **member** sees a record when it belongs to one of their projects, or to an agent they own, or to them. They
-  act on what they see, with two limits: they give work to, and change the setup of, only agents they own; and
-  household things (members, secrets, runners, pieces) are the household owner's.
-- An **agent** sees and does what its owners' rule allows for its own records and its projects.
-- A record with no project and no agent is the household owner's.
+| Case | Read | Act |
+|---|---|---|
+| `member` is set | matching member only (Comms also requires current agent ownership), or bound runtime delivery | matching member within agent/household limits; bound runtime may append replies/activity and update delivery status only, never answer member asks |
+| Household owner, no private member | all | all |
+| Other member, no private member | if project is set, must match; otherwise must own its agent | what they can read, except household setup and work/setup for agents they do not own |
+| No project, agent or member | household owners only | household owners only |
+| Agent token | non-private: if project is set, must be listed on it; otherwise record must name that agent | same scope; never member answers, household setup, or work/setup for another agent |
+| Runner token | only that runner's assigned job inputs and status | claim/report its assigned jobs; no general app access |
+| Service token (key holder or outside piece) | only declared types and operations granted by a household owner | same; no member impersonation or Comms words |
 
-The owner's example is the test case: a second member is invited with the project `pond`. He and his agent see
-pond's tasks, changes and threads; he can't give Art or Mark work, and he sees nothing outside pond.
+For agent tokens, ownership grants no inherited member powers: the rule is independent of the union or intersection
+of owners. An agent with no owners is disabled until a household owner assigns one. Household setup means members,
+secrets grants, runners and piece registration. Runtime delivery is an internal role bound to a thread and its agent,
+not an agent token or a runner's general credential. Comms' ask-routing exceptions are implemented here, never
+by exposing private words. Private-record tests cover agent ownership removal. Other internal calls preserve the original viewer; a scheduled
+job uses its registered service viewer. Every call still enters the same registry and policy.
 
-**Where it's applied:** in `may` for every operation, and in `read` for every record sent to a window. A window's
-subscriptions are dropped and re-made when its member's projects or agents change. There is no per-frame recheck,
-no hiding of counts or revisions, and no second copy of the rule in a piece.
+The second-member fixture includes Pond-bot records in another project (both Pollock and Pond-bot are denied): Jonathan owns Art and Mark. Pollock owns Pond-bot; both Pollock and Pond-bot
+are listed on `pond` only. They see pond tasks, changes and non-private conversation metadata, but not another
+member's private threads or words. Pollock may give Pond-bot work, never Art or Mark. Pollock and Pond-bot may also
+see their own agent's unprojected records; "nothing outside pond" means no other project's or agent's records,
+not denial of their own private or unprojected agent records. A member-only record is never owner-only by default.
+Creating a record checks the proposed scope; updating checks both old and proposed scopes. Changing a private
+record's member is forbidden. Project assignment requires membership in the target project; agent assignment
+requires ownership (an agent token can assign only itself). Household project membership and agent-project lists
+are household setup. Policy tests reject unauthorized create, move, reassignment and self-enrollment.
+
+**Where applied:** every operation's `may` and every record's `read` call this module. Any change to membership,
+agent ownership or projects, project sharing or record scope rebuilds affected subscriptions and replaces their
+sets, evicting old records. Removed members and revoked/expired sessions close their sockets. No independent rule
+lives in a piece. No per-frame check or hiding that activity exists is required.
 
 **Comms keeps today's promise** ([comms.md](comms.md)): a thread's words are read only by its member and its
 agent. Each message stays encrypted in its row with the Comms key, now by the library in-process. No MCP tool, CLI
@@ -308,9 +334,13 @@ onto someone else's tracker, and switching which one is registered.
 screens, and the bridges (Discord, Slack, and shuttle, which is about 60 Python files and is rewritten in
 TypeScript at its step). A bridge's connection drops for the few seconds of a restart and reconnects. Approvals, the clock and Changes are Python today and are rewritten in TypeScript; taskstore already is
 TypeScript and moves in with its contract and conformance suite (`spec/taskstore-core`), which keep governing the
-`tasks` role. Its import source is the store in `~/Art/.taskstore`. Their repos are archived once their piece has cut
+`tasks` role. The source is [taskstore's contract](https://github.com/sleepunit-agents/taskstore/tree/main/spec/taskstore-core)
+and its fixture corpus. Step 3 must vendor that exact pair at a recorded commit and run all its cases unchanged;
+the API wraps its domain results without changing their error codes. Its import source is the store in `~/Art/.taskstore`. Their repos are archived once their piece has cut
 over, and the catalog's pins go with them. The commands people and agents already type (`taskstore`, `approvals`,
-`wake`) remain as names that call the API.
+`wake`) remain as generated API-client executables in the npm package's `bin` map. Each is an alias into
+one registry client (`wake` maps to clock operations); `loom wake` remains the distinct identity command.
+Step 3 tests installed taskstore parity; the clock step tests both wake spellings with the daemon stopped.
 
 **What stays outside the process,** each speaking the same API with a token, and nothing else does:
 
@@ -320,7 +350,7 @@ over, and the catalog's pins go with them. The commands people and agents alread
 **Someone else's piece** has one door: a program with a token that calls the API, publishes records of its own
 types, and may describe pages in the block vocabulary (`src/ui/vocab.ts` and the app's block renderer, both kept).
 It ships no script and no markup, as the ruling on data-only pieces says
-(`~/Art/notes/decisions/2026-10-26-loom-page-runs-its-own-script.md`). Nothing more is built
+(the complete rule here is: the page runs only loom's shipped script; outside pieces supply data). Nothing more is built
 for this until someone outside wants it.
 
 **What goes:** running a piece's program to get its page, manifest or data; manifests and their polling; the
@@ -334,7 +364,8 @@ runs: a table of what is due and when, and timers in the one process. One proces
 the owner lock and the per-job lock databases go. A job that starts a program does so asynchronously and records
 the result with an operation, which is how its effect reaches windows.
 
-Whether wakes stop using systemd's timers is settled at the clock's step; the install goal says they should.
+At the clock's cutover, due wakes move into the job table and all old systemd wake timers are disabled and removed.
+Restart tests prove a due wake is neither lost nor fired twice. No in-repo piece requires systemd.
 
 ## The app
 
@@ -362,8 +393,8 @@ npm install -g @jbarket/loomai
 loom serve
 ```
 
-The first start makes the home, the database and a household of one, and prints a one-time sign-in link. Nothing
-else is required: no Python, no `age` binary (encryption uses the library already in the tree), no container, no
+The supported starting environment is Node 22 or later with npm (as package.json requires). The first start makes
+the home, database and household of one, and prints a one-time sign-in link. Beyond Node and npm nothing is required: no Python, no `age` binary (encryption uses the library already in the tree), no container, no
 systemd. `loom service install` is an optional convenience that writes one unit.
 
 **The base install is the desk and every in-repo piece.** Secrets is the one optional addition that brings its
@@ -376,15 +407,16 @@ rewritten when step 2 lands: the stdio side is still that; the daemon is the hou
 
 - **`startLoom({home, clock})`** starts the whole daemon in the test's own process on a temporary home, with a
   clock the test controls. Every server test uses it; none needs an installed loom.
-- **A fixture home** (`loom fixture <dir>`) builds a household with two members, two agents, a shared project and
-  a few records of every type. Tests and the staging instance start from it.
+- **A fixture home** (`loom fixture <dir>`) builds Jonathan (household owner), Pollock, Art, Mark and Pond-bot
+  with the ownership and pond membership above, plus records of every type. Tests and staging start from it.
 - **Outside pieces are faked in-process.** No test writes a shell script to stand in for a program.
-- **The suite runs in under three minutes** on loom's machine, with no fixed sleeps. Time moves only when a test
+- **The server suite runs in under three minutes** in the reference environment below, with no fixed sleeps. Time moves only when a test
   moves the clock.
 - **A handful of browser tests** (ten at most) cover what only a browser can: sign-in, the desk opening and tiling
   two apps, a change arriving in a second window, the phone shell, an outside piece's block page. They wait on
   conditions, never on time.
-- **Tests that read source files as text are deleted.** The vocabulary's "every block has a fixture" test stays.
+- **Tests that match source text are deleted.** The architecture test instead parses imports and checks the seams
+  above. The vocabulary's "every block has a fixture" test stays.
 - **A staging instance:** `loom serve --staging --home <copy> --port <other>` on a copy of the real home,
   refreshed on demand, so a change is used under real data before it reaches the owner's loom. `--staging` holds
   everything that reaches outside the process: wakes, bridge sends, starting bodies, push. Held work shows as due
@@ -392,36 +424,63 @@ rewritten when step 2 lands: the stdio side is still that; the daemon is the hou
 
 ## What must be true when this is done
 
-Each is measured on loom's machine with the owner's real home, and each has a test or a recorded measurement:
+Use the fixture home for reproducible checks; the owner's home is an additional acceptance run, never a test
+prerequisite. Step 2 adds a benchmark command and records machine specs, command, raw samples and percentiles.
+Reference environment: Linux x86-64, four dedicated CPU cores, 8 GiB RAM, local SSD, Node 22; record exact hardware
+with results. Workload: 1,000 tasks, 100 pending approvals, the three fixture agents, two viewers and three windows;
+for 60 seconds, read lists at 10 requests/second and commit one task edit/second while two fake bodies report
+status each second. Measure API latency and commit-to-render delay; then sample idle CPU for 60 seconds with
+those windows connected and no writes. All thresholds below must hold; ten under-load suite runs use that workload:
 
 - One `loom` process is listening. No `spawnSync` is reachable from a request.
 - `$LOOM_HOME` holds `loom.db`, the agents' and commons' stores, and key files; no JSON or lock file holds state.
 - A page's data is answered in under 50 ms at the 95th percentile with bodies running; the daemon idles under 5%
   of one CPU with three windows open.
 - A change made in one window appears in another within 200 ms, with no timer involved.
-- With the daemon stopped, a harness still loads Art over stdio.
-- The second-member case above passes as a test.
-- A fresh machine goes from nothing to a signed-in desk with the two commands above.
+- With old household/token JSON removed and the daemon stopped, stdio passes the two-agent and standalone tests.
+- Policy table tests cover mixed private/project/agent fields, empty fields, both owners and every token kind;
+  the second-member fixture passes for reads and writes over every allowed door and denied door.
+- Revoking a session closes its socket; ownership, sharing and scope changes evict records already sent.
+- Retry tests cover duplicate ids, mismatches, principals and restart; export scans find no Comms words in receipts.
+- Import tests interrupt before/after commit, retry and compare content; Comms snapshot rollback and job shutdown tests pass.
+- A clean supported Node/npm environment reaches a signed-in desk with the two commands above.
 - A change to one first-party piece is one PR in one repo.
-- The server suite runs in under three minutes and passes ten times in a row under load.
+- The server suite takes under three minutes in the reference environment and passes ten under-load runs.
 
 ## Moving there
 
-No new screens until step 3 lands; bug fixes only.
+No new screens until step 3 lands; bug fixes only. Every step has a gate; do not begin the next before it passes.
+Legacy paths are allowed only for apps not yet cut over. An app's cutover removes all of its old reads, writes,
+streams and storage adapters in that same change. Imports are maintenance stops, not live coexistence. Step 2
+replaces legacy readers of household, token and settings files with adapters to the same `loom.db` tables;
+external unmoved pieces obtain that metadata through the API. No mirror JSON or second writer survives.
+A staging gate exercises every unmoved app after old metadata files are removed. Each adapter dies with its last
+caller. Shared machinery remains only while an unmoved app uses it;
+its last caller's cutover deletes it. Step 6 verifies deletion, rather than permitting deferred parallel paths.
 
 1. **This spec,** agreed.
 2. **The foundation:** `loom serve` as one process on Hono; `loom.db` with sign-in state, members and settings
-   moved in; the operation registry; the policy module; the live feed; `startLoom` and the fixture home. The
-   present page keeps working on its present paths during this step, in the same process.
+   moved in (including push subscriptions); the operation registry; the policy module; the live feed; `startLoom` and the fixture home. The
+   present page keeps working for unmoved apps in the same process. Gate: one listener process; offline continuity,
+   policy table, registry retry, socket/reconnect, sign-in and staging hold tests pass; the benchmark is runnable.
 3. **Tasks, end to end:** the `tasks` piece in-repo, its data imported, its app on the desk reading records. This
-   proves the whole path and sets the pattern every later piece copies.
+   proves the whole path. Gate: unchanged taskstore conformance cases, canonical import comparison, two-window
+   updates and CLI/API parity pass; no tasks legacy read, write, poll, piece program or old store remains active.
 4. **The rest, one piece at a time:** approvals, changes, clock, then core's own apps (Inbox and what needs you,
    Comms, People, Projects, Knowledge, Activity). Each piece cuts over whole: its data, its operations, its
-   screens, and the deletion of its old path, in one change.
+   screens, and deletion of its old path, in one change. Comms imports read marks; Activity imports audit.db. Gate per piece: verified import, policy and live-feed
+   tests, operation parity and no legacy callers; the clock also passes daemon-only scheduling and restart tests.
 5. **Runtime and the bridges.** The runtime is the largest piece and the riskiest; its runner stays outside. The
-   bridges come in-process.
+   bridges come in-process. Gate: delivery, reconnect and assigned-job token tests pass, with one active adapter
+   per venue and all old runtime/bridge services stopped. Secrets' app state moves here too; only its key holder stays out.
+   Before each step 4/5 cutover, enumerate every public verb/route and job from the old implementation in a parity
+   matrix: old entry, new operation, input, expected result, permission and test. No entry may be silently omitted;
+   a removal needs an explicit spec change. Each row passes against both implementations before the old one stops.
+   Include scheduled fire/cancel, approval answer/denial, change sync, body start/report, and bridge receive/send/reconnect.
+   The step's gate includes all assigned store imports, this matrix, and interruption/restart cases.
 6. **Deletion:** whatever of the old contract nothing uses (the manifest machinery, the pools, the collections
-   code, the old shells, the catalog).
+   code, the old shells, the catalog). Gate: no legacy entry points or first-party pins remain; all completion
+   measures pass. The same apps on the phone use the new path; its visual redesign is still separate.
 7. **The phone's redesign,** as its own project.
 
 ## What this replaces
@@ -432,13 +491,17 @@ No new screens until step 3 lands; bug fixes only.
   [piece-storage.md](piece-storage.md): the command-line contract, manifests, the catalog and the piece store are
   withdrawn for first-party pieces. The block vocabulary stays as written.
 - [ui-app.md](ui-app.md): "Live, and fast" and the page-view JSON are withdrawn; the rest stands.
-- [owners.md](owners.md): members gain projects; the caller that pieces receive becomes the viewer.
+- [owners.md](owners.md): members gain projects; viewer and the policy table replace its caller, manifest opt-in
+  and per-piece visibility rules. Ownership and first-answer-wins behavior otherwise stay.
 - [household.md](household.md): `household.json` and `tokens.json` move into `loom.db`; "where core ends" stands
-  for continuity, and the desk is no longer described as a frame around pieces.
+  for continuity, with the read-only stdio metadata exception above; the desk is no longer a frame around pieces.
+- [comms.md](comms.md): its privacy, retention and ask ownership stand; old routes/streams become registry
+  operations and the single socket. Its `comms_thread` MCP tool no longer returns words; the runtime delivers
+  a thread's words only to its bound body, as today. No project membership widens private thread access.
 
 ## Left to the builder
 
-- The socket's message shapes, and whether the app's calls go over the socket or plain HTTP.
+- The socket's message shapes. All browser app-data calls use that socket; HTTP is for other API clients and sign-in.
 - Table layouts and the order of importers within a step.
 - Which parts of today's client runtime, kit and Comms code are kept as they are.
 - How a job's timers are held and resumed across a restart.
