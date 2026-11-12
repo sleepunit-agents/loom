@@ -13,6 +13,7 @@
  * The daemon resolves the role on every request; no tool takes an agent
  * argument, so a body can only ever be the agent its token names.
  */
+import { EventEmitter } from 'node:events';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -299,12 +300,18 @@ export function roleString(r: Role): string {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
+const accessChanges = new EventEmitter();
+export function onHouseholdAccessChanged(home: string, fn: () => void): () => void {
+  const key = resolve(home); accessChanges.on(key, fn);
+  return () => { accessChanges.off(key, fn); };
+}
 function writePrivate(path: string, body: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, body, { mode: 0o600 });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
+  if ([HOUSEHOLD_FILE, TOKENS_FILE].includes(basename(path))) queueMicrotask(() => accessChanges.emit(resolve(dirname(path))));
 }
 
 function loadUsed(home: string): Record<string, string> {
