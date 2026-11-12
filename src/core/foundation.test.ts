@@ -65,6 +65,32 @@ describe('app database and registry', () => {
     expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual([]);
     expect(app.operations.call('http', owner, 'example.put', { ...input, title: 'different' }, 'same').ok).toBe(true);
   });
+  it('replays a deletion after the record is gone without asking may again', () => {
+    const app = createFoundation({ home: home() }); closes.push(app.close); installFixture(app);
+    app.operations.call('direct', owner, 'example.put', { id: 'gone', title: 'Delete me' }, 'put');
+    const result = app.operations.call('http', owner, 'example.remove', { id: 'gone' }, 'remove');
+    expect(result.ok).toBe(true);
+    expect(app.db.prepare("SELECT * FROM example_records WHERE id='gone'").get()).toBeUndefined();
+    expect(app.operations.call('socket', owner, 'example.remove', { id: 'gone' }, 'remove')).toEqual(result);
+    expect(app.operations.call('direct', owner, 'example.remove', { id: 'gone' }, 'fresh')).toMatchObject({ code: 'denied' });
+  });
+  it('returns a caller own result after permission loss; another caller runs under may; mismatches conflict', () => {
+    const app = createFoundation({ home: home() }); closes.push(app.close);
+    let allowed = true;
+    const may = vi.fn(() => allowed), run = vi.fn((_, input: string) => input);
+    app.operations.register({ name: 'example.retry', input: z.string(), output: z.string(), write: true, may, run });
+    const result = app.operations.call('direct', owner, 'example.retry', 'same input', 'id');
+    allowed = false;
+    expect(app.operations.call('http', owner, 'example.retry', 'same input', 'id')).toEqual(result);
+    expect(may).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+    expect(app.operations.call('direct', owner, 'example.retry', 'different', 'id')).toMatchObject({ code: 'conflict' });
+    expect(may).toHaveBeenCalledTimes(1);
+    expect(app.operations.call('direct', pollock, 'example.retry', 'same input', 'id')).toMatchObject({ code: 'denied' });
+    expect(may).toHaveBeenCalledTimes(2); expect(run).toHaveBeenCalledTimes(1);
+    allowed = true;
+    expect(app.operations.call('direct', pollock, 'example.retry', 'same input', 'id')).toEqual(result);
+    expect(may).toHaveBeenCalledTimes(3); expect(run).toHaveBeenCalledTimes(2);
+  });
   it('publishes nested changes only after the outer commit and suppresses rollback notifications', () => {
     const app = createFoundation({ home: home() }); closes.push(app.close); installFixture(app);
     const seen: unknown[] = [];
@@ -171,6 +197,26 @@ describe('in-process HTTP and live socket', () => {
     valid = false;
     expect((await fetch(loom.url + '/api/example/put', { method: 'POST', body: JSON.stringify({ id: 'ended', input: { id: 'x', title: 'No' } }) })).status).toBe(401);
     expect(loom.db.prepare('SELECT * FROM example_records').all()).toEqual([]);
+  });
+  it.each(['refresh', 'update', 'expiry'] as const)('closes a populated subscriber when a %s read fails', async mode => {
+    const clock = new FakeClock(); let broken = false;
+    const loom = await startLoom({ home: home(), clock, authenticate: () => ({ viewer: owner, valid: () => true }), install: app => {
+      app.live.register({ name: 'fragile', ids: () => ['one'], read: () => {
+        if (broken) throw new Error('read failed');
+        return { id: 'one' };
+      }, inScope: () => true, expires: () => clock.now() + 100 });
+    } }); closes.push(loom.close);
+    const client = await socket(loom.url);
+    client.ws.send(JSON.stringify({ kind: 'subscribe', type: 'fragile' }));
+    expect(await client.next()).toMatchObject({ kind: 'set', records: [{ id: 'one' }] });
+    const ended = once(client.ws, 'close'); broken = true;
+    if (mode === 'refresh') loom.live.refreshAccess();
+    else if (mode === 'update') loom.live.changed([{ type: 'fragile', id: 'one' }]);
+    else clock.advance(100);
+    expect(await client.next()).toMatchObject({ code: 'unavailable' });
+    expect((await ended)[0]).toBe(1011);
+    // Cancelled timers cannot revive the failed subscription.
+    clock.advance(1000);
   });
   it('fixture survives restart and refuses to overwrite a home', () => {
     const dir = home(); fixture(dir); expect(() => fixture(dir)).toThrow('empty');

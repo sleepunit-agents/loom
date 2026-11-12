@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add the first web foundation slice: an app database, operation registry, central permission rule, live feed and
+  in-process fixture harness beside the present page. Caller-owned operation ids replay stored results for 30 days;
+  a failed live read closes its subscriber. No existing app data or screens move in this slice.
+
 - A request that meets another process's lock waits for it without freezing the server (t-2130, t-2141): Comms posts
   and pages, live updates, turns, audit entries, deliveries, piece stores, household changes and sign-ins wait in a
   line, asynchronously, until the database (a held write lock, or a WAL recovery) or the lock file is free, then run.

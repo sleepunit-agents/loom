@@ -63,7 +63,6 @@ export class Operations {
     this.frames.push(changes);
     try {
       result = this.db.transaction((): Result => {
-        if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const now = this.clock.now();
         const who = canonical(viewer), body = createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
@@ -71,6 +70,7 @@ export class Operations {
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
           if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
         }
+        if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const value = op.run({ db: this.db, viewer, now, changed: (type, id) => { changes.push({ type, id }); } }, parsed.data);
         if (value instanceof Promise) throw new Error('Operations must be synchronous');
         if (value && typeof value === 'object' && 'ok' in value && value.ok === false) {

@@ -18,7 +18,7 @@ export interface RecordType {
 }
 const subscribe = z.object({ kind: z.literal('subscribe'), type: z.string(), scope: z.string().optional() });
 const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional() });
-interface Subscriber { viewer: Viewer; send(value: unknown): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
+interface Subscriber { viewer: Viewer; send(value: unknown): void; close(): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
 export interface Authentication { viewer: Viewer; valid(): boolean; expiresAt?: number }
 export class Live {
   private types = new Map<string, RecordType>();
@@ -29,7 +29,7 @@ export class Live {
   constructor(private clock: Clock, private ops: Operations) {
     this.emitter.on('changed', (changes: Change[]) => {
       for (const c of this.clients) for (const sub of c.types.values()) for (const change of changes) {
-        if (sub.type.name === change.type) { try { this.update(c, sub, change.id); } catch { c.send({ ok: false, code: 'unavailable', message: 'Subscription could not update' }); } }
+        if (sub.type.name === change.type) { try { this.update(c, sub, change.id); } catch { this.failed(c); } }
       }
     });
   }
@@ -38,32 +38,40 @@ export class Live {
     if (changes.some(c => c.type === 'core.access')) this.refreshAccess();
     this.emitter.emit('changed', changes);
   }
+  private failed(c: Subscriber) {
+    c.send({ ok: false, code: 'unavailable', message: 'Subscription could not load' });
+    this.clients.delete(c);
+    for (const sub of c.types.values()) sub.cancel.forEach(cancel => cancel());
+    c.close();
+  }
   private update(c: Subscriber, sub: Subscriber['types'] extends Map<string, infer T> ? T : never, id: string) {
-    sub.cancel.get(id)?.(); sub.cancel.delete(id);
     const r = sub.type.read(id, c.viewer);
-    if (r && sub.type.inScope(r, sub.scope, this.clock.now())) {
+    const visible = r && sub.type.inScope(r, sub.scope, this.clock.now());
+    const until = visible ? sub.type.expires?.(r, sub.scope) : undefined;
+    sub.cancel.get(id)?.(); sub.cancel.delete(id);
+    if (visible) {
       sub.sent.add(id); c.send({ kind: 'put', type: sub.type.name, scope: sub.scope, record: r });
-      const until = sub.type.expires?.(r, sub.scope);
-      if (until !== undefined && until > this.clock.now()) sub.cancel.set(id, this.clock.at(until, () => { try { this.update(c, sub, id); } catch { c.send({ ok: false, code: 'unavailable', message: 'Subscription could not update' }); } }));
+      if (until !== undefined && until > this.clock.now()) sub.cancel.set(id, this.clock.at(until, () => { try { this.update(c, sub, id); } catch { this.failed(c); } }));
     } else if (sub.sent.delete(id)) c.send({ kind: 'del', type: sub.type.name, scope: sub.scope, id });
   }
   private set(c: Subscriber, type: RecordType, scope?: string) {
     const key = JSON.stringify([type.name, scope]);
-    const old = c.types.get(key); old?.cancel.forEach(cancel => cancel());
+    const old = c.types.get(key);
     const sub = { type, scope, sent: new Set<string>(), cancel: new Map<string, () => void>() };
-    c.types.set(key, sub);
     const records = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && type.inScope(r, scope, this.clock.now()));
-    for (const r of records) {
+    const deadlines = records.map(r => ({ record: r, until: type.expires?.(r, scope) }));
+    for (const { record: r, until } of deadlines) {
       sub.sent.add(r.id);
-      const until = type.expires?.(r, scope);
-      if (until !== undefined && until > this.clock.now()) sub.cancel.set(r.id, this.clock.at(until, () => { try { this.update(c, sub, r.id); } catch { c.send({ ok: false, code: 'unavailable', message: 'Subscription could not update' }); } }));
+      if (until !== undefined && until > this.clock.now()) sub.cancel.set(r.id, this.clock.at(until, () => { try { this.update(c, sub, r.id); } catch { this.failed(c); } }));
     }
+    old?.cancel.forEach(cancel => cancel());
+    c.types.set(key, sub);
     c.send({ kind: 'set', type: type.name, scope, records });
   }
   /** Called by the session/member/ownership operations, never a polling loop. */
   refreshAccess() {
     for (const [socket, auth] of this.sockets) if (!auth.valid()) socket.close(1008, 'Session ended');
-    for (const c of this.clients) for (const sub of [...c.types.values()]) { try { this.set(c, sub.type, sub.scope); } catch { c.send({ ok: false, code: 'unavailable', message: 'Subscription could not load' }); } }
+    for (const c of this.clients) for (const sub of [...c.types.values()]) { try { this.set(c, sub.type, sub.scope); } catch { this.failed(c); } }
   }
   attach(server: Server, authenticate: (req: IncomingMessage) => Authentication | undefined) {
     const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -79,7 +87,7 @@ export class Live {
         const auth = authenticated;
         const stopExpiry = auth.expiresAt === undefined ? undefined : this.clock.at(auth.expiresAt, () => ws.close(1008, 'Session ended'));
         this.sockets.set(ws, auth);
-        const c: Subscriber = { viewer: auth.viewer, types: new Map(), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
+        const c: Subscriber = { viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
         this.clients.add(c);
         ws.on('message', raw => {
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
@@ -87,7 +95,7 @@ export class Live {
           const s = subscribe.safeParse(data);
           if (s.success) {
             const type = this.types.get(s.data.type);
-            if (type) { try { this.set(c, type, s.data.scope); } catch { c.send({ ok: false, code: 'unavailable', message: 'Subscription could not load' }); } }
+            if (type) { try { this.set(c, type, s.data.scope); } catch { this.failed(c); } }
             else c.send({ ok: false, code: 'not-found', message: 'Unknown record type' });
             return;
           }
