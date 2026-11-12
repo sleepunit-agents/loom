@@ -1,3 +1,8 @@
+import { createFoundation, httpDoor, type Foundation } from '../core/app.js';
+import type { Authentication } from '../core/live/index.js';
+import { sessionStore } from '../ui/sessions.js';
+import { onHouseholdAccessChanged } from '../household.js';
+import { applicationMember } from '../ui/handler.js';
 import { configureManifestBackground } from '../ui/live.js';
 /**
  * loom HTTP MCP transport (c-loom-transport) — the mesh-reachable surface.
@@ -115,6 +120,8 @@ const HEARTBEAT_MISSES_BEFORE_CLOSE = 2;
 
 export interface HttpServeOptions {
   contextDir: string;
+  /** Composition root may supply the registry; production has no migrated pieces yet. */
+  foundation?: Foundation;
   host: string;
   port: number;
   /** Single-token mode: every request must present this bearer token. */
@@ -483,6 +490,26 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         },
       }
     : legacyUiAuth(opts.token ? [opts.token] : Object.values(opts.tokens ?? {}));
+
+  const foundation = opts.foundation ?? (household && !opts.createServer ? createFoundation({ home: household.home }) : undefined);
+  const foundationAuth = (req: IncomingMessage, csrf = false): Authentication | undefined => {
+    if (!live) return;
+    const uiOptions = { contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live };
+    const identity = applicationMember(req, uiOptions, csrf);
+    if (identity) return { viewer: { kind: 'member', id: identity.member.person }, valid: identity.valid, expiresAt: identity.expiresAt };
+    // A cookie with failed CSRF must never fall through to another authority.
+    if (csrf && req.headers.cookie) return;
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+    if (!token) return;
+    let role: Role | undefined;
+    try { role = resolver?.resolve(token) ?? undefined; } catch { return; }
+    if (role?.kind !== 'agent') return;
+    const agent = role.agent;
+    return { viewer: { kind: 'agent', id: agent }, valid: () => {
+      try { const r = resolver?.resolve(token); return r?.kind === 'agent' && r.agent === agent; } catch { return false; }
+    } };
+  };
+  const foundationHttp = foundation ? httpDoor(foundation, req => foundationAuth(req, true)) : undefined;
 
   const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer({ ...ctx, remote: true }));
   const serverFor = (c: Caller | undefined, identity: string) => {
@@ -1111,6 +1138,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // the bearer, or the bearer header), so it comes before the bearer gate.
       // Full scope only: a scoped server has no memory to show.
       const fullPath = new URL(req.url ?? '/', 'http://localhost').pathname;
+      const operationPath = /^\/api\/([a-z][a-z0-9_]*)\/([a-z][a-zA-Z0-9_-]*)$/.exec(fullPath);
+      if (foundationHttp && operationPath && foundation?.operations.has(`${operationPath[1]}.${operationPath[2]}`)) {
+        return foundationHttp(req, res);
+      }
       if (isUiRequest(req, fullPath)) {
         if (opts.createServer) return sendError(res, 404, 'not-found: this server has no UI');
         return handleUi(req, res, fullPath, {
@@ -1339,6 +1370,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
     });
   });
+  const detachFoundation = foundation?.live.attach(http, req => foundationAuth(req));
+  const stopSessionAccess = foundation && household ? sessionStore(household.home).onChange(() => foundation.live.refreshAccess()) : undefined;
+  const stopHouseholdAccess = foundation && household ? onHouseholdAccessChanged(household.home, () => foundation.live.refreshAccess()) : undefined;
   const stopCollections = live && !opts.createServer ? configureCollectionBackground(live, () => process.env, periodic) : undefined;
   const stopManifests = !opts.createServer ? configureManifestBackground(household?.home ?? opts.contextDir, process.env, periodic) : undefined;
   if (!opts.createServer) periodic.setEligible(!workerSocket);
@@ -1352,6 +1386,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     },
     async close() {
       closing = true;
+      detachFoundation?.();
+      stopSessionAccess?.();
+      stopHouseholdAccess?.();
+      foundation?.close();
       backgroundActive = false;
       await periodic?.close();
       await stopCollections?.();

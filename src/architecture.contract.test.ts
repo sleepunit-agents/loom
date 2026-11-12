@@ -79,3 +79,41 @@ describe('docs/architecture.md covers every moving part', () => {
     expect(missing).not.toContain('tool "knowledge_recall"');
   });
 });
+
+// Parse module specifiers rather than matching source text: comments and strings
+// cannot create or hide an import at the replacement-piece boundary.
+import { init, parse } from 'es-module-lexer';
+import { relative, resolve, dirname } from 'node:path';
+await init;
+function moduleSpecifiers(source: string): string[] {
+  return parse(source)[0].filter(i => i.type !== 'meta').map(i => i.specifier ?? '<computed>');
+}
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? filesUnder(join(dir, e.name)) : e.name.endsWith('.ts') && !e.name.endsWith('.test.ts') ? [join(dir, e.name)] : []);
+}
+function seamErrors(path: string, source: string): string[] {
+  const local = relative(join(repoRoot, 'src'), path).split('/');
+  return moduleSpecifiers(source).flatMap(spec => {
+    if (spec === '<computed>') return [`${path}: computed module import`];
+    if (!spec.startsWith('.')) return [];
+    const target = relative(join(repoRoot, 'src'), resolve(dirname(path), spec)).split('/');
+    if (local[0] === 'core' && target[0] === 'pieces') return [`${path}: core imports a piece`];
+    if (local[0] === 'pieces') {
+      if (target[0] === 'core' || (target[0] === 'pieces' && (target[1] === local[1] || target.slice(2).join('/') === 'role.js'))) return [];
+      return [`${path}: piece imports outside core, itself, or another piece's role.ts`];
+    }
+    return [];
+  });
+}
+describe('in-process piece seams', () => {
+  it('core imports no piece; pieces reach other pieces through role.ts only', () => {
+    const files = [...filesUnder(join(repoRoot, 'src/core')), ...filesUnder(join(repoRoot, 'src/pieces'))];
+    expect(files.flatMap(path => seamErrors(path, readFileSync(path, 'utf8')))).toEqual([]);
+  });
+  it('checks static, re-export and dynamic imports and ignores comments', () => {
+    const piece = join(repoRoot, 'src/pieces/a/index.ts');
+    expect(seamErrors(piece, `import '../b/index.js'; export * from '../b/private.js'; import('../b/secret.js');`)).toHaveLength(3);
+    expect(seamErrors(piece, `import '../b/role.js'; import '../../core/index.js'; // import '../b/private.js'`)).toEqual([]);
+    expect(seamErrors(join(repoRoot, 'src/core/x.ts'), `export * from '../pieces/a/role.js'`)).toHaveLength(1);
+  });
+});
