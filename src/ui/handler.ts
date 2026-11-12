@@ -185,7 +185,7 @@ export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member:
   };
   const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
   return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, {
-    ...r, jobs: (r.jobs ?? []).flatMap((j) => {
+    ...r, jobs: r.jobs?.flatMap((j) => {
       if (!member || !owns(member, a) || !h.agents.includes(a)) return [];
       const t = j.conversation ? threadOf(a, j.conversation) : undefined;
       if (t && t.member !== member.person) return [];

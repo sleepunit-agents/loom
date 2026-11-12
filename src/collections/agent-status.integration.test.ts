@@ -194,6 +194,41 @@ describe.skipIf(!hasAge)('agent-status records: Home\'s cards, one set for every
     expect(samArt.running).toBe(1);
   });
 
+  it('keeps an omitted jobs report unavailable alongside a populated runtime report', async () => {
+    piece(h.home, 'tasks', { role: 'tasks' }, `#!${process.execPath}
+console.log(JSON.stringify({ v: 2, owners: 2, asks: [], agents: { art: { readings: [] } } }));
+`);
+    clearPieceCache();
+    for (const who of ['jonathan', 'sam']) {
+      const page = await home(who);
+      const rows = (await ask(who)).rows as Data[];
+      for (const card of [page.home.cards.find((c: Data) => c.id === 'art'), rows.find(r => r.agent === 'art')]) {
+        expect(card.watches.find((g: Data) => g.kind === 'runtime.lane').count).toBe(1);
+        expect(card.watches.find((g: Data) => g.kind === 'tasks.task')).toMatchObject({ status: 'unavailable', count: null, items: [] });
+      }
+    }
+  });
+
+  it('filters private approval counts and words for each viewer on Home and collections', async () => {
+    piece(h.home, 'approvals', { role: 'approvals' }, `#!${process.execPath}
+console.log(JSON.stringify({ v: 2, owners: 2, asks: [
+  { agent: 'art', text: 'Private approval words', conversation: '${mine.conversation}', actions: [{ label: 'Allow', action: 'allow', fields: { id: 'a-1111' } }] },
+  { agent: 'art', text: 'Shared approval', actions: [{ label: 'Allow', action: 'allow', fields: { id: 'a-2222' } }] }
+] }));
+`);
+    clearPieceCache();
+    for (const who of ['jonathan', 'sam']) {
+      const page = await home(who);
+      const rows = (await ask(who)).rows as Data[];
+      for (const card of [page.home.cards.find((c: Data) => c.id === 'art'), rows.find(r => r.agent === 'art')]) {
+        const group = card.watches.find((g: Data) => g.kind === 'approvals.pending');
+        expect(group.count).toBe(who === 'jonathan' ? 2 : 1);
+        expect(group.items.map((i: Data) => i.id)).toEqual(who === 'jonathan' ? ['a-1111', 'a-2222'] : ['a-2222']);
+        if (who === 'sam') expect(JSON.stringify(card.watches)).not.toContain('Private approval words');
+      }
+    }
+  });
+
   it('shares one log connection across a delivery pass with six subscribed windows', async () => {
     await home('jonathan');
     for (let n = 0; n < 6; n++) {

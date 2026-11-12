@@ -104,6 +104,12 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       expect(await groups.locator('[data-watch-kind="tasks.task"] summary').textContent()).toBe('Unavailable · tasks reported');
       await lanes.locator('summary').click();
       await lanes.getByText('Watching the build', { exact: true }).waitFor();
+      d.report({ art: { jobs: [] } }); clearPieceCache(); await d.changed();
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await lanes.locator('summary').filter({ hasText: '0 · lanes running' }).waitFor();
+      const container = p.locator(width === 1600 ? '.loom-rcard-wrap' : '.loom-bigcard');
+      expect(await container.getByText(/^All jobs ·/).count()).toBe(0);
+      expect(await groups.locator('[data-watch-kind]').count()).toBe(4);
       expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     } finally { await ctx.close(); }
   }, 30000);
