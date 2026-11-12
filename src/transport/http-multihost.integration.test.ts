@@ -62,4 +62,5 @@ it('registers and executes the same periodic jobs once regardless of socket coun
   }
   try { expect(await measure(['127.0.0.1', '127.0.0.2'])).toEqual(await measure('127.0.0.1')); }
   finally { vi.restoreAllMocks(); vi.useRealTimers(); dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })); }
-});
+  // Two server starts and an hour of faked timers each: well past the 5 s default on a busy runner.
+}, 60_000);
