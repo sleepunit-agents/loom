@@ -41,7 +41,7 @@ if(req.url==='/activate')owner.setEligible(true);if(req.url.startsWith('/title/'
     const mine = listen('jonathan'), other = listen('other');
     await expect.poll(() => mine.frames).toContain('retry:'); await expect.poll(() => other.frames).toContain('retry:');
     const count = () => (mine.frames.match(/event: message/g) ?? []).length;
-    await fetch(`${leader}/title/first`);
+    await fetch(`${follower}/title/first`);
     await expect.poll(count).toBe(1);
     expect(other.frames).not.toContain('event: message');
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader');

@@ -699,7 +699,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     } finally { await held.release(); }
   }, 20_000);
 
-  it('a spent nudge budget keeps the original synchronous write and tick', async () => {
+  it('a spent nudge budget retries asynchronously and preserves the write and tick', async () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-nudge-fallback-'));
     const domain = 'loom/nudge-budget-test';
     withLog(home, (db) => domainOf(db, domain, 'test'));
@@ -713,7 +713,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       const free = await result;
       if (w.write?.includes(join(home, 'collections', 'live.db')) && !free) {
         expired = true; budget = w.budgetMs;
-        void held.release(); // Child releases after 250ms: the old synchronous write must wait for it.
+        void held.release(); // Child releases after 250ms; the retry must keep yielding meanwhile.
       }
       return free;
     });

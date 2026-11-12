@@ -316,3 +316,40 @@ it('production action refreshes on a subscribed follower reach the owner without
   owner.setEligible(true); await deliverNow(home);
   await expect.poll(() => calls).toBeGreaterThan(0);
 });
+
+it('an exhausted action-hint writer budget preserves the hint without synchronous fallback', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  withLog(home, db => domainOf(db, 'loom/agent-status', 'loom'));
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  vi.mocked(waitForLocks).mockResolvedValueOnce(false);
+  let done = false;
+  const hint = nudge(home, 'loom/agent-status', 'art').then(() => { done = true; });
+  try {
+    const started = performance.now();
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500); expect(done).toBe(false);
+    writer.exec('ROLLBACK'); await hint;
+    expect(withLog(home, db => db.prepare('SELECT domain, key FROM refresh_requests').all())).toEqual([{ domain: 'loom/agent-status', key: 'art' }]);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await hint; }
+});
+
+it('a writer acquired while a core snapshot is pending cannot block its commit on return', async () => {
+  const { Puller } = await import('./pull.js');
+  const h = { home, agents: ['art'] } as Household;
+  let entered = false, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  registerCoreSource(home, 'agent-status', async () => { entered = true; await gate; return []; });
+  const puller = new Puller(() => ({ household: h, env: { LOOM_HOME: home } }), () => new Set(['loom/agent-status']));
+  const pending = puller.now('loom/agent-status');
+  await expect.poll(() => entered).toBe(true);
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  try {
+    const started = performance.now(); release();
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    writer.exec('ROLLBACK'); expect(await pending).toBe('quiet');
+  } finally { release(); if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await pending; puller.stop(); await puller.settle(); }
+});

@@ -143,6 +143,7 @@ it('an owner waits for a shared WAL writer without blocking the event loop', asy
   reads.movedSince.mockReset().mockReturnValue([]);
   const intervals = vi.spyOn(globalThis, 'setInterval');
   const off = watchComms(home, () => owner);
+  withLog(home, () => {});
   const writer = new Database(liveDbPath(home));
   writer.exec('BEGIN IMMEDIATE');
   try {
@@ -180,7 +181,7 @@ it('a failed shared publication keeps the cursor and retries its member marker',
   const report = vi.spyOn(console, 'error').mockImplementation(() => {});
   withLog(home, db => db.exec("CREATE TRIGGER reject_move BEFORE INSERT ON comms_member_moves BEGIN SELECT RAISE(ABORT, 'publish failed'); END"));
   try {
-    const initial = withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get());
+    const initial = { through: 0 };
     await expect.poll(() => report.mock.calls.length).toBeGreaterThan(0);
     expect(withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get())).toEqual(initial);
     expect(withLog(home, db => db.prepare('SELECT * FROM comms_member_moves').all())).toEqual([]);
@@ -228,6 +229,7 @@ it('acquiring ownership during a reader probe rechecks the WAL writer before sca
   reads.movedSince.mockReset().mockReturnValue([]);
   let release!: (ready: boolean) => void;
   vi.mocked(waitForLocks).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  withLog(home, () => {});
   const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
   try {
     const tick = intervals.mock.calls.find(([, ms]) => ms === 2_000)![0] as () => void;
@@ -240,4 +242,21 @@ it('acquiring ownership during a reader probe rechecks the WAL writer before sca
     writer.exec('ROLLBACK');
     await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); off(); await owner.close(); intervals.mockRestore(); rmSync(home, { recursive: true, force: true }); }
+});
+
+it.each([false, true])('registering a Comms watch under a held writer stays responsive (eligible: %s)', async eligible => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-start-writer-'));
+  withLog(home, () => {});
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(eligible);
+  reads.movedSince.mockReset().mockReturnValue([]);
+  let off = () => {};
+  try {
+    const started = performance.now(); off = watchComms(home, () => owner);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(reads.movedSince).not.toHaveBeenCalled();
+    writer.exec('ROLLBACK');
+    if (eligible) await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); off(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
 });

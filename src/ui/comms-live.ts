@@ -117,7 +117,6 @@ export function watchComms(home: string, owner?: () => PeriodicOwner | undefined
   const registration = {};
   h.owners.set(registration, owner);
   if (owner) {
-    withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_sequence_scan VALUES (1, 0)').run());
     h.owner = () => { const owners = [...h.owners.values()].map(get => get?.()); return owners.find(o => o?.active) ?? owners.find(Boolean); };
   }
   let stopped = false;
@@ -160,7 +159,7 @@ function ensure(home: string): void {
         const localThreads = [...streams].some(s => s.home === home);
         const read = sharedOwner?.active || !registration.owner || localThreads ? [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] : [];
         if (registration.owner && !sharedOwner?.active) read.push(liveDbPath(home));
-        if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home), join(home, HOUSEHOLD_DB)] : [] })) { waiting(); return; }
+        if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home), join(home, HOUSEHOLD_DB)] : registration.owner && !registration.sharedAt ? [liveDbPath(home)] : [] })) { waiting(); return; }
         if (homes.get(home) !== registration) return;
         // Acquisition during the await changes a reader into a writer: probe again for the new role.
         if (registration.owner?.() !== sharedOwner || (sharedOwner?.active === true) !== wasActive) { again = true; continue; }

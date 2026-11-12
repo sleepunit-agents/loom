@@ -17,6 +17,7 @@ import { backgroundJob } from '../transport/stall-watch.js';
  * The durable request queue, shared check timestamps and domain lease make every listener a consumer of
  * one computation. A dead owner is replaced after its lease expires; unacknowledged hints remain pending.
  */
+import { setTimeout as sleep } from 'node:timers/promises';
 import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { randomBytes } from 'node:crypto';
 import { readRecord } from '../cli/pieces-managed.js';
@@ -510,7 +511,8 @@ export async function nudge(home: string, domain: string, key?: string): Promise
   if (key !== undefined && (typeof key !== 'string' || !RECORD_ID.test(key))) return;
   try {
     // A delayed change hint can land after the request's gate, while another request waits on this store.
-    await waitForLocks({ write: [liveDbPath(home)], budgetMs: WRITE_WAIT_MS });
+    // Keep the hint pending after a spent budget; never fall back to the synchronous busy timeout.
+    while (!await waitForLocks({ write: [liveDbPath(home)], budgetMs: WRITE_WAIT_MS })) await sleep(10);
     withLog(home, db => db.transaction(() => markNudged(db, domain, Date.now(), key)).immediate()); tick(home);
   } catch { /* a nudge is a hint; the poll still pulls */ }
 }
