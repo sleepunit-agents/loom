@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { motion } from "motion/react";
+import { m } from "motion/react";
 import { Icon, createIconMotionPainter, getIconDirection, type IconProps } from "@/components/ui/icon";
 import { createMotionLane, useChoreography } from "@/lib/cojeev-motion/choreography";
 import { useMotionVisibility } from "@/lib/cojeev-motion/use-motion-visibility";
@@ -115,6 +115,6 @@ export function StateChevron({ open, direction="down", className, ref, ...props 
   }, [open]);
   const expanded = open ?? nativeOpen;
   return <span {...props} ref={attach} data-slot="state-chevron" data-open={expanded} aria-hidden="true" className={["v-state-chevron",className].filter(Boolean).join(" ")}>
-    <motion.span initial={false} animate={{rotate:expanded?(direction==="right"?90:180):0}} transition={quiet?{duration:0}:transition}><Icon name={direction==="right"?"chevron-right":"chevron-down"} size="sm" feedback={false} /></motion.span>
+    <m.span initial={false} animate={{rotate:expanded?(direction==="right"?90:180):0}} transition={quiet?{duration:0}:transition}><Icon name={direction==="right"?"chevron-right":"chevron-down"} size="sm" feedback={false} /></m.span>
   </span>;
 }

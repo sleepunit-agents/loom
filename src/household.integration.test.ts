@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
-import { runToken } from './cli/household.js';
+import { runSessions, runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
   addAgent, commonsKnowledgePath, firstOwner, removeMember, setMember, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
@@ -28,12 +28,13 @@ import { sessionStore, signinLink } from './ui/sessions.js';
 import { watch } from './ui/push.js';
 import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, ensureAgentEntries, ensureMemberEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
-import { householdPeople, householdPerson } from './ui/household-pages.js';
+import { householdPeople, householdPerson, knowledgeView } from './ui/household-pages.js';
 import { agentName } from './ui/core.js';
 import { loadIdentity, ownersBlock } from './tools/identity.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
 import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
+import { recordTurn, writeDigest } from './backends/conversations.js';
 import { closeAllBackends } from './backends/index.js';
 import { listProposals, propose } from './backends/proposals.js';
 import { harnessInit } from './tools/harness.js';
@@ -796,28 +797,48 @@ describe('the household page', () => {
     expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toEqual(expect.arrayContaining(['/activity', '/knowledge', '/people']));
   });
 
-  it('Activity is the tape across every agent', async () => {
+  it('Activity is every agent\'s entries, to filter and open (t-1972): no status tiles', async () => {
     const cookie = await login();
     const d = await data(cookie, '/activity');
-    expect(d.view).toBe('dashboard');
-    const texts = (x: Data) => (x.dashboard.thread as Data[]).map((r) => r.text);
-    expect(texts(d)).toEqual(expect.arrayContaining(['art did a thing', 'mark did a thing']));
-    // Activity: a headline, Thread with a pill per agent, each row with its agent.
-    expect(d.dashboard.title).toBe('Everything today');
-    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').agent).toBe('art');
-    const opts = (d.dashboard.filters.options as Data[]);
-    expect(d.dashboard.filters.param).toBe('who');
-    expect(opts).toContainEqual({ value: 'mark', label: 'Visual Mark' });
-    // No scope picker (t-1625): the agents are a section of the rail, each to its own pages, saying how long since each was active.
-    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'art', label: 'Art E Fish', href: '/a/art', sub: expect.stringMatching(/^active (\d+m ago|just now)$/) }));
-    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'mark', label: 'Visual Mark', href: '/a/mark' }));
-    expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toContain('/knowledge');
-    expect(texts(await data(cookie, '/activity?who=mark'))).not.toContain('art did a thing');
-    // ...and a pill per place it happened, rows saying it the way a person would.
-    expect(opts.map((o) => o.value)).toContain('discord');
-    expect(opts.map((o) => o.value)).not.toContain('?');
-    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').meta).toMatch(/^Discord #pond · /);
-    expect(texts(await data(cookie, '/activity?who=letters'))).not.toContain('art did a thing');
+    expect(d.view).toBe('activity');
+    const titles = (x: Data) => (x.activity.entries as Data[]).map((r) => r.title);
+    expect(titles(d)).toEqual(expect.arrayContaining(['art did a thing', 'mark did a thing']));
+    const e = (d.activity.entries as Data[]).find((r) => r.title === 'art did a thing');
+    // Who, where (the filter's key and the tag's words), what, and when in the household's zone.
+    expect(e).toMatchObject({ agent: 'art', venue: 'discord', where: 'Discord #pond', what: 'conversation', day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), hour: expect.any(Number) });
+    expect(d.activity.venues).toMatchObject({ discord: 'Discord' });
+    expect(d.activity.owner).toEqual({ key: 'owner', label: expect.any(String) });
+    // The six status tiles are gone: Activity is the entries alone.
+    expect(d).not.toHaveProperty('dashboard');
+    expect(JSON.stringify(d.activity)).not.toContain('"tiles"');
+    // Filters live in the address; one that isn't a filter is dropped.
+    expect((await data(cookie, '/activity?who=mark,letters&what=work,nope&where=discord')).activity.filters).toEqual({ who: ['mark'], where: ['discord'], what: ['work'] });
+    // An entry opens whole by its id, and keeps the window around it.
+    const o = await data(cookie, `/activity?e=${encodeURIComponent(e.id)}`);
+    expect(o.activity.open).toMatchObject({ id: e.id, title: 'art did a thing', story: 'x', links: [expect.objectContaining({ page: expect.stringMatching(/^loom:a\/art\/memory\//) })] });
+    expect(titles(o)).toContain('mark did a thing');
+    expect((await data(cookie, '/activity?e=e~art~episode%2Fnope')).activity).toMatchObject({ missing: true });
+    expect((await data(cookie, '/activity?e=e~letters~x')).activity).toMatchObject({ missing: true });
+  });
+
+  it('Activity titles a body the runtime started by its conversation, never its prompt, and tells a run once', async () => {
+    const cookie = await login();
+    const dir = join(h.home, 'agents', 'art');
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const { conversation } = recordTurn(dir, 'art', { venue: 'wake', place: 'review', at, from: { kind: 'schedule' }, kind: 'wake', label: 'Daily review' } as never, 'runtime:runtime');
+    writeDigest(dir, { conversation, run: 'run-1' }, { summary: 'Took one lesson from today\'s review. Filed t-1967.', decisions: ['Saved a feedback memory'], tasks: ['t-1967'] });
+    // The harness's fallback episode of the same run: its title is the spawn preamble.
+    await remember(dir, { category: 'episode', title: 'You are art, in a conversation on wake: Daily review. (bridge spawn tok…', metadata: { where: 'terminal:Art', source: 'fallback' },
+      content: `Ask: You are art, in a conversation on wake: Daily review. (bridge spawn token ad8f1eae: ignore this line) Its conversation is ${conversation} and this run is run-1: call identity first.\nLast said: done\n(fallback episode, auto-extracted; 1 turn)` });
+    const d = await data(cookie, '/activity');
+    const all = JSON.stringify(d.activity.entries);
+    expect(all).not.toMatch(/You are art|bridge spawn/);
+    const runs = (d.activity.entries as Data[]).filter((r) => r.title === 'Daily review');
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ venue: 'wakes', where: 'Wake', line: 'Took one lesson from today\'s review.' });
+    const o = (await data(cookie, `/activity?e=${encodeURIComponent(runs[0].id)}`)).activity.open;
+    expect(o).toMatchObject({ decided: ['Saved a feedback memory'], tasks: [{ label: 't-1967', page: 'loom:p/tasks/task/t-1967' }] });
+    expect(o.story).toMatch(/Filed t-1967/);
   });
 
   it('Find looks through knowledge, people and memories, in the scope', async () => {
@@ -862,7 +883,8 @@ describe('the household page', () => {
     clearPieceCache();
     try {
       const cookie = await login();
-      const inFolder = (d: Data, f: string) => (d.items as Data[]).filter((it) => (f === 'needs' ? it.attention : it.kind === f));
+      // The folders (t-1925): Needs you, then each open item by what it wants (box), and Done.
+      const inFolder = (d: Data, f: string) => (d.items as Data[]).filter((it) => (f === 'needs' ? it.attention : it.box === f));
       const unread = (d: Data) => (d.items as Data[]).filter((it) => it.unread).length;
       const item = (d: Data, text: string) => (d.items as Data[]).find((it) => it.text.startsWith(text));
       const needs = await data(cookie, '/inbox');
@@ -881,9 +903,13 @@ describe('the household page', () => {
       expect(push.open).toBe(keyOf('Push the fix'));
       expect(item(push, 'Push the fix')).toMatchObject({ expires: soon, source: { id: 'gate' } });
       expect((item(push, 'Push the fix').actions as Data[]).map((a) => a.label)).toEqual(['Allow once', 'Deny']);
-      // Opened is read: one unread left.
-      expect(unread(push)).toBe(1);
-      expect(item(push, 'Push the fix').unread).toBe(false);
+      // Opening it is a GET, which never writes (collections.md, "Read state"): the app posts the read, and then it's
+      // read: one unread left.
+      expect(unread(push)).toBe(2);
+      expect((await post(cookie, '/inbox/read', { _csrf: csrfOf(push), i: keyOf('Push the fix') })).status).toBe(200);
+      const after = await data(cookie, '/inbox');
+      expect(unread(after)).toBe(1);
+      expect(item(after, 'Push the fix').unread).toBe(false);
       const reply = await data(cookie, `/inbox?i=${keyOf('Tonight or tomorrow')}`);
       // Its own page, drawn here: its button posts to the piece; its page is a link away.
       expect(reply.inline.key).toBe(keyOf('Tonight or tomorrow'));
@@ -892,27 +918,41 @@ describe('the household page', () => {
       expect(item(reply, 'Tonight or tomorrow')).toMatchObject({ page: 'q/1', source: { id: 'gate', base: '/p/gate/' } });
       // An item asked for in a folder it isn't in: the folder's own first item is drawn, and no page from the other.
       const elsewhere = await data(cookie, `/inbox?f=fyi&i=${keyOf('Tonight or tomorrow')}`);
-      expect(elsewhere.folder).toBe('fyi');
-      expect(inFolder(elsewhere, 'fyi').map((it) => it.text)).toContain('one joined loom');
+      // An old folder's address lands on its new folder: FYI is Done.
+      expect(elsewhere.folder).toBe('done');
+      expect(inFolder(elsewhere, 'done').map((it) => it.text)).toContain('one joined loom');
       expect(elsewhere.inline).toBeUndefined();
       // An item with buttons of its own (the permission) keeps them, and draws no page.
       expect(push.inline).toBeUndefined();
-      expect(unread(reply)).toBe(0);
+      // Opened (the app's read, as it posts it), nothing is unread.
+      expect(unread(reply)).toBe(1);
+      expect((await post(cookie, '/inbox/read', { _csrf: csrfOf(reply), i: keyOf('Tonight or tomorrow') })).status).toBe(200);
+      expect(unread(await data(cookie, '/inbox'))).toBe(0);
       const decisions = await data(cookie, '/inbox?f=decision');
-      expect(inFolder(decisions, 'decision').map((it) => it.text)).toContain('Keep this memory?');
+      expect(decisions.folder).toBe('question');
+      // A decision nothing waits on is filed with the questions all the same (not counted in Needs you).
+      expect(inFolder(decisions, 'question').map((it) => it.text)).toContain('Keep this memory?');
+      expect(inFolder(decisions, 'question').map((it) => it.text)).toEqual(expect.arrayContaining(['Tonight or tomorrow?']));
       expect(item(decisions, 'Discord bridge is dark')).toMatchObject({ kind: 'alert' });
-      expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision' });
+      expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision', attention: false, box: 'question' });
+      // Filed without counting, it's still open: loom says so, so the reader draws its Renew (t-1925).
+      const openOf = async (text: string) => (await (await fetch(`${base}/inbox/open?k=${item(needs, text).key}`, { headers: { cookie, accept: 'application/json' } })).json()).open;
+      expect(await openOf('Renew the cert?')).toBe(true);
+      expect(await openOf('Push the fix')).toBe(true);
       expect(item(decisions, 'Set up the rig')).toMatchObject({ kind: 'todo' });
       const alerts = await data(cookie, '/inbox?f=alert');
       expect(alerts.folder).toBe('alert');
       expect(inFolder(alerts, 'alert').map((it) => it.text)).toEqual(['Discord bridge is dark since 9:03 AM']);
-      expect((await data(cookie, '/inbox?f=todo')).folder).toBe('todo');
-      expect(inFolder(decisions, 'decision').some((it) => it.unread)).toBe(false);
-      const fyi = await data(cookie, '/inbox?f=fyi');
-      expect(inFolder(fyi, 'fyi').map((it) => it.text)).toContain('one joined loom');
-      expect(inFolder(fyi, 'fyi').some((it) => it.unread)).toBe(false);
+      expect((await data(cookie, '/inbox?f=todo')).folder).toBe('question');
+      expect(item(needs, 'Push the fix')).toMatchObject({ box: 'approval' });
+      expect(inFolder(decisions, 'question').filter((it) => !it.attention).some((it) => it.unread)).toBe(false);
+      const fyi = await data(cookie, '/inbox?f=done');
+      expect(fyi.folder).toBe('done');
+      expect(inFolder(fyi, 'done').map((it) => it.text)).toContain('one joined loom');
+      expect(inFolder(fyi, 'done').some((it) => it.unread)).toBe(false);
       const answered = await data(cookie, '/inbox?f=answered');
-      expect(inFolder(answered, 'answered')).toContainEqual(expect.objectContaining({ text: 'A box asks to join: evil', outcome: 'Blocked.' }));
+      expect(answered.folder).toBe('done');
+      expect(inFolder(answered, 'done')).toContainEqual(expect.objectContaining({ text: 'A box asks to join: evil', outcome: 'Blocked.' }));
       // Home says how much, and links to the Inbox, instead of the cards.
       const home = await data(cookie, '/');
       expect(home.home.needs).toBe(2);
@@ -982,23 +1022,40 @@ describe('the household page', () => {
     expect((d.home.firstRun.starters as Data[]).some((s) => /^shuttle$/i.test(s.name) || /^shuttle$/i.test(s.label))).toBe(true);
   });
 
-  it('Knowledge searches as you\'d expect, rows say how fresh they are, and a page below the top goes back by name', async () => {
+  it('Knowledge is a reader: every page\'s line with its freshness, the one asked for whole (sources, cited by), and a page below the top goes back by name', async () => {
     const c = await connect(handle.port, owner);
-    for (const [slug, title, domain] of [['kiln-cone-6', 'Cone 6 is about 1222 °C', 'ceramics'], ['glaze-food-safe', 'Food-safe glazes', 'ceramics/glaze']]) {
-      await c.callTool({ name: 'knowledge_write', arguments: { slug, title, domain, body: `${title}.`, citations: [{ claim: title, source_kind: 'web', source_locator: 'https://example.com/x', excerpt: title }] } });
+    for (const [slug, title, domain, body] of [['kiln-cone-6', 'Cone 6 is about 1222 °C', 'ceramics', 'Cone 6.'], ['glaze-food-safe', 'Food-safe glazes', 'ceramics/glaze', 'Fire to [[kiln-cone-6]].'],
+      ['kiln-wash', 'Kiln wash on every shelf', 'ceramics/kiln', 'See knowledge:kiln-cone-6 for the heat.'], ['pyrometric-cones', 'Pyrometric cones', 'ceramics/kiln', 'As in /knowledge/kiln-cone-6.'],
+      ['raku', 'Raku is fast', 'ceramics', 'Unrelated: kiln-cone-6 named bare is no link.']]) {
+      await c.callTool({ name: 'knowledge_write', arguments: { slug, title, domain, body, citations: [{ claim: title, source_kind: 'web', source_locator: 'https://example.com/x', excerpt: title }] } });
     }
     await c.close();
     const cookie = await login();
     const all = await data(cookie, '/knowledge');
-    expect(blocksOf(all).find((b) => b.type === 'filters')).toMatchObject({ search: 'Search 2 facts' });
-    expect(listItems(all).find((i) => i.text === 'Cone 6 is about 1222 °C').meta).toMatch(/^(verified|written) .*· ceramics$/);
-    const hit = await data(cookie, '/knowledge?q=cone');
-    expect(JSON.stringify(hit.page)).toContain('Cone 6 is about 1222 °C');
-    expect(JSON.stringify(hit.page)).not.toContain('Food-safe glazes');
-    expect(hit.ctx.query.q).toBe('cone');
-    expect(JSON.stringify((await data(cookie, '/knowledge?q=%25')).page)).not.toContain('Cone 6 is about');
-    const one = await data(cookie, '/knowledge/kiln-cone-6');
-    expect(one.chrome.shell.back).toEqual({ label: 'Knowledge', href: '/knowledge' });
+    expect(all.view).toBe('knowledge');
+    expect(all.knowledge.total).toBe(5);
+    expect(all).toMatchObject({ title: 'Knowledge', add: { page: 'loom:new-fact', label: 'Add a fact' } });
+    expect(all.knowledge.open).toBeUndefined();
+    expect((all.knowledge.pages as Data[]).find((p) => p.slug === 'kiln-cone-6')).toMatchObject({ title: 'Cone 6 is about 1222 °C', domain: 'ceramics', fresh: 'fresh' });
+    // Asked for whole: its body, its sources, and what cites it.
+    const one = await data(cookie, '/knowledge?p=kiln-cone-6');
+    expect(one.knowledge.open).toMatchObject({ slug: 'kiln-cone-6', body: 'Cone 6.', sources: [{ claim: 'Cone 6 is about 1222 °C', kind: 'web', href: 'https://example.com/x' }],
+    });
+    // Each way one page links another ([[slug]], knowledge:slug, /knowledge/slug); a bare mention isn't one.
+    expect((one.knowledge.open.citedBy as Data[]).map((c) => c.slug).sort()).toEqual(['glaze-food-safe', 'kiln-wash', 'pyrometric-cones']);
+    // Freshness by its age: fresh, getting old from 20 days, due from 30; Recently verified is a check in 7 days.
+    const at = (days: number) => knowledgeView(h, 'kiln-cone-6', { nowMs: Date.now() + days * 86_400_000 }).open!;
+    expect([at(0).fresh, at(21).fresh, at(31).fresh]).toEqual(['fresh', 'aging', 'due']);
+    const recentAt = (days: number) => knowledgeView(h, undefined, { nowMs: Date.now() + days * 86_400_000 }).pages.filter((p) => p.recent).length;
+    expect([recentAt(0), recentAt(8)]).toEqual([5, 0]);
+    // Its own address opens the same reader on it, and goes back by name.
+    const own = await data(cookie, '/knowledge/kiln-cone-6');
+    expect(own.knowledge.open.slug).toBe('kiln-cone-6');
+    // Its page's own title heads the app, and its line says when it was verified.
+    expect(own.title).toBe('Cone 6 is about 1222 °C');
+    expect(own.intro).toMatch(/^(Verified|Not verified yet)/);
+    expect(own.chrome.shell.back).toEqual({ label: 'Knowledge', href: '/knowledge' });
+    expect((await data(cookie, '/knowledge/no-such-page')).page.title).toBe('Not found');
     // An agent's tabs carry the way around; a memory under them goes back to Mind.
     expect((await data(cookie, '/a/mark/mind')).chrome.shell.back ?? undefined).toBeUndefined();
     expect((await data(cookie, '/a/mark/memory/x')).chrome.shell.back).toEqual({ label: 'Mind', href: '/a/mark/mind' });
@@ -1018,16 +1075,11 @@ describe('the household page', () => {
     const before = (() => { const d = db(); try { return (d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string | null }).verified_at; } finally { d.close(); } })();
     const cookie = await login();
     const k = await data(cookie, '/knowledge/kiln-cone-6');
-    const verifyAt = (k.page.sections as Data[]).findIndex((s) => JSON.stringify(s.blocks).includes('"knowledge-verify"'));
-    expect(verifyAt).toBeGreaterThanOrEqual(0);
-    // The board's order: when it was confirmed under the title, the body, Sources, then Still true.
-    expect(k.page.intro).toMatch(/^(Verified|Not verified yet)/);
-    const sourcesAt = (k.page.sections as Data[]).findIndex((s) => s.title === 'Sources');
-    expect(sourcesAt).toBeGreaterThanOrEqual(0);
-    expect(sourcesAt).toBeLessThan(verifyAt);
+    expect(k.knowledge.open.slug).toBe('kiln-cone-6');
     await new Promise((r) => setTimeout(r, 20));
     const r = await post(cookie, '/act/loom', { _csrf: csrfOf(k), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
-    expect(r.headers.get('location')).toMatch(/^\/knowledge\/kiln-cone-6\?_flash=/);
+    // Back to the reader on the page, as Check again does (one address: the list stays as it was).
+    expect(r.headers.get('location')).toMatch(/^\/knowledge\?p=kiln-cone-6&_flash=/);
     const d = db();
     try {
       const row = d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string };
@@ -1035,6 +1087,14 @@ describe('the household page', () => {
       const v = d.prepare("SELECT v.verifier, v.outcome FROM verifications v JOIN pages p ON p.id = v.page_id WHERE p.slug = 'kiln-cone-6' ORDER BY v.id DESC LIMIT 1").get() as { verifier: string; outcome: string };
       expect(v).toMatchObject({ verifier: 'jonathan', outcome: 'confirmed' });
     } finally { d.close(); }
+    // Check again: a stale check, so it's due one; its verified date stays where Still true put it.
+    const confirmed = (await data(cookie, '/knowledge?p=kiln-cone-6')).knowledge.open;
+    expect(confirmed.fresh).toBe('fresh');
+    await post(cookie, '/act/loom', { _csrf: csrfOf(k), _action: 'knowledge-recheck', _path: 'knowledge', slug: 'kiln-cone-6' });
+    const again = await data(cookie, '/knowledge?p=kiln-cone-6');
+    expect(again.knowledge.open).toMatchObject({ fresh: 'due', checked: { outcome: 'stale', by: 'jonathan' } });
+    expect(again.knowledge.open.verified_at).toBe(confirmed.verified_at);
+    expect((again.knowledge.pages as Data[]).find((p) => p.slug === 'kiln-cone-6').fresh).toBe('due');
   });
 
   it('the boards\' +: People and Knowledge each add one, as the owner, and never overwrite', async () => {
@@ -1048,12 +1108,12 @@ describe('the household page', () => {
     const dup = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor' });
     expect(flashOf(await data(cookie, dup.headers.get('location')!))).toContain('already in People');
 
-    expect((await data(cookie, '/knowledge')).page.add).toEqual({ page: 'loom:new-fact', label: 'Add a fact' });
+    expect((await data(cookie, '/knowledge')).add).toEqual({ page: 'loom:new-fact', label: 'Add a fact' });
     const kform = await data(cookie, '/new-fact');
     const k = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'Ceramics', body: 'Ramp **slowly** past 573 °C.', source: '' });
     expect(k.headers.get('location')).toMatch(/^\/knowledge\/glaze-firing-is-slower\?_flash=/);
     // The body reaches the page as its markdown, for the app to render.
-    const body = async () => blocksOf(await data(cookie, '/knowledge/glaze-firing-is-slower')).filter((b) => b.type === 'prose').map((b) => b.text).join('\n');
+    const body = async () => (await data(cookie, '/knowledge/glaze-firing-is-slower')).knowledge.open.body as string;
     expect(await body()).toContain('Ramp **slowly** past 573 °C.');
     const again = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'ceramics', body: 'something else' });
     expect(flashOf(await data(cookie, again.headers.get('location')!))).toContain('already has a page');
@@ -1108,7 +1168,7 @@ describe('the household page', () => {
     expect(prof.stats).toContainEqual({ label: 'ways to reach', value: '2' });
     expect(d.page.intro).toBeUndefined();
     // No side column: the change log is gone, and what's left is the page's width.
-    expect((d.page.sections as Data[]).filter((s) => s.side)).toEqual([]);
+    expect((d.page.sections as Data[]).filter((s) => s.side || s.place === 'side')).toEqual([]);
     expect((d.page.sections as Data[]).map((s) => s.id)).not.toContain('changes');
     expect((sectionOf(d, 'agents').blocks as Data[])[0].wrap).toBe(true);
     // A label is a string of at most 200.
@@ -1321,21 +1381,6 @@ describe('the household page', () => {
     const setup = await data(cookie, '/a/mark/setup');
     const row = listItems(setup).find((i) => i.text === 'Mark · phone');
     expect(row.act.confirm).toMatch(/Revoke "Mark · phone"|Anything still using it/);
-  });
-
-  it('a live refresh of Activity doesn\'t count as a new look', async () => {
-    const cookie = await login();
-    // "N new since": the thread's rows after the line Activity draws (sinceMs).
-    const fresh = (d: Data) => (d.dashboard.thread as Data[]).filter((r) => Date.parse(r.at) > d.dashboard.sinceMs).length;
-    const first = await data(cookie, '/activity');
-    expect(first.dashboard.sinceMs).toEqual(expect.any(Number));
-    const n = fresh(first);
-    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
-    const live = await data(cookie, '/activity', { 'x-loom-live': '1' });
-    expect(fresh(live)).toBe(n + 1);
-    expect(live.dashboard.thread).toContainEqual(expect.objectContaining({ agent: 'art', text: 'art did another thing' }));
-    // And again: still one, since the live check didn't move the line.
-    expect(fresh(await data(cookie, '/activity', { 'x-loom-live': '1' }))).toBe(n + 1);
   });
 
   it('an agent added on the page is served at once, without a restart', async () => {
@@ -1637,6 +1682,9 @@ esac
     expect(has(await data(jonC, '/inbox'))).toBe(true);
     for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly', '/a/mark/setup']) expect(has(await data(lorenC, path)), path).toBe(false);
     expect(has(await data(jonC, '/a/art/setup'))).toBe(true);
+    // The system bar's backup glyph (web/src/system-bar.tsx) is the household owner's too: never in an agent owner's shell.
+    expect((await data(jonC, '/')).chrome.shell.backup).toMatchObject({ tone: 'bad', text: 'failed', href: '/a/art/setup' });
+    expect((await data(lorenC, '/')).chrome.shell.backup).toBeUndefined();
   });
 
   it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {
@@ -1719,6 +1767,108 @@ esac
     expect(await r.json()).toMatchObject({ ok: false, message: expect.stringMatching(/household's to do/) });
     expect(loadTokens(h.home).some((t) => t.label === 'sneaky')).toBe(false);
   });
+  it('one signed-in session ends alone (t-1871): the Account page lists them, a household owner signs out an agent\'s screenshot session, every other link session stays', async () => {
+    const HEADLESS = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36';
+    const PHONE = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+    /** A session opened by a one-time sign-in link: the household's "page sign-in links" token, like Jonathan's phone's. */
+    const viaLink = async (ua: string, label?: string) => {
+      const code = signinLink(h, 600, 'jonathan', label);
+      const r = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { 'user-agent': ua, 'sec-fetch-site': 'same-origin' } });
+      expect(r.status).toBe(303);
+      return (r.headers.get('set-cookie') ?? '').split(';')[0];
+    };
+    const phone = await viaLink(PHONE);
+    const shots = await viaLink(HEADLESS, 'screenshots t-1871');
+    const lorens = await login(loren);
+    const signedIn = async (cookie: string) => (await page(cookie, '/account')).status === 200;
+    const rows = async (cookie: string) => {
+      const sec = (await data(cookie, '/account')).page.sections.find((x: { id: string }) => x.id === 'sessions');
+      return sec.blocks[0].items as Array<{ text: string; meta: string; act: { action: string; label: string; tone: string; confirm: string; fields: { ref: string } } }>;
+    };
+    const act = async (cookie: string, fields: Record<string, string>) => {
+      const csrf = (await data(cookie, '/account')).ctx.csrf as string;
+      const r = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1', 'sec-fetch-site': 'same-origin' },
+        body: new URLSearchParams({ _csrf: csrf, _action: 'session-revoke', _path: 'passkeys', ...fields }).toString() });
+      return r.json();
+    };
+
+    // Jonathan's phone sees every session, itself first (signed out with the page's own Sign out), each other one its
+    // own row with its own Sign out.
+    const seen = await rows(phone);
+    expect(seen[0]).toMatchObject({ text: 'Chrome on Android (this device)', meta: expect.stringMatching(/^signed in .* · with a sign-in link as page sign-in links$/) });
+    expect(seen[0].act).toBeUndefined();
+    const shot = seen.find((r) => r.text.includes('screenshots t-1871'))!;
+    expect(shot).toMatchObject({ text: 'HeadlessChrome on Linux “screenshots t-1871”',
+      act: { action: 'session-revoke', label: 'Sign out', tone: 'danger', confirm: expect.stringMatching(/stays signed in/), fields: { ref: expect.stringMatching(/^[0-9a-f]{16}$/) } } });
+    expect(seen.some((r) => r.meta.endsWith('with a token as loren · page'))).toBe(true);
+    // Its ref is no cookie: the session's id is nowhere on the page.
+    expect(JSON.stringify(await data(phone, '/account'))).not.toContain(shots.split('=')[1]);
+
+    // An agent owner sees only her own, and can't end anyone else's.
+    expect((await rows(lorens)).map((r) => r.text)).toEqual(['A browser (this device)']);
+    expect(await act(lorens, { ref: shot.act.fields.ref })).toMatchObject({ ok: false, message: expect.stringMatching(/No such session/) });
+    expect(await signedIn(shots)).toBe(true);
+    // A forged form (no form token) is refused.
+    const forged = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
+    expect(forged.status).toBe(403);
+    // Nor a request from another site, with the right form token.
+    const csrfNow = (await data(phone, '/account')).ctx.csrf as string;
+    const crossSite = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site', origin: 'https://evil.invalid' },
+      body: new URLSearchParams({ _csrf: csrfNow, _action: 'session-revoke', _path: 'passkeys', ref: shot.act.fields.ref }).toString() });
+    expect(crossSite.status).toBe(403);
+    // Nor anyone signed out.
+    const nobody = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
+    expect(nobody.status).toBe(401);
+    expect(await signedIn(shots)).toBe(true);
+    // Nor a ref that's not a session's, or too short to name one.
+    expect(await act(phone, { ref: '0'.repeat(16) })).toMatchObject({ ok: false });
+    expect(await act(phone, { ref: shot.act.fields.ref.slice(0, 4) })).toMatchObject({ ok: false });
+    expect(await signedIn(shots)).toBe(true);
+
+    // The household owner signs the screenshot session out: it alone ends; the phone, on the same link token, stays.
+    expect(await act(phone, { ref: shot.act.fields.ref })).toMatchObject({ ok: true, message: expect.stringMatching(/every other one stays signed in/) });
+    expect(await signedIn(shots)).toBe(false);
+    expect(await signedIn(phone)).toBe(true);
+    expect(await signedIn(lorens)).toBe(true);
+    expect(loadTokens(h.home).find((t) => t.label === 'page sign-in links')?.revoked).toBeFalsy();
+    expect((await rows(phone)).some((r) => r.text.includes('screenshots'))).toBe(false);
+
+    // And from the command line: `loom sessions list`, then revoke one by its ref.
+    const out: string[] = [];
+    const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } } as unknown as Parameters<typeof runSessions>[1];
+    // A session whose token isn't on file (the owner's bearer from loom-http's environment) is listed, not as ended.
+    const bearerOnly = sessionStore(h.home).create(Buffer.alloc(32, 5));
+    expect(await runSessions(['list'], io)).toBe(0);
+    const bearerLine = out.join('').split('\n').find((l) => l.startsWith(sessionStore(h.home).refOf(bearerOnly)))!;
+    expect(bearerLine).toMatch(/\(no token on file\)$/);
+    const line = out.join('').split('\n').find((l) => l.includes('loren · page'))!;
+    expect(line).toMatch(/^[0-9a-f]{16}  a browser .* by token, signed in .* UTC  \(loren · page\)$/);
+    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(0);
+    expect(await signedIn(lorens)).toBe(false);
+    expect(await signedIn(phone)).toBe(true);
+    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(1);
+    expect(await runSessions(['revoke', 'nope'], io)).toBe(2);
+
+    // An agent's sign-in (t-1936): --agent needs a label, its session is listed as an agent's, and the agent ends it
+    // by that label when done, leaving every other session, the same token's too.
+    out.length = 0;
+    expect(await runToken(['link', '--agent', '--page-url', base], io)).toBe(2);
+    expect(await runToken(['link', '--agent', '--label', 'screenshots t-1936', '--page-url', base], io)).toBe(0);
+    const url = out.join('').split('\n').find((l) => l.startsWith(`${base}/login/`))!;
+    expect(out.join('')).toContain('loom sessions revoke --label "screenshots t-1936"');
+    const agentS = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } });
+    const agentC = (agentS.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(await signedIn(agentC)).toBe(true);
+    out.length = 0;
+    expect(await runSessions(['list'], io)).toBe(0);
+    expect(out.join('').split('\n').find((l) => l.includes('screenshots t-1936'))).toMatch(/HeadlessChrome on Linux\s+\(agent\)  "screenshots t-1936"/);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(0);
+    expect(await signedIn(agentC)).toBe(false);
+    expect(await signedIn(phone)).toBe(true);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(1);
+  });
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } }) });
@@ -1750,7 +1900,12 @@ esac
     store.markPushed(['~seeded']);  // the first watch only records; this one has run
     await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art', open: true }, { key: 'a2', title: 't', body: 'mark', agent: 'mark', open: true },
       { key: 'a3', title: 't', body: 'house' }, { key: 'a4', title: 't', body: 'mark-unscoped', agent: 'mark', open: false }],
-      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => { sent.push(`${sub.endpoint.slice(-1)}:${JSON.parse(payload).body}`); return {} as never; }, hears);
-    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'j:mark-unscoped', 'l:mark']);
+      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => {
+        const p = JSON.parse(payload);
+        // Never the ask's words in a push (t-1978 review): what it is, who from, where a tap opens.
+        expect(p.body).toBe('');
+        sent.push(`${sub.endpoint.slice(-1)}:${p.tag}`); return {} as never;
+      }, hears);
+    expect(sent.sort()).toEqual(['j:ask-a1', 'j:ask-a2', 'j:ask-a3', 'j:ask-a4', 'l:ask-a2']);
   });
 });

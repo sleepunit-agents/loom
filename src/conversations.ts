@@ -6,9 +6,10 @@
 import { createHash } from 'node:crypto';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
-  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
+  ConversationError, MAX_PLACE, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
+import { COMMS_VENUE, filedThreads, noteLoopPause } from './comms.js';
 import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, withHouseholdDb } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
@@ -16,6 +17,21 @@ import { runOffer } from './offers-registry.js';
 import { askGrant } from './grants.js';
 
 // ─── Writing a turn ─────────────────────────────────────────────────────────
+
+/**
+ * Where an agent token's session turn goes (t-2133): a house's (or a service's) sessions are in its own namespace,
+ * `house:h-7 <place>` (`service:slack@h-7 …`), so one house never writes into another's, nor claims a place another will
+ * use first. A token in no house (loom's machine's own) writes the place as given, never one in a house's namespace.
+ */
+export function sessionPlace(role: Extract<Role, { kind: 'agent' }>, place: string): string {
+  const prefix = role.service ? `service:${role.service}${role.house ? `@${role.house}` : ''} ` : role.house ? `house:${role.house} ` : '';
+  if (!prefix) {
+    if (/^(?:house|service):/.test(place)) throw new ConversationError('a place starting house: or service: is a house\'s own session', 403);
+    return place;
+  }
+  if (prefix.length + place.length > MAX_PLACE) throw new ConversationError(`place is ${MAX_PLACE - prefix.length} characters at most from this house`);
+  return prefix + place;
+}
 
 /** A turn's idempotency key (the runtime's `<source>:<id>`): printable ASCII, kept 24 hours. */
 export const MAX_TURN_KEY = 240;
@@ -29,7 +45,7 @@ export const SESSION_VENUE = 'session';
  * POST /api/loom/conversations/turn, as `role`. The runtime writes for any of the
  * household's agents (the body names it, `agent`) in any venue but `session`: core's
  * `wake`, or one an installed piece declares. An agent token writes only venue `session`,
- * for itself. Every other role is refused before this is called (http-server.ts).
+ * for itself, and from a house only into that house's own sessions (sessionPlace, t-2133). Every other role is refused before this is called (http-server.ts).
  */
 export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number = Date.now()): { conversation: string; seq: number } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConversationError('a turn is a JSON object');
@@ -52,6 +68,7 @@ export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number 
   if (role.kind === 'agent' && turn.venue !== SESSION_VENUE) {
     throw new ConversationError(`an agent token writes only venue ${SESSION_VENUE} (its own harness session); ${turn.venue} is the runtime's`, 403);
   }
+  if (role.kind === 'agent') turn.place = sessionPlace(role, turn.place);
   if (role.kind === 'runtime') {
     if (turn.venue === SESSION_VENUE) throw new ConversationError(`venue ${SESSION_VENUE} is written by the harness, as the agent`, 403);
     const v = venueOf(h.home, turn.venue);
@@ -74,6 +91,10 @@ export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number 
   // Its model and harness, kept household-wide for good: redaction and grader families outlive the fold.
   noteModels(h.home, { model: turn.model, harness: turn.harness });
   const out = recordTurn(agentDir(h, agent), agent, turn, roleString(role));
+  // The runtime paused a Comms thread as a loop (its deferred note): the thread says so in words (comms.md, section 7).
+  if (role.kind === 'runtime' && turn.venue === COMMS_VENUE && turn.kind === 'note' && turn.outcome === 'deferred') {
+    try { noteLoopPause(h.home, out.conversation); } catch (e) { process.stderr.write(`loom: couldn't tell a Comms thread of its pause: ${(e as Error).name}\n`); }
+  }
   if (key !== undefined) {
     // writeTurn is synchronous, so nothing in this process writes between the lookup above and here.
     withHouseholdDb(h.home, (db) => db.transaction(() => {
@@ -108,7 +129,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
  * the page draws both alike): the conversation, its digests newest first, and its turn counts
  * and outcomes. It needs nothing but core's records, so it works after the venue is gone.
  */
-export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string): Feed {
+export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string, openDigest?: string): Feed {
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const head: FeedItem = {
     title: (c.label ?? c.place).slice(0, 200),
@@ -125,7 +146,8 @@ export function genericRender(c: Conversation, digests: readonly Digest[], stats
       // At most 50 items in a feed: the head, then up to 40 digests and the counts.
       items: digests.slice(0, 40).map((d) => ({
         title: d.summary.replace(/\s+/g, ' ').slice(0, 200), when: d.at, ref: d.id, body: d.summary,
-        ...(d.needs_owner ? { status: 'needs you' } : {}),
+        // Only the ask the Inbox still shows needs you; one answered or cleared was asked, and is history.
+        ...(d.needs_owner ? { status: d.id === openDigest ? 'needs you' : 'asked' } : {}),
       })),
     });
   }
@@ -156,7 +178,7 @@ export async function conversationView(contextDir: string, agent: string, id: st
   const stats = turnStats(contextDir, id);
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const label = venueLabel(home, c.venue);
-  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label) };
+  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id)) };
   let v;
   try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
@@ -238,5 +260,8 @@ export function conversationsSection(contextDir: string, slug: string, since: st
   if (!db) return null;
   db.close();
   const home = homeFor(contextDir, env);
-  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v)) };
+  // Comms threads filed under the project count from their first message, digest or not (comms.md, "Project").
+  const agent = householdOf(contextDir)?.agent;
+  const filed = home && agent ? filedThreads(home, agent, slug) : [];
+  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v), filed) };
 }

@@ -1,0 +1,16 @@
+/* Chat about this (chat-about.tsx): what it's about, who it goes to, the member's words. */
+.loom-chat-about__form { display: flex; flex-direction: column; gap: 12px; }
+.loom-chat-about__item { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--v-line, rgba(127, 127, 127, .35)); border-radius: 10px; min-width: 0; }
+.loom-chat-about__label { color: var(--v-text); font-weight: 600; overflow-wrap: anywhere; }
+.loom-chat-about__where { font-size: 11px; color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-chat-about__to { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 44px; }
+.loom-chat-about__to-word { color: var(--v-text-3); font-size: 13px; }
+.loom-chat-about__agent { font-weight: 600; color: var(--v-text); }
+.loom-chat-about__why { font-size: 12px; color: var(--v-text-2); }
+.loom-chat-about__change, .loom-chat-about__pick button { min-height: 44px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--v-line, rgba(127, 127, 127, .35)); color: var(--v-text); }
+.loom-chat-about__pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.loom-chat-about__pick button[data-on] { border-color: var(--v-pink); box-shadow: 0 0 0 1px var(--v-pink) inset; }
+.loom-chat-about__note { font-size: 13px; color: var(--v-text-2); }
+.loom-chat-about__text { width: 100%; min-height: 96px; resize: vertical; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--v-line, rgba(127, 127, 127, .35)); background: transparent; color: var(--v-text); font: inherit; }
+.loom-chat-about__error { color: var(--v-danger, #f55); font-size: 13px; }
+.loom-chat-about__go { display: flex; justify-content: flex-end; }

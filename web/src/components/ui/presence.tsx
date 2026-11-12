@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AnimatePresence, motion, useIsPresent, type HTMLMotionProps, type Target, type TargetAndTransition } from "motion/react";
+import { AnimatePresence, m, useIsPresent, type HTMLMotionProps, type Target, type TargetAndTransition } from "motion/react";
 import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/lib/utils";
 import { motionTokens, useChoreography } from "@/lib/cojeev-motion/choreography";
@@ -30,7 +30,7 @@ export function MotionPresence({ initial = false, ...props }: MotionPresenceProp
   return <AnimatePresence initial={quiet ? false : initial} {...props} />;
 }
 
-const MotionSlot = motion.create(Slot);
+const MotionSlot = m.create(Slot);
 export type MotionSurfaceProps = HTMLMotionProps<"div"> & {
   "data-slot"?: string;
   /** Merge onto exactly one ref-capable child, preserving its native element. */
@@ -52,7 +52,7 @@ export function MotionSurface({
   const { quiet, transition } = useChoreography();
   const isPresent = useIsPresent();
   const states = presencePresets[preset];
-  const Element = asChild ? MotionSlot : motion.div;
+  const Element = asChild ? MotionSlot : m.div;
   const entrance = { ...transition, delay: Math.max(0, Number.isFinite(delay) ? delay : 0), ...suppliedTransition };
   const soft = ["soften", "focus", "settle"].includes(preset);
   const exitTime = exitDuration === undefined || !Number.isFinite(exitDuration) ? soft ? .42 : motionTokens.duration.exit : Math.min(2, Math.max(0, exitDuration));

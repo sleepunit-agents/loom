@@ -228,7 +228,7 @@ export type HubSection =
  * `piece:<name>` and turn its own failure into `{key, error}`; the hub orders
  * them by key after the core sections.
  */
-export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string; nowMs: number }) => Promise<HubSection[]>;
+export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string; nowMs: number; noThreads?: boolean }) => Promise<HubSection[]>;
 
 /** No piece sections: `projectHubOf`'s default. The installed pieces' feeds are `managedPieceSections`. */
 export const noPieceSections: PieceSectionSource = async () => [];
@@ -236,6 +236,8 @@ export const noPieceSections: PieceSectionSource = async () => [];
 export interface HubOptions {
   nowMs?: number;
   pieceSections?: PieceSectionSource;
+  /** Leave out the conversations section: a house's caller reads only the conversation it holds (t-2118). */
+  noConversations?: boolean;
 }
 
 export type ProjectHubResult =
@@ -388,11 +390,11 @@ export async function projectHubOf(
       section('notes', () => notesSection(contextDir, row.card, since, nowMs)),
       section('people', () => peopleSection(contextDir, row.card, nowMs)),
       // After people (docs/specs/conversations.md, "Projects"): digests store project slugs, resolved at write.
-      section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
+      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
-      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since, nowMs });
+      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since, nowMs, ...(opts.noConversations ? { noThreads: true } : {}) });
     } catch {
       pieces = [];
     }
@@ -443,9 +445,9 @@ export async function projectList(contextDir: string, input: { status?: string; 
 export async function projectHub(
   contextDir: string,
   input: { slug: string; since?: string; include_archived?: boolean },
-  opts: HubOptions = { pieceSections: managedPieceSections() },
+  opts: HubOptions = {},
 ): Promise<string> {
-  return text(() => projectHubOf(contextDir, input, opts));
+  return text(() => projectHubOf(contextDir, input, { pieceSections: managedPieceSections(), ...opts }));
 }
 
 export async function projectOrphansText(contextDir: string): Promise<string> {

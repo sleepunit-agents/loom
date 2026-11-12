@@ -1,3 +1,5 @@
+import { aboutAttr, aboutPage, validAbout } from './about';
+import { pageHref } from './loom';
 // A panel block: settings as an app's panel (Jonathan, 2026-11-03: "app panels, not web forms"). Each row says what the
 // setting is now, in words, and holds one control: a switch that applies at once, a segmented control that applies at
 // once, an edit that opens a sheet with a few fields, a sheet of detail, a link, or a button. Its own chunk.
@@ -7,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { ActButton, BlockView, Link, Who, useEnv } from './blocks';
+import { ActButton, BlockView, Link, Who, useEnv, usePaged } from './blocks';
 import Form from './form';
 import { tidy } from './tidy';
 import type { Block, PanelRow, Tone } from './loom';
@@ -71,9 +73,10 @@ function RowChoice({ r }: { r: PanelRow }) {
 }
 
 function Row({ r }: { r: PanelRow }) {
-  const { wide } = useEnv();
+  const { wide, ctx } = useEnv();
   const [open, setOpen] = useState(false);
   const taps = !!(r.edit || r.sheet);
+  const about = r.ref ? validAbout({ ref: r.ref, label: r.label, agent: r.agent }) : r.page ? aboutPage(pageHref(r.page, ctx.source), r.label) : null;
   // The row's words: its label, its value in a sentence, a line of detail. Never cut: a value wraps.
   const words = (
     <span className="grid min-w-0 flex-1 gap-0.5 text-left">
@@ -108,7 +111,7 @@ function Row({ r }: { r: PanelRow }) {
     );
   }
   return (
-    <li className="min-w-0">
+    <li {...(about ? aboutAttr(about) : {})} className="min-w-0">
       {body}
       {r.edit && (
         <Sheet open={open} set={setOpen} title={r.edit.title ?? r.label} note={r.edit.note}>
@@ -126,10 +129,16 @@ function Row({ r }: { r: PanelRow }) {
 
 export default function Panel({ b }: { b: Extract<Block, { type: 'panel' }> }) {
   const { wide } = useEnv();
+  // A panel that's a long list of things (a store's 61 secrets) pages like a list: never a wall of rows (Jonathan,
+  // 2026-11-05: "fine if you've got 1 of something and a nightmare if you exceed that").
+  // Each row keeps its place in the whole panel, so a row's own state (a switch, an open sheet) never carries onto
+  // the row at its spot on the next page.
+  const { rows, pager } = usePaged(b.rows.map((r, n) => ({ r, n })));
   return (
     <div className="grid gap-2" data-slot="panel">
       {b.title && <h4 className="text-sm font-medium opacity-70">{b.title}</h4>}
-      <ul className="min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{b.rows.map((r, n) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
+      <ul className="loom-panel-rows min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{rows.map(({ r, n }) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
+      {pager}
       {b.action && <div className="pt-1"><ActButton b={b.action} size="default" full={!wide} /></div>}
     </div>
   );

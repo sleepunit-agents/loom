@@ -32,12 +32,16 @@ export interface VenueRow {
   render?: string[];
   /** When its piece was removed (or stopped declaring it); absent while it's installed. */
   orphaned?: string;
+  /** A venue core carries itself (`loom`, docs/specs/comms.md): the runtime posts to core's adapter route, not an argv. */
+  adapter?: 'core';
 }
 
 /** Core's own venues (conversations.md: `session` is live, `wake` scheduled). Never in the table. */
 export const CORE_VENUE_ROWS: Readonly<Record<string, VenueRow>> = Object.freeze(Object.assign(Object.create(null) as Record<string, VenueRow>, {
   session: { name: 'session', piece: 'loom', label: 'Session', kind: 'live' },
   wake: { name: 'wake', piece: 'loom', label: 'Wake', kind: 'scheduled' },
+  // Comms threads (docs/specs/comms.md): core is its adapter, at POST /api/loom/comms/adapter.
+  loom: { name: 'loom', piece: 'loom', label: 'loom', kind: 'live', adapter: 'core' },
 }));
 
 /** Core's own venue `name`, by own key only: a venue named "constructor" is no core venue. */
@@ -65,8 +69,16 @@ const schemaDone = new Set<string>();
  *    `models_seen` (every model and harness a turn named), `review_scores` and `scorecards`.
  *  - `turn_keys`: POST /api/loom/conversations/turn's idempotency keys (src/conversations.ts):
  *    (agent, key) for 24 hours, with a hash of the turn and the {conversation, seq} it answered.
+ *  - `house_conversations`: the one conversation each body's house holds, as the runtime said before handing
+ *    it a body (POST /api/loom/conversations/house, t-2061). Set once, never moved to another.
  */
-const SCHEMA = `CREATE TABLE IF NOT EXISTS turn_keys (
+const SCHEMA = `CREATE TABLE IF NOT EXISTS house_conversations (
+    house        TEXT PRIMARY KEY,
+    agent        TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    at           TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS turn_keys (
     agent        TEXT NOT NULL,
     key          TEXT NOT NULL,
     at           INTEGER NOT NULL,
@@ -143,11 +155,16 @@ export function openHouseholdDb(home: string): Database {
   // A file made since (a test's fresh home, a deleted db) gets its schema again.
   const fresh = !existsSync(path);
   const db = new BetterSqlite3(path);
-  db.pragma('busy_timeout = 5000');
-  db.pragma('journal_mode = WAL');
-  if (fresh || !schemaDone.has(path)) {
-    db.exec(SCHEMA);
-    schemaDone.add(path);
+  try {
+    db.pragma('busy_timeout = 5000');
+    db.pragma('journal_mode = WAL');
+    if (fresh || !schemaDone.has(path)) {
+      db.exec(SCHEMA);
+      schemaDone.add(path);
+    }
+  } catch (error) {
+    db.close();
+    throw error;
   }
   return db;
 }
@@ -202,6 +219,31 @@ export function syncVenues(env: NodeJS.ProcessEnv, now: Date = new Date()): stri
     }
     return changed;
   }).immediate());
+}
+
+/** A house's binding was refused: it holds another conversation (or another agent's). */
+export class HouseBindingError extends Error {}
+
+/**
+ * Record that house `house` (agent's) holds conversation `conversation` (t-2061): the runtime says so before it hands
+ * the house a body. A house holds one conversation, for good: the same binding again is a no-op, and any other (a
+ * second conversation, another agent) is refused, so a house can't come to speak for two.
+ */
+export function bindHouseConversation(home: string, b: { agent: string; house: string; conversation: string }, now: Date = new Date()): { house: string; conversation: string } {
+  return withHouseholdDb(home, (db) => db.transaction(() => {
+    const had = db.prepare('SELECT agent, conversation FROM house_conversations WHERE house = ?').get(b.house) as { agent: string; conversation: string } | undefined;
+    if (had) {
+      if (had.agent !== b.agent || had.conversation !== b.conversation) throw new HouseBindingError(`${b.house} holds another conversation; a house holds one`);
+      return { house: b.house, conversation: had.conversation };
+    }
+    db.prepare('INSERT INTO house_conversations (house, agent, conversation, at) VALUES (?, ?, ?, ?)').run(b.house, b.agent, b.conversation, now.toISOString());
+    return { house: b.house, conversation: b.conversation };
+  }).immediate());
+}
+
+/** The conversation house `house` holds, or null when the runtime never said (a house from before t-2061, a service's). */
+export function houseConversation(home: string, house: string): { agent: string; conversation: string } | null {
+  return withHouseholdDb(home, (db) => (db.prepare('SELECT agent, conversation FROM house_conversations WHERE house = ?').get(house) as { agent: string; conversation: string } | undefined) ?? null);
 }
 
 /**
@@ -273,6 +315,8 @@ export interface VenueEntry {
   piece: string;
   /** Its declared `send` argv (agent-runtime.md, "Delivery", Outbound), while its piece is installed. */
   send?: string[];
+  /** `core` for a venue core carries itself (`loom`): post to POST /api/loom/comms/adapter instead of a send argv. */
+  adapter?: 'core';
   /** When its piece was removed; an orphaned venue has no send. */
   orphaned?: string;
 }
@@ -289,7 +333,7 @@ export function venueDirectory(env: NodeJS.ProcessEnv): VenueEntry[] {
   for (const p of managedPieces(env)) {
     for (const [name, v] of Object.entries(p.loom.venues ?? {})) sends.set(name, { piece: p.name, ...(v.send ? { send: [...v.send] } : {}) });
   }
-  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece }));
+  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece, ...(v.adapter ? { adapter: v.adapter } : {}) }));
   const rows = home ? listVenues(home) : [];
   return [...core, ...rows.map((v): VenueEntry => {
     const live = sends.get(v.name);

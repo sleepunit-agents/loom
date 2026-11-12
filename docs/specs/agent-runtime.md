@@ -128,6 +128,19 @@ Its inputs:
 
 It replaces the clock's `WAKE_MODEL` and the bridges piece's resolver.
 
+**When an account runs out** (loom-box t-1907, Jonathan 2026-11-06: "I don't want slack bodies to stop responding as
+Art if we hit 100%"). "Quota left" also means no **hold**. A hold is written when a provider refuses a body's turn for
+a usage limit, read from the harness's structured error and never its words, and lasts until that limit's reset. A
+window past its reset time has room again.
+- A resume whose slot's harness has no room parks that slot as the conversation's home, and starts a fresh body on
+  another harness, from the digests.
+- The conversation goes home at its next run once that harness has room and the reset has passed.
+- A refused turn runs once more elsewhere, never twice.
+- When nothing has room, the conversation is answered plainly and the owner alerted.
+- The owner gets one Inbox FYI per agent per switch, and one when it's back. The agent's card reads "Model: on Codex",
+  and the comm screen's channel line reads `ON CODEX`.
+- A deny list Codex can't keep (anything but whole MCP servers) keeps that body off Codex.
+
 ### 5. Delivery
 
 Anything addressed to an agent arrives the same way:
@@ -197,6 +210,27 @@ Where it comes from:
   - it has 15 s, and answers `{ok, id?}`;
   - it's sent first, then the agent's turn is recorded with outcome `answered` (`failed` if `send` failed after one
     retry), and the body is told of a failure.
+  - **As built** (loom-box `src/delivery.mjs`, t-1920): an adapter that refuses only because it's in shadow says
+    `{ok: false, permanent: true, shadow: true}`. A body's `loom runtime send` waits for the post's outcome and
+    answers `posted: true` only once the venue took it, never "accepted". A DM (`--person --via`) to a venue whose
+    adapter answers `shadow` while its old bridge still posts there (Slack) goes to that bridge's relay, as the agent,
+    and is answered `posted: false, relay`: on its way, not sent.
+  - **Two more adapter calls, as built** (loom-box `src/delivery.mjs`, `src/policy.mjs`), on the same argv and
+    limits. `send --describe` answers `{ok: true, guest?, peer?, venue?, readers?, notes?}`: the place's rules for
+    the brief. It's asked before a body starts, and if it fails no body starts. `send --status working|done
+    [--message <delivery id>]…` is sent with the delivery ids when messages reach a body, every 15 s while it's
+    busy, and with `done` when its turn ends. It answers `{ok: true, stop?: true}`, and `stop: true` ends that body.
+  - **A venue core adapts itself** (`loom`, [comms.md](comms.md)) has no bin. Its row in `GET /api/loom/venues`
+    says `"adapter": "core"` instead of `send`. For it, the runtime makes the same three calls (post, describe,
+    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. A switched body's post adds
+    `on` (its harness, e.g. `"Codex"`; comms.md). They have the same limits,
+    the same retry rule and the same answer shapes. A delivery on `loom` from core's own source `loom` comes only
+    from one of the agent's owners, so the runtime takes its sender as tier 3 without reading the gates.
+- **Activity, for `loom` conversations only** ([comms.md](comms.md), "Activity"). The runtime reads a body's own
+  harness record (Claude's session transcript, Codex's `events.jsonl`) and turns each tool step into a plain card
+  `{id, at, tool, summary ≤ 120, state}`, from a fixed table and never from a model. It never carries a tool's output, a
+  file's contents, a command line or an environment value. The body host adds cards to its `body-sync` report, and the
+  runtime posts them to `POST /api/loom/comms/activity`. No other venue's bodies are read this way.
 - **Continuity slots hold raw session state** (a harness needs its history to resume). So, alongside the audit log:
   - slots are encrypted at rest to the runtime's own key;
   - each is kept only for its venue's continuity window, at most 14 days, then deleted;
@@ -239,7 +273,41 @@ Who may do what, in one place:
   - **Pieces keep their lists** (taskstore's `TASKSTORE_AGENTS`, the clock's `WAKE_AGENTS`, and the lists in agent-made
     pieces) as the fallback for a household without a runtime.
   - **Done** means: with the runtime installed, no piece's own list is consulted. Core's grant check runs first, and a
-    piece sees only granted calls.
+    piece sees only granted calls. Core tells it so: an agent caller the authority allowed carries `granted: true`
+    (extensions.md, "The API"), and a piece with its own list skips that list for such a caller (t-1971).
+  - **Asked for, and given on a Yes** (t-1970). An agent that needs a piece (its own, or another agent's request it
+    passes on) never grants it and never asks the owner to go and do it: it files a `grant` approval (approvals piece,
+    target `<piece>:<agent>[:<path>,<path>]`) and its Needs you waits on it, so Allow and Deny sit on the ask. Right
+    after a household owner's Allow on a `grant`, core reads the approval's agent and target from the approvals piece
+    (`state`, never the form) and posts `grant-approved` to the grants authority as that owner. The authority spends
+    the approval (allowed, for exactly that target, once) and only then adds the agent to that piece's grant, keeping
+    everyone else's. Deny records no and nothing else. A member who owns some agents can't answer one (approvals
+    refuses it, and the authority refuses a non-owner's call); a body can't spend one (only the authority does).
+    Without grants yet, nothing is written: every agent may already use every piece.
+  - **Whose work it is, asked the same way** (t-1975; Jonathan, 2026-11-08: "It needs to have the site ask me"). The
+    two owner-only actions that were typed at a terminal on loom's machine are asked on loom's page too, and applied on
+    his Allow: a `vouch-wake` (target `<agent>:<w-id>,…`: 1 to 12 wake ids, each `w-` and 6 hex as the clock mints
+    them, sorted and each once, so one set has one text; the approvals piece refuses any other, filed by the clock: "Count these 5 scheduled jobs as your
+    work?", core posts `vouch-approved` to the piece with role `clock`) and a `principal-reset` (target
+    `<agent>:<cv>` with `cv-` and 12 hex, filed by the runtime: "Count this conversation as your work from now on?", core posts
+    `reset-approved` to the delivery piece). As for a grant: read back from the approvals piece, only the household
+    owner's Allow, the piece spends the approval for exactly its target and only then applies it, Deny records no.
+    The card shows exactly what Allow does, resolved by the filing piece, never only an agent's words: a vouch-wake's
+    details list each wake (its id, when it fires, its note and the start of what it runs), a principal-reset's name the
+    conversation (its label and id) and list each waiting message it counts; the approvals piece refuses a card whose
+    details leave one out. The clock files a vouch-wake by itself only for unknown wakes set from a house of the agent
+    whose body sent no principal statement (no evidence of anyone else), one card per agent at a time (a new candidate
+    withdraws the waiting card and files one with the whole list; a No is never asked again); a body that knows asks with
+    `wake ask-vouch`. More than 12: the first 12 on one card, the rest on the next once it's answered.
+    The approvals piece marks these cards `lead` (as a grant's), so an Allow core can't read back is never a quiet
+    "Allowed"; core also refuses a target that isn't the asking agent's own wakes or conversation, or is malformed,
+    and a reset for a conversation core has on record as another agent's. The applying piece checks the same on its
+    side before it spends: the clock that the wakes are that agent's clock's, the runtime that the conversation is that
+    agent's and still asked about by exactly that card.
+    Nothing an owner decides is a command for him to type: a body files the approval (or the piece does), never hands
+    him a command. `wake vouch` and `loom runtime principal --reset` at a terminal stay as the fallback.
+  - **Where to see them.** The authority's page `permissions` is the household owner's Permissions app (the launcher's
+    System section), and `permissions/<agent>` is one agent's, linked from its window as "What <Agent> can use".
 - **Relay pairing,** as above.
 - **Secrets:** the runtime says *where* a secret lands in a house (the repo's house description). The secrets piece
   decides *whether* an agent may have it, through its own `run` path: `may <agent> <name>` answers allowed, denied or
@@ -286,11 +354,15 @@ These are core changes this doc depends on, each small:
      started. Each has a name, a description and a JSON
      schema, plus the argv that runs it with the arguments on stdin. Core calls it as the session's agent. The
      runtime offers `relay` and `house`. A name another piece or core already uses is refused at install.
-   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 2 s to
+   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 10 s to
      answer `{allow: true}` or `{allow: false, reason}`.
      - **Fail closed:** when the authority times out, errors, or is uninstalled while a call is in flight, the call is
        refused with `503` and the reason. Owner calls never ask it.
      - **Fallback:** a household with no authority installed uses each piece's own list, as section 6 says.
+     - **Reuse:** an authority that declares `grants_store` (the collection of its own store its answer rests on) is
+       asked with `basis: true` and names whose store and collection it read, the document it decided on and its sha256; core keeps the answer only for
+       exactly that state of the collection, read from the store itself, and any write to it is a new ask at once
+       (docs/extensions.md, `grants_store`).
 3. **A `runtime` role:** the token role conversations.md defines.
 
 ## What moves where
@@ -399,3 +471,8 @@ provenance only.
 
 Before this doc merges, a context-stripped reviewer reviews it, and every finding is folded, accepted as a trade-off,
 or rejected with a quote.
+
+Quota-blocked failed delivery replies may include `code: "quota"` and `retryAfter`
+(an ISO UTC timestamp, milliseconds and Z) for the earliest known reset. Core validates
+and preserves these fields. The clock waits for that reset without incrementing its
+job failure count; absent a reset it waits an hour. Successful replies carry neither.

@@ -14,7 +14,7 @@ import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { parseActResult, parseManifest, parsePage, splitPage, validPath } from './vocab.js';
 import { listening } from './live.js';
-import { clearPieceCache } from './pieces.js';
+import { MANIFEST_RUN_MS, clearPieceCache } from './pieces.js';
 import { esc, pageHref, pieceSource } from './render.js';
 
 const TOKEN = 'ui-test-token';
@@ -100,7 +100,8 @@ describe('the vocabulary pieces send', () => {
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '/act/loom' }] }] }, /page link/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'html', html: '<b>' }] }] }, /unknown block type/],
     [{ title: 'T', sections: [{ id: 'Bad Id', blocks: [] }] }, /section.id/],
-    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'text', text: 'x'.repeat(2001) }] }] }, /longer than/],
+    // A label over the limit still refuses the page; a block's own words are cut short instead (blocks.test.ts, t-1861).
+    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'kv', items: [{ label: 'x'.repeat(2001), value: 'v' }] }] }] }, /longer than/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 't', tone: 'red' }] }] }] }, /tone/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'table', columns: ['a'], rows: [['1', '2']] }] }] }, /table row/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'details', summary: 'a', blocks: [{ type: 'details', summary: 'b', blocks: [] }] }] }] }, /details/],
@@ -324,7 +325,8 @@ describe('loom UI over HTTP', () => {
   it('Mind explains heat, and an aged memory sits below a fresh one with no recompute', async () => {
     await remember(stack, { category: 'project', title: 'an old memory', content: 'stale' });
     const db = new BetterSqlite3(resolveSqliteDbPath(stack));
-    db.prepare('UPDATE memories SET created = ?, salience = 1 WHERE title = ?').run(new Date(Date.now() - 90 * 86_400_000).toISOString(), 'an old memory');
+    const aged = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    db.prepare('UPDATE memories SET created = ?, authored_at = ?, salience = 1 WHERE title = ?').run(aged, aged, 'an old memory');
     db.close();
     const cookie = await login();
     // The board's Mind: top of mind, ranked, with every memory a link away.
@@ -412,7 +414,7 @@ describe('loom UI over HTTP', () => {
     expect(section(pat, 'summary')).toBeUndefined();
     expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
     expect(section(pat, 'where')).toBeUndefined();
-    expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);
+    expect((pat.page.sections as Array<{ side?: boolean; place?: string }>).filter((x) => x.side || x.place === 'side')).toEqual([]);
     // A piece may link to someone with no card: a page that says so, not an error.
     const nobody = await getJson('/people/no-such-person', cookie);
     expect(nobody.status).toBe(200);
@@ -872,9 +874,10 @@ esac`);
     await piece(bin, 'hangs', `sleep 30 & echo $! > '${pidFile}'; wait`);
     await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
     const pid = Number((await readFile(pidFile, 'utf-8')).trim());
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(pid, 0)).toThrow();
-  }, 10000);
+    // The page stopped waiting at 3 s; the run itself is allowed MANIFEST_RUN_MS (t-2064), and its group goes then.
+    await expect.poll(() => { try { process.kill(pid, 0); return 'alive'; } catch { return 'gone'; } },
+      { timeout: MANIFEST_RUN_MS, interval: 200 }).toBe('gone');
+  }, MANIFEST_RUN_MS + 8000);
 
   it('pieces never see loom\'s bearer token; a piece named loom is ignored', async () => {
     const seen = join(bin, 'seen');

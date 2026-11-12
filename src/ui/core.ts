@@ -14,6 +14,7 @@ import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
 import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, surfaceOf, whereLabel, type MemoryView } from './data.js';
+import { conversationSteps } from '../comms.js';
 import { conversationView } from '../conversations.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
@@ -31,14 +32,7 @@ export function uiTimeZone(): string {
   return 'UTC';
 }
 
-/** The agent's name: IDENTITY.md's first heading, else the context dir's name. */
-export function agentName(contextDir: string): string {
-  try {
-    const line = readFileSync(join(contextDir, 'IDENTITY.md'), 'utf-8').split('\n').find((l) => /^#\s+\S/.test(l));
-    if (line) return line.replace(/^#\s+/, '').trim();
-  } catch { /* no identity file */ }
-  return contextDir.split('/').filter(Boolean).pop() ?? 'loom';
-}
+export { agentName } from './data.js';
 
 export interface CoreOptions { timeZone?: string; nowMs?: number }
 
@@ -189,7 +183,7 @@ export function homePage(contextDir: string, query: Record<string, string>, opts
     {
       id: 'mind',
       title: 'On my mind',
-      side: true,
+      place: 'side' as const,
       blocks: heat.rows.length
         ? [{ type: 'list', items: heat.rows.map((m) => ({ text: m.title, meta: `${m.category} · ${m.heat.toFixed(2)}`, page: memoryPage(m.ref) })) },
           { type: 'link', text: 'Why these?', page: 'mind' }]
@@ -200,7 +194,7 @@ export function homePage(contextDir: string, query: Record<string, string>, opts
     sections.push({
       id: 'people',
       title: 'People',
-      side: true,
+      place: 'side' as const,
       blocks: attention.length
         ? [{
             type: 'list',
@@ -350,7 +344,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
     sections.push({
       id: 'heat',
       title: 'Heat',
-      side: true,
+      place: 'side' as const,
       blocks: [
         { type: 'stats', items: [{ label: 'now', value: m.heat.toFixed(2), tone: heatTone(m.heat) }, { label: 'half-life', value: `${m.halfLifeDays}d` }] },
         { type: 'text', text: why(m, tz, nowMs, names), tone: 'muted' },
@@ -358,7 +352,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
     });
   }
   // The rest is machine detail, a tap away (HANDOFF: machine text goes behind a details).
-  sections.push({ id: 'record', side: true, blocks: [{ type: 'details', summary: 'Machine details', meta: m.ref, blocks: [record] }] });
+  sections.push({ id: 'record', place: 'side' as const, blocks: [{ type: 'details', summary: 'Machine details', meta: m.ref, blocks: [record] }] });
   return { title: m.title, sections };
 }
 
@@ -511,7 +505,9 @@ export async function coreAct(contextDir: string, action: string, fields: Record
  * One conversation as a page: its render (the venue's own when its piece offers one and answers,
  * else core's generic render), drawn group by group. Null when the agent has no such conversation.
  */
-export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string } = {}): Promise<Page | null> {
+export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string; before?: number; page?: string; home?: string; days?: number;
+  /** False: its asks aren't the viewer's (another member's Comms thread, t-2084), so no digest says it needs you or asked. */
+  asks?: boolean } = {}): Promise<Page | null> {
   const view = await conversationView(contextDir, agent, id, opts.env ?? process.env);
   if (!view) return null;
   const tz = opts.timeZone ?? uiTimeZone();
@@ -524,11 +520,21 @@ export async function conversationPage(contextDir: string, agent: string, id: st
       items: g.items.map((it) => ({
         text: it.title,
         ...(() => { const meta = [when(it.when), ...(it.who ?? []), it.ref].filter(Boolean).join(' · '); return meta ? { meta } : {}; })(),
-        ...(it.status ? { badge: it.status } : {}),
+        ...(it.status && !(opts.asks === false && (it.status === 'needs you' || it.status === 'asked')) ? { badge: it.status } : {}),
         ...(it.person?.[0] ? { person: it.person[0] } : {}),
       })),
     }],
   }));
+  const watchable = c.venue !== 'loom' && c.venue !== 'spawn';
+  let steps: Awaited<ReturnType<typeof conversationSteps>> = [];
+  let unavailable = false;
+  try { if (watchable && opts.home) steps = await conversationSteps(opts.home, opts.env ?? process.env, id, opts.before, opts.days); } catch { unavailable = true; }
+  if (watchable) sections.unshift({ id: 'watching', title: 'Watching', blocks: [
+    { type: 'text', text: 'Live steps · Read only. Closing this leaves the conversation as it is. Replies stay in its original venue.', tone: 'muted' },
+    ...(steps.length ? [{ type: 'list' as const, wrap: true, items: steps.map((s) => ({ text: s.text ?? 'Step unavailable', meta: `${when(s.at)} · ${s.run}`, badge: s.state })) }]
+      : [{ type: 'text' as const, text: unavailable ? 'Live steps are unavailable right now.' : 'No recent steps yet. A managed body sends steps while it works.', tone: 'muted' as const }]),
+    ...(steps.length === 100 ? [{ type: 'list' as const, items: [{ text: 'Earlier steps', page: `loom:${opts.page ?? `a/${agent}/conversation/${id}`}?before=${steps[0].seq}` }] }] : []),
+  ] });
   if (view.render.error) sections.push({ id: 'render', blocks: [{ type: 'text', tone: 'muted', text: `Shown by loom: ${view.render.error}.` }] });
-  return { title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
+  return { refresh: watchable && opts.before === undefined && (steps.some((s) => s.state === 'running') || Date.now() - Math.max(Date.parse(steps.at(-1)?.at ?? c.last), Date.parse(c.last)) < 15 * 60_000) ? 2 : undefined, title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
 }

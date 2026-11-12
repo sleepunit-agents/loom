@@ -1,0 +1,23 @@
+.loom-kit-frame { display: grid; gap: 16px; min-width: 0; }
+.loom-kit-filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.loom-kit-list { display: flex; flex-direction: column; min-width: 0; }
+.loom-kit-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 14px 12px 18px; width: 100%; text-align: left; color: var(--v-text); border-bottom: 1px solid var(--v-border); }
+.loom-kit-row[data-icon] { grid-template-columns: 32px minmax(0, 1fr) auto; }
+.loom-kit-row-shell { display: flex; align-items: stretch; min-width: 0; }
+.loom-kit-row-shell > .loom-kit-row { flex: 1; min-width: 0; }
+.loom-kit-row-actions { display: flex; align-items: center; gap: 8px; padding-inline: 8px; border-bottom: 1px solid var(--v-border); }
+.loom-kit-row[data-layout="stack"] { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+.loom-kit-row:hover { background: color-mix(in srgb, var(--v-text) 6%, transparent); }
+.loom-kit-row[aria-current="true"] { background: color-mix(in srgb, var(--t, var(--v-pink)) 14%, transparent); }
+.loom-kit-row:focus-visible { outline: 2px solid var(--t, var(--v-pink)); outline-offset: -2px; }
+.loom-kit-words { display: grid; gap: 2px; min-width: 0; }
+.loom-kit-row[data-layout="stack"] .loom-kit-words { gap: 7px; }
+.loom-kit-title { font-size: 14.5px; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.loom-kit-row[data-unread] .loom-kit-title { font-weight: 650; }
+.loom-kit-dot { position: absolute; left: 6px; top: 22px; width: 6px; height: 6px; border-radius: 99px; background: var(--v-blue); box-shadow: 0 0 6px var(--v-blue); }
+.loom-kit-meta { font-size: 13px; color: var(--v-text-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.loom-kit-row[data-layout="stack"] .loom-kit-meta { display: block; font-family: var(--loom-font-data); font-size: 12px; color: var(--v-text-3); }
+.loom-kit-status { width: fit-content; font-size: 12px; padding: 3px 8px; border: 1px solid var(--v-edge); border-radius: 8px; color: var(--v-text-2); }
+.loom-kit-trailing { font-family: var(--loom-font-data); font-size: 11px; color: var(--v-text-3); padding-top: 2px; white-space: nowrap; }
+.loom-kit-state { padding: 16px 12px; color: var(--v-text-2); }
+@media (prefers-contrast: more) { .loom-kit-meta { color: var(--v-text); } }

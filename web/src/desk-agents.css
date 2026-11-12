@@ -1,0 +1,247 @@
+/* The agent-centric desktop (desk-agents.tsx, docs/specs/agent-desk.md), in every look: each look's own colours
+   (looks/looks.css); an agent's edge is its own colour (--c, look.ts markColor). Loaded with the desk's chunk.
+
+   Home: the Needs you band over a grid of big cards that fills the desktop. Work: the rail, a fixed-width column on
+   the right of the tiles (tiling/tiles.tsx places it). */
+
+/* status tones: a dot in the bright colour, words in the look's readable ink for it */
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow){--st:var(--loom-ok);--st-ink:var(--status-ok-ink)}
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow)[data-tone="work"]{--st:var(--v-blue);--st-ink:var(--status-info-ink)}
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow)[data-tone="ask"]{--st:var(--v-yellow);--st-ink:var(--status-warn-ink)}
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow)[data-tone="bad"]{--st:var(--loom-bad);--st-ink:var(--loom-bad-ink)}
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow)[data-tone="warn"]{--st:var(--loom-warn);--st-ink:var(--loom-warn-ink)}
+:root[data-look] :is(.loom-bigcard,.loom-rcard,.loom-rrow)[data-tone="off"]{--st:var(--v-text-3);--st-ink:var(--v-text-2)}
+:root[data-look] .loom-dot{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:var(--st,var(--v-pink));box-shadow:var(--glow-tick) var(--st,var(--v-pink))}
+:root[data-look] .loom-askb{display:inline-flex;align-items:center;flex:none;padding:4px 6px;font-size:10.5px;font-weight:600;line-height:1;letter-spacing:.08em;
+  color:var(--v-on-accent);background:var(--v-yellow);white-space:nowrap}
+
+/* ---- Home ---- */
+:root[data-look] .loom-adesk{height:100%;min-height:0;display:flex;flex-direction:column;gap:14px}
+:root[data-look] .loom-adesk__none{flex:1;display:grid;place-items:center}
+
+/* the Needs you band: one line, its first asks as chips, the Inbox at the end */
+:root[data-look] .loom-needs-band{position:relative;flex:none;display:flex;align-items:center;gap:14px;min-height:46px;padding:7px 14px;min-width:0;
+  background:color-mix(in srgb,var(--v-paper) 90%,transparent);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 55%,var(--v-border));clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)}
+:root[data-look] .loom-needs-band[data-zero]{min-height:36px;padding-block:4px;box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-needs-band__lab{display:flex;align-items:center;gap:8px;flex:none;font-size:11px;font-weight:500;letter-spacing:.14em;color:var(--v-accent-ink,var(--v-pink));white-space:nowrap}
+:root[data-look] .loom-needs-band[data-zero] .loom-needs-band__lab{color:var(--v-text-3)}
+:root[data-look] .loom-needs-band[data-zero] .loom-dot{background:var(--v-edge);box-shadow:none}
+:root[data-look] .loom-needs-band__items{display:flex;gap:10px;flex:1;min-width:0;overflow:hidden}
+:root[data-look] .loom-needs-band__quiet{font-size:13px;color:var(--v-text-3)}
+:root[data-look] .loom-needs-band__all{margin-left:auto;flex:none;font-size:12.5px;color:var(--v-text-2);text-decoration:none;white-space:nowrap}
+:root[data-look] .loom-nchip{display:flex;align-items:center;gap:10px;flex:0 1 auto;min-width:0;padding:4px 6px 4px 10px;
+  background:color-mix(in srgb,var(--v-beige-2) 80%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
+:root[data-look] .loom-nchip[data-tone="ask"]{box-shadow:inset 2px 0 0 var(--v-yellow)}
+:root[data-look] .loom-nchip__tx{display:flex;flex-direction:column;flex:1 1 auto;min-width:150px;max-width:360px;text-align:left;line-height:1.2;color:var(--v-text)}
+:root[data-look] .loom-nchip__tx b{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-nchip__tx small{font-size:11.5px;color:var(--v-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-nchip__unread{display:inline-block;width:7px;height:7px;margin:0 6px 1px 0;border-radius:50%;background:var(--loom-unread)}
+:root[data-look] .loom-nchip__acts{display:flex;gap:5px;flex:none}
+:root[data-look] .loom-nchip__live{font-size:11px;color:var(--v-text-3);white-space:nowrap}
+
+/* the cards fill the desktop: one across, two, three, then 2 + 2, 3 + 2, 3 + 3; more scroll in threes */
+:root[data-look] .loom-adesk__cards{flex:1;min-height:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);gap:14px}
+:root[data-look] .loom-adesk__cards>*{grid-column:span 2}
+:root[data-look] .loom-adesk__cards[data-n="1"]>*{grid-column:span 6}
+:root[data-look] .loom-adesk__cards:is([data-n="2"],[data-n="4"])>*{grid-column:span 3}
+:root[data-look] .loom-adesk__cards[data-n="5"]>:nth-child(n+4){grid-column:span 3}
+:root[data-look] .loom-adesk__cards[data-n="7"]{grid-auto-rows:minmax(300px,1fr);overflow-y:auto;scrollbar-width:thin}
+
+/* ---- a big card: a dark panel, its colour on the top edge and the cut corner; its box decides how big the face is ---- */
+:root[data-look] .loom-bigcard{position:relative;min-width:0;min-height:0;container-type:size;color:var(--v-text);
+  background:color-mix(in srgb,var(--v-paper) 90%,transparent);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(0 0,calc(100% - 24px) 0,100% 24px,100% 100%,0 100%)}
+:root[data-look] .loom-bigcard::before{content:"";position:absolute;left:24px;top:0;width:72px;height:3px;background:var(--c);box-shadow:var(--glow-bar) var(--c);pointer-events:none}
+:root[data-look] .loom-bigcard::after{content:"";position:absolute;right:-5px;top:11px;width:34px;height:1.5px;background:var(--c);transform:rotate(45deg);pointer-events:none}
+:root[data-look] .loom-bigcard__in{position:absolute;inset:0;display:grid;grid-template-columns:auto minmax(0,560px);justify-content:center;
+  grid-template-rows:minmax(0,1fr) auto;gap:10px 26px;padding:26px 24px 18px;align-items:center}
+:root[data-look] .loom-bigcard__face{position:relative;display:grid;place-items:center;align-self:center;text-decoration:none;border-radius:6px}
+:root[data-look] .loom-bigcard__face>span:first-child{filter:drop-shadow(0 0 8px color-mix(in srgb,var(--c) 45%,transparent))}
+:root[data-look] .loom-bigcard__st{position:absolute;right:8%;bottom:8%;width:13px;height:13px;border-radius:50%;background:var(--st);box-shadow:0 0 0 3px var(--v-paper),var(--glow-tick) var(--st)}
+:root[data-look] .loom-bigcard__info{min-width:0;display:flex;flex-direction:column;gap:6px;align-self:center}
+:root[data-look] .loom-bigcard__eb{font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--st-ink)}
+:root[data-look] .loom-bigcard__name{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-family:var(--font-display);font-weight:600;font-size:30px;line-height:1.05;color:var(--v-text)}
+:root[data-look] .loom-bigcard__kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:4px 0 0;font-size:14px}
+:root[data-look] .loom-bigcard__kv>div{display:contents}
+:root[data-look] .loom-bigcard__kv dt{font-size:11px;line-height:20px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--v-text-3)}
+:root[data-look] .loom-bigcard__kv dd{margin:0;min-width:0;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-bigcard__kv [data-row="now"] dd{color:var(--v-text)}
+:root[data-look] .loom-bigcard__kv [data-tone="bad"] dd{color:var(--loom-bad-ink)} :root[data-look] .loom-bigcard__kv [data-tone="warn"] dd{color:var(--loom-warn-ink)}
+:root[data-look] .loom-bigcard__link{color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 35%,transparent);text-underline-offset:3px}
+:root[data-look] .loom-bigcard__at{color:var(--v-text-3)}
+:root[data-look] .loom-bigcard__sec{min-width:0}
+:root[data-look] .loom-bigcard__strip{display:flex;align-items:center;gap:8px;width:100%;min-width:0;margin-top:6px;padding:8px 10px;text-align:left;font-size:13.5px;color:var(--v-text);
+  background:color-mix(in srgb,var(--c) 10%,var(--v-beige-2));box-shadow:inset 2px 0 0 var(--c)}
+:root[data-look] .loom-bigcard__strip[data-kind="ask"]{--c:var(--v-yellow)}
+:root[data-look] .loom-bigcard__strip b{flex:none;font-size:12px;font-weight:600;color:var(--st-ink);white-space:nowrap}
+:root[data-look] .loom-bigcard__strip[data-kind="unread"] b{color:inherit}
+:root[data-look] .loom-bigcard__strip span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-bigcard__strip[data-kind="none"]{background:none;box-shadow:none;padding-left:0;color:var(--v-text-3)}
+:root[data-look] .loom-bigcard__compose{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+:root[data-look] .loom-bigcard__compose input{flex:1;min-width:0;padding:10px 12px;font-size:14px;color:var(--v-text);background:color-mix(in srgb,var(--v-canvas) 70%,transparent);
+  border:1px solid var(--v-border);border-radius:0}
+:root[data-look] .loom-bigcard__compose input:focus{outline:none;border-color:var(--c);box-shadow:0 0 0 1px var(--c)}
+:root[data-look] .loom-bigcard__compose input::placeholder{color:var(--v-text-3)}
+:root[data-look] .loom-bigcard__error{flex-basis:100%;margin:0;font-size:12.5px;color:var(--loom-bad-ink)}
+/* the card adapts to its own box */
+@container (max-width:440px) or (max-height:300px){
+  :root[data-look] .loom-bigcard__name{font-size:22px}
+  :root[data-look] .loom-bigcard__in{gap:8px 14px;padding:22px 16px 14px}
+}
+@container (max-width:560px){
+  :root[data-look] .loom-bigcard__kv{grid-template-columns:minmax(0,1fr);gap:5px}
+  :root[data-look] .loom-bigcard__kv dt{display:none}
+  :root[data-look] .loom-bigcard__kv dd{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3}
+}
+
+/* ---- the rail ---- */
+:root[data-look] .loom-arail{position:absolute;top:0;right:0;bottom:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+/* The agent you're with (t-2075): out of the list, on top, set apart from Needs you and the rest by a rule. */
+:root[data-look] .loom-arail__one,:root[data-look] .loom-arail__with{display:flex;flex-direction:column;flex:none;min-width:0;width:100%}
+:root[data-look] .loom-arail__with{position:relative;z-index:1;padding-bottom:10px;box-shadow:0 1px 0 0 var(--v-border)}
+:root[data-look] .loom-rneeds{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px 9px;flex:none;width:100%;padding:10px 12px;text-align:left;color:var(--v-text);
+  background:color-mix(in srgb,var(--v-paper) 92%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 55%,var(--v-border))}
+:root[data-look] .loom-rneeds__lab{font-size:10.5px;letter-spacing:.14em;color:var(--v-accent-ink,var(--v-pink))}
+:root[data-look] .loom-rneeds__top{grid-column:2;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rneeds[data-zero]{box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-rneeds[data-zero] :is(.loom-rneeds__lab,.loom-rneeds__top){color:var(--v-text-3)}
+:root[data-look] .loom-rneeds[data-zero] .loom-dot{background:var(--v-edge);box-shadow:none}
+
+:root[data-look] .loom-rcard{position:relative;display:block;flex:none;width:100%;text-align:left;color:var(--v-text);
+  background:color-mix(in srgb,var(--v-paper) 92%,transparent);box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%)}
+:root[data-look] .loom-rcard::before{content:"";position:absolute;left:14px;top:0;width:40px;height:2px;background:var(--c);box-shadow:var(--glow-bar) var(--c)}
+:root[data-look] .loom-rcard__top{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;gap:4px 10px;padding:8px 12px 4px 4px}
+:root[data-look] .loom-rcard__face{display:grid;place-items:center;width:96px;height:84px;overflow:hidden}
+:root[data-look] .loom-rcard__who{display:flex;flex-direction:column;gap:3px;min-width:0}
+:root[data-look] .loom-rcard__who b{font-family:var(--font-display);font-weight:600;font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-rcard__st{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--st-ink)}
+:root[data-look] .loom-rcard__st .loom-dot{width:7px;height:7px}
+:root[data-look] .loom-rcard__now{display:block;padding:0 12px;font-size:12.5px;color:var(--v-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rcard__now i{font-style:normal;font-size:10.5px;letter-spacing:.06em;color:var(--v-text-3)}
+:root[data-look] .loom-rcard__now[data-tone="bad"]{color:var(--loom-bad-ink)} :root[data-look] .loom-rcard__now[data-tone="warn"]{color:var(--loom-warn-ink)}
+:root[data-look] .loom-rcard__ur{display:flex;align-items:center;gap:7px;min-width:0;margin:6px 12px 10px;font-size:12.5px}
+:root[data-look] .loom-rcard__ur b{flex:none;display:grid;place-items:center;min-width:20px;height:18px;padding:0 5px;border-radius:9px;font-size:11px;font-weight:700;line-height:1;
+  color:var(--v-on-accent);background:var(--c)}
+:root[data-look] .loom-rcard__ur span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rcard__ur[data-none]{color:var(--v-text-3)}
+:root[data-look] .loom-rcard>.loom-askb{position:absolute;right:12px;top:10px}
+
+@media (hover:hover) and (pointer:fine){
+  :root[data-look] :is(.loom-rcard,.loom-rneeds):hover{box-shadow:inset 0 0 0 1px var(--v-edge);background:color-mix(in srgb,var(--v-beige-2) 92%,transparent)}
+  :root[data-look] .loom-bigcard__strip:not([data-kind="none"]):hover{background:color-mix(in srgb,var(--c) 18%,var(--v-beige-2))}
+  :root[data-look] .loom-needs-band__all:hover{color:var(--v-text)}
+  :root[data-look] .loom-nchip__tx:hover b{text-decoration:underline;text-underline-offset:3px}
+}
+:root[data-look] :is(.loom-rcard,.loom-rneeds,.loom-bigcard__strip,.loom-nchip__tx,.loom-bigcard__face):focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+
+/* More contrast: no glass, no glow */
+@media (prefers-contrast:more){
+  :root[data-look] :is(.loom-bigcard,.loom-needs-band,.loom-rcard,.loom-rneeds){-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
+}
+
+/* the accordion: an agent on one line (its face cropped to its head), one card open */
+:root[data-look] .loom-rrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto auto;align-items:center;gap:9px;flex:none;width:100%;padding:3px 12px 3px 4px;
+  text-align:left;color:var(--v-text);background:color-mix(in srgb,var(--v-paper) 92%,transparent);box-shadow:inset 0 0 0 1px var(--v-border),inset 2px 0 0 var(--c)}
+:root[data-look] .loom-rrow__face{display:block;width:48px;height:42px;overflow:hidden}
+:root[data-look] .loom-rrow__face>span{margin:-3px 0 0 0}
+:root[data-look] .loom-rrow b{display:flex;align-items:center;gap:8px;min-width:0;font-family:var(--font-display);font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rrow .loom-dot{width:7px;height:7px}
+:root[data-look] .loom-rrow .loom-askb{padding:3px 5px}
+:root[data-look] .loom-rrow__n{display:grid;place-items:center;min-width:20px;height:18px;padding:0 5px;border-radius:9px;font-size:11px;font-weight:700;line-height:1;
+  color:var(--v-on-accent);background:var(--c)}
+:root[data-look] .loom-rrow:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media (hover:hover) and (pointer:fine){:root[data-look] .loom-rrow:hover{box-shadow:inset 0 0 0 1px var(--v-edge),inset 2px 0 0 var(--c);background:color-mix(in srgb,var(--v-beige-2) 92%,transparent)}}
+
+/* the comm screen's card: the screen (drawn by the Comms pane, comms.css) the card's width, its face at 2x */
+:root[data-look] .loom-rscreen{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,var(--v-border)),inset 0 0 40px -20px var(--c)}
+:root[data-look] .loom-rscreen__slot{padding:12px 12px 4px;min-height:24px}
+:root[data-look] .loom-rscreen__slot .comms-screen{width:100%}
+:root[data-look] .loom-rscreen__slot .comms-screen__glass{width:100%;height:184px;aspect-ratio:auto}
+:root[data-look] .loom-rscreen__meta{display:flex;align-items:baseline;gap:8px;min-width:0;padding:6px 12px 2px}
+:root[data-look] .loom-rscreen__meta b{font-family:var(--font-display);font-weight:600;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rscreen__meta small{font-size:11px;color:var(--v-text-3);white-space:nowrap}
+
+/* ---- hiding (tiles.tsx; docs/specs/agent-desk.md, "Hiding"): the rail's strip, its edge and the rail brought in over
+   the apps; the dock's strip and edge. A glowing dot while anything is unread or waiting on you. ---- */
+:root[data-look] .loom-glow{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--v-pink);box-shadow:0 0 10px 2px var(--v-pink)}
+@media (prefers-reduced-motion:no-preference){:root[data-look] .loom-glow{animation:loom-glow 1.6s ease-in-out infinite}}
+@keyframes loom-glow{50%{opacity:.45}}
+:root[data-look] .loom-rstrip{position:absolute;top:0;right:0;bottom:0;width:14px;cursor:pointer;background:color-mix(in srgb,var(--v-paper) 90%,transparent);box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-rstrip::after{content:"";position:absolute;left:5px;top:50%;width:3px;height:40px;margin-top:-20px;border-radius:2px;background:var(--v-edge)}
+:root[data-look] .loom-rstrip:is(:hover,:focus-visible){box-shadow:inset 0 0 0 1px var(--v-edge)}
+:root[data-look] .loom-rstrip .loom-glow{left:3px;top:10px}
+:root[data-look] .loom-redge{position:absolute;top:0;right:calc(-1 * var(--desk-gutter,24px));bottom:0;width:calc(var(--desk-gutter,24px) + 6px);z-index:30}
+:root[data-look] .loom-redge::after{content:"";position:absolute;right:0;top:0;bottom:0;width:2px;background:color-mix(in srgb,var(--v-pink) 30%,transparent)}
+:root[data-look] .loom-redge .loom-glow{right:4px;top:50%}
+@media (pointer:coarse){:root[data-look] .loom-redge{width:calc(var(--desk-gutter,24px) + 16px)}}
+/* over the apps, never moving them: from the right edge, the rail's own width */
+:root[data-look] .loom-tiles>.loom-arail.loom-arail--over{z-index:40;width:calc(var(--rail-over,320px) + 20px);padding:10px;background:color-mix(in srgb,var(--v-canvas) 94%,transparent);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px var(--v-edge),-20px 0 40px -10px rgba(0,0,0,.55)}
+@media (prefers-reduced-motion:no-preference){:root[data-look] .loom-tiles>.loom-arail.loom-arail--over{animation:loom-rail-in .22s ease-out}}
+@keyframes loom-rail-in{from{transform:translateX(calc(100% + 24px))}}
+
+/* ---- a phone's Home (PhoneHome): one column; the band's chips stacked, the cards as tall as they need ---- */
+:root[data-look] .loom-phome{display:flex;flex-direction:column;gap:12px;min-width:0}
+:root[data-look] .loom-phome .loom-needs-band{flex-direction:column;align-items:stretch;gap:8px;padding:10px 12px}
+:root[data-look] .loom-phome .loom-needs-band__items{flex-direction:column;width:100%}
+:root[data-look] .loom-phome .loom-nchip{flex-wrap:wrap}
+:root[data-look] .loom-phome .loom-nchip__tx{max-width:none;flex-basis:100%}
+:root[data-look] .loom-phome .loom-needs-band__all{margin-left:0}
+:root[data-look] .loom-phome .loom-bigcard{flex:none;container-type:inline-size}
+:root[data-look] .loom-phome .loom-bigcard__in{position:relative;inset:auto;grid-template-columns:auto minmax(0,1fr);justify-content:stretch;gap:10px 14px;padding:22px 14px 14px}
+:root[data-look] .loom-phome .loom-bigcard__name{font-size:22px}
+:root[data-look] .loom-phome .loom-rrow{min-height:48px}
+/* a field on a phone is 16 px at least, so iOS doesn't zoom in on it (immersion.ts) */
+:root[data-look] .loom-phome .loom-bigcard__compose input{font-size:16px}
+/* how it is, in words: chrome, not text to select (index.css's chrome list) */
+:root[data-look] :is(.loom-bigcard__eb,.loom-rcard__st,.loom-askb){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+/* Agreed large cards (t-1982): spend room on words, with scrolling rather than truncation. */
+:root[data-look] .loom-bigcard__in { display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:20px; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
+:root[data-look] .loom-bigcard__identity { display:flex; align-items:center; gap:18px; flex:none; min-width:0; }
+:root[data-look] .loom-bigcard__face { flex:none; }
+:root[data-look] .loom-bigcard__info { flex:1; }
+:root[data-look] .loom-bigcard__name { overflow-wrap:anywhere; }
+:root[data-look] .loom-bigcard__columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; min-width:0; flex:1 0 auto; }
+:root[data-look] .loom-bigcard__columns>div { min-width:0; display:flex; flex-direction:column; gap:22px; }
+:root[data-look] .loom-bigcard h3 { margin:0 0 10px; color:var(--v-text-3); font:11px var(--loom-font-data); text-transform:uppercase; letter-spacing:.12em; }
+:root[data-look] .loom-bigcard__kv { display:block; margin:0; }
+:root[data-look] .loom-bigcard__kv dt { display:none; }
+:root[data-look] .loom-bigcard__kv dd { display:block; white-space:normal; overflow:visible; overflow-wrap:anywhere; line-height:1.5; }
+:root[data-look] .loom-bigcard__item { margin:0; padding:10px 0; border-bottom:1px solid var(--v-border); overflow-wrap:anywhere; font-size:14px; }
+:root[data-look] .loom-bigcard__item small { display:block; color:var(--v-text-3); font-size:12px; }
+:root[data-look] .loom-bigcard__empty { color:var(--v-text-3); font-size:14px; }
+:root[data-look] .loom-bigcard__question { flex:none; min-width:0; padding:16px; border:1px solid color-mix(in srgb,var(--v-yellow) 45%,var(--v-border)); background:color-mix(in srgb,var(--v-yellow) 6%,var(--v-paper)); }
+:root[data-look] .loom-bigcard__question .loom-inbox__read { padding:0; }
+:root[data-look] .loom-bigcard__question :is(.loom-inbox__meta,.loom-inbox__details) { display:none; }
+:root[data-look] .loom-bigcard__question .loom-split__head { font-size:18px; }
+:root[data-look] .loom-bigcard__question .loom-inbox__answer { margin-top:12px; }
+:root[data-look] .loom-bigcard__compose { flex:none; margin-top:auto; }
+:root[data-look] .loom-bigcard__strip span { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+@container (max-width:560px) {
+  :root[data-look] .loom-bigcard__columns { grid-template-columns:minmax(0,1fr); gap:22px; }
+  :root[data-look] .loom-bigcard__kv dd { display:block; -webkit-line-clamp:unset; }
+}
+:root[data-look] .loom-phome .loom-bigcard__in { display:flex; }
+:root[data-look] .loom-bigcard__words summary { font-size:12px; color:var(--v-text-2); cursor:pointer; }
+:root[data-look] .loom-bigcard__question .loom-inbox__read { gap:10px; }
+:root[data-look] .loom-bigcard__question .loom-inbox__answer { gap:8px; margin-top:0; }
+
+/* Complete jobs stay reachable in the compact rail and wrap on phones. */
+.loom-rcard-wrap { min-width: 0; }
+.loom-rcard-wrap > .loom-rcard { width: 100%; }
+.loom-jobs-fold { padding: .5rem; font-size: .8rem; }
+.loom-jobs-fold summary { cursor: pointer; }
+.loom-jobs { list-style: none; margin: .5rem 0; padding: 0; }
+.loom-jobs li { display: flex; flex-direction: column; gap: .15rem; padding: .4rem 0; overflow-wrap: anywhere; }
+.loom-jobs small { opacity: .7; font-size: .7rem; }
+/* What it's doing, one box per running job (t-2077): under the card, before its jobs list. */
+.loom-doing { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.loom-doing__box { display: flex; flex-direction: column; gap: 2px; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c, var(--v-pink)) 45%, transparent); background: color-mix(in srgb, var(--c, var(--v-pink)) 8%, transparent); color: var(--v-text); text-decoration: none; }
+a.loom-doing__box:hover, a.loom-doing__box:focus-visible { border-color: var(--c, var(--v-pink)); }
+.loom-doing__who { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--v-text-3); font-weight: 400; }
+.loom-doing__what { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-doing__meta { font-size: 11px; color: var(--v-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-doing__more { font-size: 11px; color: var(--v-text-3); padding: 0 10px; }

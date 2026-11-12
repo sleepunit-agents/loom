@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { motion, useInView } from "motion/react";
+import { m, useInView } from "motion/react";
 import { cn } from "@/lib/utils";
 import { useChoreography } from "@/lib/cojeev-motion/choreography";
 
@@ -41,14 +41,13 @@ export function AgentState({ status = "idle", size = "md", label, description, c
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
   }, []);
-  const live = !quiet && inView && visible;
-  const active = live && (status === "thinking" || status === "working");
+  const active = !quiet && inView && visible && (status === "thinking" || status === "working");
   const contour = silhouettes[status];
   const alternate = silhouettes[status === "thinking" ? "working" : "thinking"];
   const pathAnimation = active ? { d: [contour, alternate, contour] } : { d: contour };
   const fieldTransition = active ? { duration: status === "working" ? 5 : 7, repeat: Infinity, ease: "easeInOut" as const } : transition;
   return (
-    <div ref={ref} data-slot="agent-state" data-status={status} data-size={size} data-animated={active || undefined} data-live={live || undefined} className={cn("v-agent-state", className)} role="status" aria-live="polite" aria-atomic="true" {...props}>
+    <div ref={ref} data-slot="agent-state" data-status={status} data-size={size} data-animated={active || undefined} className={cn("v-agent-state", className)} role="status" aria-live="polite" aria-atomic="true" {...props}>
       <svg className="v-agent-state__field" viewBox="0 0 180 160" fill="none" aria-hidden="true" focusable="false">
         <defs>
           <radialGradient id={`${id}-body`} cx=".3" cy=".2" r=".85">
@@ -67,23 +66,23 @@ export function AgentState({ status = "idle", size = "md", label, description, c
             <stop offset="1" stopColor="var(--agent-deep)" stopOpacity=".8" />
           </linearGradient>
           <clipPath id={`${id}-clip`}>
-            <motion.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} />
+            <m.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} />
           </clipPath>
         </defs>
         <ellipse cx="92" cy="139" rx="43" ry="5" fill="var(--agent-deep)" opacity=".12" />
-        <motion.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} fill={`url(#${id}-body)`} />
+        <m.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} fill={`url(#${id}-body)`} />
         <g clipPath={`url(#${id}-clip)`}>
-          <motion.g initial={false} animate={active ? { rotate: [0, 12, -6, 0], x: [0, 5, -3, 0] } : { rotate: 0, x: 0 }} transition={active ? { duration: 10, repeat: Infinity, ease: "easeInOut" } : transition} style={{ transformOrigin: "90px 80px" }}>
+          <m.g initial={false} animate={active ? { rotate: [0, 12, -6, 0], x: [0, 5, -3, 0] } : { rotate: 0, x: 0 }} transition={active ? { duration: 10, repeat: Infinity, ease: "easeInOut" } : transition} style={{ transformOrigin: "90px 80px" }}>
             <path d="M15 61C51 32 81 110 128 89C165 72 142 24 105 14C163 7 181 113 125 142C74 168 20 125 15 61Z" fill={`url(#${id}-fold)`} />
             <path d="M26 48C64 18 59 134 119 110C147 99 132 71 155 47" stroke={`url(#${id}-rim)`} strokeWidth="1.2" />
             <path d="M30 44C69 19 58 139 125 111C151 99 136 69 159 43" stroke={`url(#${id}-rim)`} strokeWidth=".65" opacity=".75" />
             <path d="M35 42C74 26 64 143 131 109C154 97 141 65 162 40" stroke={`url(#${id}-rim)`} strokeWidth=".5" opacity=".5" />
             <path d="M24 92C47 78 93 148 139 118" stroke="var(--agent-deep)" strokeOpacity=".25" strokeWidth="14" />
-          </motion.g>
+          </m.g>
         </g>
-        <motion.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} stroke={`url(#${id}-rim)`} strokeWidth="1.2" />
+        <m.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} stroke={`url(#${id}-rim)`} strokeWidth="1.2" />
         <g className="v-agent-state__mark" stroke="var(--ink-fixed)" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-          {status === "complete" ? <path d="m77 79 9 9 19-21" /> : status === "error" ? <><path d="M90 66v16" /><path d="M90 91h.01" /></> : status === "needs-input" ? <><path d="M84 72a7 7 0 0 1 14 0c0 5-8 6-8 11" /><path d="M90 92h.01" /></> : <><g className="v-agent-state__eyes"><path d="M77 77v5M101 77v5" /></g><path d={status === "idle" ? "M84 91q6 4 12 0" : status === "working" ? "M85 90q5 3.5 10 0" : "M85 91h10"} /></>}
+          {status === "complete" ? <path d="m77 79 9 9 19-21" /> : status === "error" ? <><path d="M90 66v16" /><path d="M90 91h.01" /></> : status === "needs-input" ? <><path d="M84 72a7 7 0 0 1 14 0c0 5-8 6-8 11" /><path d="M90 92h.01" /></> : <><path d="M77 77v5M101 77v5" /><path d={status === "idle" ? "M84 91q6 4 12 0" : "M85 91h10"} /></>}
         </g>
       </svg>
       <div className="v-agent-state__copy"><span className="v-agent-state__label">{label ?? stateLabels[status]}</span>{description && <span className="v-agent-state__description">{description}</span>}</div>

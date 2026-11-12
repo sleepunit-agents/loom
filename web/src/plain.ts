@@ -103,3 +103,14 @@ export async function openItem(i: { key: string; kind: string; page?: string; ac
   else if (to.sheet) to.sheet();
   else to.go(where.sheet);
 }
+
+/**
+ * Who asks, in words (t-1970): the agent, or, for another agent's request it passed on (a relay), that agent first:
+ * "Mark, via Art E Fish". `name` turns an agent's id into its name. `asks` is the line a chip says: "Mark asks, via Art".
+ */
+export function askerOf(i: { agent?: string; relayedFrom?: string }, name: (a?: string) => string): { who: string; asks: string } {
+  const by = name(i.agent);
+  if (!i.relayedFrom || !by) return { who: by, asks: by ? `${by} asks` : '' };
+  const from = name(i.relayedFrom);
+  return { who: `${from}, via ${by}`, asks: `${from} asks, via ${by}` };
+}

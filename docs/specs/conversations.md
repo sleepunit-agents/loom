@@ -46,6 +46,18 @@ The owner's other rulings shape everything below:
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
    no tools, whose output is capped so it cannot carry the text out in bulk: a score, and at most one line of ≤ 200
    characters per conversation per day.
+   - **The one exception: Comms threads** ([comms.md](comms.md), "History"; the owner, 2026-11-05: "14 days is great.
+     you've got the full context, I don't need to look back at everything"). A `loom` conversation's words are also
+     kept for its thread, so its member can scroll back:
+     - encrypted at rest to a key of their own;
+     - for at most 14 days (household.json's `comms_days`), the continuity slot's window, then swept;
+     - read only by the thread's member, who must own its agent, and by no identity, token or tool;
+     - never in a bundle or export;
+     - wiped at once when the thread is deleted.
+
+     A thread's refs index (comms.md, "Work in this thread") isn't words: it keeps the tasks, changes and notes a
+     message named (`t-12`, `github:acme/app#3`, `note:pond/plan`), never the text around them. So it may outlive the
+     words, and the sweep leaves it.
 5. **Review has two halves.**
    - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
      their scores feed model choice.
@@ -187,7 +199,8 @@ What a turn is (one delivered message or action, never merged) is the venue adap
 - **One per run.** A second write in the same run replaces that run's digest. A digest is never written for another
   run, or for another agent's conversation.
 - **Projects.** `projects` are names (projects.md's slugs or aliases), stored resolved to slugs. When a digest names
-  none, the one live project whose `links.venues` contains `<venue>:<place>` is used. If none or several match, none is.
+  none, a `loom` conversation's thread project is used ([comms.md](comms.md)); else the one live project whose
+  `links.venues` contains `<venue>:<place>`. If none or several match, none is.
 
 **Retention.** A sweep runs daily and at daemon start. It folds each UTC day whose every turn is older than 90 days into
 one `conversation_days` row per conversation and day: turn counts by `kind`, median `latency_ms`, and
@@ -241,7 +254,8 @@ in `venues`.
 - `label` is required, ≤ 40. `kind` is required: `live`, `scheduled` or `agent`.
 - `render` is optional: 1–16 strings of ≤ 200, and `argv[0]` must be one of the piece's own `bin` names.
 - Unknown keys are rejected.
-- `session` (`live`) and `wake` (`scheduled`) are core's own and may not be declared. A piece that delivers on `wake`
+- `session` (`live`), `wake` (`scheduled`) and `loom` (`live`: Comms threads, [comms.md](comms.md)) are core's own
+  and may not be declared. A piece that delivers on `wake`
   (the clock) says so with an empty entry, `"wake": {}`, which defines nothing (agent-runtime.md, "Delivery").
 - `relay` (`agent`) may be declared only by a piece whose `loom` block has `"role": "runtime"`.
 - A name another installed piece already declares is rejected.
@@ -352,9 +366,19 @@ audit log, so it has no raw text to copy.
 
 **MCP**
 - `conversation_digest({summary, asks?, decisions?, tasks?, projects?, needs_owner?})`: for the conversation and run
-  given at identity. Without them, rejected.
+  given at identity. Without them, rejected. From a house (an agent token naming a house, a service's too, t-2118), only
+  for the one conversation the runtime said that house holds (`POST /api/loom/conversations/house`, the runtime's,
+  set once per house; `household.db` `house_conversations`), and never from a house it named none for (t-2061): inside
+  one house every body could read the others' ids, so the conversation named at identity proves nothing by itself.
+  A house that holds no body's conversation (a task's own house before it runs a job, an `up` house) writes none.
+  `comms_title` is held to the same rule.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
-  above.
+  above. From a house (t-2118), only the conversation that house holds: the list has that one, `conversation` refuses
+  any other as if it weren't there, and the findings are its own. `project_hub` from a house has no conversations
+  section (and its pieces aren't asked about the project's Comms threads). The boot tape is held the same way:
+  identity's "Last 24h", `episodes`, and `/cli` `wake`, `memory tape` and `project hub` carry only the held
+  conversation's digests (the server sets it from the token, `LOOM_HOUSE_HELD`). A service's house, with or without a
+  house id, holds none, so it reads none.
 
 **The ask** (`needs_owner` as an object, src/backends/needs.ts), written for the owner: what decision, why, what
 happens either way.
@@ -412,15 +436,19 @@ details (the conversation, its venue, the refs). A plain string reads as before:
 - **Clearing itself** (src/needs-resolve.ts). Each minute (and at start, and right after an approval is answered on
   the page) core checks what each open ask waits on, through the pieces' own APIs as the household owner: the
   approvals piece's (`role: approvals`) `state` (`{ids}` → each known id's state; an unknown id is gone), the tasks
-  piece's (`role: tasks`) `run show`. Allowed, used, denied, expired or gone, or a task closed or gone: the ask is
+  piece's (`role: tasks`) `run show`. Allowed, used, denied, expired, withdrawn (the piece that filed it took it back
+  unanswered, to ask again with an up-to-date list, t-1975) or gone, or a task closed or gone: the ask is
   answered `resolved`, by `loom`, with the reason, and leaves a quiet FYI in the Inbox ("Cleared itself: the approval
   was allowed and used"). A piece that's absent or doesn't answer clears nothing.
 
 **Projects.** A project's hub gets a core section, `conversations`, after `people`. It replaces the shuttle feed in
 projects.md and follows projects.md's core-section rule: `since` marks `new`, it doesn't filter.
-- **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project.
+- **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project, or whose Comms
+  thread is filed under it ([comms.md](comms.md)), digest or not.
 - **Each item:** id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new`
-  (`last` after `since`).
+  (`last` after `since`). Open is the Inbox's own test (`openNeeds`, one function): an ask answered (done, dismissed,
+  replied, yes, no) or resolved by what it waits on is `null` here, as it's gone from the Inbox. `needs_digest` names
+  the digest that asks it, while it's open, and `needs_legacy` says it was written as a plain string.
 
 ## Edits this forces elsewhere
 
@@ -443,7 +471,9 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
 1. **Turn writes.**
    - A `runtime` turn creates or extends agent · venue · place, and answers `{conversation, seq}`.
    - Two places are two conversations.
-   - An agent token may write only venue `session`, for itself.
+   - An agent token may write only venue `session`, for itself. From a house its place is in that house's own
+     namespace (`house:h-7 <place>`, a service's `service:<name>@h-9 <place>`), so a house never writes into another's
+     session; a token in no house never writes a place in a house's namespace (t-2133).
    - Any other role is refused.
    - A runtime turn with a `key` already used in the last 24 hours answers the first `{conversation, seq}` and writes
      nothing; the same key on a different turn is a `409`; an agent token's `key` is a `403`.
@@ -509,8 +539,9 @@ Slice 1 settled these points the doc left open:
 - **Core venues' labels.** `session` is "Session" (`live`) and `wake` is "Wake" (`scheduled`). They live in code,
   never in the `venues` table.
 - **Session digests.** A harness passes `conversation` and `run` to `identity` the way the runtime does. The
-  conversation is the agent's `session` · `<harness>:<session id>`, and it exists from its first turn. The harness
-  writes that turn first; until then `conversation_digest` is refused.
+  conversation is the agent's `session` · `<harness>:<session id>` (from a house, in its namespace: `house:h-7 …`), and
+  it exists from its first turn. The harness writes that turn first and uses the `conversation` id it answers, never
+  one it works out from its place; until then `conversation_digest` is refused.
 - **`since` on the read tools.** It's exclusive. `conversations({since})` lists conversations whose `last` is after
   it, and `conversation_findings({since})` lists findings written after it.
 - **Turn writes.**
@@ -600,6 +631,8 @@ These slices settled these points the doc left open:
   process them (Review, step 2).
 - **Model names inside text.** Redaction covers the names core knows. A model describing itself can still leak its
   family to a grader: blind as far as we can make it.
+- **Comms history.** Settled (the owner, 2026-11-05): a thread's words are kept 14 days at most, rule 4's one
+  exception ([comms.md](comms.md), "History").
 - **Harness transcripts.** A harness's own local transcript files (outside loom) still hold raw text. The runtime spec
   decides whether they're deleted once their turns are in the audit log.
 

@@ -123,11 +123,25 @@ describe('ProjectsStore', () => {
       ['an alias listed twice', { slug: 'x', name: 'X', links: { aliases: ['y', 'y'] } }, /^links\.aliases\[1\]: "y" is listed twice/],
       ['a notes entry that is not a note path', { slug: 'x', name: 'X', links: { notes: ['../etc'] } }, /^links\.notes\[0\]: "\.\.\/etc" is not a note path prefix/],
       ['a notes entry over 200', { slug: 'x', name: 'X', links: { notes: ['n'.repeat(201)] } }, /^links\.notes\[0\]: longer than 200/],
-      ['more than 16 repos', { slug: 'x', name: 'X', links: { repos: Array.from({ length: 17 }, (_, i) => `r${i}`) } }, /^links\.repos: more than 16 entries/],
+      ['more than 16 repos', { slug: 'x', name: 'X', links: { repos: Array.from({ length: 17 }, (_, i) => `o/r${i}`) } }, /^links\.repos: more than 16 entries/],
       ['a venue over 200', { slug: 'x', name: 'X', links: { venues: ['v'.repeat(201)] } }, /^links\.venues\[0\]: longer than 200/],
+      // 16. Repo selectors: <forge>:<literal locator>, or the bare owner/repo (github's).
+      ['a repo with a space', { slug: 'x', name: 'X', links: { repos: ['acme/a pp'] } }, /^links\.repos\[0\]: "acme\/a pp" is not a repo selector/],
+      ['a repo with #', { slug: 'x', name: 'X', links: { repos: ['github:acme/app#1'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['a repo with @', { slug: 'x', name: 'X', links: { repos: ['acme/app@x'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['a repo pattern', { slug: 'x', name: 'X', links: { repos: ['github:acme/*'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['an empty locator', { slug: 'x', name: 'X', links: { repos: ['github:'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['one segment', { slug: 'x', name: 'X', links: { repos: ['github:acme'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['an uppercase forge', { slug: 'x', name: 'X', links: { repos: ['GitHub:acme/app'] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['an over-long forge', { slug: 'x', name: 'X', links: { repos: [`${'f'.repeat(25)}:acme/app`] } }, /^links\.repos\[0\]: .* is not a repo selector/],
+      ['the same repo twice after normalizing', { slug: 'x', name: 'X', links: { repos: ['acme/app', 'github:acme/app'] } }, /^links\.repos\[1\]: "github:acme\/app" is the same repo as "acme\/app"/],
       ['an epic over 64', { slug: 'x', name: 'X', links: { epic: 'e'.repeat(65) } }, /^links\.epic: longer than 64/],
       ['an epic that is not a string', { slug: 'x', name: 'X', links: { epic: ['t-1'] } }, /^links\.epic: must be a string/],
     ];
+    it('accepts github:, forgejo: and bare repo selectors, and reads them back as written (16)', () => {
+      store.write({ slug: 'sel', name: 'Sel', links: { repos: ['github:acme/app', 'forgejo:codeberg.org/acme/app', 'acme/other', 'azure:org/proj/repo.x_y-z'] } });
+      expect(card('sel').links.repos).toEqual(['github:acme/app', 'forgejo:codeberg.org/acme/app', 'acme/other', 'azure:org/proj/repo.x_y-z']);
+    });
     for (const [what, input, err] of violations) {
       it(`rejects ${what}, naming the field`, () => {
         expect(() => store.write(input as never)).toThrow(err);

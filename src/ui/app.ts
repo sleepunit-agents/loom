@@ -7,6 +7,6 @@
 export const APP_JS = `'use strict';
 if ('serviceWorker' in navigator && window.isSecureContext && location.pathname.startsWith('/login')) {
   if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('forget');
-  if (window.caches) caches.keys().then((ks) => ks.forEach((k) => { if (k.endsWith('-pages') || k.endsWith('-views')) caches.delete(k); }));
+  if (window.caches) caches.keys().then((ks) => ks.forEach((k) => { if (/-(pages|views|media)$/.test(k)) caches.delete(k); }));
 }
 `;

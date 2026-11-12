@@ -60,7 +60,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 2;
   }
   // Subcommand-level --help, honoured before any side effect (see memory.ts).
-  if (subRest[0] === '--help' || subRest[0] === '-h') {
+  if (subRest.includes('--help') || subRest.includes('-h')) {
     io.stdout(USAGE);
     return 0;
   }

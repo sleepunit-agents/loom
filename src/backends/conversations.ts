@@ -582,7 +582,7 @@ export function projectLookup(db: Database): ProjectLookup {
  * another run adds one. Projects resolve to slugs; with none named, the one live project whose
  * links.venues holds `<venue>:<place>` (none when several do).
  */
-export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date()): Digest {
+export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date(), threadProject: string | null = null): Digest {
   if (!isConversationId(at.conversation) || !isRunId(at.run)) fail('a digest is written for the conversation and run given at identity: pass conversation and run to identity first');
   const input = parseDigest(raw);
   return withDb(contextDir, (db) => db.transaction(() => {
@@ -596,6 +596,9 @@ export function writeDigest(contextDir: string, at: { conversation: string; run:
       const s = slug ?? name;
       if (!projects.includes(s)) projects.push(s);
     }
+    // Named none: a Comms thread's own project first (comms.md, "Project"), then the one live project whose
+    // links.venues names the place.
+    if (!projects.length && threadProject && look.resolve(threadProject) === threadProject) projects.push(threadProject);
     if (!projects.length) {
       const matches = look.byVenue(`${c!.venue}:${c!.place}`);
       if (matches.length === 1) projects.push(matches[0]);
@@ -626,6 +629,12 @@ function digestOf(r: DigestRow): Digest {
     projects: JSON.parse(r.projects_json) as string[], needs_owner: r.needs_owner, needs_owner_href: r.needs_owner_href ?? null,
     needs: needsOfRow(r),
   };
+}
+
+/** Set a conversation's label (a Comms thread's title, comms.md): its own store's row, when it has one. */
+export function setConversationLabel(contextDir: string, conversation: string, label: string): boolean {
+  if (!isConversationId(conversation)) return false;
+  return withDb(contextDir, (db) => db.prepare('UPDATE conversations SET label = ? WHERE id = ?').run(label.slice(0, MAX_LABEL), conversation).changes > 0);
 }
 
 /** A conversation's digests, newest first. */
@@ -662,17 +671,26 @@ export interface ListFilter {
   people?: string;
   /** A project slug its digests must name (the caller resolves an alias first). */
   project?: string;
+  /** With `project`: these conversations count as the project's too (Comms threads filed under it, comms.md). */
+  orIds?: readonly string[];
   venue?: string;
   /** ISO time: only conversations whose `last` is after it. */
   since?: string;
   limit?: number;
 }
 
-/** A conversation as `conversations` lists it: the record, its newest digest's summary, and any open needs_owner. */
+/**
+ * A conversation as `conversations` lists it: the record, its newest digest's summary, and its open needs_owner: the
+ * very ask the Inbox shows (openNeedsOf), so an ask the owner answered (or that cleared itself) is null here too.
+ */
 export interface ConversationListItem extends Conversation {
   turns: number;
   summary: string | null;
   needs_owner: string | null;
+  /** The digest that asks it, while it's open: what the owner answers in the Inbox. */
+  needs_digest: string | null;
+  /** True when the ask was written as a plain string (the Inbox words it "<agent> needs you: …"). */
+  needs_legacy: boolean;
 }
 
 /** The newest digest of each conversation, by conversation id. */
@@ -695,14 +713,19 @@ export function listConversations(contextDir: string, f: ListFilter = {}): Conve
     if (f.since) { where.push('c.last > ?'); args.push(new Date(f.since).toISOString()); }
     if (f.people) { where.push('EXISTS (SELECT 1 FROM json_each(c.people_json) p WHERE p.value = ?)'); args.push(f.people); }
     if (f.project) {
-      where.push('EXISTS (SELECT 1 FROM conversation_digests d, json_each(d.projects_json) j WHERE d.conversation = c.id AND j.value = ?)');
-      args.push(f.project);
+      const ids = (f.orIds ?? []).filter((x) => isConversationId(x)).slice(0, 200);
+      where.push(`(EXISTS (SELECT 1 FROM conversation_digests d, json_each(d.projects_json) j WHERE d.conversation = c.id AND j.value = ?)${ids.length ? ` OR c.id IN (${ids.map(() => '?').join(', ')})` : ''})`);
+      args.push(f.project, ...ids);
     }
     const rows = db.prepare(`SELECT c.* FROM conversations c ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.last DESC, c.id LIMIT ?`).all(...args, limit) as ConvRow[];
     const newest = newestDigests(db, rows.map((r) => r.id));
     return rows.map((r) => {
       const d = newest.get(r.id);
-      return { ...conversationOf(db, r), turns: r.last_seq, summary: d?.summary ?? null, needs_owner: d?.needs_owner ?? null };
+      // What needs the owner is what the Inbox shows as open, never a digest's bare needs_owner (2026-11-07: an ask
+      // Jonathan marked done stayed "waiting on you" on the Projects page).
+      const open = d && isOpenNeed(db, d) ? d : undefined;
+      return { ...conversationOf(db, r), turns: r.last_seq, summary: d?.summary ?? null, needs_owner: open?.needs_owner ?? null,
+        needs_digest: open?.id ?? null, needs_legacy: open ? !!needsOfRow(open)?.legacy : false };
     });
   });
 }
@@ -755,12 +778,10 @@ export function findingsOf(contextDir: string, opts: { conversation?: string; si
  */
 export function openNeeds(contextDir: string): Array<{ conversation: Conversation; digest: Digest }> {
   return withReadonly(contextDir, [], (db) => {
-    const answered = hasTable(db, 'conversation_needs_answers');
-    const rows = db.prepare(`SELECT d.* FROM conversation_digests d
+    const rows = (db.prepare(`SELECT d.* FROM conversation_digests d
       WHERE d.rowid = (SELECT d2.rowid FROM conversation_digests d2 WHERE d2.conversation = d.conversation ORDER BY d2.at DESC, d2.rowid DESC LIMIT 1)
         AND d.needs_owner IS NOT NULL
-        ${answered ? 'AND NOT EXISTS (SELECT 1 FROM conversation_needs_answers a WHERE a.digest = d.id AND a.at >= d.at)' : ''}
-      ORDER BY d.at DESC`).all() as DigestRow[];
+      ORDER BY d.at DESC`).all() as DigestRow[]).filter((d) => isOpenNeed(db, d));
     return rows.flatMap((r) => {
       const c = db.prepare('SELECT * FROM conversations WHERE id = ?').get(r.conversation) as ConvRow | undefined;
       return c ? [{ conversation: conversationOf(db, c), digest: digestOf(r) }] : [];
@@ -801,12 +822,25 @@ export function answerNeeds(contextDir: string, a: { conversation: string; diges
   }).immediate());
 }
 
+/** The id of the conversation's open Needs you digest (the Inbox's ask), else undefined. */
+export function openNeedDigest(contextDir: string, conversation: string): string | undefined {
+  return withReadonly(contextDir, undefined as string | undefined, (db) => openNeedsOf(db, conversation)?.id);
+}
+
 /** The conversation's newest digest when it needs the owner and isn't answered, else undefined. */
 function openNeedsOf(db: Database, conversation: string): DigestRow | undefined {
   const d = db.prepare('SELECT * FROM conversation_digests WHERE conversation = ? ORDER BY at DESC, rowid DESC LIMIT 1').get(conversation) as DigestRow | undefined;
-  if (!d || d.needs_owner === null) return undefined;
-  if (hasTable(db, 'conversation_needs_answers') && db.prepare('SELECT 1 FROM conversation_needs_answers WHERE digest = ? AND at >= ?').get(d.id, d.at)) return undefined;
-  return d;
+  return d && isOpenNeed(db, d) ? d : undefined;
+}
+
+/**
+ * Whether a conversation's newest digest is an open Needs you: it asks the owner, and nobody answered it (done,
+ * dismissed, replied, yes, no) nor did it clear itself (resolved, when what it waits on was). The one test every
+ * reader uses, the Inbox, the project hub and conversation lists alike, so they can't drift apart.
+ */
+function isOpenNeed(db: Database, d: DigestRow): boolean {
+  if (d.needs_owner === null) return false;
+  return !(hasTable(db, 'conversation_needs_answers') && db.prepare('SELECT 1 FROM conversation_needs_answers WHERE digest = ? AND at >= ?').get(d.id, d.at));
 }
 
 /** The asks the owner answered done or replied to since `sinceIso`, newest first: the Inbox's history of them. */
@@ -834,6 +868,9 @@ export interface HubConversation {
   last: string;
   summary: string | null;
   needs_owner: string | null;
+  /** The digest that asks it, while it's open (the Inbox's ask): null with needs_owner. */
+  needs_digest: string | null;
+  needs_legacy: boolean;
   new: boolean;
 }
 
@@ -842,11 +879,11 @@ export interface HubConversation {
  * conversations with the newest `last` whose projects include `slug`. `since` marks `new`
  * (last after since); it doesn't filter. `venueLabel` names a venue for the page.
  */
-export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v): HubConversation[] {
+export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v, filed: readonly string[] = []): HubConversation[] {
   const sinceMs = Date.parse(since);
-  return listConversations(contextDir, { project: slug, limit: HUB_MAX }).map((c) => ({
+  return listConversations(contextDir, { project: slug, limit: HUB_MAX, orIds: filed }).map((c) => ({
     id: c.id, venue: venueLabel(c.venue), label: c.label, people: c.people, last: c.last,
-    summary: c.summary, needs_owner: c.needs_owner, new: Date.parse(c.last) > sinceMs,
+    summary: c.summary, needs_owner: c.needs_owner, needs_digest: c.needs_digest, needs_legacy: c.needs_legacy, new: Date.parse(c.last) > sinceMs,
   }));
 }
 
@@ -854,10 +891,11 @@ export function hubConversations(contextDir: string, slug: string, since: string
 
 export interface TapeDigest { at: string; venue: string; label: string | null; place: string; summary: string }
 
-/** Digests written in [since, now], oldest first, for the boot tape. */
-export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string): TapeDigest[] {
+/** Digests written in [since, now], oldest first, for the boot tape; with `only`, that conversation's alone (t-2118). */
+export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string, only?: string): TapeDigest[] {
   return withReadonly(contextDir, [], (db) => db.prepare(`SELECT d.at, c.venue, c.label, c.place, d.summary FROM conversation_digests d
-      JOIN conversations c ON c.id = d.conversation WHERE d.at >= ? AND d.at <= ? ORDER BY d.at`).all(sinceIso, nowIso) as TapeDigest[]);
+      JOIN conversations c ON c.id = d.conversation WHERE d.at >= ? AND d.at <= ?${only !== undefined ? ' AND d.conversation = ?' : ''} ORDER BY d.at`)
+    .all(...(only !== undefined ? [sinceIso, nowIso, only] : [sinceIso, nowIso])) as TapeDigest[]);
 }
 
 // ─── Retention ──────────────────────────────────────────────────────────────

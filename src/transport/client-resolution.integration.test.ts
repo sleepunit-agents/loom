@@ -53,12 +53,33 @@ describe('c-loom-identity: harness from the handshake', () => {
   async function identityAs(peerName: string, args: Record<string, unknown> = {}): Promise<string> {
     const client = new Client({ name: peerName, version: '0.0.0' }, { capabilities: {} });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${handle.port}/`)));
-    const r = await client.callTool({ name: 'identity', arguments: args });
+    const r = await client.callTool({ name: 'identity', arguments: { piece: 'harness', ...args } });
     const text = ((r.content ?? []) as Array<{ type: string; text?: string }>)
       .filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
     await client.close();
     return text;
   }
+
+  it('defaults to core and retrieves only the requested pieces through MCP', async () => {
+    writeFileSync(join(tmpDir, 'self-model.md'), 'SELF-MODEL-MARKER');
+    const core = await identityAs('claude-code', { piece: undefined });
+    expect(core).toContain('# creed');
+    expect(core).toContain('# Pieces');
+    expect(core).not.toContain('CODE-HARNESS-MARKER');
+    expect(core).not.toContain('SELF-MODEL-MARKER');
+    const selected = await identityAs('claude-code', { piece: undefined, pieces: ['self-model', 'harness'] });
+    expect(selected).toContain('SELF-MODEL-MARKER');
+    expect(selected).toContain('CODE-HARNESS-MARKER');
+    expect(selected).not.toContain('# creed');
+    const combined = await identityAs('claude-code', { piece: 'self-model', pieces: ['harness'] });
+    expect(combined).toBe(selected);
+    const all = await identityAs('claude-code', { piece: 'all' });
+    expect(all).toContain('# creed');
+    expect(all).toContain('SELF-MODEL-MARKER');
+    expect(all).toContain('CODE-HARNESS-MARKER');
+    expect(all).not.toContain('# Pieces');
+    expect(await identityAs('claude-code', { piece: '../secret' })).toContain('Invalid identity piece');
+  });
 
   it('a claude-ai peer (Desktop) gets the desktop harness', async () => {
     const out = await identityAs('claude-ai');
@@ -78,12 +99,11 @@ describe('c-loom-identity: harness from the handshake', () => {
     expect(out).not.toContain('DESKTOP-HARNESS-MARKER');
   });
 
-  // An unknown runtime gets the self-describe onboarding prompt (via its own
-  // normalized name) — NOT silently served someone else's harness.
-  it('an unknown peer gets the harness onboarding prompt', async () => {
+  // Missing manifests are absent; a peer never receives another runtime's manifest.
+  it('an unknown peer has no harness section', async () => {
     const out = await identityAs('mystery-x-runtime');
-    expect(out).toMatch(/harness_describe/);
-    expect(out).toMatch(/unknown/i);
+    expect(out).not.toContain('# Harness:');
+    expect(out).not.toContain('harness_describe');
     expect(out).not.toContain('DESKTOP-HARNESS-MARKER');
     expect(out).not.toContain('CODE-HARNESS-MARKER');
   });

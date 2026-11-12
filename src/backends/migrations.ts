@@ -495,6 +495,12 @@ export const MIGRATIONS: readonly Migration[] = [
       ).run();
     },
   },
+  {
+    id: 'add_authored_at',
+    description: 'Separate authored heat from audit updates; legacy rows use created, never ambiguous updated',
+    pending: (db) => !hasColumn(db, 'memories', 'authored_at'),
+    run: (db) => { db.prepare('ALTER TABLE memories ADD COLUMN authored_at TEXT').run(); },
+  },
 ];
 
 /**

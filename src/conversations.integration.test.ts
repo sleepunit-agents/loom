@@ -18,11 +18,15 @@ import { runtimePieces, parseLoomBlock } from './cli/pieces-managed.js';
 import {
   conversationId, createConversationTables, digestId, digestsOf, dueToProgressSeconds, foldConversations, getConversation, listConversations,
   parseDigest, parseTurn, recordTurn, turnsOf, turnWriter, daysOf, writeDigest, ConversationError, type TurnInput,
+  answerNeeds, NEEDS_VERDICTS, openNeeds,
 } from './backends/conversations.js';
+import { projectHubPage } from './ui/projects-pages.js';
+import { askKey } from './ui/push.js';
 import { conversationsSection, conversationView, genericRender, householdConversations, ScopeError, writeTurn } from './conversations.js';
-import { listVenues, syncVenues, venueOf } from './household-store.js';
+import { bindHouseConversation, houseConversation, listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
 import { tapeForContext } from './backends/episodes.js';
+import { handleCliBody } from './transport/cli-endpoint.js';
 import { remember } from './tools/remember.js';
 import { projectHubOf } from './tools/project.js';
 import { openProjectsStore } from './backends/projects.js';
@@ -79,8 +83,8 @@ const msg = (place: string, s: number, slug = 'loren'): TurnInput => ({ venue: '
 const reply = (place: string, s: number, run = 'r1', extra: Partial<TurnInput> = {}): TurnInput =>
   ({ venue: 'slack', place, at: at(s), from: { kind: 'agent', id: 'art' }, kind: 'reply', run, outcome: 'answered', model: 'opus', harness: 'claude-code', ...extra });
 
-async function mcp(contextDir: string) {
-  const { server } = createLoomServer({ contextDir });
+async function mcp(contextDir: string, caller?: { house?: string; service?: string }) {
+  const { server } = createLoomServer({ contextDir, ...(caller ? { caller } : {}) });
   const client = new Client({ name: 'conv-test', version: '1' });
   const [c, s] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(s), client.connect(c)]);
@@ -114,6 +118,9 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
     tok.box = createToken(h, { role: { kind: 'piece', piece: 'shuttle', subject: 'thor' }, label: 'shuttle · thor' }).token;
     tok.peer = createToken(h, { role: { kind: 'peer', name: 'pal' }, label: 'pal' }).token;
     tok.runtime = createToken(h, { role: { kind: 'runtime', piece: 'shuttle' }, label: 'runtime', runtimePieces: runtimePieces(process.env) }).token;
+    tok.house7 = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-7' }, label: 'art @ h-7' }).token;
+    tok.house8 = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-8' }, label: 'art @ h-8' }).token;
+    tok.bridge = createToken(h, { role: { kind: 'agent', agent: 'art', service: 'slack', house: 'h-9' }, label: 'art/slack @ h-9' }).token;
     // The daemon syncs the venues registry at start.
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
@@ -126,6 +133,25 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
 
   const post = (token: string | undefined, body: unknown) => fetch(`${base}/api/loom/conversations/turn`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  });
+
+  it('which conversation a house holds is the runtime\'s to say, once (t-2061)', async () => {
+    expect(ROLE_ROUTES.runtime).toContain('conversations/house');
+    expect(AGENT_ROUTES).not.toContain('conversations/house');
+    const bind = (token: string, body: unknown) => fetch(`${base}/api/loom/conversations/house`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+    });
+    const b = { agent: 'art', house: 'h-41', conversation: 'cv-0000000000a1' };
+    const first = await bind(tok.runtime, b);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ house: 'h-41', conversation: 'cv-0000000000a1' });
+    expect((await bind(tok.runtime, b)).status).toBe(200);
+    expect((await bind(tok.runtime, { ...b, conversation: 'cv-0000000000a2' })).status).toBe(409);
+    // A body (its agent's token) never says it: it would bind its house to whatever it liked.
+    expect((await bind(tok.art, { ...b, house: 'h-42' })).status).toBeGreaterThanOrEqual(403);
+    expect((await bind(tok.owner, { ...b, house: 'h-43' })).status).toBeGreaterThanOrEqual(403);
+    expect(houseConversation(h.home, 'h-42')).toBeNull();
+    for (const bad of [{ ...b, agent: 'nobody' }, { ...b, house: 'house-1' }, { ...b, conversation: 'cv-x' }]) expect((await bind(tok.runtime, bad)).status).toBe(400);
   });
 
   it('the route is the runtime\'s (allowlisted), and an agent token\'s for its own session', () => {
@@ -176,6 +202,24 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
     expect((await post(tok.art, { ...session, agent: 'pond-bot' })).status).toBe(403);
     expect((await post(tok.art, msg('dm:U1', 0))).status).toBe(403);
     expect(getConversation(agentDir(h, 'pond-bot'), conversationId('pond-bot', 'session', 'claude-code:abc123'))).toBeUndefined();
+  });
+
+  it('a house writes only its own sessions: its own namespace, never another house\'s (t-2133)', async () => {
+    const session = { venue: 'session', place: 'claude-code:s1', at: at(0), from: { kind: 'unknown' }, kind: 'message' };
+    const r7 = await (await post(tok.house7, session)).json();
+    const r8 = await (await post(tok.house8, session)).json();
+    const rb = await (await post(tok.bridge, session)).json();
+    expect(r7.conversation).toBe(conversationId('art', 'session', 'house:h-7 claude-code:s1'));
+    expect(r8.conversation).toBe(conversationId('art', 'session', 'house:h-8 claude-code:s1'));
+    expect(rb.conversation).toBe(conversationId('art', 'session', 'service:slack@h-9 claude-code:s1'));
+    expect(new Set([r7.conversation, r8.conversation, rb.conversation]).size).toBe(3);
+    // h-8 naming h-7's place lands in its own namespace, never in h-7's.
+    const r = await (await post(tok.house8, { ...session, place: 'house:h-7 claude-code:s1', at: at(1) })).json();
+    expect(r.conversation).toBe(conversationId('art', 'session', 'house:h-8 house:h-7 claude-code:s1'));
+    expect(getConversation(agentDir(h, 'art'), r7.conversation)?.last).toBe(at(0));
+    // A token in no house never writes into a house's namespace; and a place too long with the prefix is refused.
+    expect((await post(tok.art, { ...session, place: 'house:h-7 claude-code:s1' })).status).toBe(403);
+    expect((await post(tok.house7, { ...session, place: 'x'.repeat(200) })).status).toBe(400);
   });
 
   it('any other role is refused: owner, piece credential, peer; and no token at all', async () => {
@@ -337,6 +381,105 @@ describe('criterion 3: digests (conversation_digest)', () => {
     await call('conversation_digest', { summary: 'Followed up.' });
     ds = digestsOf(art, conv);
     expect(ds.map((d) => d.run).sort()).toEqual(['run-1', 'run-2']);
+  });
+
+  // t-2061: inside one house every body could read another's ids, so the conversation named at identity proves
+  // nothing by itself. From a body's house, a digest goes only to the conversation the runtime said that house holds.
+  it('from a body\'s house, only for the conversation that house holds; none when the runtime named none', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U2', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-1', conversation: conv });
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-2', conversation: other });
+    // Its own house: written.
+    const own = await mcp(art, { house: 'h-1' });
+    await own.call('identity', { conversation: conv, run: 'run-1' });
+    expect((await own.call('conversation_digest', { summary: 'mine' })).error).toBe(false);
+    // A sibling's house, naming this conversation (its run id too): refused, nothing written.
+    const sib = await mcp(art, { house: 'h-2' });
+    await sib.call('identity', { conversation: conv, run: 'run-1' });
+    const posed = await sib.call('conversation_digest', { summary: 'merged, as you asked', needs_owner: { ask: 'OK to merge it?' } });
+    expect(posed.error).toBe(true);
+    expect(String(posed.body.error)).toMatch(/h-2 holds cv-[0-9a-f]{12}: it writes for that conversation only/);
+    expect(digestsOf(art, conv).map((d) => d.summary)).toEqual(['mine']);
+    // A house the runtime named nothing for (one from before, or never bound): no digest at all.
+    const none = await mcp(art, { house: 'h-3' });
+    await none.call('identity', { conversation: conv, run: 'run-1' });
+    expect(String((await none.call('conversation_digest', { summary: 'x' })).body.error)).toMatch(/h-3 holds no conversation the runtime named/);
+    // Another agent's binding of the same house id isn't this agent's.
+    bindHouseConversation(h.home, { agent: 'mark', house: 'h-4', conversation: conv });
+    const marks = await mcp(art, { house: 'h-4' });
+    await marks.call('identity', { conversation: conv, run: 'run-1' });
+    expect((await marks.call('conversation_digest', { summary: 'x' })).error).toBe(true);
+    // A service's house (a chat bridge people other than the owner steer) holds no conversation the runtime named, so it
+    // writes none (t-2118). No house at all (loom's machine): as before.
+    const bridge = await mcp(art, { house: 'h-5', service: 'discord' });
+    await bridge.call('identity', { conversation: other, run: 'run-9' });
+    expect(String((await bridge.call('conversation_digest', { summary: 'bridge' })).body.error)).toMatch(/h-5 holds no conversation the runtime named/);
+    const local = await mcp(art);
+    await local.call('identity', { conversation: other, run: 'run-8' });
+    expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);
+  });
+
+  // t-2118: a digest summarises its conversation's words, so a house reads only the conversation it holds: the list,
+  // one conversation, its findings and a project hub's conversations section. A service's house (with or without a
+  // house id) reads none; loom's machine (no house) reads all, as before.
+  it('from a house, the conversations it reads are the one it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U3', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-11', conversation: conv });
+    const ids = (r: { body: Record<string, unknown> }) => (r.body.conversations as Array<{ id: string }>).map((c) => c.id);
+    const own = await mcp(art, { house: 'h-11' });
+    expect(ids(await own.call('conversations'))).toEqual([conv]);
+    expect((await own.call('conversation', { id: conv })).error).toBe(false);
+    const theirs = await own.call('conversation', { id: other });
+    expect(theirs.error).toBe(true);
+    expect(String(theirs.body.error)).toBe(`no conversation ${other}`);
+    for (const caller of [{ house: 'h-12' }, { house: 'h-13', service: 'discord' }, { service: 'discord' }]) {
+      const none = await mcp(art, caller);
+      expect(ids(await none.call('conversations'))).toEqual([]);
+      expect((await none.call('conversation', { id: conv })).error).toBe(true);
+      expect((await none.call('conversation_findings')).body.findings).toEqual([]);
+    }
+    const local = await mcp(art);
+    expect(ids(await local.call('conversations'))).toEqual(expect.arrayContaining([conv, other]));
+  });
+
+  // t-2118: the boot tape (identity's "Last 24h", the episodes tool, `/cli wake` and `memory tape`) carries digests:
+  // from a house, only the held conversation's; from one that holds none, none.
+  it('from a house, the tape carries only the digests of the conversation it holds', async () => {
+    const other = recordTurn(art, 'art', msg('dm:U4', 0), 'runtime:shuttle').conversation;
+    bindHouseConversation(h.home, { agent: 'art', house: 'h-14', conversation: conv });
+    writeDigest(art, { conversation: conv, run: 'run-t1' }, { summary: 'held-conversation-words' });
+    writeDigest(art, { conversation: other, run: 'run-t2' }, { summary: 'another-conversation-words' });
+    const text = (r: { body: unknown }) => JSON.stringify(r.body);
+    const own = await mcp(art, { house: 'h-14' });
+    for (const t of [text(await own.call('identity', { client: 'claude-code', piece: 'last-24h' })), text(await own.call('episodes', { hours: 100000 }))]) {
+      expect(t).toContain('held-conversation-words');
+      expect(t).not.toContain('another-conversation-words');
+    }
+    const bridge = await mcp(art, { house: 'h-15', service: 'discord' });
+    expect(text(await bridge.call('episodes', { hours: 100000 }))).not.toMatch(/conversation-words/);
+    const local = await mcp(art);
+    expect(text(await local.call('episodes', {}))).toContain('another-conversation-words');
+    for (const argv of [['memory', 'tape', '--hours', '100000'], ['wake']]) {
+      const none = await handleCliBody(art, { argv }, null);
+      const held = await handleCliBody(art, { argv }, conv);
+      const all = await handleCliBody(art, { argv }, undefined);
+      if (!none.ok || !held.ok || !all.ok) throw new Error('cli refused');
+      expect(none.response.stdout).not.toMatch(/conversation-words/);
+      expect(held.response.stdout).toContain('held-conversation-words');
+      expect(held.response.stdout).not.toContain('another-conversation-words');
+      expect(all.response.stdout).toContain('another-conversation-words');
+    }
+    // A request can't name what it holds itself: its env carries LOOM_CLIENT and LOOM_MODEL only.
+    expect(await handleCliBody(art, { argv: ['wake'], env: { LOOM_HOUSE_HELD: conv } })).toMatchObject({ ok: false });
+  });
+
+  it('a house holds one conversation, for good', () => {
+    expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
+    expect(bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000a' })).toEqual({ house: 'h-7', conversation: 'cv-00000000000a' });
+    expect(() => bindHouseConversation(h.home, { agent: 'art', house: 'h-7', conversation: 'cv-00000000000b' })).toThrow(/holds another conversation/);
+    expect(() => bindHouseConversation(h.home, { agent: 'mark', house: 'h-7', conversation: 'cv-00000000000a' })).toThrow(/holds another conversation/);
+    expect(houseConversation(h.home, 'h-7')).toEqual({ agent: 'art', conversation: 'cv-00000000000a' });
+    expect(houseConversation(h.home, 'h-8')).toBeNull();
   });
 
   it('is never written for another agent\'s conversation', async () => {
@@ -595,6 +738,9 @@ process.stdin.on('data', (d) => s += d).on('end', () => {
   });
 });
 
+/** The household's owner, looking (a household with no members is its first owner's). */
+const OWNER = { person: 'owner', householdOwner: true };
+
 // ─── 11. Needs you ──────────────────────────────────────────────────────────
 
 describe('criterion 11: Needs you', () => {
@@ -607,21 +753,21 @@ describe('criterion 11: Needs you', () => {
     const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Loren (DM)' }, 'runtime:shuttle').conversation;
     const other = recordTurn(art, 'art', msg('dm:U2', 0, 'matt'), 'runtime:shuttle').conversation;
     writeDigest(art, { conversation: other, run: 'r1' }, { summary: 'Nothing for the owner.' });
-    expect(conversationAsks(h)).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
 
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Loren wants the WAF exception.', needs_owner: 'approve the WAF exception' }, new Date(T0));
-    const asks = conversationAsks(h);
+    const asks = conversationAsks(h, OWNER);
     expect(asks).toHaveLength(1);
     expect(asks[0]).toMatchObject({ text: 'art needs you: approve the WAF exception', page: `loom:conversation/${conv}`, agent: 'art', source: { id: 'loom' } });
     expect(asks[0].attention).not.toBe(false);
-    expect(coreAsks(h).map((a) => a.page)).toContain(`loom:conversation/${conv}`);
+    expect(coreAsks(h, OWNER).map((a) => a.page)).toContain(`loom:conversation/${conv}`);
 
     // The same run rewritten still needing the owner: still one ask.
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Still waiting.', needs_owner: 'approve the WAF exception' }, new Date(T0 + 1000));
-    expect(conversationAsks(h)).toHaveLength(1);
+    expect(conversationAsks(h, OWNER)).toHaveLength(1);
     // A later run's digest with none clears it.
     writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Approved; done.' }, new Date(T0 + 2000));
-    expect(conversationAsks(h)).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
   });
 });
 
@@ -650,12 +796,47 @@ describe('criterion 12: the projects hub\'s conversations section', () => {
     expect(s.items.map((i) => i.label)).toEqual(Array.from({ length: 20 }, (_, k) => `Pond ${25 - k}`));
     expect(s.items[0]).toEqual({
       id: conversationId('art', 'slack', 'p25'), venue: 'slack', label: 'Pond 25', people: ['person-25'], last: at(25 * 60),
-      summary: 'pond 25', needs_owner: 'answer Loren', new: true,
+      summary: 'pond 25', needs_owner: 'answer Loren', needs_digest: digestId(conversationId('art', 'slack', 'p25'), 'new'), needs_legacy: true, new: true,
     });
     expect(s.items.filter((i) => i.new).map((i) => i.label)).toEqual(['Pond 25', 'Pond 24', 'Pond 23', 'Pond 22', 'Pond 21', 'Pond 20']);
     expect(s.items[1].needs_owner).toBeNull();
     expect(conversationsSection(dir, 'hockey', since).items).toHaveLength(3);
     expect(conversationsSection(dir, 'mud', since).items).toEqual([]);
+  });
+});
+
+describe('criterion 12: the hub shows needs_owner exactly when the Inbox does (2026-11-07)', () => {
+  let h: Household;
+  beforeEach(() => { h = household('loom-conv-hub-needs-'); process.env.LOOM_HOME = h.home; });
+  afterEach(() => { restoreEnv(); rmSync(h.home, { recursive: true, force: true }); });
+
+  // Jonathan marked "Review/merge art#68" done in his Inbox on 2026-11-03; the Projects page still had it waiting on him.
+  it.each(NEEDS_VERDICTS)('an ask answered %s is gone from the hub, the conversation list and the Inbox alike', (verdict) => {
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Merge art#68' }, 'runtime:shuttle').conversation;
+    const d = writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'PR up.', projects: ['loom'], needs_owner: 'Review/merge art#68' }, new Date(T0));
+    const hubNeeds = () => conversationsSection(art, 'loom', at(0))!.items.map((i) => i.needs_owner);
+    expect(hubNeeds()).toEqual(['Review/merge art#68']);
+    expect(openNeeds(art)).toHaveLength(1);
+
+    answerNeeds(art, { conversation: conv, digest: d.id, verdict, by: verdict === 'resolved' ? 'loom' : 'jonathan' }, new Date(T0 + 1000));
+    expect(openNeeds(art)).toEqual([]);
+    expect(conversationAsks(h, OWNER)).toEqual([]);
+    expect(hubNeeds()).toEqual([null]);
+    expect(conversationsSection(art, 'loom', at(0))!.items[0]).toMatchObject({ needs_digest: null, summary: 'PR up.' });
+    expect(listConversations(art).map((c) => c.needs_owner)).toEqual([null]);
+  });
+
+  it('a still-open ask on the Projects page opens that ask in the Inbox, by the Inbox\'s own key', async () => {
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Pond' }, 'runtime:shuttle').conversation;
+    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Asked.', projects: ['loom'], needs_owner: { ask: 'OK to merge the fix for the hub?', why: 'It fixes the hub.', refs: ['sleepunit-agents/art#70'] } } as never, new Date(T0));
+    const [inboxAsk] = conversationAsks(h, OWNER);
+    const hub = await projectHubPage({ agent: 'art', dir: art }, 'loom', {
+      hub: async () => ({ found: true, card: { slug: 'loom' }, sections: [conversationsSection(art, 'loom', at(0))!] }) as never,
+    });
+    const waiting = hub!.sections.find((x) => x.id === 'waiting')!.blocks[0] as { items: Array<{ text: string; page: string }> };
+    expect(waiting.items).toEqual([expect.objectContaining({ text: 'OK to merge the fix for the hub?', page: `loom:inbox?i=${askKey(inboxAsk)}` })]);
   });
 });
 
@@ -699,6 +880,16 @@ describe('criterion 12, end to end: project_hub carries the conversations core s
     expect(conv.items.filter((i) => i.new).length).toBe(4);   // the channel, 22, 21, 20
     const hockey = await projectHubOf(dir, { slug: 'hockey', since });
     expect(('sections' in hockey) && (hockey.sections.find((x) => x.key === 'conversations') as { items: unknown[] }).items).toHaveLength(1);
+    // From a house (t-2118): no conversations section at all, the rest as before.
+    const housed = await projectHubOf(dir, { slug: 'on-pond', since }, { noConversations: true });
+    expect(('sections' in housed) && housed.sections.map((x) => x.key)).not.toContain('conversations');
+    const viaTool = await mcp(dir, { house: 'h-20', service: 'discord' });
+    expect(JSON.stringify((await viaTool.call('project_hub', { slug: 'pond' })).body)).not.toContain('Pond channel');
+    expect(JSON.stringify((await (await mcp(dir)).call('project_hub', { slug: 'pond' })).body)).toContain('Pond channel');
+    // And through /cli from a house (t-2118): the same.
+    const cliHub = async (held?: string | null) => { const r = await handleCliBody(dir, { argv: ['project', 'hub', 'pond', '--json'] }, held); if (!r.ok) throw new Error(r.error); return r.response.stdout; };
+    expect(await cliHub(null)).not.toContain('Pond channel');
+    expect(await cliHub(undefined)).toContain('Pond channel');
   });
 });
 

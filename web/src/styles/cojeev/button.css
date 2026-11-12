@@ -23,11 +23,8 @@
 :root[data-mode="dark"] .v-btn[data-slot]:is(.-ghost,.-outline) { color:var(--v-text); }
 .v-btn[data-slot] .v-icon { width:18px; height:18px; }
 .v-btn[data-slot][aria-busy="true"] { position:relative; cursor:progress; gap:var(--s-3); }
-.v-btn__loading[data-slot] { --pulse:20px; display:inline-flex; align-items:center; justify-content:center; flex:none; pointer-events:none; }
-.v-btn[data-slot] [data-slot="button-indicator"] { width:20px; height:20px; }
-.v-btn[data-slot] [data-slot="button-indicator"] svg { width:100%; height:100%; overflow:visible; }
-.v-btn[data-slot] [data-slot="button-indicator"] .seed { fill:currentColor; }
-.v-btn[data-slot] [data-slot="button-indicator"] .core { fill:transparent; }
+.v-btn__loading[data-slot] { display:inline-flex; align-items:center; justify-content:center; flex:none; pointer-events:none; }
+.v-btn[data-slot] [data-slot="button-indicator"] { --loom-load-c:currentColor; }
 /* Native disabled or a consumer's aria-disabled wins over every variant/theme;
    aria-disabled added only for loading suppresses activation, not readability. */
 :root .v-btn[data-slot]:is(:disabled,[aria-disabled="true"]:not([aria-busy="true"])) {

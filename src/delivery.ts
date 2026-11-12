@@ -25,6 +25,7 @@ import { ConversationError, parseTurn, type From } from './backends/conversation
 import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
+import { waitForLocks, WRITE_WAIT_MS } from './lock-gate.js';
 import { Pool } from './ui/pieces.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
 import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer, type OfferResult } from './offers-registry.js';
@@ -43,7 +44,7 @@ export const DELIVER_MAX_BYTES = 256 * 1024;
  */
 export type DeliverKind = 'message' | 'wake';
 const DELIVER_KINDS: readonly DeliverKind[] = ['message', 'wake'];
-const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text', 'local'] as const;
+const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text', 'local', 'continuation'] as const;
 
 /** A checked deliver body (agent-runtime.md, "The deliver contract"). */
 export interface DeliverBody {
@@ -62,6 +63,8 @@ export interface DeliverBody {
    * so only for a wake set on loom's machine. A structured field, never read from the text.
    */
   local?: true;
+  /** Opaque capability carried only by the authenticated clock, never display lineage. */
+  continuation?: { handle: string; wake: string; expiresAt: number };
 }
 
 export type BodyState = 'fed' | 'resumed' | 'started' | 'queued' | 'failed';
@@ -73,6 +76,8 @@ export interface DeliverAnswer {
   seq: number;
   body: BodyState;
   reason?: string;
+  code?: 'quota';
+  retryAfter?: string;
 }
 
 /** What the route answers: a status and a JSON body. */
@@ -114,6 +119,13 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   if (!DELIVER_KINDS.includes(raw.kind as DeliverKind)) return `kind is one of ${DELIVER_KINDS.join(', ')}`;
   if (raw.local !== undefined && raw.local !== true) return 'local is true, or left out';
   if (raw.local === true && (raw.venue !== 'wake' || raw.kind !== 'wake')) return 'local is only for a wake, on venue wake';
+  if (raw.continuation !== undefined) {
+    const c = raw.continuation;
+    if (!isObject(c) || Object.keys(c).some((k) => !['handle', 'wake', 'expiresAt'].includes(k)) ||
+        typeof c.handle !== 'string' || !/^cont-[0-9a-f]{64}$/.test(c.handle) ||
+        typeof c.wake !== 'string' || !/^w-[0-9a-f]{6}$/.test(c.wake) || !Number.isSafeInteger(c.expiresAt) || (c.expiresAt as number) <= 0) return 'continuation is an opaque handle and exact wake id';
+    if (raw.venue !== 'wake' || raw.kind !== 'wake' || !isObject(raw.from) || raw.from.kind !== 'schedule') return 'continuation is only for a scheduled wake';
+  }
   // The key and turn fields are conversations.md's: the turn parser checks them the same way.
   let turn;
   try {
@@ -124,6 +136,7 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   }
   return {
     id: raw.id, agent: raw.agent, venue: turn.venue, place: turn.place, ...(turn.label !== undefined ? { label: turn.label } : {}),
+    ...(raw.continuation !== undefined ? { continuation: { handle: (raw.continuation as Record<string, string>).handle, wake: (raw.continuation as Record<string, string>).wake, expiresAt: (raw.continuation as Record<string, unknown>).expiresAt as number } } : {}),
     from: turn.from, kind: raw.kind as DeliverKind, at: turn.at, text: raw.text, ...(raw.local === true ? { local: true as const } : {}),
   };
 }
@@ -131,14 +144,17 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
 /** The runtime's answer checked: `{conversation, seq, body, reason?}`, `reason` required when `body` is failed. */
 export function parseDeliverAnswer(v: unknown): DeliverAnswer | string {
   if (!isObject(v)) return 'not a JSON object';
-  const bad = Object.keys(v).find((k) => !['conversation', 'seq', 'body', 'reason'].includes(k));
+  const bad = Object.keys(v).find((k) => !['conversation', 'seq', 'body', 'reason', 'code', 'retryAfter'].includes(k));
   if (bad !== undefined) return `unknown key ${JSON.stringify(bad)}`;
   if (typeof v.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(v.conversation)) return 'conversation is a conversation id (cv-…)';
   if (typeof v.seq !== 'number' || !Number.isInteger(v.seq) || v.seq < 1) return 'seq is a positive integer';
   if (!BODY_STATES.includes(v.body as BodyState)) return `body is one of ${BODY_STATES.join(', ')}`;
   if (v.reason !== undefined && (typeof v.reason !== 'string' || !v.reason.length || v.reason.length > 500)) return 'reason is 1-500 characters';
   if (v.body === 'failed' && v.reason === undefined) return 'a failed body says why (reason)';
-  return { conversation: v.conversation, seq: v.seq, body: v.body as BodyState, ...(v.reason !== undefined ? { reason: v.reason as string } : {}) };
+  if (v.code !== undefined && (v.code !== 'quota' || v.body !== 'failed')) return 'code is quota, on a failed delivery only';
+  if (v.retryAfter !== undefined && (v.code !== 'quota' || typeof v.retryAfter !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v.retryAfter) || !Number.isFinite(Date.parse(v.retryAfter)))) return 'retryAfter is an ISO UTC timestamp on a quota failure';
+  return { conversation: v.conversation, seq: v.seq, body: v.body as BodyState, ...(v.reason !== undefined ? { reason: v.reason as string } : {}),
+    ...(v.code === 'quota' ? { code: 'quota' as const } : {}), ...(v.retryAfter !== undefined ? { retryAfter: v.retryAfter as string } : {}) };
 }
 
 /**
@@ -158,6 +174,7 @@ export async function grantRefusal(env: NodeJS.ProcessEnv, h: Household, agent: 
 
 /** Who may deliver what: the reason a delivery is refused before it's forwarded, or undefined. */
 export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody): Promise<DeliverResult | undefined> {
+  if (d.continuation && caller.piece !== 'clock') return refuse(403, 'forbidden: only the clock may carry a continuation');
   const rec = readRecord(env, caller.piece);
   if (!rec) return refuse(403, `forbidden: ${caller.piece} isn't an installed managed piece`);
   // The runtime is the installed delivery piece, not any piece whose block claims the role.
@@ -191,7 +208,7 @@ export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, call
  * the same however its JSON was written. The table keeps this, never the text.
  */
 export function deliveryHash(d: DeliverBody): string {
-  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : [])];
+  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : []), ...(d.continuation ? ['continuation', d.continuation.handle, d.continuation.wake, d.continuation.expiresAt] : [])];
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
@@ -321,12 +338,13 @@ export const OWNER_SOURCE = 'loom';
  * only from an adapter) are for pieces, and the page already knows this is the owner, speaking for themselves.
  * Idempotent on `id` like any delivery.
  */
-export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string },
+export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string; at?: string },
   nowMs: () => number = Date.now): Promise<DeliverResult> {
   if (!h.agents.includes(m.agent)) return refuse(403, `forbidden: ${m.agent} isn't one of this household's agents`);
   const d = parseDeliver({
     id: m.id, agent: m.agent, venue: m.venue, place: m.place, ...(m.label ? { label: m.label } : {}),
-    from: { kind: 'person', slug: m.person }, kind: 'message', at: new Date(nowMs()).toISOString(), text: m.text,
+    // `at`, when given, is the message's own time (a Comms message sent again is the same delivery: t-1881).
+    from: { kind: 'person', slug: m.person }, kind: 'message', at: m.at ?? new Date(nowMs()).toISOString(), text: m.text,
   });
   if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
   return forwardKept(env, h, { piece: OWNER_SOURCE }, d, nowMs);
@@ -345,6 +363,9 @@ async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: Deliver
   const pending = inFlight.get(key);
   if (pending) return pending.hash === k.hash ? pending.result : conflict(d.id);
   const result = (async (): Promise<DeliverResult> => {
+    // Its kept answers, read and written once household.db is free: a lock is waited out off the event loop (lock-gate.ts).
+    const keptDb = [join(h.home, HOUSEHOLD_DB)];
+    await waitForLocks({ read: keptDb });
     const kept = replayOf(h.home, k.piece, k.id, nowMs());
     if (kept) return kept.hash === k.hash ? { status: 200, body: kept.answer } : conflict(d.id);
     if (keptCount(h.home, k.piece, nowMs()) >= DELIVERY_LIMITS.keptPerPiece) {
@@ -364,6 +385,7 @@ async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: Deliver
       if (r.error === 'timed out') return refuse(504, `timeout: the delivery piece (${target.piece}) didn't answer within ${DELIVERY_LIMITS.timeoutMs / 1000} s`);
       return refuse(502, `bad-gateway: the delivery piece (${target.piece}) failed (${r.error})`);
     }
+    await waitForLocks({ write: keptDb, budgetMs: WRITE_WAIT_MS });
     keepAnswer(h.home, k, r.value, nowMs());
     return { status: 200, body: r.value };
   })();

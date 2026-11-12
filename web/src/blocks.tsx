@@ -1,3 +1,4 @@
+import { aboutAttr, aboutPage, validAbout } from './about';
 // loom's blocks (src/ui/vocab.ts) drawn with 000h's components, by the rules in docs/specs/ui-app.md:
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
@@ -17,6 +18,7 @@ const ChartBlock = lazy(() => import('./chart'));
 const Face = lazy(() => import('./face'));
 // An agent's pixel face, where it has a sheet (pixel-face.tsx): its own chunk, its sheet loaded when drawn.
 const PixelFace = lazy(() => import('./pixel-face'));
+const PixelAvatar = lazy(() => import('./pixel-face').then((m) => ({ default: m.PixelAvatar })));
 const Panel = lazy(() => import('./panel'));
 const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
 const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
@@ -30,20 +32,24 @@ const Confirm = lazy(() => import('./block-extras').then((m) => ({ default: m.Co
 const Pager = lazy(() => import('./block-extras').then((m) => ({ default: m.Pager })));
 const DetailsBlock = lazy(() => import('./details'));
 const WideTable = lazy(() => import('./block-extras').then((m) => ({ default: m.WideTable })));
+// What a list row opens to in place (its `more`): loads the first time one opens.
+const RowMore = lazy(() => import('./row-more'));
 
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { createContext, useContext, useState, type ReactNode, lazy, Suspense } from 'react';
-import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { AnimatedIcon, StateChevron } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
-import { markColor, PixelContext, useLook } from './look';
+import { markColor, markName, PixelContext } from './look';
 import type { Sprite } from './pixel-face';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
   ctx: Ctx; send: (action: string, fields: Record<string, string>) => Promise<boolean>; go: (href: string) => void; wide: boolean;
+  /** What's shown hasn't been checked with loom yet (page.ts fresh): its actions wait until it has. */
+  stale?: boolean;
   /** The same page, but links and actions belong to another source (an ask's or a tile's piece). */
   withSource: (source: Ctx['source']) => Env;
 }
@@ -64,7 +70,7 @@ export function Link({ page, href, children, className }: { page?: string; href?
 
 /** A button that sends its action; one that is danger (or says confirm) asks first. */
 export function ActButton({ b, size = 'sm', full = false, onDone, disabled = false }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void; disabled?: boolean }) {
-  const { send } = useEnv();
+  const { send, stale } = useEnv();
   const [asking, setAsking] = useState(false);
   // The confirm dialog (000h's alert dialog) loads the first time it's asked for, and stays for its closing motion.
   const [asked, setAsked] = useState(false);
@@ -73,7 +79,7 @@ export function ActButton({ b, size = 'sm', full = false, onDone, disabled = fal
   const variant = b.tone === 'danger' ? 'danger' : b.tone === 'primary' ? 'default' : 'outline';
   return (
     <>
-      <Button size={size} variant={variant} disabled={busy || disabled} className={full ? 'w-full' : undefined}
+      <Button size={size} variant={variant} disabled={busy || disabled || stale} className={full ? 'w-full' : undefined}
         onClick={() => (b.confirm || b.tone === 'danger' ? (setAsked(true), setAsking(true)) : void fire())}>{b.label}</Button>
       {asked && <Suspense fallback={null}><Confirm b={b} open={asking} onOpenChange={setAsking} fire={() => void fire()} /></Suspense>}
     </>
@@ -86,9 +92,12 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
   // Nothing is cut so it can't be read (Jonathan, 2026-11-03): a row's words run to two lines, and a row that goes
   // nowhere opens to its whole text on a tap; one that goes somewhere shows it all there.
+  const { ctx } = useEnv();
+  const about = i.ref ? validAbout({ ref: i.ref, label: i.text, agent: i.agent }) : i.page ? aboutPage(pageHref(i.page, ctx.source), i.text) : null;
   const [open, setOpen] = useState(false);
   const whole = wrap || open;
-  const linked = i.page !== undefined || !!i.href;
+  // A row with `more` opens in place; its link is then inside what opened, not where the tap goes.
+  const linked = !i.more && (i.page !== undefined || !!i.href);
   const body = (
     <ItemContent className="min-w-0 flex-1">
       <ItemTitle className={`flex min-w-0 gap-2 ${whole ? 'items-start' : 'items-center'}`}>
@@ -102,21 +111,23 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
   );
   return (
     <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
-      <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
+      <Item {...(about ? aboutAttr({ ...about, ...(i.agent ? { agent: i.agent } : {}) }) : {})} as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
         {linked ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link>
-          : wrap ? body
-            : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{body}</button>}
+          : wrap && !i.more ? body
+            : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+              {body}{i.more && !i.act && <StateChevron open={open} className="shrink-0" />}</button>}
         {i.act && <ItemTrailing><ActButton b={i.act} /></ItemTrailing>}
       </Item>
+      {i.more && open && <Suspense fallback={<div className="min-h-16" />}><RowMore more={i.more} page={i.page} href={i.href} indent={marked || !!i.tone} /></Suspense>}
     </Arrive>
   );
 }
 
-/** Long tables and lists a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
+/** Long tables, lists and panels a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
 const PAGE_ROWS = 15;
 /** Where a list or table that pages itself is (the piece serves one page; loom asks for ?<param>=<n>). */
 type Pages = { param: string; at: number; count: number; total?: number };
-function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } {
+export function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } {
   const { ctx, go } = useEnv();
   const [at, setAt] = useState(0);
   // The piece's own pages (0-based here), else ours over what it sent.
@@ -146,14 +157,19 @@ function ListBlock({ items, pages, wrap, who }: { items: ListItem[]; pages?: Pag
 }
 
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
-  const { wide } = useEnv();
+  const { wide, ctx } = useEnv();
+  const rowAbout = (r: (string | { text: string; page?: string })[]) => {
+    const c = r.find((c) => typeof c !== "string" && c.page);
+    const a = c && typeof c !== "string" && c.page ? aboutPage(pageHref(c.page, ctx.source), c.text) : null;
+    return a ? aboutAttr(a) : {};
+  };
   const { rows, pager } = usePaged(b.rows, (b as { pages?: Pages }).pages);
   const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? tidy(c) : <Link page={c.page}>{tidy(c.text)}</Link>);
   if (!b.rows.length) return <Nothing title="Nothing here yet" />;
   if (!wide) {
     return (
       <><ul className="divide-y">{rows.map((r, n) => (
-        <Arrive as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
+        <Arrive {...rowAbout(r)} as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
           <span className="font-medium">{cell(r[0])}</span>
           <span className="text-sm opacity-70">{r.slice(1).map((c, m) => <span key={m}>{m ? ' · ' : ''}{cell(c)}</span>)}</span>
         </Arrive>))}
@@ -161,7 +177,7 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
     );
   }
   // A desktop: 000h's table (its ledger look), rows as they come.
-  return <><Suspense fallback={<div className="min-h-24" />}><WideTable columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
+  return <><Suspense fallback={<div className="min-h-24" />}><WideTable rowAbout={rowAbout} columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
 }
 
 
@@ -182,12 +198,12 @@ export type Mark = { label: string; bg: string; fg: string; face?: { shape?: str
 export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
 export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
-  const look = useLook();
-  // A pixel face is at least its 48-pixel square: drawn at 1x from 36 px, 2x from 64; smaller, the drawn face.
-  const pixel = useContext(PixelContext) && !!a.face?.sprite && size >= 36;
+  // An agent with a pixel sheet wears it (unless the person turned Pixel faces off): its whole face, alive, from 36 px
+  // (1x, 2x from 64); smaller, a still crop of its head (pixel-face.tsx PixelAvatar). Without one, the drawn face.
+  const sprite = useContext(PixelContext) ? a.face?.sprite : undefined;
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
-      style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      style={{ '--c': markColor(a.bg), color: markName(a.bg) ? 'var(--v-on-accent)' : a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
   );
@@ -195,8 +211,8 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
     <Suspense fallback={initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
         {(() => {
-          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />;
-          return pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} fallback={drawn} /> : drawn;
+          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} />;
+          return !sprite ? drawn : size >= 36 ? <PixelFace sprite={sprite} state={state} size={size} label={a.label} fallback={drawn} /> : <PixelAvatar sprite={sprite} size={size} label={a.label} fallback={drawn} />;
         })()}
       </span>
     </Suspense>
@@ -249,6 +265,12 @@ export function Nothing({ title, text, children }: { title: string; text?: strin
 }
 
 export function BlockView({ b }: { b: Block }) {
+  if (!b.cut) return <BlockBody b={b} />;
+  // Cut short to fit loom's limits (src/ui/vocab.ts long()): the block, then a word that it isn't whole (t-1861).
+  return <div className="grid gap-1" data-cut><BlockBody b={b} /><p className="text-xs opacity-70">Cut short: too long to show whole here.</p></div>;
+}
+
+function BlockBody({ b }: { b: Block }) {
   switch (b.type) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{tidy(t.text)}</p>; }
     case 'prose': { const text = (b as { text: string }).text;
@@ -280,6 +302,8 @@ export function BlockView({ b }: { b: Block }) {
         <Arrive as="li" key={s.label} k={`ss:${s.label}\0${s.text ?? ''}\0${s.tone ?? ''}`} className="flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${DOT[s.tone ?? 'muted']}`} /><span className="font-medium">{s.label}</span>
           <span className="opacity-70">{s.text}</span>{s.meta && <span className="ml-auto text-xs opacity-60">{s.meta}</span>}</Arrive>))}</ul>);
     case 'link': return <PageLink l={b as Extract<Block, { type: 'link' }>} />;
+    // loom draws a from block for the viewer before the page leaves it; one that didn't says nothing of the thread.
+    case 'from': return <p className="text-sm opacity-70">From a conversation</p>;
     case 'code': { const text = (b as { text: string }).text;
       return <Suspense fallback={<pre className="overflow-x-auto rounded-xl p-3 text-xs">{text}</pre>}><CodeBlock code={text} /></Suspense>; }
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;

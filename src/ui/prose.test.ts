@@ -30,6 +30,7 @@ describe('prose: markdown, with raw HTML off', () => {
   it('a piece can send one, up to 20,000 characters', () => {
     const page = (text: string) => parsePage({ title: 'T', sections: [{ id: 's', blocks: [{ type: 'prose', text }] }] });
     expect(page('**hi**')).toMatchObject({ sections: [{ blocks: [{ type: 'prose', text: '**hi**' }] }] });
-    expect(page('x'.repeat(20001))).toMatch(/longer than 20000/);
+    // More is cut short to 20,000 and the block says so (t-1861), not the page refused.
+    expect(page('x'.repeat(20001))).toMatchObject({ sections: [{ blocks: [{ type: 'prose', text: `${'x'.repeat(19999)}…`, cut: true }] }] });
   });
 });

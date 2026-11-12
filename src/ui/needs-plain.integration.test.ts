@@ -66,7 +66,8 @@ process.stdin.on('end', () => {
   const req = JSON.parse(input);
   const tasks = JSON.parse(fs.readFileSync(process.env.LOOM_HOME + '/tasks.json', 'utf-8'));
   const id = req.body.argv[1];
-  const out = tasks[id] ? { ok: true, task: { id, status: tasks[id] } } : { ok: false, errors: ['E_UNKNOWN_ID'], task: null };
+  const t = typeof tasks[id] === 'object' ? tasks[id] : { status: tasks[id] };
+  const out = tasks[id] ? { ok: true, task: { id, ...t } } : { ok: false, errors: ['E_UNKNOWN_ID'], task: null };
   console.log(JSON.stringify({ body: { exit: out.ok ? 0 : 1, stdout: JSON.stringify(out), stderr: '' } }));
 });
 `;
@@ -231,6 +232,43 @@ describe('a Needs you in plain words', () => {
     const later = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000001', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
     writeDigest(art, { conversation: later, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you look at the other one?', waits_on: { task: 't-41' } } });
     expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['t-41 is gone']);
+  });
+
+  it('a task it waits on clears it once the owner answers that same ask on the task (t-2098), never another', async () => {
+    const at = new Date().toISOString();
+    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
+    const asked: [string, string, string][] = [];
+    let answered: boolean | undefined = false;
+    const check: WaitCheckers = { approvals: async () => ({}), task: async () => 'open', taskAnswered: async (id, ask, since) => { asked.push([id, ask, since]); return answered; } };
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    expect(asked[0][0]).toBe('t-40');
+    expect(asked[0][1]).toBe('Can you check the backup restored?');
+    expect(asked[0][2] >= at.slice(0, 16)).toBe(true);
+    answered = undefined;
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    answered = true;
+    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['you answered it on t-40']);
+  });
+
+  it('through the tasks piece: only the owner\'s answer to the same ask, written since, clears it', async () => {
+    const since = new Date(Date.now() - 1000).toISOString();
+    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
+    const task = (comments: { actor: string; at: string; text: string }[]) =>
+      writeFileSync(join(h.home, 'tasks.json'), JSON.stringify({ 't-40': { status: 'open', comments } }));
+    const later = new Date(Date.now() + 1000).toISOString();
+    const check = pieceCheckers(process.env);
+    // No owner set on the tasks piece: it can't tell whose answer is whose, so nothing clears.
+    task([{ actor: 'jonathan', at: later, text: 'Yes, to: Can you check the backup restored?' }]);
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    writeFileSync(join(h.home, 'pieces', 'tasks', 'settings.json'), JSON.stringify({ TASKSTORE_OWNER: 'jonathan' }));
+    // An agent's comment in his words, his answer to another ask, or one from before it was asked: nothing.
+    task([{ actor: 'mark', at: later, text: 'Yes, to: Can you check the backup restored?' },
+      { actor: 'jonathan', at: later, text: 'No, to: Can you buy a spare?' },
+      { actor: 'jonathan', at: '2020-01-01T00:00:00.000Z', text: 'Yes, to: Can you check the backup restored?' }]);
+    expect(await resolveNeeds(h, check)).toEqual([]);
+    expect(since < later).toBe(true);
+    task([{ actor: 'jonathan', at: later, text: 'Yes, to: Can you check the backup restored?\nIf yes, you said: I restore it.' }]);
+    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['you answered it on t-40']);
   });
 
   it('the stale one of 2026-11-03, a plain string naming an approval already spent, clears the same way', async () => {

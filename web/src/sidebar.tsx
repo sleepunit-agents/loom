@@ -54,14 +54,14 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       groups.push({ items: [row({ label: 'Home', href: s.home, current: s.tab === 'home' }), row({ label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks })] });
       if (places.length) groups.push({ label: 'Places', items: places.map((p) => row(p)) });
       groups.push({ label: 'Agents', items: s.agents.map((a) => row({ label: a.label, href: a.href, current: false, count: a.asks }, mark(a))) });
-      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) })] });
+      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || s.tab === 'accessibility' || settings.some((p) => p.current) })] });
     }
   }
   return (
     <Sidebar aria-label="loom" className="loom-side sticky top-3 m-3 mr-0 h-[calc(100dvh-24px)] w-[16.5rem] overflow-hidden">
       <SidebarHeader className="mb-4 justify-start gap-3 px-1">
         <a href="/" onClick={(e) => { e.preventDefault(); go('/'); }} className="flex min-w-0 items-center gap-3 no-underline">
-          <img src="/icons/loom-192.png" alt="" width={40} height={40} className="size-10 shrink-0 rounded-[var(--loom-r-icon)]" />
+          <img src="/icons/loom-192.png" alt="" draggable={false} width={40} height={40} className="size-10 shrink-0 rounded-[var(--loom-r-icon)]" />
           <span className="grid min-w-0 leading-tight">
             <span className="text-lg font-semibold">loom</span>
             <span className="truncate text-xs opacity-70">{s?.household ? `${s.owner}'s household` : (s?.owner ?? chrome.agent)}</span>

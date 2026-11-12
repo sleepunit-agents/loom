@@ -1,0 +1,116 @@
+/* The tiled desktop (tiles.tsx): the tiles share the desk between the bars and the dock, each where the rule
+   (layout.ts) puts it. A tile is today's window made slimmer: a 32 px strip in its app's colour (its key, Back and
+   Forward, its title, then make-big, minimize and close), and its page, scrolling inside it. Every colour is the look's
+   own (looks/looks.css), so Neon Noir, Low Light and Daylight each wear it. Loaded with the desk's own chunk. */
+:root[data-look] .loom-desk main.loom-tiles-main{padding-bottom:var(--desk-dock)}
+:root[data-look] .loom-tiles{position:relative;flex:1 1 auto;min-height:0;width:100%}
+:root[data-look] .loom-tile{--cut:10px;--frame:1px;--tile-ring:var(--v-border);position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+  background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
+  clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
+:root[data-look] .loom-tile[data-focused]{--tile-ring:var(--t)}
+/* The frame's ring (its edge in the app's tint when focused, and the cut corner's diagonal) is drawn over everything
+   in the tile, its page and its sheets alike: an inset shadow on the tile itself paints under its children, so a page's
+   panel ran over the bottom edge (Jonathan, 2026-11-06: Activity). The page sits inside the ring (.loom-tile__body's
+   margin), so nothing it draws is under it either; desk-window-overflow.integration.test.ts holds both. Only the
+   bottom-right cut gets a diagonal: the top-left one is the strip's key, filled in the tint. Its own name: --ring is
+   the focus outline's (tokens.css). */
+:root[data-look] .loom-tile::after{content:"";position:absolute;inset:0;z-index:21;pointer-events:none;
+  box-shadow:inset 0 0 0 var(--frame) var(--tile-ring);
+  background:linear-gradient(135deg,transparent calc(50% - .75px),var(--tile-ring) calc(50% - .75px) calc(50% + .75px),transparent calc(50% + .75px)) right bottom/var(--cut) var(--cut) no-repeat}
+:root[data-look] .loom-tile[data-focused]::after{box-shadow:inset 0 0 0 var(--frame) var(--tile-ring),inset 0 0 0 calc(var(--frame) + 1px) color-mix(in srgb,var(--t) 30%,transparent)}
+:root[data-look] .loom-tile__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:6px;height:32px;padding-right:4px;
+  border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
+:root[data-look] .loom-tile[data-focused] .loom-tile__bar{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
+:root[data-look] .loom-tile__key{flex:none;display:grid;place-items:center;align-self:stretch;width:44px;padding-left:6px;background:var(--t);color:var(--v-on-accent);
+  clip-path:polygon(var(--cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--cut))}
+:root[data-look] .loom-tile__steps{flex:none;display:flex}
+:root[data-look] .loom-tile__crumb{flex:none;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:600;
+  font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--v-text-2);text-decoration:none}
+:root[data-look] .loom-tile__crumb::after{content:"›";display:inline-block;margin-left:.35em;color:var(--v-text-3);text-decoration:none}
+:root[data-look] .loom-tile__crumb:is(:hover,:focus-visible){color:var(--v-text);text-decoration:underline;text-underline-offset:3px}
+:root[data-look] .loom-tile__bar h2{flex:0 1 auto;min-width:3em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;
+  font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
+:root[data-look] .loom-tile__bar h2:focus-visible{text-decoration:underline;text-decoration-color:var(--v-blue);text-underline-offset:4px}
+:root[data-look] .loom-tile__up{color:inherit;text-decoration:none} :root[data-look] .loom-tile__up:is(:hover,:focus-visible){text-decoration:underline;text-underline-offset:3px}
+:root[data-look] .loom-tile__path{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--v-text-3)}
+:root[data-look] .loom-tile__acts{margin-left:auto;flex:none;display:flex;gap:2px}
+:root[data-look] .loom-tile__btn{display:grid;place-items:center;width:28px;height:26px;color:var(--v-text-2)}
+:root[data-look] .loom-tile__btn:disabled{color:var(--v-text-3);opacity:.45}
+:root[data-look] .loom-tile__btn:not(:disabled):is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
+/* The page: its own scroll, its own width (an app's narrow layout asks the tile, not the screen: container queries). */
+:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;margin:0 var(--frame) var(--frame);overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
+/* Its app fills it edge to edge, every padding inside the scroller: an app's page is one surface (surface.css). */
+:root[data-look] .loom-tile__page{display:flex;flex-direction:column}
+:root[data-look] .loom-tile__page>*{width:100%;min-width:0}
+/* A wide tile's side column (SIDE_WIDE): Recent here, as the window has it, beside the page; it stays as the page scrolls. */
+:root[data-look] .loom-tile__body:has(>.loom-tile__side){display:flex;align-items:flex-start}
+:root[data-look] .loom-tile__body:has(>.loom-tile__side)>.loom-tile__page{flex:1 1 auto;min-width:0}
+:root[data-look] .loom-tile__side{position:sticky;top:0;flex:none;width:260px;max-width:260px;overflow-x:hidden;padding:18px 14px 24px;border-left:1px solid var(--v-border)}
+:root[data-look] .loom-tile__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+:root[data-look] .loom-tile__side ul{display:grid;gap:2px}
+:root[data-look] .loom-tile__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
+  text-decoration:none;box-shadow:inset 1px 0 0 var(--v-border)}
+:root[data-look] .loom-tile__side a:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
+:root[data-look] .loom-tile__btn[aria-pressed="true"]{color:var(--t)}
+
+/* ---- the agents' rail beside the apps (desk-agents.tsx, docs/specs/agent-desk.md): a fixed width at the right edge;
+   the apps share what's left (tiles.tsx appArea). ---- */
+:root[data-look] .loom-tiles>.loom-arail{width:var(--rail-w,320px)}
+/* a context menu (menu.tsx): a small dark panel at the pointer, a lit edge in Neon's pink, its title in the data face;
+   the item under focus or the pointer lit as a dock key is. Above the tiles and the dock, under Find. */
+:root[data-look] .loom-cmenu{position:fixed;z-index:60;min-width:200px;max-width:min(320px,calc(100vw - 16px));padding:6px;
+  background:color-mix(in srgb,var(--v-paper) 96%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 30%,var(--v-border)),var(--shadow-float);
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
+:root[data-look] .loom-cmenu__title{padding:4px 8px 6px;font-family:var(--loom-font-data);font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-cmenu [role="menuitem"]{display:flex;align-items:center;gap:12px;width:100%;min-height:32px;padding:5px 10px;text-align:left;font-size:13.5px;color:var(--v-text);outline:none}
+:root[data-look] .loom-cmenu [role="menuitem"]:is(:hover,:focus-visible,:focus){background:color-mix(in srgb,var(--v-pink) 12%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
+:root[data-look] .loom-cmenu__hint{margin-left:auto;font-family:var(--loom-font-data);font-size:11px;color:var(--v-text-3)}
+@media (prefers-contrast:more){:root[data-look] .loom-cmenu{box-shadow:inset 0 0 0 2px var(--v-text)}}
+
+/* ---- phase 5: a tile's own pop-ups (components/ui/portal-container.ts). Its layer covers the tile and lets presses
+   through until a dialog opens in it; then a scrim covers this tile only, and the dialog sits in the tile's middle (the
+   tile is the containing block for its fixed children: its backdrop-filter), never wider or taller than the tile. ---- */
+:root[data-look] .loom-tile__layer{position:absolute;inset:var(--frame);z-index:20;pointer-events:none}
+:root[data-look] .loom-tile__layer>*{pointer-events:auto}
+:root[data-look] .loom-tile[data-blocked] .loom-tile__layer{pointer-events:auto;background:var(--v-scrim)}
+:root[data-look] .loom-tile__layer :is([role="dialog"],[role="alertdialog"]){max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto}
+
+/* ---- moves (docs/specs/desk-tiling.md, "Transitions"): every tile is named for itself, so one View Transition
+   morphs each from its old box to its new one. A page change in one tile names only that
+   tile's body, so the rest stand still. Reduced motion never starts one (tiles.tsx). ---- */
+:root[data-look] .loom-tile{view-transition-name:var(--vt,none)}
+:root[data-tile-move="page"] .loom-tile{view-transition-name:none}
+:root[data-tile-move="page"] .loom-tile[data-moving] .loom-tile__body{view-transition-name:loom-tile-page}
+:root[data-tile-move]::view-transition-group(*){animation-duration:.22s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
+:root[data-tile-move="page"]::view-transition-old(root),:root[data-tile-move="page"]::view-transition-new(root){animation:none}
+/* a tile's own move (tiles.tsx Fx; t-1925 B): the one tile opened, closed, minimized, made big or brought back wears
+   `loom-fx`, and <html data-tile-fx> says which. loom's look, not a page's: a CRT's power-on (a lit line, then the
+   picture) and power-off (the picture folds to a line, the line to a dot); a scanline wiping it down to the dock and
+   back up; a glitch, slices of it torn sideways, as it takes the big slot. 220 to 320 ms, transform, opacity and
+   clip-path only. Reduced motion never starts one. */
+:root[data-tile-fx]::view-transition-group(loom-fx){z-index:2}
+:root[data-tile-fx]::view-transition-image-pair(loom-fx){isolation:auto}
+:root[data-tile-fx="open"]::view-transition-new(loom-fx){animation:loom-fx-on .3s cubic-bezier(.2,.8,.2,1) both}
+:root[data-tile-fx="close"]::view-transition-old(loom-fx){animation:loom-fx-off .26s cubic-bezier(.5,0,.8,.4) both}
+:root[data-tile-fx="min"]::view-transition-old(loom-fx){animation:loom-fx-wipe-out .24s cubic-bezier(.5,0,.8,.4) both}
+:root[data-tile-fx="restore"]::view-transition-new(loom-fx){animation:loom-fx-wipe-in .28s cubic-bezier(.2,.8,.2,1) both}
+:root[data-tile-fx="max"]::view-transition-group(loom-fx){animation-duration:.3s}
+:root[data-tile-fx="max"]::view-transition-old(loom-fx){animation:loom-fx-fade .12s linear both}
+:root[data-tile-fx="max"]::view-transition-new(loom-fx){animation:loom-fx-glitch .3s steps(1,end) both}
+@keyframes loom-fx-on{0%{opacity:0;transform:scale(.55,.004)}12%{opacity:1;transform:scale(.55,.004)}45%{opacity:1;transform:scale(1,.004)}
+  70%{opacity:.85;transform:scale(1,1.02)}100%{opacity:1;transform:none}}
+@keyframes loom-fx-off{0%{opacity:1;transform:none}50%{opacity:1;transform:scale(1.02,.004)}85%{opacity:1;transform:scale(0,.004)}100%{opacity:0;transform:scale(0,.004)}}
+@keyframes loom-fx-wipe-out{0%{clip-path:inset(0 0 0 0);transform:none;opacity:1}100%{clip-path:inset(100% 0 0 0);transform:translateY(8%);opacity:.3}}
+@keyframes loom-fx-wipe-in{0%{clip-path:inset(0 0 100% 0);transform:translateY(8%);opacity:.3}100%{clip-path:inset(0 0 0 0);transform:none;opacity:1}}
+@keyframes loom-fx-fade{to{opacity:0}}
+@keyframes loom-fx-glitch{0%{clip-path:inset(0 0 62% 0);transform:translateX(-6px)}15%{clip-path:inset(38% 0 22% 0);transform:translateX(5px)}
+  30%{clip-path:inset(8% 0 70% 0);transform:translateX(-3px)}45%{clip-path:inset(55% 0 0 0);transform:translateX(2px)}60%,100%{clip-path:inset(0);transform:none}}
+/* a choice of many in a tile is the browser's own list (choice-select.tsx), dressed as the look's field */
+:root[data-look] .loom-tile .loom-native-select{width:100%;min-width:0;height:40px;padding:0 10px;border-radius:var(--r-field,10px);color:var(--v-text);
+  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border);font:inherit}
+/* a sheet from the bottom (drawer.tsx) sits on the tile's own bottom edge, not over the screen's dock */
+:root[data-look] .loom-tile__layer .v-drawer{left:12px;right:12px;bottom:12px;max-height:calc(100% - 24px);overflow:auto}
+/* A page on its way while the one shown stays (page.ts pending): after 150 ms, a line along the tile's top (t-1925 F). */
+:root[data-look] .loom-tile__body:has(>.loom-tile__page[data-pending]){box-shadow:inset 0 2px 0 var(--t,var(--v-pink));transition:box-shadow 0s 150ms}

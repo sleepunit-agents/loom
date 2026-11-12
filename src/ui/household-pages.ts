@@ -12,15 +12,17 @@
  * page here may show every agent's relationship: an agent's own tools never
  * can.
  */
+import { listProjects } from '../tools/project.js';
 import { listProposals } from '../backends/proposals.js';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  aboutOf, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
+  aboutOf, setAboutAsk, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, setAbout, setMark,
   setMember, type Household, type Member,
   markIndexOf,
 } from '../household.js';
+import { passkeysMadeFrom, revokeTokenAndPasskeys, thePasskeys, ThePasskeys as cap } from './passkey-tokens.js';
 import { relayOf } from '../relay-pairs.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { backupRow, readSettings, setSettings, targetString, validateSettings } from '../backup.js';
@@ -111,7 +113,7 @@ export function householdHome(h: Household, opts: CoreOptions = {}): { tiles: Ti
     {
       id: 'commons',
       title: 'The commons',
-      side: true,
+      place: 'side' as const,
       blocks: [
         { type: 'stats', items: [
           { label: 'knowledge pages', value: pages.toLocaleString('en-US'), page: 'loom:knowledge' },
@@ -162,96 +164,73 @@ interface PageRow { slug: string; title: string; domain: string; updated: string
 
 /** A knowledge page not checked (or, never checked, not written) in this many days needs a check. */
 const CHECK_DAYS = 30;
-const CHECK = 'needs-check';
 
-export function knowledgePage(h: Household, query: Record<string, string>, opts: CoreOptions = {}): Page {
-  const tz = opts.timeZone ?? uiTimeZone();
+// ─── Knowledge as a reader (t-1925, Jonathan's approved mock 2026-11-06) ─────────────────────────────
+
+/** How fresh a page is: checked lately (fresh), getting on (aging, two thirds of the way to a check), or due a check
+ * (unchecked for CHECK_DAYS, or its last check found it stale: Check again asks for one). */
+export type Freshness = 'fresh' | 'aging' | 'due';
+export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; fresh: Freshness; by?: string;
+  /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
+  recent?: true }
+export interface KnowledgeOpen extends KnowledgeRow {
+  body: string; sourcing?: string;
+  sources: Array<{ claim: string; kind: string; locator?: string; href?: string }>;
+  /** Other pages that link to this one ([[slug]], knowledge:slug, /knowledge/slug). */
+  citedBy: Array<{ slug: string; title: string }>;
+  /** Its last check's outcome, when there was one. */
+  checked?: { at: string; outcome: string; by?: string };
+}
+export interface KnowledgeView { total: number; checkDays: number; recentDays: number; pages: KnowledgeRow[]; open?: KnowledgeOpen }
+
+/** How many days back "Recently verified" reaches. */
+const RECENT_DAYS = 7;
+/** The most pages the reader lists (the whole commons, today 188). */
+const READER_MAX = 2000;
+
+/** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
+export function knowledgeView(h: Household, open?: string, opts: CoreOptions = {}): KnowledgeView {
   const nowMs = opts.nowMs ?? Date.now();
   const path = commonsKnowledgePath(h);
-  if (!existsSync(path)) return { title: 'Knowledge', intro: 'The commons has no knowledge yet.', sections: [], add: NEW_FACT };
+  const empty: KnowledgeView = { total: 0, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: [] };
+  if (!existsSync(path)) return empty;
   const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
   try {
-    const domains = (db.prepare("SELECT substr(domain, 1, instr(domain || '/', '/') - 1) AS top, COUNT(*) AS n FROM pages WHERE status = 'active' GROUP BY top ORDER BY n DESC LIMIT 11").all() as Array<{ top: string; n: number }>);
-    // "Needs a check": last verified (or, never verified, last written) more than CHECK_DAYS ago.
-    const cutoff = new Date(nowMs - CHECK_DAYS * 86_400_000).toISOString();
-    const STALE = 'COALESCE(verified_at, updated) < ?';
-    const stale = (db.prepare(`SELECT COUNT(*) AS n FROM pages WHERE status = 'active' AND ${STALE}`).get(cutoff) as { n: number }).n;
-    const pick = query.domain === CHECK || domains.some((d) => d.top === query.domain) ? query.domain : '';
-    const q = (query.q ?? '').trim().toLowerCase().slice(0, 100);
-    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const where = ["status = 'active'"];
-    const args: unknown[] = [];
-    if (pick === CHECK) { where.push(STALE); args.push(cutoff); }
-    else if (pick) { where.push("(domain = ? OR domain LIKE ? || '/%')"); args.push(pick, pick); }
-    if (q) { where.push("(lower(title) LIKE ? ESCAPE '\\' OR lower(domain) LIKE ? ESCAPE '\\')"); args.push(like, like); }
-    const rows = db.prepare(
-      `SELECT slug, title, domain, updated, sourcing, verified_at FROM pages WHERE ${where.join(' AND ')} ORDER BY ${pick === CHECK ? 'COALESCE(verified_at, updated) ASC' : 'updated DESC'} LIMIT 60`,
-    ).all(...args) as PageRow[];
-    const total = count(path, "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'");
-    const freshness = (r: PageRow): { meta: string; tone?: 'warn' } => {
-      const at = r.verified_at ?? r.updated;
-      const days = Math.floor((nowMs - Date.parse(at)) / 86_400_000);
-      if (at < cutoff) return { meta: `unchecked for ${days} days`, tone: 'warn' };
-      return { meta: r.verified_at ? `verified ${ago(r.verified_at, tz, nowMs)}` : `written ${ago(r.updated, tz, nowMs)}` };
+    // Each page's last check's outcome (a stale one means "check again").
+    let last = new Map<number, { at: string; outcome: string; by?: string }>();
+    try {
+      last = new Map((db.prepare('SELECT v.page_id AS id, v.verified_at AS at, v.outcome AS outcome, v.verifier AS by FROM verifications v JOIN (SELECT page_id, MAX(id) AS m FROM verifications GROUP BY page_id) x ON x.m = v.id').all() as Array<{ id: number; at: string; outcome: string; by: string | null }>)
+        .map((r) => [r.id, { at: r.at, outcome: r.outcome, ...(r.by ? { by: r.by } : {}) }]));
+    } catch { /* an older store: no verifications table */ }
+    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, created_by, author FROM pages WHERE status = 'active' ORDER BY updated DESC LIMIT ${READER_MAX}`)
+      .all() as Array<PageRow & { id: number }>;
+    const day = 86_400_000;
+    const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {
+      const at = Date.parse(r.verified_at ?? r.updated);
+      const age = (nowMs - at) / day;
+      if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
+      return age >= (CHECK_DAYS * 2) / 3 ? 'aging' : 'fresh';
     };
-    return {
-      title: 'Knowledge',
-      add: NEW_FACT,
-      intro: 'Facts about the world, shared by every agent in the household. Newest first.',
-      sections: [
-        { id: 'filter', blocks: [
-          { type: 'filters', param: 'domain', search: `Search ${total.toLocaleString('en-US')} facts`, options: [{ value: '', label: 'All' },
-            ...(stale ? [{ value: CHECK, label: `Needs a check · ${stale}` }] : []), ...domains.map((d) => ({ value: d.top, label: `${d.top} · ${d.n}` }))] },
-          ...(q || pick ? [{ type: 'text' as const, text: `${rows.length}${rows.length === 60 ? '+' : ''} of ${total.toLocaleString('en-US')} pages${q ? ` matching “${query.q!.trim()}”` : ''}`, tone: 'muted' as const }] : []),
-        ] },
-        { id: 'pages', blocks: [{
-          type: 'list',
-          items: rows.map((r) => {
-            const f = freshness(r);
-            return { text: r.title, meta: `${f.meta} · ${r.domain}`, tone: f.tone, page: validPath(`knowledge/${r.slug}`) ? `loom:knowledge/${r.slug}` : undefined };
-          }),
-        }] },
-      ],
-    };
-  } finally {
-    db.close();
-  }
-}
-
-export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {}): Page {
-  const tz = opts.timeZone ?? uiTimeZone();
-  const path = commonsKnowledgePath(h);
-  if (!existsSync(path)) return { title: 'Not found', sections: [] };
-  const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
-  try {
-    const r = db.prepare("SELECT slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(slug) as PageRow | undefined;
-    if (!r) return { title: 'Not found', sections: [] };
-    const cites = (() => {
-      try {
-        return db.prepare('SELECT claim, source_kind, source_locator FROM citations c JOIN pages p ON p.id = c.page_id WHERE p.slug = ? LIMIT 40').all(slug) as Array<{ claim: string; source_kind: string; source_locator: string | null }>;
-      } catch { return []; }
-    })();
-    const body = r.body ?? '';
-    const by = r.created_by ?? r.author;
-    return {
-      title: r.title,
-      // The board's line under the title: when it was last confirmed, and by whom.
-      intro: r.verified_at ? `Verified ${ago(r.verified_at, tz, opts.nowMs ?? Date.now())}${by ? ` · written by ${by}` : ''}` : `Not verified yet${by ? ` · written by ${by}` : ''}`,
-      sections: [
-        { id: 'body', blocks: [{ type: 'prose' as const, text: body.slice(0, 20000) }] },
-        ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
-        // The board's "Still true", after the sources: a verification (the clock the nightly freshness pass reads), as the owner.
-        { id: 'verify', blocks: [{ type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] }] },
-        { id: 'record', side: true, blocks: [{ type: 'kv', items: [
-          { label: 'domain', value: r.domain },
-          { label: 'sourcing', value: r.sourcing ?? 'unknown' },
-          { label: 'updated', value: when(r.updated, tz) },
-          { label: 'verified', value: when(r.verified_at ?? null, tz) },
-          { label: 'written by', value: r.created_by ?? r.author ?? 'unknown' },
-          { label: 'slug', value: r.slug },
-        ] }] },
-      ],
-    };
+    const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
+    const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
+      ...(r.verified_at ? { verified_at: r.verified_at } : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
+    const out: KnowledgeView = { total: count(path, "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'"), checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
+    if (open) {
+      const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
+      if (r) {
+        let sources: KnowledgeOpen['sources'] = [];
+        try {
+          sources = (db.prepare('SELECT claim, source_kind, source_locator FROM citations WHERE page_id = ? LIMIT 40').all(r.id) as Array<{ claim: string; source_kind: string; source_locator: string | null }>)
+            .map((c) => ({ claim: c.claim, kind: c.source_kind, ...(c.source_locator ? { locator: c.source_locator } : {}), ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) }));
+        } catch { /* no citations table */ }
+        const esc = (x: string) => x.replace(/[\\%_]/g, (c) => `\\${c}`);
+        const citedBy = db.prepare("SELECT slug, title FROM pages WHERE status = 'active' AND slug != ? AND (body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY title LIMIT 20")
+          .all(r.slug, `%[[${esc(r.slug)}]]%`, `%knowledge:${esc(r.slug)}%`, `%/knowledge/${esc(r.slug)}%`) as Array<{ slug: string; title: string }>;
+        const checked = last.get(r.id);
+        out.open = { ...line(r), body: (r.body ?? '').slice(0, 20000), ...(r.sourcing ? { sourcing: r.sourcing } : {}), sources, citedBy, ...(checked ? { checked } : {}) };
+      }
+    }
+    return out;
   } finally {
     db.close();
   }
@@ -321,6 +300,23 @@ export function householdPeople(h: Household, query: Record<string, string | und
   }
 }
 
+/** The contacts app shares the directory and person page with the classic view. No private agent memories are added. */
+export function householdPeopleApp(h: Household, query: Record<string, string | undefined> = {}, slug?: string, opts: { projects?: boolean } = {}) {
+  const page = householdPeople(h);
+  const list = page.sections.flatMap((s) => s.blocks).find((b) => b.type === 'list');
+  const dir = directory(h);
+  try {
+    const rows = list?.type === 'list' ? list.items.map((i) => {
+      const slug = i.page?.replace(/^loom:people\//, '') ?? '';
+      return { slug, name: i.text, meta: i.meta, badge: i.badge,
+        kind: dir && kindOf(dir.getRow(slug)?.card ?? { how: {} }) === 'agent' ? 'agent' : 'person' };
+    }).filter((i) => i.slug) : [];
+    const selected = slug ?? query.p;
+    return { rows, q: query.q ?? '', kind: query.kind ?? '',
+      ...(selected && /^[a-z0-9][a-z0-9-]*$/.test(selected) ? { selected, open: householdPerson(h, selected, opts) } : {}) };
+  } finally { dir?.close(); }
+}
+
 /** The start of a text, cut at a sentence (or a word) near n characters. */
 function gist(text: string, n: number): string {
   const one = text.replace(/\s+/g, ' ').trim();
@@ -330,7 +326,7 @@ function gist(text: string, n: number): string {
   return end > n / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
-export function householdPerson(h: Household, slug: string, opts: CoreOptions = {}): Page {
+export function householdPerson(h: Household, slug: string, opts: CoreOptions & { projects?: boolean } = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
   const dir = directory(h);
@@ -390,6 +386,11 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
       ...placed,
       ...facts.map(([k, v]) => ({ label: k, value: value(v) })),
     ] }] });
+    const projects = opts.projects === false ? [] : h.agents.flatMap((a) => {
+      try { return listProjects(agentDir(h, a)).filter((p) => own && a === slug || [p.slug, ...(p.links.aliases ?? [])].some((name) => Object.hasOwn(d.card.where, name.replace(/-/g, '_')) || Object.hasOwn(rels.get(a)?.row.card.where ?? {}, name.replace(/-/g, '_'))))
+        .map((p) => ({ text: p.name, meta: p.status, page: `loom:projects/${a}/${p.slug}` })); } catch { return []; }
+    });
+    if (opts.projects !== false) sections.push({ id: 'projects', title: 'Projects', blocks: projects.length ? [{ type: 'list', items: projects }] : [{ type: 'text', text: 'No linked projects.', tone: 'muted' }] });
     return { title: d.card.name, sections };
   } finally {
     dir.close();
@@ -471,7 +472,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
       }),
       // Who it may relay to without asking: the runtime's permissions (agent-runtime.md, "Agent-to-agent relay"),
       // read here; the household owner sets them on the runtime's page.
-      { id: 'relay', title: 'Who it may write to', side: true, blocks: (() => {
+      { id: 'relay', title: 'Who it may write to', place: 'side' as const, blocks: (() => {
         const others = h.agents.filter((a) => a !== agent);
         const { authority, to } = relayOf(h.home, h.agents, agent);
         const text = !others.length ? 'There\'s no other agent to write to.'
@@ -484,15 +485,27 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         // them. Folded to a line each way (Jonathan, 2026-10-30: plain words over ids); the rest are a row each.
         const HOUSE = /^(.+?) · house h-\d+ on (.+)$/;
         const isHouse = (t: { label: string }) => HOUSE.test(t.label);
-        const row = (t: typeof live[number]) => ({
-          text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
-          meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}`,
-          act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
-        });
+        // A passkey's own token (t-1969) says what it was made from; a token passkeys were made from offers to take them too.
+        const counts = passkeysMadeFrom(h);
+        const madeFrom = (t: typeof live[number]) => counts.get(t.sha256) ?? 0;
+        const row = (t: typeof live[number]) => {
+          const n = madeFrom(t);
+          return {
+            text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
+            meta: `${t.role === 'owner' ? 'owner · ' : ''}${t.from !== undefined ? `made from "${t.from}" · ` : ''}used ${since(t.last_used, nowMs)}${n ? ` · ${n} passkey${n === 1 ? '' : 's'} made from it` : ''}`,
+            act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: n ? `Anything still using it is signed out at once. ${cap(n)} made from it ${n === 1 ? 'isn\'t' : 'aren\'t'} touched. You can make a new one.` : 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
+          };
+        };
         const own = live.filter((t) => !isHouse(t)), houses = live.filter(isHouse);
         const gone = tokens.filter((t) => t.revoked), goneHouses = gone.filter(isHouse).length, goneOwn = gone.filter((t) => !isHouse(t));
         return [
           own.length ? { type: 'list' as const, items: own.slice(0, 50).map(row) } : { type: 'text' as const, text: 'No tokens of its own yet.', tone: 'muted' as const },
+          // Revoke leaves a token's passkeys working; this takes them too.
+          ...(own.some((t) => madeFrom(t)) ? [{ type: 'details' as const, summary: 'Revoke a token with its passkeys', blocks: [{ type: 'list' as const, items: own.filter((t) => madeFrom(t)).slice(0, 50).map((t) => {
+            const n = madeFrom(t);
+            return { text: t.label, meta: `${n} passkey${n === 1 ? '' : 's'} made from it`,
+              act: { action: 'revoke-token', label: 'Revoke with its passkeys', tone: 'danger' as const, confirm: `Anything using it is signed out, and ${thePasskeys(n)} made from it ${n === 1 ? 'is' : 'are'} removed.`, fields: { label: t.label, passkeys: 'with' } } };
+          }) }] }] : []),
           ...(houses.length ? [{ type: 'details' as const, summary: `${houses.length} house${houses.length === 1 ? '' : 's'} running`, meta: 'each holds its own token, revoked when it ends',
             blocks: [{ type: 'list' as const, items: houses.slice(0, 50).map(row) }] }] : []),
           ...(gone.length ? [{ type: 'details' as const, summary: `${gone.length} revoked`, blocks: [
@@ -513,7 +526,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
 /** Setup's Backup section: the form loom backup set is, filled with what's set. */
 function backupSection(h: Household) {
   const { settings: s } = readSettings(h);
-  return { id: 'backup', title: 'Nightly backup', side: true, blocks: [
+  return { id: 'backup', title: 'Nightly backup', place: 'side' as const, blocks: [
     { type: 'text' as const, tone: 'muted' as const, text: 'Each night loom exports the household, encrypted to your keys, checks it restores, and writes it to a git repo it owns (one commit) or a directory. It pushes with this machine\'s own git login.' },
     { type: 'details' as const, summary: s ? 'Change it' : 'Set it up', blocks: [{ type: 'form' as const, action: 'backup-set', submit: 'Save', fields: [
       { name: 'target', label: 'Where', kind: 'text' as const, required: true, ...(s ? { value: targetString(s.target) } : {}), hint: 'git:https://github.com/you/backup.git, or path:/mnt/usb' },
@@ -615,7 +628,6 @@ const VOICES: Record<string, string> = {
 // ─── The boards' "+": a person, a fact ───────────────────────────────────────
 
 const NEW_PERSON = { page: 'loom:new-person', label: 'Add a person' };
-const NEW_FACT = { page: 'loom:new-fact', label: 'Add a fact' };
 const CHANNELS = ['slack', 'discord', 'email', 'phone', 'github'];
 
 export function newPersonPage(): Page {
@@ -734,7 +746,15 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const slug = fields.slug ?? '';
       if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
       const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
-      return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
+      return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge?p=${slug}` } : { ok: false, message: out };
+    }
+    // Check again (t-1925): a check that found it stale, so the page is due one (Knowledge's "Due a check"), and the
+    // nightly freshness pass and any agent reading it see it needs one. Its verified date doesn't move.
+    if (action === 'knowledge-recheck') {
+      const slug = fields.slug ?? '';
+      if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
+      const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'stale', note: 'asked to be checked again from loom\'s page' }, h.owner ?? 'owner');
+      return /outcome: stale/.test(out) ? { ok: true, message: 'Asked for a check: it’s in Due a check until an agent confirms it.', page: `loom:knowledge?p=${slug}` } : { ok: false, message: out };
     }
     if (action === 'backup-set') {
       const split = (v?: string) => (v ?? '').split(/[\s,]+/).filter(Boolean);
@@ -750,10 +770,14 @@ export async function householdAct(h: Household, action: string, fields: Record<
       return { ok: true, message: `Token for ${agent}, shown this once: ${token}`, page: `loom:a/${agent}/setup`, keep: true };
     }
     if (action === 'revoke-token') {
-      const t = revokeToken(h, fields.label ?? '');
+      const withPasskeys = fields.passkeys === 'with';
+      const { token: t, passkeys, devices } = revokeTokenAndPasskeys(h, fields.label ?? '', withPasskeys);
       const r = parseRole(t.role);
       const agent = r?.kind === 'agent' ? r.agent : h.default;
-      return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
+      const pk = (!passkeys ? '' : withPasskeys ? ` ${cap(passkeys)} made from it ${passkeys === 1 ? 'is' : 'are'} removed.`
+        : ` ${cap(passkeys)} made from it keep${passkeys === 1 ? 's' : ''} working.`)
+        + (devices ? ` ${devices} device${devices === 1 ? '' : 's'} signed in with ${withPasskeys ? 'them' : 'it'} no longer get${devices === 1 ? 's' : ''} notifications.` : '');
+      return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.${pk}`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'face-set') {
       const agent = fields.agent ?? '';
@@ -770,6 +794,21 @@ export async function householdAct(h: Household, action: string, fields: Record<
       setMark(h, agent, mark);
       return { ok: true, message: `${agentName(agentDir(h, agent))} wears ${mark.name}.`, page: `loom:a/${agent}/setup` };
     }
+    // Its description (the agent window's header, t-1925 D): what the household sees, in plain words. The owner's own
+    // words, or, asked for (about-ask, the window's Regenerate), the agent's (describe_self). Never its creed.
+    if (action === 'about-set') {
+      const agent = fields.agent ?? '';
+      if (!h.agents.includes(agent)) return { ok: false, message: 'No such agent.' };
+      try { setAbout(h, agent, fields.about ?? ''); } catch (e) { return { ok: false, message: e instanceof HouseholdError ? e.message : 'That didn\'t save.' }; }
+      setAboutAsk(h, agent, null);
+      return { ok: true, message: (fields.about ?? '').trim() ? `Saved ${agentName(agentDir(h, agent))}'s description.` : `Cleared ${agentName(agentDir(h, agent))}'s description.` };
+    }
+    if (action === 'about-ask') {
+      const agent = fields.agent ?? '';
+      if (!h.agents.includes(agent)) return { ok: false, message: 'No such agent.' };
+      setAboutAsk(h, agent, new Date().toISOString());
+      return { ok: true, message: `Asked ${agentName(agentDir(h, agent))} to write its description.` };
+    }
     // Its creed, a part at a time (Setup's "Who it is" and "Its creed"); every write keeps a backup.
     if (action === 'identity-set' || action === 'identity-section-set' || action === 'identity-section-add') {
       const agent = fields.agent ?? '';
@@ -781,7 +820,8 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (action === 'identity-set') {
         if ('purpose' in fields) next = withPart(next, 'purpose', fields.purpose ?? '');
         for (const b of ['voice', 'rules', 'ask'] as const) if (b in fields) next = withPart(next, b, fields[b] ?? '');
-        if ('about' in fields) setAbout(h, agent, fields.about ?? '');
+        // The owner's own words close an open ask: the agent's describe_self can't write over them.
+        if ('about' in fields) { setAbout(h, agent, fields.about ?? ''); setAboutAsk(h, agent, null); }
       } else if (action === 'identity-section-set') {
         next = withPart(next, fields.section ?? '', fields.body ?? '');
       } else {
@@ -881,6 +921,13 @@ export function householdSuggestPeople(h: Household, n = 8): Array<{ name: strin
   try {
     return dir.list().filter((p) => kindOf(dir.getRow(p.slug)?.card ?? { how: {} }) !== 'agent').slice(0, n).map((p) => ({ name: p.name, slug: p.slug }));
   } finally { dir.close(); }
+}
+
+/** A person's name as People has it (Jonathan Barket), or none when People doesn't know the slug or can't be read
+ * (Profile's head: an unreadable people.db must not stop the page you sign out from). */
+export function householdPersonName(h: Household, slug: string): string | undefined {
+  let dir: PeopleStore | null = null;
+  try { dir = directory(h); return dir?.getRow(slug)?.card.name?.trim() || undefined; } catch { return undefined; } finally { dir?.close(); }
 }
 
 export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {

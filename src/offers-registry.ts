@@ -58,15 +58,19 @@ export function deliveryPiece(env: NodeJS.ProcessEnv): { piece: string; argv: st
  * Each offer kind's limits (docs/extensions.md, "Offers"): the section feed's 3 s for a feed or
  * a venue's render, and the mcp_tools limits (agent-runtime.md, "Seams", 2: 120 s, an answer of
  * at most 64 KB) for `delivery` and `mcp_tools`, each in a pool of its own (src/ui/pieces.ts).
- * `grants` has 2 s.
+ * `grants` has 10 s.
  */
 export interface OfferLimits { timeoutMs: number; maxBytes: number; pool: OfferPool }
 export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   sections: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
   venues: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
-  grants: { timeoutMs: 2_000, maxBytes: 4 * 1024, pool: 'grants' },
+  grants: { timeoutMs: 10_000, maxBytes: 4 * 1024, pool: 'grants' },
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
+  // docs/specs/collections.md ("Their limits are their own"): 15 s; the pool is per provider (src/collections/serve.ts),
+  // apart from the page's. The answer is read a line at a time and each row checked as it comes; only the rows core
+  // admits count against its 1 MB. This is the most one line (one row) may be.
+  collections: { timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024, pool: 'collections' },
 };
 
 /**
@@ -88,6 +92,11 @@ export interface RunOfferOptions<T> {
   limits?: Partial<OfferLimits>;
   /** Who the call is for: the process gets that caller's store grant (as for a piece's API). */
   caller?: ApiCaller;
+  /**
+   * The answer read a line at a time as it comes (JSON lines), instead of one value at the end: `parse` then gets
+   * null. Returning `stop` ends the run (`stopped`).
+   */
+  onLine?: (line: string) => 'go' | 'stop';
 }
 
 /**
@@ -109,8 +118,13 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   const dir = managedBinDir(env);
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
   const limits = { ...OFFER_LIMITS[opts.kind ?? 'sections'], ...opts.limits };
+  // Only the installed query declaration opts in; changes/search never inherit query's transport.
+  const declared = rec.loom.collections;
+  const serve = opts.kind === 'collections' && declared?.query_serve === true && !opts.args?.length
+    && JSON.stringify(argv) === JSON.stringify(declared.query);
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
-    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller,
+    serve: serve ? [...rest, '--serve'] : undefined,
+    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller, onLine: opts.onLine,
   });
   if (!r.ok) {
     if (r.exit === undefined) return { ok: false, error: r.reason };
@@ -118,8 +132,8 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
     try { answer = r.stdout ? JSON.parse(r.stdout) : undefined; } catch { answer = undefined; }
     return { ok: false, error: r.reason, exit: r.exit, ...(answer !== undefined ? { answer } : {}) };
   }
-  let parsed: unknown;
-  try { parsed = JSON.parse(r.stdout); } catch { return { ok: false, error: 'invalid: not JSON' }; }
+  let parsed: unknown = null;
+  if (!opts.onLine) try { parsed = JSON.parse(r.stdout); } catch { return { ok: false, error: 'invalid: not JSON' }; }
   const v = opts.parse(parsed);
   return typeof v === 'string' ? { ok: false, error: `invalid: ${v}` } : { ok: true, value: v };
 }

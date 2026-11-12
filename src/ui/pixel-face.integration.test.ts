@@ -8,34 +8,17 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deflateSync, crc32 } from 'node:zlib';
 import { chromium, type Browser } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, checkSpriteManifest, createToken, HouseholdError, loadHousehold, manifestFromPixelLab, setSprite, spriteOf, type Household } from '../household.js';
 import { runHousehold } from '../cli/household.js';
 import { pick, variantsFor } from '../../web/src/pixel-face';
+import { sheet } from './pixel-sheet.fixture.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
-
-/** A sheet as PixelLab exports one: 56×84 cells, 17 columns, a rotations row, then each state in the facings given; a cyan square in each cell. */
-function sheet(facings = ['south', 'south-east', 'south-west']): { png: Buffer; json: Buffer } {
-  const names = ['Error', 'Shift eyes rapidly from side to side to simulate reading', 'Idle', 'Thinking', 'Done', 'Waiting', 'Crack Neck'];
-  const [cw, ch, cols, rows] = [56, 84, 17, 1 + names.length * facings.length];
-  const [w, h] = [cw * cols, ch * rows];
-  const raw = Buffer.alloc((w * 4 + 1) * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const [cx, cy] = [x % cw, y % ch];
-    if (cx >= 10 && cx < 46 && cy >= 20 && cy < 64) raw.set([0x2e, 0xe6, 0xf0, 255], y * (w * 4 + 1) + 1 + x * 4);
-  }
-  const chunk = (type: string, data: Buffer) => { const t = Buffer.from(type); const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const c = Buffer.alloc(4); c.writeUInt32BE(crc32(Buffer.concat([t, data])) >>> 0); return Buffer.concat([len, t, data, c]); };
-  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr.set([8, 6, 0, 0, 0], 8);
-  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
-  const json = Buffer.from(JSON.stringify({ character: { size: { width: 48, height: 48 } }, spritesheet: { cell_size: { width: cw, height: ch }, columns: cols,
-    rows: [{ row: 0, type: 'rotations', frame_count: 8 }, ...names.flatMap((animation, i) => facings.map((direction, j) => ({ row: 1 + i * facings.length + j, type: 'animation', frame_count: 17, animation, direction })))] } }));
-  return { png, json };
-}
 
 describe('an agent\'s pixel face', () => {
   let h: Household;
@@ -162,23 +145,24 @@ describe('an agent\'s pixel face', () => {
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const page = await ctx.newPage();
     await page.goto(`${base}/`);
-    const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
+    const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
     await face.waitFor({ timeout: 15_000 });
     expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 192, 96]);
     // It draws the sheet (the fixture's cyan square), not an empty square.
-    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-identity .loom-pixel-face canvas'); if (!c) return false;
+    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-phome .loom-bigcard .loom-pixel-face canvas'); if (!c) return false;
       const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });
-    expect(await page.locator('.loom-identity').count()).toBe(2);
-    expect(await page.locator('.loom-identity [data-slot="agent-face"]').count()).toBe(1);   // Mark's, drawn
+    expect(await page.locator('.loom-phome .loom-bigcard').count()).toBe(2);
+    // Mark's, drawn (its chunk may still be on its way: the card shows his initial until it lands)
+    await expect.poll(() => page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').count(), { timeout: 15_000 }).toBe(1);
     await page.goto(`${base}/appearance`);
     await page.getByRole('radio', { name: 'Off' }).first().click();
     await page.goto(`${base}/`);
-    await page.locator('.loom-identity [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
+    await page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
     expect(await page.locator('.loom-pixel-face').count()).toBe(0);
     await ctx.close();
   }, 60_000);
 
-  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn under Neon, and 000h draws it as ever', async () => {
+  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn, in every look', async () => {
     const file = join(h.home, 'faces', 'art', 'manifest.json');
     const was = readFileSync(file, 'utf-8');
     writeFileSync(file, JSON.stringify({ ...JSON.parse(was), scale: 0.75, offset: [0, 4] }));
@@ -193,11 +177,11 @@ describe('an agent\'s pixel face', () => {
         const csrf = await page.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
         expect(await page.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
       };
-      const sized = async (look: 'neon' | '000h') => {
+      const sized = async (look: Look) => {
         await choose({ look, pixel: true });
         await page.goto(`${base}/`);
         await page.waitForFunction((l) => document.documentElement.dataset.look === l, look);
-        const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
+        const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
         await face.waitFor({ timeout: 15_000 });
         await page.waitForTimeout(300);
         return face.evaluate((c) => [c.getBoundingClientRect().width, getComputedStyle(c).translate]);
@@ -205,7 +189,7 @@ describe('an agent\'s pixel face', () => {
       const neon = await sized('neon');
       expect(neon[0]).toBe(144);   // 96 × 2 × 0.75
       expect(neon[1]).toContain('6px');   // 4 sheet pixels × 1.5
-      expect((await sized('000h'))[0]).toBe(192);
+      for (const look of ['lowlight', 'daylight'] as const) expect(await sized(look), look).toEqual(neon);
       await choose({ look: 'neon' });
       await ctx.close();
     } finally { writeFileSync(file, was); }

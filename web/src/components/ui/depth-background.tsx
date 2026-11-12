@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { animate, motion, useMotionValue, useScroll, useSpring, useTransform, type MotionValue } from "motion/react";
+import { animate, m, useMotionValue, useScroll, useSpring, useTransform, type MotionValue } from "motion/react";
 import { cn } from "@/lib/utils";
 import { assignMotionRef } from "@/lib/cojeev-motion/refs";
 import { motionTokens, trackMotion, useChoreography } from "@/lib/cojeev-motion/choreography";
@@ -90,10 +90,10 @@ function Piece({ piece, variant, field }: { piece: DepthPiece; variant: DepthBac
   });
   const x = useTransform(position, value => value.x), y = useTransform(position, value => value.y), rotate = useTransform(position, value => value.rotation);
   const blur = variant === "pollen" ? [1.6, .2, 4.5][piece.layer] : variant === "contour" ? [1.1, 0, .3][piece.layer] : [.9, 0, .55][piece.layer];
-  return <motion.span className="v-depth-background__piece" data-depth-layer={plane.name}
+  return <m.span className="v-depth-background__piece" data-depth-layer={plane.name}
     style={{ left: `${piece.x}%`, top: `${piece.y}%`, width: variant === "contour" ? `${piece.size}%` : piece.size, x, y, z: plane.z, rotate, color: palette[piece.color], opacity: variant === "contour" ? plane.opacity * .8 : plane.opacity, filter: `blur(${blur}px)` }}>
     {variant === "contour" ? <ContourGraphic shape={piece.shape} /> : variant === "orbital" ? <OrbitalGraphic shape={piece.shape} /> : <svg viewBox="0 0 48 48" className="v-depth-background__pollen"><path d={piece.shape % 2 ? "M25 5C37 4 45 14 41 28C38 40 24 46 13 39C2 32 5 20 10 13C14 7 18 5 25 5Z" : "M24 7C35 7 42 15 41 25C40 36 32 42 22 41C12 40 6 32 7 22C8 12 15 7 24 7Z"} fill="currentColor" /></svg>}
-  </motion.span>;
+  </m.span>;
 }
 
 /** A decorative perspective field. Mount inside a positioned section, behind its content. */

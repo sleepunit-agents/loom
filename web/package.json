@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "build": "node ../scripts/check-app-kit.mjs && tsc -b && vite build",
+    "lint": "oxlint && node ../scripts/check-app-kit.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -27,13 +27,12 @@
     "@radix-ui/react-toggle": "^1.2.1",
     "@radix-ui/react-toggle-group": "^1.2.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/db": "1.0.0-rc.1.4",
+    "@tanstack/react-db": "1.0.0-rc.1.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cn": "^0.5.0",
-    "lucide-react": "^1.63.0",
     "motion": "^14.7.1",
     "prismjs": "^1.30.0",
-    "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "shadcn": "^4.23.0",
@@ -48,6 +47,8 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "oxlint": "^1.89.0",
+    "postcss": "^8.5.32",
+    "react-test-renderer": "^19.3.1",
     "typescript": "~7.0.2",
     "vite": "^8.3.5"
   }

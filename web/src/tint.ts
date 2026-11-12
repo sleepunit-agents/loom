@@ -16,18 +16,18 @@ export type Tint = typeof TINTS[number];
  *   dock     Home pink · Inbox blue · Places yellow · More/Setup olive
  *   Places   Activity pink · Knowledge blue · People yellow · Tasks olive
  *   Setup    Approvals pink · Boxes blue · Bridges yellow · Clock olive · Machine blue · Secrets yellow · Members olive
- *            · Pieces yellow · Appearance pink
+ *            · Pieces yellow · Appearance pink · Accessibility blue
  * and in a Setup without the runtime or the bridges (Approvals, Clock, Secrets, …). Four colours can't keep every set
  * apart; src/ui/app-tint.test.ts checks these. A runtime's pages share its colour (Boxes, Houses, Machine).
  */
 export const APP_TINTS: Readonly<Record<string, Tint>> = {
   // The shell
   Home: 'pink', Today: 'pink', Inbox: 'blue', Places: 'yellow', Setup: 'olive', More: 'olive', Find: 'blue',
-  Account: 'pink', Passkeys: 'olive',
+  Account: 'pink', Profile: 'pink', Passkeys: 'olive',
   // loom's own places
-  Activity: 'pink', Knowledge: 'blue', People: 'yellow', Mind: 'blue',
+  Activity: 'pink', Knowledge: 'blue', People: 'yellow', Mind: 'blue', Projects: 'olive',
   // Setup's own
-  Members: 'olive', Pieces: 'yellow', Appearance: 'pink',
+  Members: 'olive', Pieces: 'yellow', Appearance: 'pink', Accessibility: 'blue',
   // The catalog's pieces (assets/pieces.json), by their tabs' labels
   Tasks: 'olive', Approvals: 'pink', Boxes: 'blue', Houses: 'blue', Machine: 'blue', Bridges: 'yellow', Clock: 'olive',
   Secrets: 'yellow', Subscriptions: 'olive', Fuel: 'yellow', Discord: 'blue', Slack: 'pink',

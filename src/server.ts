@@ -1,3 +1,4 @@
+import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
  * Loom — MCP Server Factory
  *
@@ -6,6 +7,7 @@
  * no chat clients. Just the tools that carry a persistent persona across
  * any MCP-compatible runtime.
  */
+import { nudge } from './collections/pull.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -36,7 +38,7 @@ import {
 } from './backends/proposals.js';
 import { updateIdentity } from './tools/update-identity.js';
 import { bootstrap } from './tools/bootstrap.js';
-import { harnessInit, harnessDescribe } from './tools/harness.js';
+import { harnessInit, harnessDescribe, harnessPatch } from './tools/harness.js';
 import { resolvePeerToHarness, normalizePeer } from './blocks/harness.js';
 import { registerHelloApp } from './transport/mcp-app-hello.js';
 import { registerKnowledgeTools } from './transport/knowledge-tools.js';
@@ -69,8 +71,10 @@ import {
 } from './tools/project.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
-import { conversationsList, conversationView } from './conversations.js';
-import { householdOf } from './household.js';
+import { conversationsList, conversationView, homeFor } from './conversations.js';
+import { houseConversation } from './household-store.js';
+import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
+import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
 function agentOfDir(contextDir: string): string {
@@ -81,6 +85,12 @@ function agentOfDir(contextDir: string): string {
 
 export interface LoomServerConfig {
   contextDir: string;
+  /**
+   * The house this session's agent token names, and its service if it's one (t-2061): set by the household HTTP server
+   * from the token, never from what the session says. A body's house (not a service's) writes a digest only for the
+   * one conversation the runtime said it holds (household-store.ts, house_conversations).
+   */
+  caller?: { house?: string; service?: string };
   /**
    * Optional path to the knowledge-gaps directory (e.g. `~/Art/.knowledge-gaps`).
    * When set, zero-result knowledge_recall calls append a miss entry to
@@ -120,6 +130,35 @@ export interface LoomServerInstance {
   server: McpServer;
 }
 
+/**
+ * The conversation a house holds (t-2061): undefined when the caller is in no house (loom's machine, an owner's session),
+ * null when it is one the runtime named nothing for (or another agent's), else that conversation. A service's house (a
+ * chat bridge, a jobs house: people other than the owner may steer one) is held to the same rule (t-2118): the runtime
+ * names no conversation for one, so it writes and reads none.
+ */
+export function bodyHouseConversation(contextDir: string, caller: LoomServerConfig['caller']): string | null | undefined {
+  const house = caller?.house;
+  // A service's token with no house (an older one, or one made by hand) holds nothing either: never as loom's machine.
+  if (!house) return caller?.service ? null : undefined;
+  const home = homeFor(contextDir);
+  const self = householdOf(contextDir)?.agent;
+  let held: { agent: string; conversation: string } | null = null;
+  try { held = home ? houseConversation(home, house) : null; } catch { held = null; }
+  return held && held.agent === self ? held.conversation : null;
+}
+
+/**
+ * Why a session from `caller`'s house may not write for `conversation` (a digest, a Comms title), or null when it may
+ * (t-2061): no house (loom's machine, an owner's session), as before; any house, only the conversation the runtime said
+ * it holds, and nothing at all when it said none (fail closed), a service's too (t-2118).
+ */
+export function houseWriteProblem(contextDir: string, caller: LoomServerConfig['caller'], conversation: string | undefined): string | null {
+  const held = bodyHouseConversation(contextDir, caller);
+  if (held === undefined) return null;
+  if (held === null) return `${caller?.house ?? `the ${caller?.service} service`} holds no conversation the runtime named, so it writes for none`;
+  return held === conversation ? null : `${caller?.house} holds ${held}: it writes for that conversation only`;
+}
+
 // ─── Server Factory ───────────────────────────────────────────────────────────
 
 export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
@@ -147,7 +186,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       description:
       'Load the persistent identity for this agent. Returns the terminal creed ' +
-      '(who you are), relevant memories, preferences, and self-model. ' +
+      '(who you are), preferences, owners, Top of Mind and a Pieces index. ' +
       'IMPORTANT: Call this tool FIRST before doing any other work. ' +
       'The identity defines who you are and how you should behave.',
       inputSchema:
@@ -173,6 +212,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Slugs of the people this turn is addressed by (the room), e.g. ["patrick-kells"]. ' +
           'Adds an "# In the room" block with their person cards. Omit for no block.',
         ),
+        piece: z.string().optional().describe(
+          'Return only this identity section: ' + IDENTITY_SECTIONS.map(section => section.name).join(', ') + '; "all" returns full output. Missing content is omitted. Omit for core + index.',
+        ),
+        pieces: z.array(z.string()).optional().describe('Return only these identity pieces. Combined with piece when both are given.'),
         conversation: z.string().max(64).optional().describe(
           'The conversation this body is in (cv-…), as the runtime or harness that started it says. ' +
           'With run, it is where conversation_digest writes.',
@@ -181,7 +224,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people, conversation, run }) => {
+    async ({ project, client, model, role, people, piece, pieces, conversation, run }) => {
       // The body's conversation and run (docs/specs/conversations.md): kept for this session's
       // conversation_digest. Both or neither; a later identity call replaces them.
       if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
@@ -192,7 +235,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // normalized name); LOOM_CLIENT is only the no-peer fallback (in loadIdentity).
       const effectiveClient =
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
-      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people);
+      // From a house, the tape carries only the digests of the conversation it holds (t-2118).
+      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller),
+        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])]);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -430,7 +475,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ hours }) => {
-      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000 });
+      // From a house, only the digests of the conversation it holds (t-2118); the episodes are the agent's own.
+      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000, onlyConversation: bodyHouseConversation(contextDir, config.caller) });
       return { content: [{ type: 'text' as const, text: tape ?? `No episodes in the last ${hours ?? 24}h.` }] };
     },
   );
@@ -499,8 +545,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
-      const n = recomputeSalienceForContext(contextDir, Date.now());
-      return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories` }] };
+      const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+      const n = recomputeSalienceForContext(contextDir, Date.now(), counts);
+      return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories; invalid timestamps: ${counts.invalidTimestamps}; future timestamps: ${counts.futureTimestamps}` }] };
     },
   );
 
@@ -845,6 +892,36 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async ({ content, version }) => {
       const peer = server.server.getClientVersion()?.name;
       const text = await harnessDescribe(contextDir, { content, version }, peer);
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.registerTool(
+    'harness_patch',
+    {
+      description:
+      'Safely edit ONE small piece of the CURRENTLY CONNECTED harness\'s own manifest, ' +
+      'without reading back the full current body first. identity() bundles the manifest ' +
+      'into a combined payload that can silently truncate once it grows large (t-1674), ' +
+      'making a read-then-overwrite via harness_describe unsafe past that point. ' +
+      'harness_patch instead applies an exact find/replace against the server\'s own ' +
+      'on-disk copy of the manifest, which is always complete. `find` must match the ' +
+      'current manifest body exactly once — zero or multiple matches is refused rather ' +
+      'than guessed at. To append, make `find` the last line of the section you\'re adding ' +
+      'to and `replace` that same line followed by the new line(s). Requires a manifest to ' +
+      'already exist (harness_describe or harness_init first). Peer-scoped like ' +
+      'harness_describe: a harness can only patch its own manifest.',
+      inputSchema:
+      {
+        find: z.string().describe('Exact text to find in the current manifest body — must match exactly once.'),
+        replace: z.string().describe('Text to replace it with.'),
+        version: z.string().optional().describe('Manifest version stamp to set (default: keep the existing version).'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ find, replace, version }) => {
+      const peer = server.server.getClientVersion()?.name;
+      const text = await harnessPatch(contextDir, { find, replace, version }, peer);
       return { content: [{ type: 'text' as const, text }] };
     },
   );
@@ -1388,7 +1465,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug, since, include_archived }) => {
-      const result = await projectHub(contextDir, { slug, since, include_archived });
+      // From a house, no other conversation's digests (t-2118): a house reads only the conversation it holds.
+      const result = await projectHub(contextDir, { slug, since, include_archived }, bodyHouseConversation(contextDir, config.caller) === undefined ? {} : { noConversations: true });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1445,7 +1523,117 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (input) => convText(() => writeDigest(contextDir, here ?? { conversation: '', run: '' }, input)),
+    async (input) => convText(() => {
+      // From a body's house, only the conversation that house holds (t-2061): inside one house every body could read
+      // another's ids, so the conversation it names at identity proves nothing by itself.
+      const notHeld = houseWriteProblem(contextDir, config.caller, here?.conversation);
+      if (notHeld) throw new ConversationError(notHeld, 403);
+      // A Comms thread's own project is the fallback for a digest that names none (comms.md, "Project").
+      const home = here ? homeFor(contextDir) : undefined;
+      const self = householdOf(contextDir)?.agent;
+      const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
+      const d = writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
+      // An ask raised or cleared is what needs its owner moving (t-2025): the HTTP listeners pull it now, not on their
+      // next round (a nudge names only the domain, through the household's live data).
+      const h = homeFor(contextDir);
+      if (h) nudge(h, 'loom/attention');
+      return d;
+    }),
+  );
+
+  server.registerTool(
+    'describe_self',
+    {
+      description:
+      'Write your own description on your loom profile, when your household\'s owner has asked you to (their agent ' +
+      'window\'s Regenerate; refused otherwise, and the ask closes once you write it). One or two short sentences in plain ' +
+      'words, for the household: what you do and for whom. Not your creed, nothing from your private memories, no ids.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(300).describe('The description: one or two plain sentences, at most 300 characters.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ text }) => {
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const mine = householdOf(contextDir);
+      const fail = (error: string) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ error }) }], isError: true });
+      if (!mine) return fail('only an agent in a household has a profile description');
+      if (!aboutAskOf(mine.household, mine.agent)) return fail('nobody asked: your owner asks for this from your window in loom (Regenerate)');
+      const t = text.replace(/\s+/g, ' ').trim();
+      if ((t.match(/[.!?](\s|$)/g) ?? []).length > 2) return fail('keep it to one or two sentences');
+      setAbout(mine.household, mine.agent, t);
+      setAboutAsk(mine.household, mine.agent, null);
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };
+    },
+  );
+
+  server.registerTool(
+    'comms_title',
+    {
+      description:
+      'Name this Comms thread (a conversation in loom\'s own app, venue loom), once you know what it\'s about: a short ' +
+      'title of at most 60 characters on one line, written for its owner to read in their thread list. For the ' +
+      'conversation given to identity; refused anywhere else, and once the owner has named the thread themselves.',
+      inputSchema: z.object({
+        title: z.string().max(60).describe('The thread\'s title: at most 60 characters, one line, plain words.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ title }) => {
+      const home = homeFor(contextDir);
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!here || !home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
+      // From a body's house, only the conversation it holds (t-2061), as conversation_digest.
+      const notHeld = houseWriteProblem(contextDir, config.caller, here.conversation);
+      if (notHeld) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: notHeld }) }], isError: true };
+      try {
+        const t = titleFromAgent(home, self, here.conversation, title);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };
+      } catch (e) {
+        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+        throw e;
+      }
+    },
+  );
+
+  server.registerTool(
+    'comms_thread',
+    {
+      description:
+      'Read a Comms thread of your own agent\'s (a conversation in loom\'s own app, venue loom): its messages as its ' +
+      'owner sees them, oldest first, with the owner\'s words, your replies, tool cards and any error card such as ' +
+      '"your reply couldn\'t be shown". Words go after the household\'s comms_days (14 at most); the message stays. With no thread, the one ' +
+      'of the conversation given to identity. Never another agent\'s thread. Read only.',
+      inputSchema: z.object({
+        thread: z.string().max(20).optional().describe('A thread id of yours, th:… (its place). Left off: this body\'s own thread.'),
+        before: z.number().int().positive().optional().describe('Only messages before this seq: scrolling back.'),
+        limit: z.number().int().min(1).max(100).optional().describe('How many of the newest messages (default 30, at most 100).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ thread, before, limit }) => {
+      const home = homeFor(contextDir);
+      // Whose thread: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'no household here' }) }], isError: true };
+      // From a body's house, only the thread of the conversation that house holds (t-2061): a thread's words are its
+      // conversation's transcript, and a sibling's (or a guest's house) never reads another's.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      if (held !== undefined) {
+        const mine = held ? threadOfAgentConversation(home, self, held)?.id : undefined;
+        if (!held || !mine || (thread !== undefined && thread !== mine)) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `${config.caller?.house} reads only the thread of the conversation it holds` }) }], isError: true };
+        }
+      }
+      try {
+        const r = await agentThreadRead(home, process.env, self, { conversation: held ?? here?.conversation, thread, before, limit });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
+      } catch (e) {
+        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+        throw e;
+      }
+    },
   );
 
   server.registerTool(
@@ -1462,9 +1650,13 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ people, project, venue, since }) => convText(() => ({
-      conversations: conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }),
-    })),
+    async ({ people, project, venue, since }) => convText(() => {
+      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) });
+      // From a house, only the conversation it holds (t-2118): a digest summarises its conversation's words, and a
+      // house (a sibling's, a guest's, a chat bridge's) never reads another's. None from a house the runtime named none for.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      return { conversations: held === undefined ? all : all.filter((c) => held !== null && c.id === held) };
+    }),
   );
 
   server.registerTool(
@@ -1477,6 +1669,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ id }) => {
+      // From a house, only the conversation it holds (t-2118), the same refusal as one that isn't there.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      if (held !== undefined && held !== id) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `no conversation ${id}` }, null, 2) }], isError: true };
       const view = await conversationView(contextDir, agentOfDir(contextDir), id);
       return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
     },
@@ -1491,7 +1686,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ since }) => convText(() => ({ findings: findingsOf(contextDir, since ? { since } : {}) })),
+    async ({ since }) => convText(() => {
+      // From a house, the findings on the conversation it holds only (t-2118); none from a house it named none for.
+      const held = bodyHouseConversation(contextDir, config.caller);
+      if (held === null) return { findings: [] };
+      return { findings: findingsOf(contextDir, { ...(since ? { since } : {}), ...(held ? { conversation: held } : {}) }) };
+    }),
   );
 
   // MCP-App render probe — env-gated, throwaway. Not part of the tool surface

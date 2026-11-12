@@ -1,0 +1,61 @@
+// Chat about this (t-2034, t-2035; docs/specs/comms.md, "Chat about this"): any loom item can start a Comms thread with
+// what it's about attached. An item says what it is with `data-about` (aboutAttr): the desktop's right-click offers
+// "Chat about this" for it (a phone uses a touch hold), and a window menu offers it for the page (aboutPage). The request
+// is one event, `loom-chat-about`, that App answers with the sheet (chat-about.tsx, its own chunk). This file is on the
+// first page, so it stays this small.
+
+/** What it's about: the item's ref or its page (path without the leading slash), the label as shown, and the agent the
+ * item names (whose job, whose ask), if any. Who it goes to is the server's call (/comms/route), never this. */
+export type About = { ref?: string; page?: string; label: string; agent?: string };
+
+export const CHAT_ABOUT = 'loom-chat-about';
+
+/** What loom takes as an about's page and ref (src/comms-about.ts PAGE, refShape and PIECE_ITEM): anything else is
+ * dropped here rather than sent to be refused. */
+const PAGE = /^[A-Za-z0-9][A-Za-z0-9._~/-]{0,199}$/;
+const REF = /^(?:t-\d{1,9}|a-[0-9a-f]{8}|cv-[0-9a-f]{12}|github:[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}|[a-z][a-z0-9-]{0,39}:[A-Za-z0-9._@/#:-]{1,160})$/;
+
+/** `a` with only the page and ref loom takes, or null when neither is left: then nothing offers Chat about this. */
+export function validAbout(a: About | null): About | null {
+  if (!a || !a.label.trim()) return null;
+  const page = a.page && PAGE.test(a.page) && !a.page.split('/').includes('..') ? a.page : undefined;
+  const ref = a.ref && REF.test(a.ref) ? a.ref : undefined;
+  if (!page && !ref) return null;
+  const { page: _p, ref: _r, ...rest } = a;
+  return { ...rest, ...(ref ? { ref } : {}), ...(page ? { page } : {}) };
+}
+
+/** Ask for the sheet about `a` (one validAbout made). */
+export function chatAbout(a: About): void {
+  const ok = validAbout(a);
+  if (ok) dispatchEvent(new CustomEvent<About & { seen: string }>(CHAT_ABOUT, { detail: { ...ok, seen: new Date().toISOString() } }));
+}
+
+/** The attribute a row puts on itself to be chatted about. */
+export const aboutAttr = (a: About) => ({ 'data-about': JSON.stringify(a) });
+
+/** A row's `data-about`, read back: only what an About can hold, or null. */
+export function aboutOf(el: Element | null): About | null {
+  const raw = el?.getAttribute('data-about');
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    const s = (k: string) => (typeof o[k] === 'string' && o[k] ? { [k]: o[k] as string } : {});
+    return typeof o.label === 'string' ? validAbout({ label: o.label, ...s('ref'), ...s('page'), ...s('agent') }) : null;
+  } catch { return null; }
+}
+
+/** A loom page as an item: its ref where loom has one for that page, its agent where the page is an agent's. Only an
+ * item's page (a task, a person, an agent, a piece's own page under its home): an app's list (the Inbox, People, a
+ * piece's home) isn't something to chat about, and Comms is already a chat. */
+export function aboutPage(url: string, label: string): About | null {
+  const path = url.replace(/^\/+/, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+  const parts = path.split('/');
+  if (parts.length < 2 || parts[0] === 'comms' || (parts[0] === 'p' && parts.length < 3)) return null;
+  const task = /^p\/[a-z0-9-]+\/task\/(t-\d+)$/.exec(path)?.[1];
+  const cv = /^(?:a\/([a-z][a-z0-9-]*)\/)?conversation\/(cv-[0-9a-f]{12})$/.exec(path);
+  const slug = /^(knowledge|projects|people)\/([a-z0-9][a-z0-9-]*)$/.exec(path);
+  const agent = /^a\/([a-z][a-z0-9-]*)(?:\/|$)/.exec(path)?.[1];
+  const ref = task ?? cv?.[2] ?? (slug ? `${{ knowledge: 'knowledge', projects: 'project', people: 'person' }[slug[1]]}:${slug[2]}` : undefined);
+  return validAbout({ label: label.slice(0, 120), page: path, ...(ref ? { ref } : {}), ...(agent ? { agent } : {}) });
+}

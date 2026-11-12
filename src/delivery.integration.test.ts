@@ -8,7 +8,8 @@
  * The stub runtime appends every stdin it gets to $LOOM_HOME/runtime-calls.jsonl, so a test
  * can see whether core called it, and how often. $LOOM_HOME/runtime-mode picks its answer:
  * ok (the default), fail (exit 1, nothing said), said (exit 1 with {status: 503, error}),
- * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>.
+ * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>, hold (answers once
+ * $LOOM_HOME/runtime-release exists, or after 30 s whatever: a failed test never leaves it running).
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -48,7 +49,7 @@ process.stdin.on('end', () => {
     // The grants ask (src/grants.ts): $LOOM_HOME/grants-mode is allow, deny or slow.
     fs.appendFileSync(home + '/grants-calls.jsonl', input + '\\n');
     const g = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : 'allow';
-    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 11000);
     return console.log(JSON.stringify(g === 'deny' ? { allow: false, reason: 'clock may not act for art' } : { allow: true }));
   }
   fs.appendFileSync(home + '/runtime-calls.jsonl', JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(input) }) + '\\n');
@@ -63,6 +64,7 @@ process.stdin.on('end', () => {
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
   if (mode === 'slow') setTimeout(answer, 400);
   else if (mode.startsWith('sleep:')) setTimeout(answer, Number(mode.slice(6)));
+  else if (mode === 'hold') { const until = Date.now() + 30000; const t = setInterval(() => { if (fs.existsSync(home + '/runtime-release') || Date.now() > until) { clearInterval(t); answer(); } }, 20); }
   else answer();
 });
 `;
@@ -112,7 +114,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | 'hold' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -157,6 +159,7 @@ describe('POST /api/loom/deliver', () => {
   beforeEach(() => {
     Object.assign(DELIVERY_LIMITS, LIMITS0);
     rmSync(join(h.home, 'runtime-calls.jsonl'), { force: true });
+    rmSync(join(h.home, 'runtime-release'), { force: true });
     mode('ok');
     piece(h.home, 'runtime', RUNTIME_LOOM, RUNTIME_BIN);
     clearPieceCache();
@@ -188,6 +191,24 @@ describe('POST /api/loom/deliver', () => {
       expect((await post(tok.runtimePiece, relay('r-1'))).status).toBe(200);
       expect((await post(tok.runtime, relay('r-2'))).status).toBe(200);
       expect(calls().map((c) => c.stdin.source)).toEqual(['clock', 'runtime', 'runtime']);
+    });
+
+    it('only authenticated clock carries opaque continuation fields, with payload conflict checking', async () => {
+      const continuation = { handle: `cont-${'a'.repeat(64)}`, wake: 'w-abcdef', expiresAt: 9999999999999 };
+      const body = wake('continued', { continuation });
+      expect((await post(tok.w1, body)).status).toBe(403);
+      expect(calls()).toHaveLength(0);
+      expect((await post(tok.clock, body)).status).toBe(200);
+      expect(calls()[0].stdin.continuation).toEqual(continuation);
+      expect(calls()[0].stdin.source).toBe('clock');
+      expect((await post(tok.clock, body)).status).toBe(200);
+      expect(calls()).toHaveLength(1);
+      expect((await post(tok.clock, wake('continued', { continuation: { ...continuation, wake: 'w-123456' } }))).status).toBe(409);
+      expect((await post(tok.clock, wake('continued', { continuation: { ...continuation, expiresAt: 9999999999998 } }))).status).toBe(409);
+      for (const bad of [{ ...continuation, target: 'forged' }, { ...continuation, handle: 'bad' }, { ...continuation, wake: 'bad' }, { ...continuation, expiresAt: undefined }, { ...continuation, expiresAt: '9999999999999' }, { ...continuation, expiresAt: 0 }]) {
+        expect((await post(tok.clock, wake('invalid', { continuation: bad }))).status).toBe(400);
+      }
+      expect((await post(tok.clock, slackMsg('wrong-venue', { continuation }))).status).toBe(400);
     });
 
     it('a label-less message is a delivery too', async () => {
@@ -475,8 +496,16 @@ describe('POST /api/loom/deliver', () => {
     it('the delivery pool full (8 running, 32 waiting, across pieces) is a 503 busy, not kept', async () => {
       // Each piece may run 9 here, so five pieces (45 at once) overrun the pool's 40.
       Object.assign(DELIVERY_LIMITS, { perPieceRunning: 9, perPieceWaiting: 0 });
-      mode('sleep:300');
-      const rs = await Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)))));
+      // Held until all 45 are in: with a fixed sleep, the first ones finished on a slow runner before the last arrived,
+      // freeing their places, and all 45 got in (t-1886).
+      mode('hold');
+      let refused = 0;
+      const sent = Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)).then((r) => { if (r.status === 503) refused++; return r; }))));
+      // Five refused is the pool saying full; ten seconds without them is a pool that never refused (said below).
+      for (let i = 0; i < 200 && refused < 5; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(refused, 'the pool refused none, or too few, while all 45 were held').toBe(5);
+      writeFileSync(join(h.home, 'runtime-release'), '');
+      const rs = await sent;
       const busy = rs.filter((r) => r.status === 503);
       expect(rs.filter((r) => r.status === 200)).toHaveLength(40);
       expect(busy).toHaveLength(5);
@@ -514,6 +543,7 @@ describe('POST /api/loom/deliver', () => {
       expect(r.body).toEqual({ venues: [
         { name: 'session', label: 'Session', kind: 'live', piece: 'loom' },
         { name: 'wake', label: 'Wake', kind: 'scheduled', piece: 'loom' },
+        { name: 'loom', label: 'loom', kind: 'live', piece: 'loom', adapter: 'core' },
         { name: 'relay', label: 'Relay', kind: 'agent', piece: 'runtime', send: ['loom-runtime', 'relay-send'] },
         { name: 'slack', label: 'Slack', kind: 'live', piece: 'slack', send: ['loom-slack', 'send'] },
         { name: 'slack-huddle', label: 'Huddle', kind: 'live', piece: 'slack' },
@@ -581,6 +611,6 @@ describe('POST /api/loom/deliver', () => {
       const before = asked().length;
       expect((await post(tok.runtime, relay('g-2'))).status).toBe(200);
       expect(asked()).toHaveLength(before);
-    });
+    }, 20_000);
   });
 });

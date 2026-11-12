@@ -7,13 +7,14 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { iconFor } from './safe';
 import { useTint } from './tint';
+import { AppIcon } from './app-icon';
 
 /** An app's icon in its tile, in the app's one colour (tint.ts): the same as its tile in Places or Setup, in the dock and in Find. */
 export function AppTile({ label, icon, size = 44 }: { label: string; icon: string; size?: number }) {
   const tint = useTint();
   return (
     <span aria-hidden className="loom-app-tile grid shrink-0 place-items-center rounded-[var(--loom-r-tile)]" data-tint={tint(label)} style={{ width: size, height: size }}>
-      <AnimatedIcon name={iconFor(icon)} size="sm" />
+      <AppIcon label={label} name={iconFor(icon)} size="sm" />
     </span>
   );
 }
@@ -41,21 +42,6 @@ function useMore(where: string, context?: string, more?: string) {
   useEffect(() => setOpen(false), [where]);
   const extra = more && more.trim() !== context ? more : undefined;
   return { open, toggle: () => setOpen((o) => !o), extra };
-}
-
-/** Under Neon's phone bar, which has the title (phone-bar.tsx): only the page's one line and its ⓘ; nothing without them. */
-export function HeaderLine({ context, more, where }: { context?: string; more?: string; where: string }) {
-  const { open, toggle, extra } = useMore(where, context, more);
-  if (!context && !extra) return null;
-  return (
-    <div className="grid gap-2 pt-1">
-      <div className="flex items-center gap-3">
-        <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm opacity-70">{context}</p>
-        {extra && <InfoButton open={open} toggle={toggle} />}
-      </div>
-      {extra && open && <InfoMore text={extra} />}
-    </div>
-  );
 }
 
 export function AppHeader({ title, lead, context, more, crumb, go, actions, where }: {

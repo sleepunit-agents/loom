@@ -31,34 +31,46 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
-import { PieceStore, readGrant, StoreError, type Grant } from '../stores.js';
+import { PieceStore, readGrant, StoreError, storesDir, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { WebStandardStreamableHTTPServerTransport, isInitializeRequest } from '@modelcontextprotocol/server';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { EmptyResultSchema } from '@modelcontextprotocol/core';
-import { createLoomServer, type SessionTool } from '../server.js';
+import { bodyHouseConversation, createLoomServer, type SessionTool } from '../server.js';
 import { callOfferedTool, offeredTools, type OfferedTool, type ToolCaller } from '../offered-tools.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
+import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
 import { spawnBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
-import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
-import { findPiece, resolvePieceName } from '../cli/pieces.js';
+import { forgetPiecePages, pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
+import { stopPieceServers } from '../ui/piece-server.js';
+import { closePieceSockets } from '../ui/piece-socket.js';
+import { findPiece, listPieces, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { askGrant } from '../grants.js';
+import { grantsAuthority } from '../offers-registry.js';
+import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_NUDGE_ROUTE, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
+import { nudge as collectionsNudge } from '../collections/pull.js';
+import { pullPieceSoon } from '../collections/subs.js';
+import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
-import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
+import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
+import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
+import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { piecesMoved } from '../ui/live.js';
+import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
@@ -71,7 +83,14 @@ import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
 import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { join } from 'node:path';
+import { resolveSqliteDbPath } from '../config.js';
+import { HOUSEHOLD_DB } from '../household-store.js';
+import { AUDIT_DB } from '../audit.js';
+import { COMMS_DB } from '../comms.js';
+import { isSqliteBusy, TURN_WAIT_MS, waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
+import { backgroundJob, watchStalls } from './stall-watch.js';
 import {
   assertSafeBind,
   checkBearer,
@@ -143,6 +162,7 @@ export interface HttpServeHandle {
   /** The actually-bound port (resolves a 0 request to the OS-assigned port). */
   port: number;
   host: string;
+  setBackgroundActive(active: boolean): void;
   close(): Promise<void>;
 }
 
@@ -197,6 +217,9 @@ async function sendWebResponse(res: ServerResponse, webRes: Response): Promise<v
     headers[key] = value;
   });
   res.writeHead(webRes.status, headers);
+  // Announce SSE immediately, before the first heartbeat, so the proxy can
+  // recognize and drain an otherwise idle stream.
+  if (headers['content-type']?.startsWith('text/event-stream')) res.flushHeaders();
   if (!webRes.body) {
     res.end();
     return;
@@ -236,6 +259,8 @@ function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof
 export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
+  const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
+  let backgroundActive = !workerSocket;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -268,6 +293,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The runtime piece is read per request, so removing it (or installing a second) ends its tokens at once.
   const resolver = live ? new TokenResolver(live, { runtimePieces: () => runtimePieces(process.env) }) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
+  // Passkeys made before t-1969 signed in as the adding session's token: each moves to a token of its own, once.
+  if (live) {
+    try {
+      const { moved, failed } = migratePasskeys(live(), ownerDigest?.toString('hex'));
+      if (moved.length) process.stderr.write(`loom: gave ${moved.length} passkey${moved.length === 1 ? '' : 's'} a sign-in token of its own (t-1969)\n`);
+      for (const f of failed) process.stderr.write(`loom: a passkey (added as ${f.id.slice(0, 8)}…) kept its old token: ${f.error}\n`);
+    } catch (e) { process.stderr.write(`loom: the passkey migration didn't run: ${(e as Error).message}\n`); }
+  }
   /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
   const ownerCaller = (member: string | undefined): ApiCaller => {
     const m = live ? memberOf(live(), member) : undefined;
@@ -356,33 +389,75 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (household) for (const a of household.agents) createBackend(agentDir(household, a));
   else if (!opts.createServer) createBackend(opts.contextDir);
 
+  // What held the loop, when it's held (stall-watch.ts): the background jobs below run through stalls.timed.
+  const stalls = watchStalls();
+  // Maintenance never has overlapping passes. Each lock is waited out asynchronously first, with the original
+  // synchronous operation (and its old timeouts) still the fallback, exactly like a request's wait.
+  let closing = false;
+  const maintaining = new Map<string, Promise<void>>();
+  const maintain = (name: string, work: () => Promise<void>): Promise<void> => {
+    const running = maintaining.get(name);
+    if (running) return running;
+    const run = stalls.timed(name, work).catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
+      .finally(() => maintaining.delete(name));
+    maintaining.set(name, run);
+    return run;
+  };
   // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
   // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
   // start and daily. Neither ever stops the daemon.
-  const foldAll = () => {
-    const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
+  const foldAll = () => maintain('conversations fold', async () => {
+    if (!backgroundActive || closing) return;
+    const h = live?.();
+    const dirs = h ? h.agents.map((a) => agentDir(h, a)) : opts.createServer ? [] : [opts.contextDir];
     for (const d of dirs) {
-      try { foldConversations(d); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
+      await waitForLocks({ write: [resolveSqliteDbPath(d)], budgetMs: WRITE_WAIT_MS });
+      if (!backgroundActive || closing) return;
+      try { stalls.timed('conversations fold', () => foldConversations(d)); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
     }
-  };
-  if (household) syncVenuesQuietly(process.env);
+  });
+  if (household && backgroundActive) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
   foldAll();
   const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
   foldTimer.unref();
   // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
   // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
   // measures on the scorecards. Neither ever stops the daemon.
-  const sweepAll = () => {
-    if (!live) return;
+  const sweepAll = () => maintain('audit and measures sweep', async () => {
+    if (!backgroundActive || !live || closing) return;
     const h = live();
-    try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
+    await waitForLocks({ write: [join(h.home, AUDIT_DB)], budgetMs: WRITE_WAIT_MS });
+    if (!backgroundActive || closing) return;
+    try { stalls.timed('audit sweep', () => sweepAudit(h.home)); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
     for (const day of recentDays()) {
-      try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
+      await waitForLocks({ read: h.agents.map((a) => resolveSqliteDbPath(agentDir(h, a))), write: [householdDb(h)], budgetMs: WRITE_WAIT_MS });
+      if (!backgroundActive || closing) return;
+      try { stalls.timed(`scorecard measures ${day}`, () => computeMeasures(h, day)); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
     }
-  };
+  });
   sweepAll();
   const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
   sweepTimer.unref();
+  // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
+  // listener watches for thread moves, so a member's own shared stream hears of their threads.
+  const commsSweep = () => maintain('Comms sweep', async () => {
+    if (!backgroundActive || !live || closing) return;
+    const h = live();
+    await waitForLocks({ write: [join(h.home, HOUSEHOLD_DB), join(h.home, COMMS_DB)], budgetMs: WRITE_WAIT_MS });
+    if (!backgroundActive || closing) return;
+    stalls.timed('comms sweep', () => sweepComms(h));
+  });
+  const refsBackfill = () => maintain('Comms refs backfill', () => backgroundJob('comms refs backfill', async () => {
+    if (live && backgroundActive && !closing) await backfillRefs(live(), process.env, new Date(), () => backgroundActive && !closing);
+  }));
+  const commsTimer = live && !opts.createServer ? setInterval(() => void commsSweep(), 60_000) : undefined;
+  commsTimer?.unref();
+  if (live && !opts.createServer) {
+    void commsSweep();
+    watchComms(live().home);
+    // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
+    void refsBackfill();
+  }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
@@ -408,7 +483,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const serverFor = (c: Caller | undefined, identity: string) => {
     if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
-    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true, tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true,
+      // Which house this session's agent token names (t-2061): its digests go only to the conversation that house holds.
+      ...(c.role.kind === 'agent' && (c.role.house || c.role.service) ? { caller: { ...(c.role.house ? { house: c.role.house } : {}), ...(c.role.service ? { service: c.role.service } : {}) } } : {}),
+      tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
   };
 
   /**
@@ -454,7 +532,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // dead peer or a reaped stream → close the session so it can't zombie, and
     // the client recovers via the 404 re-init path.
     let misses = 0;
-    const heartbeat = setInterval(() => {
+    const heartbeat = setInterval(() => backgroundJob('mcp heartbeat', () => {
       void server.server
         .request({ method: 'ping' }, EmptyResultSchema, { timeout: HEARTBEAT_TIMEOUT_MS })
         .then(() => {
@@ -467,13 +545,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
             void transport.close().catch(() => undefined);
           }
         });
-    }, heartbeatMs);
+    }), heartbeatMs);
     // Don't let the heartbeat keep the event loop alive (clean process exit / test teardown).
     if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
     transport.onclose = () => {
       clearInterval(heartbeat);
-      if (transport.sessionId) sessions.delete(transport.sessionId);
+      if (transport.sessionId) {
+        sessions.delete(transport.sessionId);
+        if (workerSocket && process.connected) process.send?.({ type: 'loom-session-close', id: transport.sessionId }, () => undefined);
+      }
     };
     await server.connect(transport);
     return transport;
@@ -516,7 +597,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (req.headers['authorization'] === undefined) {
       const rec = piece === 'loom' ? undefined : readRecord(process.env, piece);
       if (!rec?.loom.strangers?.includes(subpath)) return sendError(res, 401, 'unauthorized: a bearer token is required');
-      return pieceCall(req, res, piece, subpath, { kind: 'stranger', address: req.socket.remoteAddress ?? 'unknown' }, STRANGER_MAX_BYTES);
+      return pieceCall(req, res, piece, subpath, { kind: 'stranger', address: (workerSocket && typeof req.headers['x-loom-peer-address'] === 'string' ? req.headers['x-loom-peer-address'] : req.socket.remoteAddress) ?? 'unknown' }, STRANGER_MAX_BYTES);
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
@@ -531,6 +612,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (piece === 'loom' && subpath === ENSURE_ROUTE) return ensureApi(req, res, role);
     // POST /api/loom/people/merge (docs/specs/person-cards.md, "Merge"): a household owner, or the runtime.
     if (piece === 'loom' && subpath === MERGE_ROUTE) return mergeApi(req, res, role);
+    // POST /api/loom/collections/query (docs/specs/collections.md, "Asking: queries"): an owner's, an agent's or a house's
+    // token, each as a viewer of its own kind. No stream here: subscribing is the page's.
+    if (piece === 'loom' && subpath === COLLECTIONS_QUERY_ROUTE) return collectionsApi(req, res, role);
+    // POST /api/loom/collections/nudge {domain}: someone wrote; core pulls that domain soon (collections.md, "A nudge").
+    if (piece === 'loom' && subpath === COLLECTIONS_NUDGE_ROUTE) return nudgeApi(req, res, role, req.headers['authorization'] ?? '');
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -561,8 +647,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         // The grants authority, if one is installed, decides before the piece runs (src/grants.ts).
         // A piece that isn't there is still its 404 below, asked or not.
         if (piece !== 'loom' && findPiece(piece, process.env)) {
+          // Read before asking: an authority installed mid-call leaves the piece's own list to decide.
+          const decided = grantsAuthority(process.env).piece !== undefined;
           const no = await askGrant(process.env, { agent: role.agent, piece, path: subpath });
           if (no) return sendError(res, no.status, no.error);
+          // The authority said yes, so the piece doesn't consult its own agent list (agent-runtime.md section 6, t-1971).
+          if (decided) caller = { ...caller, granted: true };
         }
         break;
       }
@@ -573,6 +663,66 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /**
+   * POST /api/loom/collections/query {queries: [...]}: the answers for the token's own viewer (src/collections/serve.ts).
+   * Piece, peer, review and runtime tokens are programs with their own seams, and are refused.
+   */
+  async function collectionsApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let viewer: Viewer;
+    if (role.kind === 'owner') {
+      // An owner token naming no member is the first household owner's (owners.md); one naming a member who left is no one's.
+      const m = role.member === undefined ? firstOwner(h) : memberOf(h, role.member);
+      if (!m) return sendError(res, 403, 'forbidden: this token\'s member isn\'t one of the household\'s');
+      viewer = memberViewer(h, m);
+    } else if (role.kind === 'agent') {
+      if (!h.agents.includes(role.agent)) return sendError(res, 403, `forbidden: ${role.agent} isn't one of the household's agents`);
+      viewer = { kind: 'agent', agent: role.agent, ...(role.house ? { house: role.house } : {}), ...(role.service ? { service: role.service } : {}) };
+    } else {
+      return sendError(res, 403, `forbidden: a ${role.kind} token doesn't read shared collections (it has its own seam)`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, COLLECTIONS_MAX_BYTES);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: a batch of queries is ${COLLECTIONS_MAX_BYTES / 1024} KB at most`);
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    const r = await answerBatch({ env: process.env, household: h }, viewer, body);
+    if (r.status !== 200) return sendError(res, r.status, `bad-input: ${r.body.error}`);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(r.body));
+  }
+
+  /**
+   * POST /api/loom/collections/nudge {domain}: an agent's, a house's, an owner's or a piece's token (never a peer's or a
+   * review's), at most one a second per token. It carries a domain name and nothing else, and the answer is the same
+   * whether or not the domain exists, so a nudge can't probe what's installed; a forged one costs at most one pull.
+   */
+  const nudgedAt = new Map<string, number>();
+  async function nudgeApi(req: IncomingMessage, res: ServerResponse, role: Role, bearer: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (role.kind !== 'agent' && role.kind !== 'owner' && role.kind !== 'piece') return sendError(res, 403, `forbidden: a ${role.kind} token doesn't nudge`);
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a nudge is a domain name');
+    let body: { domain?: unknown };
+    try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // Per token: the credential itself, as roleFor reads it, so another spelling of the header is the same token.
+    const who = createHash('sha256').update(bearer.replace(/^Bearer\s+/i, '').trim()).digest('hex');
+    const now = Date.now();
+    if (now - (nudgedAt.get(who) ?? 0) < 1000) return sendError(res, 429, 'too-many: one nudge a second');
+    nudgedAt.delete(who);
+    nudgedAt.set(who, now);
+    // Oldest first (a Map keeps insertion order): past the cap, the oldest go, whatever their age.
+    for (const k of nudgedAt.keys()) { if (nudgedAt.size <= 4096) break; nudgedAt.delete(k); }
+    if (typeof body?.domain === 'string') collectionsNudge(h.home, body.domain);
+    res.writeHead(202, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end('{"ok":true}');
   }
 
   /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
@@ -694,8 +844,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const runOf = (header: string | undefined): string =>
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
-  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
-  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. Activity carries
+   * steps' words (t-2109: a command, a diff, the body's own words, each card's bounded): 1 MB, the runtime posting at
+   * most half that a time. */
+  const bodyCap = (subpath: string) => subpath === 'comms/activity' ? 1024 * 1024 : subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
@@ -703,6 +855,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     process.stderr.write(`loom: couldn't ${what}: ${(e as Error).name}\n`);
     return sendError(res, 503, `unavailable: couldn't ${what}; see the daemon log`);
   };
+
+  // Each route waits out the locks it will take, off the event loop (lock-gate.ts). A spent budget fails nothing:
+  // the route goes on to its own synchronous wait, as before, and only a lock still held after that is a 503.
+  const householdDb = (h: Household) => join(h.home, HOUSEHOLD_DB);
+  const commsDbs = (h: Household) => [householdDb(h), join(h.home, COMMS_DB)];
 
   /**
    * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
@@ -725,10 +882,31 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const cap = bodyCap(subpath);
+    // A declared length over the cap is refused before reading (as deliverApi does), so the caller gets the 413, not a
+    // reset (t-2109: the runtime reads a 413 as a post too large and sends it smaller).
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > cap) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     const raw = await collectBody(req, cap);
     if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     let body: unknown = {};
     try { if (raw !== '') body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // A turn, an audit entry, a Comms post or live update must land: each waits for its databases first.
+    if (household) {
+      const h = live!();
+      const named = (body as { agent?: unknown } | null)?.agent;
+      const turnish = subpath === 'conversations/turn' || subpath === 'audit' || subpath === 'conversations/house';
+      const agent = role.kind === 'agent' ? role.agent : typeof named === 'string' && h.agents.includes(named) ? named : undefined;
+      const memories = agent ? [resolveSqliteDbPath(agentDir(h, agent))] : [];
+      const write = subpath === 'conversations/turn' ? [householdDb(h), ...memories]
+        : subpath === 'audit' ? [join(h.home, AUDIT_DB), householdDb(h), ...memories]
+        : subpath === 'conversations/house' ? [householdDb(h)]
+        : subpath === 'comms/adapter' || subpath === 'comms/activity' ? commsDbs(h)
+        : [];
+      // A reconciliation only reads household.db and writes comms.db, and answers a store it can't take as unresolved
+      // itself (comms.ts): it waits the read budget, then asks as before.
+      if (subpath === 'comms/adapter' && (body as { op?: unknown } | null)?.op === 'reconcile') await waitForLocks({ read: [householdDb(h)], write: [join(h.home, COMMS_DB)] });
+      else if (write.length) await waitForLocks({ write, budgetMs: turnish ? TURN_WAIT_MS : WRITE_WAIT_MS });
+    }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
     if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try {
@@ -736,12 +914,49 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       } catch (e) {
         if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
+        if (isSqliteBusy(e)) res.setHeader('retry-after', '1');
         return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
+      }
+    }
+    // POST /api/loom/conversations/house (t-2061): the runtime says which one conversation a body's house holds, before it
+    // hands the house a body. Set once: another conversation for the same house is a 409. conversation_digest from that
+    // house then writes only there (server.ts).
+    if (subpath === 'conversations/house' && role.kind === 'runtime') {
+      const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+      const h = live!();
+      if (typeof b.agent !== 'string' || !h.agents.includes(b.agent)) return sendError(res, 400, `bad-input: agent names one of this household's agents (${h.agents.join(', ')})`);
+      if (typeof b.house !== 'string' || !/^h-[0-9]{1,9}$/.test(b.house)) return sendError(res, 400, 'bad-input: house is a house id (h-<n>)');
+      if (typeof b.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(b.conversation)) return sendError(res, 400, 'bad-input: conversation is a conversation id (cv-<12 hex>)');
+      try {
+        return sendJson(res, 200, bindHouseConversation(h.home, { agent: b.agent, house: b.house, conversation: b.conversation }));
+      } catch (e) {
+        if (e instanceof HouseBindingError) return sendError(res, 409, `conflict: ${e.message}`);
+        process.stderr.write(`loom: couldn't record a house's conversation: ${(e as Error).name}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t record the house\'s conversation; see the daemon log');
       }
     }
     // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
     if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // Its manifest moved (docs/extensions.md, "agents"; t-1945): the open apps ask the pieces again now. No body to read.
+    if (subpath === 'pieces/changed' && role.kind === 'runtime') {
+      // Only the runtime's own manifest moved: the other pieces keep theirs (t-2065).
+      const runtime = runtimePieces(process.env);
+      piecesMoved(live!().home, runtime.length === 1 ? listPieces(process.env).find((p) => p.name === runtime[0])?.path : undefined);
+      return sendJson(res, 200, { ok: true });
+    }
+    // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.
+    if ((subpath === 'comms/adapter' || subpath === 'comms/activity') && role.kind === 'runtime') {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return sendError(res, 400, 'bad-input: a JSON object');
+      try {
+        return sendJson(res, 200, subpath === 'comms/adapter' ? commsAdapter(live!(), process.env, body as Record<string, unknown>) : postActivity(live!(), process.env, body as Record<string, unknown>));
+      } catch (e) {
+        if (e instanceof CommsError) return sendError(res, e.status, e.message.startsWith(`${statusWord(e.status)}:`) ? e.message : `${statusWord(e.status)}: ${e.message}`);
+        process.stderr.write(`loom: a Comms runtime call failed: ${(e as Error).name}\n`);
+        if (isSqliteBusy(e)) res.setHeader('retry-after', '1');
+        return sendError(res, 503, 'unavailable: Comms couldn\'t answer; see the daemon log');
+      }
     }
     // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
     if (role.kind === 'review') {
@@ -800,6 +1015,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     try { b = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     const rec = readRecord(process.env, storePiece);
     if (!rec) return sendError(res, 404, `not-found: no managed piece ${storePiece}`);
+    const stored = [join(storesDir(live!().home), `${storePiece}.db`)];
+    const writes = op === 'put' || op === 'del' || op === 'revert';
+    await waitForLocks(writes ? { write: stored, budgetMs: WRITE_WAIT_MS } : { read: stored });
     const st = new PieceStore(live!().home, storePiece);
     try {
       const decl = rec.loom.store ?? {};
@@ -840,6 +1058,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     const gone = new AbortController();
     res.on('close', () => { if (!res.writableEnded) gone.abort(); });
     const out = await pieceApi(path, { caller, path: subpath, body }, process.env, gone.signal);
+    // The piece said it wrote: its shared collections are pulled soon, so open windows hear it at once (t-2029).
+    // Not on a stranger's word: a tokenless call can't make loom pull (a pull it caused would cost the household, not it).
+    if (out.changed && live && caller.kind !== 'stranger') {
+      forgetPiecePages(path);
+      try { pullPieceSoon(live().home, process.env, piece); } catch { /* a hint; the 15 s pull still runs */ }
+    }
     if (gone.signal.aborted) return;
     res.writeHead(out.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(out.body));
@@ -847,16 +1071,17 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
-    void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
-      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
+    if (!backgroundActive) return;
+    backgroundJob('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`)));
   }, WATCH_S * 1000);
   pushTimer?.unref();
   // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
-    if (!live) return;
-    void resolveNeeds(live(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`));
+    if (!backgroundActive || !live) return;
+    backgroundJob('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`)));
   };
   const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
   needsTimer?.unref();
@@ -865,13 +1090,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
-  const backupTick = () => { try { if (live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTick = () => { try { if (backgroundActive && live) stalls.timed('backup tick', () => spawnBackupTick(live!(), process.env)); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
   const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
   const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
   backupFirst?.unref();
 
   const http = createServer((req, res) => {
+    const done = stalls.request(req.method, req.url);
+    res.once('close', done);
     void (async () => {
       // loom's web page (src/ui), at the root. Its own auth (a session from
       // the bearer, or the bearer header), so it comes before the bearer gate.
@@ -884,6 +1111,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           auth: uiAuth,
           env: process.env,
           household: live,
+          ...(ownerDigest ? { envOwnerDigest: ownerDigest.toString('hex') } : {}),
         });
       }
 
@@ -938,6 +1166,29 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 413, `oversized: declared ${declared} bytes exceeds cap ${maxBytes}`);
       }
 
+      // Wait after the complete, capped body: a lock can start while a slow upload is still arriving. Authentication
+      // and route guards stay before this gate, and a spent budget still goes on to the old synchronous wait.
+      const waitForMemory = async () => {
+        const h = household ? live!() : undefined;
+        await waitForLocks({ read: [resolveSqliteDbPath(caller?.contextDir ?? opts.contextDir), ...(h ? [householdDb(h)] : [])] });
+      };
+
+      const stillAuthorized = (): boolean => {
+        if (household) {
+          const current = callerFor(req.headers['authorization'], target);
+          if ('status' in current) { sendError(res, current.status, current.error); return false; }
+          if (current.key !== identity || JSON.stringify(current.role) !== JSON.stringify(caller?.role)) {
+            sendError(res, 403, 'forbidden: authorization changed during this request; try again');
+            return false;
+          }
+          caller = current;
+        } else {
+          const current: { ok: boolean; error?: string; identity?: string } = opts.tokens ? checkBearerMulti(opts.tokens, req.headers['authorization']) : checkBearer(opts.token, req.headers['authorization']);
+          if (!current.ok || (current.identity ?? 'art') !== identity) { sendError(res, 401, current.error ?? 'unauthorized: identity changed during the request'); return false; }
+        }
+        return true;
+      };
+
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
       // as /mcp above. Full server only: a scoped server (knowledge-only)
       // can't offer the memory verbs, so it has no /cli at all.
@@ -962,7 +1213,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         } catch (e) {
           return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
         }
-        const outcome = await handleCliBody(caller?.contextDir ?? opts.contextDir, parsed);
+        if (!stillAuthorized()) return;
+        await waitForMemory();
+        if (!stillAuthorized()) return;
+        // From a house (or a service's token), what it reads is the conversation it holds (t-2118).
+        const cliRole = caller?.role.kind === 'agent' ? caller.role : undefined;
+        const held = cliRole && (cliRole.house || cliRole.service)
+          ? bodyHouseConversation(caller!.contextDir, { ...(cliRole.house ? { house: cliRole.house } : {}), ...(cliRole.service ? { service: cliRole.service } : {}) })
+          : undefined;
+        const outcome = await handleCliBody(caller?.contextDir ?? opts.contextDir, parsed, held);
         if (!outcome.ok) return sendError(res, 400, outcome.error);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(outcome.response));
@@ -1015,6 +1274,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
       }
 
+      if (!stillAuthorized()) return;
+      await waitForMemory();
+      if (!stillAuthorized()) return;
       let transport = existingSession?.transport;
       if (!transport) {
         if (sessionId) {
@@ -1035,12 +1297,27 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // error) are the SDK server's job from here — never a raw throw out.
       const webRes = await transport.handleRequest(nodeRequestToWebRequest(req), { parsedBody: parsed });
       await sendWebResponse(res, webRes);
-    })().catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
+    })().catch((e: unknown) => {
+      // A lock still held after the old synchronous wait: try again, not an internal error.
+      if (isSqliteBusy(e) && !res.headersSent) {
+        res.setHeader('retry-after', '1');
+        return sendError(res, 503, 'unavailable: busy; try again');
+      }
+      sendError(res, 500, `internal: ${(e as Error).message}`);
+    });
   });
+
+  // Traefik keeps backend connections idle for up to 90 seconds. Close
+  // after its reuse window, so a reused POST cannot race Node's 5 s default.
+  http.keepAliveTimeout = 120_000;
+  http.headersTimeout = 125_000;
 
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
-    http.listen(opts.port, opts.host, () => resolve());
+    // A supervised worker has a private Unix socket, inaccessible to other
+    // users. All request/auth handling stays in this server.
+    if (workerSocket) http.listen(workerSocket, () => resolve());
+    else http.listen(opts.port, opts.host, () => resolve());
   });
   const addr = http.address();
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
@@ -1048,7 +1325,21 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   return {
     port,
     host: opts.host,
+    setBackgroundActive(active) {
+      const was = backgroundActive;
+      backgroundActive = active;
+      if (active && !was) stalls.timed('worker activation', () => {
+        if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
+        foldAll(); sweepAll();
+        if (live && !opts.createServer) {
+          void commsSweep();
+          void refsBackfill();
+        }
+      });
+    },
     async close() {
+      closing = true;
+      stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
       if (backupTimer) clearInterval(backupTimer);
@@ -1056,6 +1347,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
+      if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
+      stopPieceServers();
+      closePieceSockets();
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

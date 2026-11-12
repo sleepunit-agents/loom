@@ -1,6 +1,6 @@
 /**
  * Offers: what a managed piece declares, in its package's `loom` block, that it
- * offers through core (docs/extensions.md, "Offers"). Five sibling keys, each
+ * offers through core (docs/extensions.md, "Offers"). Six sibling keys, each
  * with its own schema:
  *
  *   sections   a project section feed           docs/specs/projects.md, "Section feeds (the seam)"
@@ -8,6 +8,7 @@
  *   mcp_tools  tools core adds to an agent's MCP session   docs/specs/agent-runtime.md, "Seams", 2
  *   grants     the argv core asks before an agent's piece call   docs/specs/agent-runtime.md, "Permissions"
  *   delivery   the argv core forwards POST /api/loom/deliver to (the runtime's)   agent-runtime.md, "Delivery"
+ *   collections  the shared collections a piece publishes   docs/specs/collections.md, "Declaring a provider"
  *
  * This module is the one install-time validation path: `parseOffers` checks a
  * block's own declarations (called from parseLoomBlock, so an invalid offer
@@ -17,6 +18,7 @@
  * installed and run a piece, are in offers-registry.ts.
  */
 import { TOOLS } from './clients.js';
+import { parseCollectionsOffer, providerConflict, type CollectionsOffer } from './collections/contract.js';
 
 export type VenueKind = 'live' | 'scheduled' | 'agent';
 
@@ -27,8 +29,15 @@ export interface ProjectSection {
   unfiled: boolean;
 }
 
+/** A Comms thread's work (docs/specs/comms.md, "The thread feed"): run with `--conversation <cv> [--ref <ref>]…`. */
+export interface ThreadSection {
+  label: string;
+  argv: string[];
+}
+
 export interface SectionsOffer {
-  project: ProjectSection;
+  project?: ProjectSection;
+  thread?: ThreadSection;
 }
 
 export interface VenueOffer {
@@ -60,6 +69,13 @@ export interface Offers {
    */
   grants?: string[];
   /**
+   * The grants authority's promise that its answer is a function of the ask and of this one
+   * collection of its own store alone (and of its installed version). Core then reuses an answer
+   * while that collection is unchanged, instead of running the authority again (src/grants.ts):
+   * any write to the collection is a new ask at once. Only with `grants`.
+   */
+  grants_store?: string;
+  /**
    * The argv core runs with a `deliver` body on stdin (src/delivery.ts). Only a piece whose
    * block says `"role": "runtime"` declares it, and only one installed piece may.
    */
@@ -69,11 +85,13 @@ export interface Offers {
    * `"wake": {}`, which references core's venue rather than defining one. The clock does.
    */
   delivers_wake?: true;
+  /** The shared collections the piece publishes (docs/specs/collections.md): its query argv and its record types. */
+  collections?: CollectionsOffer;
 }
 
 /** The offers core runs or lists by kind (`delivers_wake` is a permission, not an offer it runs). */
-export type OfferKind = 'sections' | 'venues' | 'mcp_tools' | 'grants' | 'delivery';
-export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery'];
+export type OfferKind = 'sections' | 'venues' | 'mcp_tools' | 'grants' | 'delivery' | 'collections';
+export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery', 'collections'];
 
 export const MAX_ARGV = 16;
 export const MAX_ARG = 200;
@@ -85,7 +103,7 @@ export const MAX_INPUT_SCHEMA_BYTES = 16 * 1024;
 const VENUE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 /** Venues core keeps for itself (conversations.md): `session` (live) and `wake` (scheduled). */
-export const CORE_VENUES: readonly string[] = ['session', 'wake'];
+export const CORE_VENUES: readonly string[] = ['session', 'wake', 'loom'];
 /** The venue only the runtime (`"role": "runtime"`) may declare. */
 export const RUNTIME_VENUE = 'relay';
 /**
@@ -126,9 +144,20 @@ function argvError(v: unknown, bins: readonly string[], where: string): string |
 
 function parseSections(raw: unknown, bins: readonly string[]): SectionsOffer | undefined | string {
   if (!isObject(raw)) return 'loom.sections is not an object';
-  const bad = unknownKey(raw, ['project']);
-  if (bad !== undefined) return `loom.sections has one key, project: not ${JSON.stringify(bad)}`;
-  if (raw.project === undefined) return undefined;
+  const bad = unknownKey(raw, ['project', 'thread']);
+  if (bad !== undefined) return `loom.sections has two keys, project and thread: not ${JSON.stringify(bad)}`;
+  let thread: ThreadSection | undefined;
+  if (raw.thread !== undefined) {
+    const t = raw.thread;
+    if (!isObject(t)) return 'loom.sections.thread is not an object';
+    const badT = unknownKey(t, ['label', 'argv']);
+    if (badT !== undefined) return `loom.sections.thread has no key ${JSON.stringify(badT)} (it has label, argv)`;
+    if (!str(t.label, 40)) return 'loom.sections.thread.label is required: a string of at most 40 characters';
+    const ta = argvError(t.argv, bins, 'loom.sections.thread.argv');
+    if (ta) return ta;
+    thread = { label: t.label, argv: [...(t.argv as string[])] };
+  }
+  if (raw.project === undefined) return thread ? { thread } : undefined;
   const p = raw.project;
   if (!isObject(p)) return 'loom.sections.project is not an object';
   const badP = unknownKey(p, ['label', 'argv', 'unfiled']);
@@ -137,7 +166,7 @@ function parseSections(raw: unknown, bins: readonly string[]): SectionsOffer | u
   const a = argvError(p.argv, bins, 'loom.sections.project.argv');
   if (a) return a;
   if (p.unfiled !== undefined && typeof p.unfiled !== 'boolean') return 'loom.sections.project.unfiled is true or false';
-  return { project: { label: p.label, argv: [...(p.argv as string[])], unfiled: p.unfiled === true } };
+  return { project: { label: p.label, argv: [...(p.argv as string[])], unfiled: p.unfiled === true }, ...(thread ? { thread } : {}) };
 }
 
 /** Core's venue a piece may say it delivers on, with an empty entry (agent-runtime.md, "Delivery"). */
@@ -232,11 +261,21 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
     if (a) return a;
     out.grants = [...(b.grants as string[])];
   }
+  if (b.grants_store !== undefined) {
+    if (!out.grants) return 'loom.grants_store is declared only with loom.grants';
+    if (typeof b.grants_store !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(b.grants_store)) return 'loom.grants_store names one of the piece\'s store collections';
+    out.grants_store = b.grants_store;
+  }
   if (b.delivery !== undefined) {
     if (ctx.role !== 'runtime') return 'loom.delivery is declared only by the runtime (a loom block with "role": "runtime")';
     const a = argvError(b.delivery, bins, 'loom.delivery');
     if (a) return a;
     out.delivery = [...(b.delivery as string[])];
+  }
+  if (b.collections !== undefined) {
+    const c = parseCollectionsOffer(b.collections, (v, where) => argvError(v, bins, where));
+    if (typeof c === 'string') return c;
+    out.collections = c;
   }
   return out;
 }
@@ -269,7 +308,8 @@ export function offerConflicts(name: string, offers: Offers & { role?: string },
     // A household has one runtime (conversations.md: the runtime token is minted for the one piece).
     if (offers.role === 'runtime' && other.loom.role === 'runtime') return `the ${other.name} piece is already the runtime: a household has one`;
   }
-  return undefined;
+  // A provider name (its role, else its name) is one piece's (docs/specs/collections.md, "Record keys").
+  return providerConflict(name, offers.collections, offers.role, installed);
 }
 
 // ─── Feed output (projects.md "Section feeds", Output) ───────────────────────
@@ -281,14 +321,25 @@ export interface FeedItem {
   person?: string[];
   status?: string;
   ref?: string;
+  /** A page of the feed's own piece, or `loom:<page>` (projects.md, "Output"). */
+  page?: string;
+  /** An https URL that opens outside. */
+  href?: string;
   body?: string;
 }
-export interface FeedGroup { title: string; items: FeedItem[] }
+/** `waiting`: these items wait on the owner; the Projects index counts them. */
+export interface FeedGroup { title: string; waiting?: boolean; items: FeedItem[] }
 export interface Feed { groups: FeedGroup[] }
 
 export const FEED_MAX_BYTES = 64 * 1024;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+/** A feed item's `page`: an optional `loom:`, a page path (lowercase letters, digits and . _ ~ / -, no `..` segment),
+ * an optional `?key=value&…` query. The page draws it through splitPage, which checks what a `loom:` may reach. */
+const FEED_PAGE = /^(?:loom:)?(?:[a-z0-9._~-]+(?:\/[a-z0-9._~-]+)*)?(?:\?[a-z0-9_-]+=[^&#\s]*(?:&[a-z0-9_-]+=[^&#\s]*)*)?$/;
+/** No `..` segment, anywhere. */
+const DOTDOT = /(?:^|:|\/)\.\.(?:\/|\?|$)/;
+const HTTPS = /^https:\/\/[^\s<>"]+$/;
 
 function strList(v: unknown, maxItems: number, maxLen: number, re?: RegExp): v is string[] {
   return Array.isArray(v) && v.length <= maxItems && v.every((x) => str(x, maxLen) && (!re || re.test(x)));
@@ -307,17 +358,18 @@ export function parseFeed(v: unknown): Feed | string {
   const groups: FeedGroup[] = [];
   for (const [gi, g] of v.groups.entries()) {
     if (!isObject(g)) return `groups[${gi}] is not an object`;
-    const bg = unknownKey(g, ['title', 'items']);
+    const bg = unknownKey(g, ['title', 'waiting', 'items']);
     if (bg !== undefined) return `groups[${gi}]: unknown key ${JSON.stringify(bg)}`;
     if (!str(g.title, 80)) return `groups[${gi}].title is required, at most 80 characters`;
     if (!Array.isArray(g.items)) return `groups[${gi}].items is a list`;
+    if (g.waiting !== undefined && typeof g.waiting !== 'boolean') return `groups[${gi}].waiting is true or false`;
     items += g.items.length;
     if (items > 50) return 'at most 50 items in all';
     const out: FeedItem[] = [];
     for (const [ii, it] of g.items.entries()) {
       const at = `groups[${gi}].items[${ii}]`;
       if (!isObject(it)) return `${at} is not an object`;
-      const bi = unknownKey(it, ['title', 'when', 'who', 'person', 'status', 'ref', 'body']);
+      const bi = unknownKey(it, ['title', 'when', 'who', 'person', 'status', 'ref', 'page', 'href', 'body']);
       if (bi !== undefined) return `${at}: unknown key ${JSON.stringify(bi)}`;
       if (!str(it.title, 200)) return `${at}.title is required, at most 200 characters`;
       if (it.when !== undefined && !(typeof it.when === 'string' && ISO_UTC.test(it.when))) return `${at}.when is an ISO-8601 UTC time`;
@@ -325,10 +377,13 @@ export function parseFeed(v: unknown): Feed | string {
       if (it.person !== undefined && !strList(it.person, 8, 80, SLUG)) return `${at}.person is at most 8 person slugs`;
       if (it.status !== undefined && !str(it.status, 24)) return `${at}.status is at most 24 characters`;
       if (it.ref !== undefined && !str(it.ref, 200)) return `${at}.ref is at most 200 characters`;
+      if (it.page !== undefined && !(str(it.page, 200) && FEED_PAGE.test(it.page) && !DOTDOT.test(it.page))) return `${at}.page is a page path (or loom:<page>), at most 200 characters`;
+      if (it.href !== undefined && !(str(it.href, 500) && HTTPS.test(it.href))) return `${at}.href is an https URL, at most 500 characters`;
+      if (it.page !== undefined && it.href !== undefined) return `${at} has a page or an href, not both`;
       if (it.body !== undefined && !str(it.body, 600)) return `${at}.body is at most 600 characters`;
       out.push(it as unknown as FeedItem);
     }
-    groups.push({ title: g.title, items: out });
+    groups.push({ title: g.title, ...(g.waiting === true ? { waiting: true } : {}), items: out });
   }
   return { groups };
 }

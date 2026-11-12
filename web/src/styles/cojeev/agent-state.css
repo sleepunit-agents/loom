@@ -26,19 +26,6 @@
 [data-slot="agent-state"][data-size="lg"] .v-agent-state__field { width: min(100%, 216px); }
 [data-slot="agent-state"][data-size="lg"] .v-agent-state__label { font-size: var(--fs-section); }
 [data-slot="agent-state"][data-size="lg"] .v-agent-state__description { max-width: 32ch; margin-inline: auto; font-size: var(--fs-control); }
-/* Alive (2026-11-04): it breathes at rest, bobs while working and blinks now and then; transforms only, and only
- * while it's on screen in a visible page ([data-live], agent-state.tsx). */
-.v-agent-state__field { transform-origin: 50% 90%; }
-.v-agent-state__eyes { transform-box: fill-box; transform-origin: 50% 50%; }
-[data-slot="agent-state"][data-live] .v-agent-state__field { animation: agent-state-breathe 4.8s ease-in-out infinite; }
-[data-slot="agent-state"][data-live][data-status="working"] .v-agent-state__field { animation: agent-state-bob 1.15s ease-in-out infinite; }
-[data-slot="agent-state"][data-live] .v-agent-state__eyes { animation: agent-state-blink 5.6s ease-in-out infinite; }
-@keyframes agent-state-breathe { 0%, 100% { scale: 1 1; } 50% { scale: 1.012 1.03; } }
-@keyframes agent-state-bob { 0%, 100% { translate: 0 0; } 35% { translate: 0 -2px; } }
-@keyframes agent-state-blink { 0%, 93%, 100% { scale: 1 1; } 95.5% { scale: 1 .12; } }
-@media (prefers-reduced-motion: reduce) {
-  .v-agent-state__field, .v-agent-state__eyes { animation: none !important; }
-}
 @media (forced-colors: active) {
   .v-agent-state__field { forced-color-adjust: none; }
 }

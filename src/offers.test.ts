@@ -22,7 +22,7 @@ describe('sections.project', () => {
   });
 
   it.each<[string, unknown, RegExp]>([
-    ['an unknown section key', { project: feed, people: feed }, /one key, project/],
+    ['an unknown section key', { project: feed, people: feed }, /two keys, project and thread/],
     ['a missing label', { project: { argv: feed.argv } }, /label is required/],
     ['an over-long label', { project: { ...feed, label: long(41) } }, /label is required/],
     ['an empty argv', { project: { ...feed, argv: [] } }, /argv is a list of 1-16/],
@@ -212,6 +212,33 @@ describe('offerConflicts (against the other installed pieces)', () => {
 });
 
 describe('parseFeed (the section-feed output schema)', () => {
+  it('17. waiting is a boolean on a group; an item may link with page (a path or loom:) or href (https), not both', () => {
+    const ok = { groups: [{ title: 'Waiting on you', waiting: true, items: [
+      { title: 'a', page: 'c/github/acme/app/1' }, { title: 'b', page: 'loom:p/tasks/task/t-1' }, { title: 'c', page: 'task/t-1?tab=x' },
+      { title: 'd', href: 'https://github.com/acme/app/pull/1' }] }, { title: 'Rest', waiting: false, items: [] }] };
+    expect(parseFeed(ok)).toEqual({ groups: [ok.groups[0], { title: 'Rest', items: [] }] });
+    const bad: Array<[unknown, RegExp]> = [
+      [{ title: 'g', waiting: 'yes', items: [] }, /waiting is true or false/],
+      [{ title: 'g', items: [{ title: 'x', page: 'Task/T-1' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: '../secret' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'a/../b' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'loom://evil.com' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'loom:/x' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'loom:../x' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: '//host/x' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: '/x' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'a//b' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'a/..' }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', page: 'p'.repeat(201) }] }, /page is a page path/],
+      [{ title: 'g', items: [{ title: 'x', href: 'http://example.com' }] }, /href is an https URL/],
+      [{ title: 'g', items: [{ title: 'x', href: 'javascript:alert(1)' }] }, /href is an https URL/],
+      [{ title: 'g', items: [{ title: 'x', href: `https://e.com/${'h'.repeat(500)}` }] }, /href is an https URL/],
+      [{ title: 'g', items: [{ title: 'x', page: 'a', href: 'https://e.com' }] }, /a page or an href, not both/],
+      [{ title: 'g', items: [{ title: 'x', link: 'a' }] }, /unknown key "link"/],
+    ];
+    for (const [g, err] of bad) expect(parseFeed({ groups: [g] })).toMatch(err);
+  });
+
   const item = { title: 'Approve the WAF exception', when: '2026-11-02T14:10:00Z', who: ['Loren'], person: ['loren-smith'], status: 'open', ref: 't-1271', body: '…' };
 
   it('accepts the documented answer, and an empty one', () => {

@@ -36,8 +36,24 @@ an agent's persistent state:
 
 - **`identity`** — loads the terminal creed — the free-form markdown document
   that defines who the agent is (values, voice, purpose) — along with
-  preferences, self-model (running self-knowledge), and a client-specific
-  adapter on session start. Call this first.
+  preferences, owners, Top of Mind, and requested project/room/mode context.
+  Call this first. A short **Pieces** index points to on-demand sections:
+  `identity({piece: "self-model"})`, `"harness"` (including the client adapter),
+  `"last-24h"`, or `"model"`. Any standard section (including core names such as
+  `"creed"`) can be selected. Pass `client` or
+  `model` when loading their manifests; their environment defaults still apply.
+  `identity({pieces: ["self-model", "harness"]})` loads only those sections;
+  `piece` and `pieces` combine when both are given. `piece: "all"` returns the
+  full output, including the legacy memory-index appendix. `loom wake` keeps
+  that full output for shell fallbacks. Missing sections are omitted, including
+  missing creed/model/harness files; no placeholder or onboarding error is emitted.
+  Identity text is never summarized or truncated; the 24,000-byte core budget
+  test guards the measured Art baseline, not arbitrary agent-authored files.
+  The shared contract in [`src/identity/sections.ts`](src/identity/sections.ts)
+  defines each section’s name, purpose, writer, boot policy, load trigger and
+  advisory UTF-8 byte budget. Every agent uses this table; the core/index/selection
+  are derived from it. Requested room/project/mode blocks and recorder warnings
+  remain supplements. Section budgets never truncate text.
 - **`dossier`** — loads Art's operating brief for a **worker body** — a body
   that executes tasks on Art's behalf but is NOT Art. Returns preferences and
   self-model reframed in the third person, plus an explicit push-back mandate:
@@ -49,8 +65,9 @@ an agent's persistent state:
 - **`episodes`** — the episode tape: the short-term, cross-body tier. Every
   body leaves a `category: episode` note (where it was / what was said or
   decided / what shipped / what's open; 48h TTL by default) and every body
-  gets the last 24h of them at boot as a plain time-ordered tape, injected
-  right after preferences. Never salience-ranked — it's what just *happened*,
+  can load the last 24h as a plain time-ordered tape with
+  `identity({piece: "last-24h"})`. The full output (`piece: "all"` or `loom wake`)
+  includes it right after preferences. Never salience-ranked — it's what just *happened*,
   not what's important. `loom memory tape [--hours N]` is the CLI view.
 - **`find_similar`** — surface memories semantically near an existing entry or
   free-form text; used for deduplication and memory consolidation.
@@ -100,6 +117,16 @@ an agent's persistent state:
   write its own manifest, keyed to its MCP `clientInfo.name`. A harness can only
   describe itself, never another — the target is the connected peer, not a
   caller-supplied name.
+- **`harness_patch`** — edit one small piece of the connected harness's own
+  manifest by exact find/replace, applied against the server's own on-disk
+  copy. Unlike `harness_describe`, the caller never has to hold the full
+  current body — which matters once a manifest has grown past the point
+  where `identity()`'s combined payload truncates it (the manifest is
+  read back via `identity({piece: "harness"})`; older clients bundled it with
+  persona, preferences and self-model into one payload capped by the transport; a
+  `harness_describe` call built from a truncated read would silently drop
+  everything past the cut on the next overwrite). `find` must match the
+  current body exactly once.
 - **`knowledge_write`** — upsert an entity page by slug into the knowledge
   store (a separate `knowledge.db`). On an existing slug the body replaces by
   default (`mode: "append"` adds instead), title/domain follow the write, and
@@ -134,6 +161,15 @@ an agent's persistent state:
 - **`conversation`** — one conversation: its record, digests, findings and render
   (the venue's own, else core's generic one).
 - **`conversation_findings`** — graders' findings on the agent's own turns.
+- **`comms_title`** — name a Comms thread (a conversation in loom's own app), at
+  most 60 characters, for the conversation given to `identity`; never over the
+  owner's own name for it (docs/specs/comms.md).
+- **`comms_thread`** — read, read only, a Comms thread of the agent's own: its
+  messages as the owner sees them (words for the household's `comms_days`, 14 at most), its replies, tool cards and
+  error cards. This body's own thread, or one named by id; never another agent's.
+- **`describe_self`** — write the agent's own description on its loom profile (its
+  window's header), one or two plain sentences, only when the household's owner has
+  asked for it from the agent's window (Regenerate); never its creed or its memories.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
@@ -723,6 +759,10 @@ loom token create --agent art --label "Art · house on wunder"   # printed once
 loom token create --owner --label "Jonathan · page"
 loom token list
 loom token revoke "Art · house on wunder"
+loom token link --agent --label "screenshots t-1871"   # an agent's one-time page sign-in, its session named
+loom sessions list                  # every browser signed in to the page, by ref
+loom sessions revoke 3f9a0c1d2e4b5a69   # sign that one browser out; every other stays
+loom sessions revoke --label "screenshots t-1871"   # an agent ends its own sessions when done
 ```
 
 Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:
@@ -822,6 +862,14 @@ for, the harness block becomes a self-describe onboarding prompt (call
 delegation, scheduling, session search, memory layers, gotchas) instead
 of a bare "(manifest missing)" stub.
 
+**Or patch it in place.** Once a manifest exists, `harness_patch` edits
+one piece of it by exact find/replace against the server's own on-disk
+copy — no need to read the full current body back through `identity()`'s
+combined payload first (which truncates past a size cap, so a
+read-truncated-then-overwrite via `harness_describe` risks silently
+losing whatever was past the cut). `find` must match the current body
+exactly once; zero or multiple matches is refused.
+
 **Resolution is data-driven.** Mapping a connecting `clientInfo.name` to
 a manifest is done from the files on disk, not a hardcoded code table. A
 peer matches a manifest when its normalized name equals the manifest's
@@ -859,6 +907,7 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_STALL_MS` | `500` | `loom serve --http` logs any event-loop stall this long: the requests in flight, the background jobs that held it, GC time. `0` turns it off |
 | `LOOM_URL` | *(unset)* | Run the CLI's store verbs against this loom-http (its MCP URL) instead of a local stack |
 | `LOOM_TOKEN_FILE` | *(unset)* | File holding the bearer token for `LOOM_URL` (never passed in argv) |
 | `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |

@@ -1,0 +1,8 @@
+.loom-changes__filters { display: grid; gap: 12px; }
+.loom-changes label { display: grid; gap: 5px; font-size: 12px; color: var(--v-text-2); min-width: 0; }
+.loom-changes select { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--v-edge); border-radius: 8px; padding: 6px; background: var(--v-bg); color: var(--v-text); }
+.loom-changes__meta { font-family: var(--loom-font-data); font-size: 12px; color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-changes__notices { display: grid; gap: 8px; padding: 8px 14px; }
+.loom-changes__read { display: grid; gap: 20px; min-width: 0; }
+.loom-changes__read section { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
+.loom-changes__read h3 { font-size: 14px; font-weight: 600; color: var(--v-text-2); }
