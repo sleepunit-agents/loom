@@ -10,8 +10,9 @@ import { loadHousehold } from '../../household.js';
 
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-function fixture() {
+function fixture(beforeMigration?: (home: string) => void) {
   const home = mkdtempSync(join(tmpdir(), 'loom-household-rows-')); homes.push(home);
+  beforeMigration?.(home);
   const lease = openDb(home);
   migrateHouseholdTables(lease.db);
   return { home, ...lease };
@@ -19,12 +20,12 @@ function fixture() {
 
 describe('household database substrate (no cutover)', () => {
   it('keeps legacy files untouched and applies the schema idempotently', () => {
-    const f = fixture();
+    const legacy = '{"v":1,"agents":["art"],"default":"art"}\n';
+    const f = fixture(home => writeFileSync(join(home, 'household.json'), legacy));
     try {
-      const legacy = '{"v":1,"agents":["art"],"default":"art"}\n';
-      writeFileSync(join(f.home, 'household.json'), legacy);
       const before = loadHousehold(f.home);
       migrateHouseholdTables(f.db);
+      expect(before).toMatchObject({ home: f.home, agents: ['art'], default: 'art', members: [{ person: 'owner', role: 'owner', agents: '*' }] });
       expect(loadHousehold(f.home)).toEqual(before);
       const tables = f.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'household_%'").all() as { name: string }[];
       for (const { name } of tables) expect(f.db.prepare(`SELECT count(*) AS n FROM ${name}`).get()).toEqual({ n: 0 });
@@ -32,6 +33,8 @@ describe('household database substrate (no cutover)', () => {
       expect(readFileSync(join(f.home, 'household.json'), 'utf8')).toBe(legacy);
       expect(readdirSync(f.home).sort()).toEqual(['household.json', 'loom.db', 'loom.db-shm', 'loom.db-wal']);
       expect(f.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='household'").get()).toEqual({ n: 1 });
+      writeFileSync(join(f.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'mark' }));
+      expect(loadHousehold(f.home)).toMatchObject({ agents: ['art', 'mark'], default: 'mark' });
     } finally { f.close(); }
   });
   it('round-trips every concern without interpreting its optional fields', () => {
