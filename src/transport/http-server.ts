@@ -47,7 +47,8 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
-import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
+import { readWatches, watchReadShape } from '../watch-read.js';
+import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { runBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
@@ -611,6 +612,22 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (piece === 'loom' && subpath === DELIVER_ROUTE) {
       if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
       return deliverApi(req, res, role.piece);
+    }
+    // Only the installed clock's own credential may carry a wake principal for registry reads.
+    if (piece === 'loom' && subpath === 'watches/observe') {
+      if (role.kind !== 'piece' || role.piece !== pieceWithRole(process.env, 'clock')?.name) return sendError(res, 403, 'forbidden: the installed clock token is required');
+      if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+      if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: application/json required');
+      if (Number(req.headers['content-length'] ?? 0) > 16 * 1024) return sendError(res, 413, 'oversized: watch read is 16 KB at most');
+      const raw = await collectBody(req, 16 * 1024);
+      if (raw === OVERSIZED) return sendError(res, 413, 'oversized: watch read is 16 KB at most');
+      let body: unknown;
+      try { body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+      if (!watchReadShape(body)) return sendError(res, 400, 'bad-input: agent, principal and 1-20 watch targets required');
+      const h = live?.();
+      if (!h) return sendError(res, 503, 'unavailable: no household');
+      try { return sendJson(res, 200, await readWatches(process.env, h, body)); }
+      catch { return sendError(res, 503, 'unavailable: watch snapshot could not be read'); }
     }
     // POST /api/loom/people/ensure (docs/specs/person-cards.md, "Ensure"): a household owner, a piece
     // in an owner's action (its credential and the grant loom gave it), or the runtime.

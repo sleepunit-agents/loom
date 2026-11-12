@@ -701,9 +701,13 @@ export async function ownersAwarePieces(env: NodeJS.ProcessEnv, nowMs = Date.now
 export async function pieceManifests(
   env: NodeJS.ProcessEnv,
   nowMs = Date.now(),
+  /** Program observations must await this read, never a stale-while-refresh page value. */
+  fresh = false,
 ): Promise<{ pieces: PieceInfo[]; skipped: PieceSkip[] }> {
   const installed = shownPieces(env);
-  const results = await Promise.all(installed.map((p) => manifestFor(p.name, p.path, env, nowMs)));
+  const results = await Promise.all(installed.map((p) => fresh
+    ? runManifest(p.name, p.path, env, keyOf(p.path, env))
+    : manifestFor(p.name, p.path, env, nowMs)));
   const pieces = results.filter((r): r is PieceInfo => 'manifest' in r);
   // A piece with only Inbox history (notices, answered) or readings for the agents' cards has something to show.
   const empty = pieces.filter((p) => !p.manifest.tab && !p.manifest.tile && !p.manifest.asks.length && !p.manifest.legacy?.length
