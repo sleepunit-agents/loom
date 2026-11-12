@@ -165,16 +165,20 @@ operation({
   - A call over the window's socket, for the app.
   - An MCP tool, for the operations a piece marks as offered to agents.
   - A direct function call from another piece, through that piece's interface.
-- **Every door resolves the caller to a viewer first,** then `may`, then `run`. No door has a rule of its own.
+- **Every door resolves the caller to a viewer first,** then `may`, then `run` (a retried write stops at its
+  stored result, below). No door has a rule of its own.
 - **An operation names its doors.** The default is all four. Comms' operations that carry a message's words are
   open only on the window's socket, to the thread's member, and to the runtime delivering to the thread's agent
   (below).
 - **A write is one transaction** and names what it changed (`ctx.changed(type, id)`), which is what feeds the live
   feed.
 - **A write carries an operation id** from the caller. The daemon stores the id with the result, in the write's
-  own transaction, for 30 days. The same id with the same input returns that result again; the same id with
-  different input is a `conflict`. So a retry after a dropped connection or a restart never acts twice. A stored
-  result never holds a Comms message's words.
+  own transaction, for 30 days. Ids belong to the caller that sent them: another caller's same id is a different
+  id. The daemon looks the id up once it knows who is calling and before `may`. The same caller sending the same
+  id with the same input gets the stored result back and nothing runs, so `may` isn't asked again: the work
+  already happened and the caller is only hearing its own answer a second time. The same id with different input
+  is a `conflict`. So a retry after a dropped connection or a restart never acts twice. A stored result never
+  holds a Comms message's words.
 - **Errors are values:** `{ok: false, code, message}` with a small fixed set of codes (`denied`, `not-found`,
   `invalid`, `conflict`, `unavailable`). The app shows them inline; nothing uses `alert()`.
 
