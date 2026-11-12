@@ -1,6 +1,6 @@
 # The web foundation: one process, one database, one API, one live feed
 
-*2026-11-12. Status: **accepted as the working design** (Jonathan, terminal, 2026-11-12: "your order is perfect"; building began the same day) (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
+*2026-11-12. Status: **the working design**. Jonathan agreed the direction and the order of work in conversation on 2026-11-12 ("your order is perfect") and building began that day; he has not yet read this final text (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
 will build and what its tests must pin. It follows a review of the web side at main `73c0063` (the browser client,
 the page server, the piece boundary, and all 623 commits since 2026-10-24; loom note
 `loom/2026-11-12-web-side-review`) and a conversation with the owner the same day. Where it conflicts with an
