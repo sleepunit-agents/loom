@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Database } from 'better-sqlite3';
 import { markNudged } from './log.js';
 
-const NAME = /^([a-z][a-z0-9-]{0,39})\.([a-z][a-z0-9-]{0,31})\.(pending|processing)$/;
+const NAME = /^([a-z][a-z0-9-]{0,39})\.([a-z][a-z0-9-]{0,31}|\*)\.(pending|processing)$/;
 export function persistHints(home: string, hints: ReadonlyMap<string, ReadonlySet<string>>): void {
   if (!hints.size) return;
   const dir = join(home, 'collections', 'hint-outbox');
@@ -25,7 +25,7 @@ export function consumeHintOutbox(home: string, db: Database): void {
   try { files = readdirSync(dir).filter(f => NAME.test(f)); }
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw e; }
   // At most one pending and one claimed marker per installed domain, even with a dead producer/owner.
-  for (const base of [...new Set(files.map(f => f.replace(/\.(pending|processing)$/, '')))].slice(0, 32)) {
+  for (const base of [...new Set(files.map(f => f.replace(/\.(pending|processing)$/, '')))]) {
     const claimed = `${base}.processing`;
     if (!files.includes(claimed)) {
       try { renameSync(join(dir, `${base}.pending`), join(dir, claimed)); }

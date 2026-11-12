@@ -234,7 +234,17 @@ it('follower demand renewal waits off the event loop for a WAL writer', async ()
   const h = { home, agents: ['art'] } as Household;
   owner = new PeriodicOwner(home, () => {});
   stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  const env = () => ({ LOOM_HOME: home }), viewer = { kind: 'core' } as const;
+  const provider = { name: 'loom', owners2: true, types: { 'agent-status': CORE_TYPES['agent-status'] } };
+  const port = { id: 'renewal', session: 'renewal', viewer: () => viewer, frame: () => 1, seq: () => 0, behind: () => 0, close: () => {} };
+  openStream(() => h, env, port, viewer);
+  const { startSeq } = await prepare(() => h, env, provider, 'agent-status');
+  await attach(() => h, env, { stream: port.id, session: port.session }, viewer, provider,
+    { id: 'renewal', type: 'agent-status', version: 1, where: [], order: [], limit: 100, after: null, fields: [], aggregates: [] },
+    { next: null, complete: true }, [], undefined, undefined, startSeq, async () => ({ rows: [], admitted: [] }));
   await deliverNow(home);
+  const demand = () => withLog(home, db => db.prepare('SELECT read_at, until FROM listener_demand').get() as { read_at: number; until: number });
+  const first = demand();
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + 11_000);
   const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
   try {
@@ -242,6 +252,7 @@ it('follower demand renewal waits off the event loop for a WAL writer', async ()
     await new Promise(r => setTimeout(r, 25));
     expect(performance.now() - started).toBeLessThan(500);
     writer.exec('ROLLBACK'); await pass;
+    expect(demand().until).toBeGreaterThan(first.until); expect(demand().read_at).toBe(first.read_at);
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); }
 });
 
@@ -439,3 +450,30 @@ it('the action wait includes publication contention in its three-second budget',
   } finally { writer.exec('ROLLBACK'); writer.close(); }
   await expect.poll(() => withLog(home, db => db.prepare("SELECT domain FROM refresh_requests WHERE domain = 'loom/project'").get())).toEqual({ domain: 'loom/project' });
 }, 6000);
+
+it('withdraws ownership while an admitted refresh is suspended in its writer probe', async () => {
+  const { Puller } = await import('./pull.js');
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0; registerCoreSource(home, 'project', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  withLog(home, db => domainOf(db, 'loom/project', 'loom'));
+  await nudge(home, 'loom/project');
+  const puller = new Puller(() => ({ household: h, env: { LOOM_HOME: home } }), () => new Set(['loom/project']), {
+    active: () => owner!.active,
+    run: async (_domain, job) => {
+      let result: Awaited<ReturnType<typeof job>> | undefined;
+      await owner!.run('test admitted refresh', async () => { result = await job(); });
+      return result;
+    },
+  });
+  let entered = false, release!: (ready: boolean) => void;
+  const probe = new Promise<boolean>(resolve => { release = resolve; });
+  vi.mocked(waitForLocks).mockImplementationOnce(() => { entered = true; return probe; });
+  const pending = puller.soon('loom/project');
+  try {
+    await expect.poll(() => entered).toBe(true);
+    owner.setEligible(false);
+    release(true);
+    expect(await pending).toBe('busy'); expect(calls).toBe(0);
+  } finally { release(true); puller.stop(); await puller.settle(); }
+});

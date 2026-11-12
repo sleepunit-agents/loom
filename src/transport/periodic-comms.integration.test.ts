@@ -41,19 +41,22 @@ if(req.url==='/activate')owner.setEligible(true);if(req.url.startsWith('/title/'
     const mine = listen('jonathan'), other = listen('other');
     await expect.poll(() => mine.frames).toContain('retry:'); await expect.poll(() => other.frames).toContain('retry:');
     const count = () => (mine.frames.match(/event: message/g) ?? []).length;
-    await fetch(`${follower}/title/first`);
+    // First require remote owner publication: the stream listener receives no local bump.
+    await fetch(`${leader}/title/remote`);
     await expect.poll(count).toBe(1);
+    await fetch(`${follower}/title/first`);
+    await expect.poll(count).toBe(2);
     expect(other.frames).not.toContain('event: message');
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader');
     expect(readFileSync(join(home, 'calls'), 'utf8')).not.toContain('follower');
     const gone = once(children[0], 'exit'); children[0].kill('SIGKILL'); await gone;
     await fetch(`${follower}/title/second`);
-    await expect.poll(count).toBe(2);
+    await expect.poll(count).toBe(3);
     // The local title frame can precede the successor owner's asynchronous scan. Observe takeover itself.
     await expect.poll(() => readFileSync(join(home, 'calls'), 'utf8')).toContain('follower');
     writeFileSync(join(home, 'allow'), 'no'); await fetch(`${follower}/title/third`);
     await expect.poll(() => mine.closed).toBe(true);
-    expect(count()).toBe(2); expect(other.frames).not.toContain('event: message');
+    expect(count()).toBe(3); expect(other.frames).not.toContain('event: message');
   } finally {
     for (const stream of streams) stream.destroy();
     await Promise.all(children.map(async child => { if (child.exitCode !== null || child.signalCode !== null) return; const gone = once(child, 'exit'); child.kill('SIGKILL'); await gone; }));

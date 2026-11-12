@@ -28,3 +28,26 @@ it('bounds repeated publications and replays a dead owner without swallowing new
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+it('retains provider-wide domains as well as individual type domains', () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-provider-hint-outbox-'));
+  try {
+    withLog(home, db => domainOf(db, 'tasks/*', 'tasks'));
+    persistHints(home, new Map([['tasks/*', new Set(['*'])]]));
+    withLog(home, db => { consumeHintOutbox(home, db); expect(refreshRequest(db, 'tasks/*').through).toBeGreaterThan(0); });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it('imports all bounded domains rather than starving the tail behind hot domains', () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-domain-hint-outbox-'));
+  try {
+    const hints = new Map(Array.from({ length: 40 }, (_, i) => [`loom/type-${i}`, new Set(['*'])]));
+    withLog(home, db => { for (const domain of hints.keys()) domainOf(db, domain, 'loom'); });
+    persistHints(home, hints);
+    withLog(home, db => {
+      consumeHintOutbox(home, db);
+      for (const domain of hints.keys()) expect(refreshRequest(db, domain).through).toBeGreaterThan(0);
+    });
+    expect(readdirSync(join(home, 'collections', 'hint-outbox'))).toEqual([]);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
