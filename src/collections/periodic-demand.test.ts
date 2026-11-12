@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEMAND_TTL_MS, domainOf, indexOf, publishDemand, sharedDemand, withLog } from './log.js';
+import { DEMAND_TTL_MS, domainOf, indexOf, publishDemand, resetEpoch, sharedDemand, withLog } from './log.js';
 import { attach, closeStream, configureCollectionBackground, deliverNow, openStream, prepare, pullNow, stopAll } from './subs.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
 import { CORE_TYPES, registerCoreSource } from './core-types.js';
@@ -145,7 +145,7 @@ it('shutdown withdraws demand, waits for an automatic reask and suppresses its l
   } finally { release(); await closing; }
 });
 
-it.each(['viewer', 'install', 'scope'])('withdrawn %s authority while a reask is pending suppresses its late rows', async mode => {
+it.each(['viewer', 'install', 'scope', 'epoch'])('withdrawn %s authority while a reask is pending suppresses its late rows', async mode => {
   const h = { home, agents: ['art'] } as Household;
   owner = new PeriodicOwner(home, () => {});
   stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
@@ -172,6 +172,7 @@ it.each(['viewer', 'install', 'scope'])('withdrawn %s authority while a reask is
     await deliverNow(home); await expect.poll(() => entered).toBe(true);
     if (mode === 'viewer') current = null;
     else if (mode === 'scope') current = { kind: 'member', person: 'jonathan', household: false, agents: ['mark'] };
+    else if (mode === 'epoch') withLog(home, db => { const row = db.prepare('SELECT epoch FROM domains WHERE domain = ?').get('loom/agent-status') as { epoch: string }; resetEpoch(db, 'loom/agent-status', row.epoch); });
     else install = 'two';
     const before = frames.mock.calls.length;
     release(); await new Promise(resolve => setImmediate(resolve));

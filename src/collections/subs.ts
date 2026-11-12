@@ -620,6 +620,7 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     const now = providers(h.env()).get(sub.provider);
     // Unlike the delivery pass (which resets with a specific reason), stale async answers are discarded.
     if (!now || now.install !== install || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
+    if (withLog(h.household().home, db => domainRow(db, sub.domain)?.epoch) !== sub.epoch) return undefined;
     p = now;
     return v;
   };
