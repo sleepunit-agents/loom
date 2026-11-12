@@ -319,7 +319,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       child.stdout?.destroy();
       // Every time, not only on a timeout: whatever the piece left running in
       // its group goes with it. (A piece that calls setsid on purpose escapes.)
-      if (!background) killGroup(child.pid);
+      if (background) { if (!r.ok) child.kill('SIGTERM'); } else killGroup(child.pid);
       resolve(r);
     };
     const timer = setTimeout(() => { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);

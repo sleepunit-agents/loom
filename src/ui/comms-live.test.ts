@@ -11,7 +11,7 @@ const reads = vi.hoisted(() => ({ COMMS_DB: 'comms.db', movedSince: vi.fn((_home
 vi.mock('../comms.js', () => reads);
 vi.mock('../lock-gate.js', async importOriginal => { const actual = await importOriginal<typeof import('../lock-gate.js')>(); return { ...actual, waitForLocks: vi.fn(actual.waitForLocks) }; });
 vi.mock('./live.js', () => ({ changedFor: vi.fn() }));
-import { stopCommsWatch, watchComms } from './comms-live.js';
+import { openThreadStream, stopCommsWatch, watchComms } from './comms-live.js';
 
 afterEach(() => { stopCommsWatch(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -97,4 +97,41 @@ it('a lock probe from a disposed home cannot scan a replacement registration', a
   expect(reads.movedSince).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(2000);
   expect(reads.movedSince).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])('counts duplicate callback and ownerless registrations independently (owner: %s)', async withOwner => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-refcount-'));
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([]);
+  const getter = withOwner ? () => owner : undefined;
+  const first = watchComms(home, getter), second = watchComms(home, getter);
+  try {
+    first(); first();
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+  } finally { second(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
+});
+it('successor scans from the persisted cursor and preserves previously published member markers', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-cursor-'));
+  const firstOwner = new PeriodicOwner(home, () => {}), nextOwner = new PeriodicOwner(home, () => {});
+  firstOwner.setEligible(true); reads.movedSince.mockReset();
+  const through = Date.now() + 10;
+  reads.movedSince.mockReturnValueOnce([{ id: 'thread', member: 'jonathan', updated: through }]).mockReturnValue([]);
+  let off = watchComms(home, () => firstOwner);
+  try {
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual({ through });
+    off(); await firstOwner.close(); nextOwner.setEligible(true); reads.movedSince.mockClear();
+    off = watchComms(home, () => nextOwner);
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+    expect(reads.movedSince.mock.calls[0]).toEqual([home, through]);
+    expect(withLog(home, db => db.prepare('SELECT member FROM comms_member_moves').all())).toEqual([{ member: 'jonathan' }]);
+  } finally { off(); await firstOwner.close(); await nextOwner.close(); rmSync(home, { recursive: true, force: true }); }
+});
+it('sends the Comms heartbeat to local thread streams', async () => {
+  vi.useFakeTimers(); reads.seqsOf.mockReturnValue({ last: 0 }); reads.threadState.mockReturnValue('idle');
+  reads.movedSince.mockReturnValue([]);
+  const write = vi.fn(() => true);
+  const response = { writeHead: vi.fn(), write, on: vi.fn(), end: vi.fn() };
+  openThreadStream(response as unknown as import('node:http').ServerResponse, {}, '/missing-comms-heartbeat', { thread: 'thread', session: 'session', from: 0, may: () => true });
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(write).toHaveBeenCalledWith(': beat\n\n');
 });
