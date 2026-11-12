@@ -31,6 +31,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
+import { PeriodicOwner } from './periodic-owner.js';
 import { PieceStore, readGrant, StoreError, storesDir, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -260,7 +261,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
-  let backgroundActive = !workerSocket;
+  let backgroundActive = false;
+  let periodic: PeriodicOwner | undefined;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -396,6 +398,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   let closing = false;
   const maintaining = new Map<string, Promise<void>>();
   const maintain = (name: string, work: () => Promise<void>): Promise<void> => {
+    if (periodic) return periodic.run(name, () => stalls.timed(name, work));
     const running = maintaining.get(name);
     if (running) return running;
     const run = stalls.timed(name, work).catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
@@ -1072,16 +1075,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
     if (!backgroundActive) return;
-    backgroundJob('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
-      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`)));
+    void periodic?.run('push watch', () => backgroundJob('push watch', () => pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`))));
   }, WATCH_S * 1000);
   pushTimer?.unref();
   // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
     if (!backgroundActive || !live) return;
-    backgroundJob('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`)));
+    void periodic?.run('needs resolve', () => backgroundJob('needs resolve', () => resolveNeeds(live!(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`))));
   };
   const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
   needsTimer?.unref();
@@ -1322,23 +1325,29 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const addr = http.address();
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
 
+  // All listeners for this home contend on one lifetime OS lock. A rolling-deploy standby is ineligible
+  // until its supervisor activates it; retirement admits no work and drains the old owner before takeover.
+  periodic = new PeriodicOwner(household?.home ?? opts.contextDir, () => {
+    backgroundActive = true;
+    stalls.timed('worker activation', () => {
+      if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
+      void foldAll(); void sweepAll();
+      if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
+    });
+  });
+  if (!opts.createServer) periodic.setEligible(!workerSocket);
+
   return {
     port,
     host: opts.host,
     setBackgroundActive(active) {
-      const was = backgroundActive;
-      backgroundActive = active;
-      if (active && !was) stalls.timed('worker activation', () => {
-        if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-        foldAll(); sweepAll();
-        if (live && !opts.createServer) {
-          void commsSweep();
-          void refsBackfill();
-        }
-      });
+      if (!active) backgroundActive = false;
+      if (!opts.createServer) periodic!.setEligible(active);
     },
     async close() {
       closing = true;
+      backgroundActive = false;
+      await periodic?.close();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
