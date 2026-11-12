@@ -108,7 +108,7 @@ type Data = any;
 const FIELDS = ['agent', 'kind', 'box', 'attention', 'unread', 'text', 'sort', 'actions'];
 
 
-// A piece's manifest may carry at most 10 asks (src/ui/vocab.ts): more and it's refused whole.
+// A viewer sees at most ten asks per piece; a manifest may carry more candidates before the member checks.
 const N = Number(process.env.LOOM_BENCH_ASKS ?? 10);
 // Between rounds: a person answering every few seconds. Closer than GAP_MS (1.5 s) apart, changes coalesce by design.
 const SPACING = Number(process.env.LOOM_BENCH_SPACING ?? 3_500);

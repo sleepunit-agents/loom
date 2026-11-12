@@ -13,6 +13,16 @@ import { identityFacts } from './household-pages.js';
 const ok = (p: Page | string): Page => { if (typeof p === 'string') throw new Error(p); return p; };
 const page = (blocks: unknown[], extra: Record<string, unknown> = {}) => parsePage({ title: 'T', sections: [{ id: 's', blocks }], ...extra });
 
+describe('bounded ask candidates before member filtering', () => {
+  it('accepts up to 1000 candidates, and refuses an over-limit manifest whole', () => {
+    const asks = Array.from({ length: 1000 }, (_, i) => ({ text: `Permission ${i}?`, agent: 'art', page: '' }));
+    const manifest = parseManifest({ v: 2, asks });
+    expect(typeof manifest).not.toBe('string');
+    if (typeof manifest !== 'string') expect(manifest.asks).toHaveLength(1000);
+    expect(parseManifest({ v: 2, asks: [...asks, asks[0]] })).toBe('asks has more than 1000 entries');
+  });
+});
+
 describe('meter, code and status blocks', () => {
   it('a long list of plain choices keeps every option and its chosen value', () => {
     const opts = (n: number) => Array.from({ length: n }, (_, i) => ({ value: `p${i}`, label: `Person ${i}` }));

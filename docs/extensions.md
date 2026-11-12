@@ -434,7 +434,12 @@ that ignores it keeps working. Outside a household there's no `caller`.
   doesn't is shown as it is, under one line saying it shows the whole
   household.
 - **`asks`** are things only the owner can decide. They're listed under
-  "Your call" on Home (at most 10 a piece). Optional on each: `tone` (tints
+  "Your call" on Home (at most 10 a piece, after the viewer's agent and conversation visibility checks).
+  A manifest may supply up to 1000 candidates within the existing 512 KiB answer limit; exceeding either
+  refuses the manifest whole. Pieces must not globally truncate before loom's member checks: supply up to
+  ten per visibility group (agent, conversation or none, and `lead` or not), preserving overall recency/order,
+  so another member's private backlog cannot crowd out an eligible card. Display selection does not change
+  who may answer an approval by id. Optional on each: `tone` (tints
   its card), `at` (an ISO date-time, shown as its age), `agent` (an agent's
   id, whose mark it carries) and `actions` (up to two `buttons` items, drawn on
   its card in place of the link: Ratify and Reject, Renew and Later). An ask is a decision, not news:

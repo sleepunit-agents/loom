@@ -254,6 +254,9 @@ export const LIMITS = {
   columns: 12,
   string: 2000,
   asks: 10,
+  // Candidates before the viewer's ownership/thread checks; only ten eligible asks are shown per piece.
+  // Still bounded by the manifest's 512 KiB transport limit, and refused whole if either limit is exceeded.
+  askCandidates: 1000,
   // An ask's own buttons: a yes, a no, and one more (a request's Allow, Always allow, Deny).
   askActions: 3,
   notices: 20,
@@ -1016,7 +1019,7 @@ export function parseManifest(value: unknown): Manifest | string {
       };
     }
     if (top.asks !== undefined) {
-      m.asks = arr(top.asks, 'asks', LIMITS.asks).map((x) => {
+      m.asks = arr(top.asks, 'asks', LIMITS.askCandidates).map((x) => {
         const a = obj(x, 'ask');
         return {
           text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label'),
