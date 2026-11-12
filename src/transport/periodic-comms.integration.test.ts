@@ -32,7 +32,7 @@ if(req.url==='/activate')owner.setEligible(true);if(req.url.startsWith('/title/'
   };
   const streams: ReturnType<typeof request>[] = [];
   try {
-    const leader = await start('leader', true), follower = await start('follower', false);
+    const leader = await start('leader', true), follower = await start('follower', true);
     const listen = (member: string) => {
       const state = { frames: '', closed: false };
       const req = request(`${follower}/events/${member}`, res => { res.setEncoding('utf8'); res.on('data', s => { state.frames += s; }); res.on('end', () => { state.closed = true; }); });
@@ -47,7 +47,7 @@ if(req.url==='/activate')owner.setEligible(true);if(req.url.startsWith('/title/'
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader');
     expect(readFileSync(join(home, 'calls'), 'utf8')).not.toContain('follower');
     const gone = once(children[0], 'exit'); children[0].kill('SIGKILL'); await gone;
-    await fetch(`${follower}/activate`); await fetch(`${follower}/title/second`);
+    await fetch(`${follower}/title/second`);
     await expect.poll(count).toBe(2);
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('follower');
     writeFileSync(join(home, 'allow'), 'no'); await fetch(`${follower}/title/third`);

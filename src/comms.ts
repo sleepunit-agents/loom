@@ -337,7 +337,18 @@ const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
     channel INTEGER NOT NULL,
     at      TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS comms_delete_pending (id TEXT PRIMARY KEY);`;
+  CREATE TABLE IF NOT EXISTS comms_delete_pending (id TEXT PRIMARY KEY);
+  -- One latest move per thread, ordered by commit rather than wall-clock time.
+  CREATE TABLE IF NOT EXISTS comms_moves (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, member TEXT NOT NULL);
+  CREATE TRIGGER IF NOT EXISTS comms_moves_insert AFTER INSERT ON comms_threads BEGIN
+    INSERT OR REPLACE INTO comms_moves(id, member) VALUES (NEW.id, NEW.member);
+  END;
+  CREATE TRIGGER IF NOT EXISTS comms_moves_update AFTER UPDATE OF updated ON comms_threads BEGIN
+    INSERT OR REPLACE INTO comms_moves(id, member) VALUES (NEW.id, NEW.member);
+  END;
+  CREATE TRIGGER IF NOT EXISTS comms_moves_delete AFTER DELETE ON comms_threads BEGIN
+    INSERT OR REPLACE INTO comms_moves(id, member) VALUES (OLD.id, OLD.member);
+  END;`;
 
 const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS conversation_steps (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, conversation TEXT NOT NULL, run TEXT NOT NULL,
@@ -1702,6 +1713,12 @@ export function threadState(home: string, thread: string): string {
   const alive = typeof r.alive_at === 'number' ? Math.floor(r.alive_at / 15_000) : null;
   const tokens = typeof r.alive_tokens === 'number' ? Math.floor(r.alive_tokens / 500) : null;
   return JSON.stringify([r.working_since, r.queued_since, r.last_failed, r.title, r.archived, m.sending ?? 0, m.running ?? 0, alive, tokens]);
+}
+
+/** Latest thread moves after a durable monotonic sequence, including equal-timestamp writes. */
+export function movesAfter(home: string, sequence: number): Array<{ id: string; member: string; seq: number }> {
+  if (!existsSync(join(home, 'household.db'))) return [];
+  return withThreadsAt(home, db => db.prepare('SELECT id, member, seq FROM comms_moves WHERE seq > ? ORDER BY seq').all(sequence) as Array<{ id: string; member: string; seq: number }>);
 }
 
 /** Threads whose rows moved since `ms` (the live streams' cross-process read). */

@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, watch, type FSWatcher } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { COMMS_DB, movedSince, onBump, seqsOf, threadState } from '../comms.js';
+import { COMMS_DB, movesAfter, movedSince, onBump, seqsOf, threadState } from '../comms.js';
 import { HOUSEHOLD_DB } from '../household-store.js';
 import { isSqliteBusy, waitForLocks } from '../lock-gate.js';
 import { changedFor } from './live.js';
@@ -89,15 +89,15 @@ async function tellShared(home: string): Promise<void> {
   const owner = h.owner?.();
   await owner?.run('comms shared changes', () => {
     const since = withLog(home, db => {
-      db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, 0)').run();
-      return (db.prepare('SELECT through FROM comms_scan WHERE id = 1').get() as { through: number }).through;
+      db.prepare('INSERT OR IGNORE INTO comms_sequence_scan(id, through) VALUES (1, 0)').run();
+      return (db.prepare('SELECT through FROM comms_sequence_scan WHERE id = 1').get() as { through: number }).through;
     });
-    const moved = movedSince(home, since);
+    const moved = movesAfter(home, since);
     if (!moved.length) return;
     withLog(home, db => db.transaction(() => {
       const put = db.prepare('INSERT OR REPLACE INTO comms_member_moves(member) VALUES (?)');
       for (const member of new Set(moved.map(m => m.member))) put.run(member);
-      db.prepare('UPDATE comms_scan SET through = ? WHERE id = 1').run(Math.max(...moved.map(m => m.updated)));
+      db.prepare('UPDATE comms_sequence_scan SET through = ? WHERE id = 1').run(Math.max(...moved.map(m => m.seq)));
     }).immediate());
     // Commit before publishing. A failed hint is recovered by the bounded fallback read.
     try { writeFileSync(join(home, COMMS_LIVE_TICK), randomBytes(12).toString('hex'), { mode: 0o600 }); } catch { /* fallback */ }
@@ -117,7 +117,7 @@ export function watchComms(home: string, owner?: () => PeriodicOwner | undefined
   const registration = {};
   h.owners.set(registration, owner);
   if (owner) {
-    withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, ?)').run(Date.now()));
+    withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_sequence_scan VALUES (1, 0)').run());
     h.owner = () => { const owners = [...h.owners.values()].map(get => get?.()); return owners.find(o => o?.active) ?? owners.find(Boolean); };
   }
   let stopped = false;
@@ -160,7 +160,7 @@ function ensure(home: string): void {
         const localThreads = [...streams].some(s => s.home === home);
         const read = sharedOwner?.active || !registration.owner || localThreads ? [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] : [];
         if (registration.owner && !sharedOwner?.active) read.push(liveDbPath(home));
-        if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home)] : [] })) { waiting(); return; }
+        if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home), join(home, HOUSEHOLD_DB)] : [] })) { waiting(); return; }
         if (homes.get(home) !== registration) return;
         // Acquisition during the await changes a reader into a writer: probe again for the new role.
         if (registration.owner?.() !== sharedOwner || (sharedOwner?.active === true) !== wasActive) { again = true; continue; }

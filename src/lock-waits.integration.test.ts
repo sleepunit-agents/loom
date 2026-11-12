@@ -30,7 +30,7 @@ import { pendingLockWaits, waitForLocks } from './lock-gate.js';
 import { clearPieceCache } from './ui/pieces.js';
 import { propose, listProposals } from './backends/proposals.js';
 import { changed } from './ui/live.js';
-import * as collectionPull from './collections/pull.js';
+import * as collectionSubs from './collections/subs.js';
 import { GAP_MS, nudge } from './collections/pull.js';
 import { domainOf, nudgedSince, withLog } from './collections/log.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -731,8 +731,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     await fetch(`${base}/account`, { headers: { authorization: `Bearer ${tok.jonathan}` } });
     const domains = ['loom/attention', 'loom/agent-status'];
     withLog(h.home, (db) => { for (const d of domains) domainOf(db, d, 'test'); });
+    const hints = vi.spyOn(collectionSubs, 'queueCollectionNudge');
     changed(); changed();
-    const hints = vi.spyOn(collectionPull, 'nudge');
     const since = Date.now() - 1;
     const op = 'receipt-slow-body-12345678';
     const body = `_action=mark-set&agent=art&mark=4&_op=${op}`;
@@ -743,14 +743,14 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     try {
       upload.finish();
       await queuedFor(path);
-      await flushHints();
-      // The delayed attention/status nudges must not spend SQLite's synchronous timeout while this action waits.
-      expect(hints.mock.calls.map(([, d]) => d).sort()).toEqual([...domains].sort());
-      const deferred = hints.mock.results.map((r) => r.value as Promise<void>);
-      for (const hint of deferred) expect(await pending(hint)).toBe(true);
+      // Production hooks queue locally; their publication waits off the event loop alongside the action.
+      expect([...new Set(hints.mock.calls.map(([, d]) => d))].sort()).toEqual([...domains].sort());
+      expect(hints.mock.results.every(r => r.value === true)).toBe(true);
+      const publication = collectionSubs.deliverNow(h.home);
+      expect(await pending(publication)).toBe(true);
       expect((await fetch(`${base}/login`)).status).toBe(200);
       expect(await pending(upload.result)).toBe(true);
-      await held.release(); await Promise.all(deferred);
+      await held.release(); await publication;
       expect(withLog(h.home, (db) => nudgedSince(db, since)).filter((r) => domains.includes(r.domain)).map((r) => r.domain).sort()).toEqual([...domains].sort());
       expect(await upload.result).toBe(200);
       const answer = JSON.parse(upload.text());

@@ -163,6 +163,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string, 
     const stdin = JSON.stringify({ [domain]: { rev: paging.rev, txn: paging.txn }, limit: PAGE_MAX });
     const r = await poolOf(p.name).run(() => runOffer(ctx.env, p.piece!, p.changes!, { kind: 'collections', stdin, caller: { kind: 'owner' }, parse: (v) => v }));
     if (r === null) return 'busy';
+    if (!await waitForLocks({ write: [liveDbPath(home)] })) return 'busy';
     // A slow provider may outlive the lease; do not commit if another listener took it.
     if (!atCursor(() => true)) return 'busy';
     if (!r.ok) { process.stderr.write(`loom: collections changes from ${p.name} (${domain}) failed: ${r.error}\n`); return 'failed'; }
@@ -185,6 +186,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string, 
       // leaves initialization retryable; a successor cannot skip unchanged rows.
       const snap = await snapshot(ctx, p, types);
       if (typeof snap === 'string') return snap;
+      if (!await waitForLocks({ write: [liveDbPath(home)] })) return 'busy';
       if (!atCursor((db) => {
         seedIndex(db, domain, row.epoch, [...snap.seen].map(([key, c]) => ({ key, audience: c.audience!, ...(c.agent ? { agent: c.agent } : {}), ...(c.expires !== undefined ? { expires: c.expires } : {}), record: c.record! })));
         setCursor(db, domain, row.epoch, a.head as number, a.txn as string);
@@ -308,6 +310,7 @@ async function bridge(ctx: PullContext, p: Provider, domain: string, types: read
   const head = withLog(home, db => domainHead(db, domain));
   const snap = await snapshot(ctx, p, types, keys);
   if (typeof snap === 'string') return snap;
+  if (!await waitForLocks({ write: [liveDbPath(home)] })) return 'busy';
   const { seen, complete } = snap;
   const diffs = withLog(home, (db) => {
     const held = new Map(indexOf(db, domain).map((r) => [r.key, r]));
@@ -361,16 +364,26 @@ export class Puller {
     this.timers.clear();
     for (const w of this.after.values()) w.resolve(undefined);
     this.after.clear();
-    for (const domain of this.last.keys()) if (!this.running.has(domain)) this.release(domain);
+    // Completed pulls release their leases; stopped timers never acquired one.
   }
 
-  private release(domain: string, listener = this.ctx().listener ?? LISTENER): void {
+  private async release(domain: string, listener = this.ctx().listener ?? LISTENER): Promise<void> {
+    if (!await waitForLocks({ write: [liveDbPath(this.ctx().household.home)] })) return;
     try { withLog(this.ctx().household.home, db => db.prepare('UPDATE domains SET lease = NULL, lease_until = 0 WHERE domain = ? AND lease = ?').run(domain, listener)); } catch { /* a dead owner's lease still expires */ }
   }
 
+  private rounds = new Set<Promise<void>>();
+
   /** Every wanted domain that's due, and the expiry pass. */
   round(): void {
-    return backgroundJob('collection round', () => this.roundWork());
+    const round = backgroundJob('collection round', async () => {
+      const run = async (): Promise<PullOutcome> => {
+        if (!await waitForLocks({ write: [liveDbPath(this.ctx().household.home)] }) || this.stopped || (this.background && !this.background.active())) return 'busy';
+        this.roundWork(); return 'quiet';
+      };
+      if (this.background) await this.background.run('maintenance', run); else await run();
+    }).finally(() => { this.rounds.delete(round); });
+    this.rounds.add(round);
   }
 
   private roundWork(): void {
@@ -437,7 +450,7 @@ export class Puller {
   /** Every pull asked for so far, done (tests: a round's pulls). */
   async settle(): Promise<void> {
     for (;;) {
-      const pending = [...[...this.after.values()].map((w) => w.promise), ...this.running.values()];
+      const pending = [...this.rounds, ...[...this.after.values()].map((w) => w.promise), ...this.running.values()];
       if (!pending.length) return;
       await Promise.allSettled(pending);
     }
@@ -458,19 +471,22 @@ export class Puller {
     const started = Date.now();
     this.last.set(domain, started);
     const c = { ...this.ctx(), ...(background ? { listener: this.background?.listener?.() } : {}) };
-    // A steady stream of hints must not starve repair of an unrelated missed write. Promote
-    // the hint itself when a recently-read domain is due, even if the maintenance round was busy.
-    if (checkOnly === 'hint' && started - (this.readsAt.get(domain) ?? 0) < 2 * consistencyMs(c.env)) {
-      const overdue = withLog(c.household.home, db => {
-        const row = domainRow(db, domain);
-        return !row || started - checkedAt(db, domain, row.epoch) >= consistencyMs(c.env);
-      });
-      if (overdue) checkOnly = true;
-    }
-    const [prov] = domain.split('/');
-    const p = providers(c.env).get(prov);
-    if (p?.piece && !p.changes) this.costly.add(domain); else this.costly.delete(domain);
     const run = (async (): Promise<PullOutcome> => {
+      // The delayed timer can fire long after delivery's probe. Gate its actual writes.
+      if (!await waitForLocks({ write: [liveDbPath(c.household.home)] })) return 'busy';
+      if (background && (this.stopped || !this.background?.active())) return 'busy';
+      // A steady stream of hints must not starve repair of an unrelated missed write. Promote
+      // the hint itself when a recently-read domain is due, even if the maintenance round was busy.
+      if (checkOnly === 'hint' && started - (this.readsAt.get(domain) ?? 0) < 2 * consistencyMs(c.env)) {
+        const overdue = withLog(c.household.home, db => {
+          const row = domainRow(db, domain);
+          return !row || started - checkedAt(db, domain, row.epoch) >= consistencyMs(c.env);
+        });
+        if (overdue) checkOnly = true;
+      }
+      const [prov] = domain.split('/');
+      const p = providers(c.env).get(prov);
+      if (p?.piece && !p.changes) this.costly.add(domain); else this.costly.delete(domain);
       if (!p || !domainsOf(p).has(domain)) return 'gone';
       try { return await pullDomain(c, p, domain, checkOnly); } catch (e) { process.stderr.write(`loom: collections pull of ${domain} failed: ${(e as Error).message}\n`); return 'failed'; }
     })().then((out) => {
@@ -479,7 +495,7 @@ export class Puller {
         this.failures.set(domain, { count, until: Date.now() + Math.min(CONSISTENCY_MS, 2000 * 2 ** Math.min(count, 8)) });
       } else if (out !== 'busy') this.failures.delete(domain);
       return out;
-    }).finally(() => { this.running.delete(domain); this.release(domain, c.listener ?? LISTENER); });
+    }).finally(async () => { await this.release(domain, c.listener ?? LISTENER); this.running.delete(domain); });
     this.running.set(domain, run);
     return run;
   }

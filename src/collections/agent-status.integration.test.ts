@@ -236,12 +236,14 @@ console.log(JSON.stringify({ v: 2, owners: 2, asks: [
       expect((await ask('jonathan', { subscribe: true, stream: ev.hello.stream })).error).toBeUndefined();
     }
     await pullNow(h.home, 'loom/agent-status'); await pullsSettled(h.home);
-    const close = vi.spyOn(BetterSqlite3.prototype, 'close');
+    const prepares = vi.spyOn(BetterSqlite3.prototype, 'prepare');
     try {
       await deliverNow(h.home);
-      const logConnections = close.mock.contexts.filter(db => db.name === join(h.home, 'collections', 'live.db'));
-      expect(logConnections).toHaveLength(1);
-    } finally { close.mockRestore(); }
+      // The async lock gate opens a probe too; all six windows' domain reads share one data connection.
+      const logConnections = new Set(prepares.mock.contexts.filter((db, i) => db.name === join(h.home, 'collections', 'live.db')
+        && prepares.mock.calls[i][0] === 'SELECT domain, epoch, rev, txn, source, mode FROM domains WHERE domain = ?'));
+      expect(logConnections.size).toBe(1);
+    } finally { prepares.mockRestore(); }
   }, 20_000);
 
   it('coalesces keyed card rebuilds across six windows of the same viewer', async () => {

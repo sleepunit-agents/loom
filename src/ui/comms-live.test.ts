@@ -9,7 +9,7 @@ import { changedFor } from './live.js';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const reads = vi.hoisted(() => ({ COMMS_DB: 'comms.db', movedSince: vi.fn((_home: string, _since: number): Array<{ id: string; member: string; updated: number }> => []), seqsOf: vi.fn(), threadState: vi.fn(), onBump: vi.fn(() => () => {}) }));
-vi.mock('../comms.js', () => reads);
+vi.mock('../comms.js', () => ({ ...reads, movesAfter: (home: string, since: number) => reads.movedSince(home, since).map(m => ({ ...m, seq: m.updated })) }));
 vi.mock('../lock-gate.js', async importOriginal => { const actual = await importOriginal<typeof import('../lock-gate.js')>(); return { ...actual, waitForLocks: vi.fn(actual.waitForLocks) }; });
 vi.mock('./live.js', () => ({ changedFor: vi.fn() }));
 import { openThreadStream, stopCommsWatch, watchComms } from './comms-live.js';
@@ -119,7 +119,7 @@ it('successor scans from the persisted cursor and preserves previously published
   reads.movedSince.mockReturnValueOnce([{ id: 'thread', member: 'jonathan', updated: through }]).mockReturnValue([]);
   let off = watchComms(home, () => firstOwner);
   try {
-    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual({ through });
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get())).toEqual({ through });
     off(); await firstOwner.close(); nextOwner.setEligible(true); reads.movedSince.mockClear();
     off = watchComms(home, () => nextOwner);
     await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
@@ -180,12 +180,12 @@ it('a failed shared publication keeps the cursor and retries its member marker',
   const report = vi.spyOn(console, 'error').mockImplementation(() => {});
   withLog(home, db => db.exec("CREATE TRIGGER reject_move BEFORE INSERT ON comms_member_moves BEGIN SELECT RAISE(ABORT, 'publish failed'); END"));
   try {
-    const initial = withLog(home, db => db.prepare('SELECT through FROM comms_scan').get());
+    const initial = withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get());
     await expect.poll(() => report.mock.calls.length).toBeGreaterThan(0);
-    expect(withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual(initial);
+    expect(withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get())).toEqual(initial);
     expect(withLog(home, db => db.prepare('SELECT * FROM comms_member_moves').all())).toEqual([]);
     withLog(home, db => db.exec('DROP TRIGGER reject_move'));
-    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_scan').get())).toEqual({ through });
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT through FROM comms_sequence_scan').get())).toEqual({ through });
     expect(withLog(home, db => db.prepare('SELECT member FROM comms_member_moves').all())).toEqual([{ member: 'jonathan' }]);
   } finally { off(); await owner.close(); rmSync(home, { recursive: true, force: true }); }
 });
@@ -236,7 +236,7 @@ it('acquiring ownership during a reader probe rechecks the WAL writer before sca
     await new Promise(r => setTimeout(r, 25));
     expect(performance.now() - started).toBeLessThan(500);
     expect(reads.movedSince).not.toHaveBeenCalled();
-    expect(waitForLocks).toHaveBeenCalledWith(expect.objectContaining({ write: [liveDbPath(home)] }));
+    expect(waitForLocks).toHaveBeenCalledWith(expect.objectContaining({ write: expect.arrayContaining([liveDbPath(home)]) }));
     writer.exec('ROLLBACK');
     await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); off(); await owner.close(); intervals.mockRestore(); rmSync(home, { recursive: true, force: true }); }

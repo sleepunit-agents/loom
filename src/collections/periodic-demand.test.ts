@@ -261,3 +261,58 @@ it('retirement retains hints through a spent writer budget and flushes before re
   release(true); await ending;
   expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/attention', key: '*' }]);
 });
+
+it('gates a delayed refresh at execution when a writer arrives after scheduling', async () => {
+  const { Puller } = await import('./pull.js');
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0; registerCoreSource(home, 'agent-status', async () => { calls++; return []; });
+  withLog(home, db => domainOf(db, 'loom/agent-status', 'loom'));
+  const puller = new Puller(() => ({ household: h, env: { LOOM_HOME: home } }), () => new Set(['loom/agent-status']));
+  await nudge(home, 'loom/agent-status');
+  const pending = puller.soon('loom/agent-status');
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  try {
+    const started = performance.now();
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500); expect(calls).toBe(0);
+    writer.exec('ROLLBACK'); await pending; expect(calls).toBe(1);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); puller.stop(); await puller.settle(); }
+});
+
+it('retirement cancels queued refreshes before waiting on a writer', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  let calls = 0; registerCoreSource(home, 'agent-status', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); publishDemand(db, 'remote', new Map([['loom/agent-status', Date.now()]])); });
+  await nudge(home, 'loom/agent-status'); await deliverNow(home);
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  const closing = stop(); stop = undefined;
+  try {
+    const started = performance.now();
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500); expect(calls).toBe(0);
+    writer.exec('ROLLBACK'); await closing; expect(calls).toBe(0);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await closing; }
+});
+
+it('production action refreshes on a subscribed follower reach the owner without local provider work', async () => {
+  const { pullAfterAction } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household, env = () => ({ LOOM_HOME: home });
+  let calls = 0; registerCoreSource(home, 'project', async () => { calls++; return []; });
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, env, owner);
+  const p = { name: 'loom', owners2: true, types: { project: CORE_TYPES.project } }, viewer = { kind: 'core' } as const;
+  const port = { id: 'action', session: 'session', viewer: () => viewer, frame: () => 1, seq: () => 0, behind: () => 0, close: () => {} };
+  openStream(() => h, env, port, viewer);
+  const { startSeq } = await prepare(() => h, env, p, 'project');
+  const q = { id: 'q', type: 'project', version: 1, where: [], order: [], limit: 100, after: null, fields: [], aggregates: [] };
+  await attach(() => h, env, { stream: port.id, session: port.session }, viewer, p, q,
+    { next: null, complete: true }, [], undefined, undefined, startSeq, async () => ({ rows: [], admitted: [] }));
+  await pullAfterAction(home, env(), 'loom');
+  expect(calls).toBe(0);
+  expect(withLog(home, db => db.prepare('SELECT domain FROM refresh_requests WHERE domain = ?').get('loom/project'))).toEqual({ domain: 'loom/project' });
+  owner.setEligible(true); await deliverNow(home);
+  await expect.poll(() => calls).toBeGreaterThan(0);
+});

@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS refresh_requests (
   key TEXT NOT NULL,
   UNIQUE(domain, key)
 );
-CREATE TABLE IF NOT EXISTS comms_scan (
+-- Separate from the legacy millisecond comms_scan cursor.
+CREATE TABLE IF NOT EXISTS comms_sequence_scan (
   id INTEGER PRIMARY KEY CHECK(id = 1),
   through INTEGER NOT NULL
 );

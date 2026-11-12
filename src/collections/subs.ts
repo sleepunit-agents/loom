@@ -170,8 +170,9 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
     puller: new Puller(() => ({ env: env(), household: household() }),
       () => state.background ? new Set(state.demand.keys()) : wantedOf(state), {
         listener: () => state.background ? `periodic:${state.listener}` : undefined,
-        active: () => !state.background || state.background.active,
+        active: () => !state.closed && (!state.background || state.background.active),
         run: async (domain, job) => {
+          if (state.closed) return undefined;
           if (!state.background) return job();
           let out: Awaited<ReturnType<typeof job>> | undefined;
           await state.background.run(`collection pull ${domain}`, async () => { out = await job(); });
@@ -194,14 +195,15 @@ export function configureCollectionBackground(household: () => Household, env: (
   return async () => {
     if (stopped) return;
     stopped = true;
-    h.backgrounds.delete(owner);
-    if (h.backgrounds.size) return;
+    if (h.backgrounds.size > 1) { h.backgrounds.delete(owner); return; }
     h.closed = true;
+    h.puller.stop();
     await h.passing;
     // Retirement retains queued hints and demand until the writer lets them commit.
     while (!await waitForLocks({ write: [liveDbPath(h.household().home)] })) await sleep(10);
     withLog(h.household().home, db => publishHints(h, db));
     h.streams.clear();
+    h.backgrounds.delete(owner);
     stopIfIdle(h);
     await h.puller.settle();
     await h.passing;
@@ -249,16 +251,19 @@ function consumeHints(h: HomeState, db: Database): void {
   }).immediate()));
 }
 
+function wantedDemand(h: HomeState) {
+  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
+  return { wanted, serialized: JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b))) };
+}
+
 function demandDue(h: HomeState): boolean {
   if (!h.background) return false;
-  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
-  return JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b))) !== h.published || Date.now() - h.publishedAt >= 10_000;
+  return wantedDemand(h).serialized !== h.published || Date.now() - h.publishedAt >= 10_000;
 }
 
 function publishWanted(h: HomeState, db: Database): void {
   if (!h.background) return;
-  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
-  const serialized = JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b)));
+  const { wanted, serialized } = wantedDemand(h);
   const now = Date.now();
   if (serialized === h.published && now - h.publishedAt < 10_000) return;
   publishDemand(db, h.listener, wanted, now);
@@ -805,13 +810,14 @@ export function pullSoon(home: string, domains: readonly string[]): void {
   }).catch(() => undefined);
 }
 
-/** Pull these domains now, here if this listener has a subscription on them (bounded by PULL_WAIT_MS), and nudge them
- * for every other listener. */
+/** Publish action refreshes for the lifetime owner. Standalone listeners also pull subscribed domains locally
+ * (bounded by PULL_WAIT_MS). */
 export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
   await Promise.all(domains.map(d => nudge(home, d)));
   const h = homes.get(home);
-  if (!h) return;
+  if (!h || h.closed) return;
+  if (h.background) { await deliverNow(home); return; }
   const wanted = wantedOf(h);
   const pulls = domains.filter((d) => wanted.has(d)).map((d) => h.puller.now(d));
   if (!pulls.length) return;
