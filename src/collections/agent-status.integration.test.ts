@@ -280,6 +280,10 @@ console.log(JSON.stringify({ v: 2, owners: 2, asks: [
     const elapsed = Date.now() - t0;
     process.stdout.write(`targeted agent-status seam: mark reached its viewer in ${elapsed} ms\n`);
     expect(elapsed).toBeLessThan(2_000);
+    const update = jon.frames.flatMap(f => f.event === 'rows' ? ((f.data.upserts as Data[]) ?? []) : []).find(u => u.key === key && u.running === 1);
+    expect(update.watches.find((g: Data) => g.kind === 'runtime.lane')).toMatchObject({
+      count: 1, items: [{ id: 'job-mark', title: 'Tidying the notes', state: 'running' }],
+    });
     // sam owns art only: mark's card never reaches them.
     await new Promise((r) => setTimeout(r, 300));
     expect(sam.frames.some((f) => JSON.stringify(f.data).includes('agent-status/mark'))).toBe(false);

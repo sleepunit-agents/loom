@@ -101,6 +101,8 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
       const groups = p.locator(width === 1600 ? '.loom-rcard-wrap .loom-watches' : '.loom-bigcard .loom-watches');
       const lanes = groups.locator('[data-watch-kind="runtime.lane"]');
       await lanes.locator('summary').filter({ hasText: '1 · lanes running' }).waitFor();
+      expect(await lanes.locator('summary').getAttribute('title')).toBe('1 · lanes running');
+      expect(await groups.locator('[data-watch-kind="tasks.task"] summary').getAttribute('title')).toBe('Unavailable · tasks reported');
       expect(await groups.locator('[data-watch-kind="tasks.task"] summary').textContent()).toBe('Unavailable · tasks reported');
       await lanes.locator('summary').click();
       await lanes.getByText('Watching the build', { exact: true }).waitFor();
