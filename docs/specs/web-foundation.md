@@ -1,6 +1,6 @@
 # The web foundation: one process, one database, one API, one live feed
 
-*2026-11-12. Status: **final draft, for the owner's read** (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
+*2026-11-12. Status: **accepted as the working design** (Jonathan, terminal, 2026-11-12: "your order is perfect"; building began the same day) (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
 will build and what its tests must pin. It follows a review of the web side at main `73c0063` (the browser client,
 the page server, the piece boundary, and all 623 commits since 2026-10-24; loom note
 `loom/2026-11-12-web-side-review`) and a conversation with the owner the same day. Where it conflicts with an
@@ -450,8 +450,13 @@ passes.
 
 **The old path lives only for apps that haven't moved.** An app's cutover removes all of its old reads, writes,
 streams and stores in the same change. Shared old machinery goes with its last caller. In step 2 the code that
-still reads `household.json`, `tokens.json` and the settings files is pointed at the same tables in `loom.db`, so
-no JSON copy survives.
+still reads `household.json`, `tokens.json` and the settings files is pointed at the same tables in `loom.db`.
+
+**One generated file stays until step 5.** The clock and the runtime are still separate programs and read
+`household.json` themselves (agent names, members and owner, the default agent, relays, and whether the file
+exists). Until they move in, the daemon writes that file from `loom.db` after every household change. It is an
+export: nothing reads it back into loom, a hand edit is overwritten, and it is deleted when the runtime moves in.
+This is the ruling's own exception ("a file is fine as a generated export of what loom holds").
 
 1. **This spec,** agreed.
 2. **The foundation:** `loom serve` as one process on Hono; `loom.db` with sign-in state, members and settings
