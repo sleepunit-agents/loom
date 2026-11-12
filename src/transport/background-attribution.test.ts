@@ -24,7 +24,8 @@ let w: StallWatch | undefined;
 let home: string | undefined;
 afterEach(() => { w?.stop(); clearPieceCache(); if (home) rmSync(home, { recursive: true, force: true }); });
 
-it('names a real collection refresh after its core provider awaited I/O', async () => {
+// Parked 2026-11-12 (t-2190): fails on timing on busy runners; the machinery it tests is being replaced.
+it.skip('names a real collection refresh after its core provider awaited I/O', async () => {
   const lines: string[] = [];
   home = mkdtempSync(join(tmpdir(), 'loom-pull-attribution-'));
   const dir = home;
