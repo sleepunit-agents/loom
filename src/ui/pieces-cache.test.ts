@@ -10,6 +10,70 @@ describe('the manifest cache', () => {
   const dirs: string[] = [];
   afterEach(() => { clearPieceCache(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
+  it.each([[1, false], [8, false], [1, true], [8, true]] as const)('bounds concurrent cold, after-timeout and stale pending callers with %i producers (invalidated: %s)', async (count, invalidate) => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-deadline-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (let i = 0; i < count; i++) {
+      const path = join(bin, `loom-probe${i}`);
+      writeFileSync(path, `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(join(root, 'started'))}, 'start\\n');
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(join(root, 'release'))})) return;
+  clearInterval(timer);
+  console.log(JSON.stringify({v:2,tile:{label:'Probe',value:'late'}}));
+}, 10);
+`);
+      chmodSync(path, 0o755);
+    }
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const requests: Promise<unknown>[] = [];
+    const bounded = async (at = Date.now(), concurrent = false) => {
+      let done = 0;
+      const start = () => {
+        const pending = pieceManifests(env, at).then(r => { done++; return r; });
+        requests.push(pending);
+        return pending;
+      };
+      const calls = [start()];
+      if (concurrent) {
+        await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS / 2);
+        calls.push(start());
+      }
+      await vi.advanceTimersByTimeAsync((concurrent ? PIECE_TIMEOUT_MS / 2 : PIECE_TIMEOUT_MS) - 1);
+      expect(done).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done).toBe(1);
+      if (concurrent) {
+        await vi.advanceTimersByTimeAsync(PIECE_TIMEOUT_MS / 2 - 1);
+        expect(done).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(done).toBe(2);
+      }
+      for (const call of calls) expect(await call).toMatchObject({
+        pieces: [], skipped: Array.from({length: count}, (_, i) => ({piece:`probe${i}`,reason:'timed out'})),
+      });
+    };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await bounded(Date.now(), true);
+      // The first caller has timed out, but its producer is still pending. Neither
+      // a fresh hit nor a synthetically stale hit is a last good answer.
+      await bounded();
+      if (invalidate) expirePieceManifests();
+      await bounded(Date.now() + CACHE_MS + 1);
+    } finally {
+      vi.useRealTimers();
+      writeFileSync(join(root, 'release'), 'yes');
+      await Promise.all(requests);
+    }
+    // An ordinary page read must see the late answer without a live refresh repairing it.
+    await expect.poll(async () => (await pieceManifests(env)).pieces.length).toBe(count);
+    expect(readFileSync(join(root, 'started'), 'utf8').trim().split('\n')).toHaveLength(count * (invalidate ? 2 : 1));
+  }, 25_000);
+
   it('failed UI offers start only once per freshness window, or on that piece moving', async () => {
     const root = mkdtempSync(join(tmpdir(), 'loom-failed-ui-'));
     dirs.push(root);
