@@ -1,6 +1,6 @@
 # The web foundation: one process, one database, one API, one live feed
 
-*2026-11-12. Status: **draft, for the owner's read**. A design doc in the `docs/specs/` sense: it says what loom
+*2026-11-12. Status: **final draft, for the owner's read** (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
 will build and what its tests must pin. It follows a review of the web side at main `73c0063` (the browser client,
 the page server, the piece boundary, and all 623 commits since 2026-10-24; loom note
 `loom/2026-11-12-web-side-review`) and a conversation with the owner the same day. Where it conflicts with an
@@ -82,11 +82,10 @@ loom has two ways to run, and only the second is new.
   MCP over HTTP, and one WebSocket endpoint, and it runs every background job. There is one of it per home; a
   second `loom serve` on the same home refuses to start.
 
-**Deploying is a restart.** Stop accepting requests, finish transactions within five seconds, then roll back any
-unfinished transaction and exit. Persist job intent before starting work; on restart resume local work from its
-checkpoint or retry by operation id. Uncertain outside effects stay held for a person. Worker threads stop at the
-deadline; tests interrupt each phase and check committed work once, rolled-back work absent and held effects not
-resent. A window reconnects and subscribes again.
+**Deploying is a restart.** The daemon stops taking requests, gives running transactions five seconds, and exits;
+anything unfinished rolls back. A job records what it is about to do before it does it, so the new process picks
+it up. A job that may or may not have reached the outside world (a message sent, a body started) is held for a
+person and never sent twice. A window reconnects and subscribes again.
 
 **Nothing on a request's path starts a process or waits on a lock.** Slow work (embedding, backup, encrypting a
 large file) runs on a worker thread. A piece that must run a program (a body, `git`) does so asynchronously, as a
@@ -95,8 +94,8 @@ job, never inside a request.
 **The CLI is only a client.** `loom <piece> <operation>` calls the daemon's API with a token, from loom's machine
 or from a house on another one, and has no other way to reach app data. It holds no logic of its own: its
 commands and help are generated from the operation registry. With the daemon down it says so; across a restart it
-retries for a few seconds, which is safe because a write carries an operation id. Only the continuity commands (`loom wake` to load identity, `recall`, `remember`, `mcp`) keep direct
-access to the mind stores. The separate `wake` command schedules work through the API and needs the daemon.
+retries for a few seconds, which is safe because a write carries an operation id. Only the continuity commands (`loom wake`, which loads identity, and `recall`, `remember`, `mcp`) reach an agent's
+stores directly. The separate `wake` command, which schedules work, goes through the API like everything else.
 
 The HTTP layer moves to Hono. The 2,900-line `src/ui/handler.ts` goes; its jobs split into the static files, the
 sign-in routes, and the API below.
@@ -134,17 +133,17 @@ start. A piece reads and writes only its own tables; another piece's data is rea
 interface ("Pieces").
 
 **Moving existing data** is one importer per old file or store, run by `loom migrate` with the daemon stopped,
-after a backup. Importing is a one-way door for that store: the owner is present for each. The importer commits
-its data and source checksum together, or neither; a retry of that checksum is a no-op and a different source is
-refused. The old writer stays stopped. Before cutover, compare ids, counts and canonical exported content (including
-links, ownership and timestamps), and read encrypted data with its existing keys. A failed check blocks cutover;
-restore the backup to resume the old version. Only a verified import retires its old store and writer.
-Comms uses a local maintenance snapshot of encrypted rows and keys, excluded from normal export/backup. Before
-import, save it with owner-only file access; compare decrypted rows locally in memory, never in exported reports.
-On failure restore it with the normal backup. Delete it after verified cutover. Tests prove both success and rollback.
+after a backup. Importing is a one-way door for that store, so the owner is present for each.
 
-The data rule is complete here: loom owns app data; pieces own tables inside its database. Mutable app state
-in a JSON or lock file is a bug. Historical review counts in "Why" are background, not acceptance measurements.
+- An import is one transaction and records the checksum of what it read. Running it again on the same source does
+  nothing; a different source is refused.
+- Before the old store is retired, the importer compares ids, counts and content on both sides. A mismatch stops
+  the cutover and the backup is restored.
+- Comms is compared on loom's machine only, in memory, and its backup copy is deleted after a verified cutover.
+
+The ruling "loom owns the data" (`~/Art/notes/decisions/2026-10-28-loom-owns-the-data.md`) stands and this is its
+completion: app state that changes lives in `loom.db`, in its piece's tables. A JSON or lock file holding it is a
+bug.
 
 ## The API
 
@@ -172,13 +171,10 @@ operation({
   (below).
 - **A write is one transaction** and names what it changed (`ctx.changed(type, id)`), which is what feeds the live
   feed.
-- **A write carries an operation id** scoped to the authenticated principal, shared across doors. In one transaction,
-  store the operation name, canonical input and result with the change. Same id and input returns that result;
-  different name or input returns `conflict`. Keep receipts until that principal is removed, including across
-  restarts. Recheck current permission before returning a receipt. Jobs use the id for any outside delivery too;
-  where the receiver cannot deduplicate, an uncertain delivery is held for a person, never retried blindly.
-  Comms receipts live in its encrypted, export-excluded tables; generic receipts keep only opaque ids and keyed
-  input hashes, never words or word-bearing results. Only the thread's authorized member/runtime may replay them.
+- **A write carries an operation id** from the caller. The daemon stores the id with the result, in the write's
+  own transaction, for 30 days. The same id with the same input returns that result again; the same id with
+  different input is a `conflict`. So a retry after a dropped connection or a restart never acts twice. A stored
+  result never holds a Comms message's words.
 - **Errors are values:** `{ok: false, code, message}` with a small fixed set of codes (`denied`, `not-found`,
   `invalid`, `conflict`, `unavailable`). The app shows them inline; nothing uses `alert()`.
 
@@ -199,9 +195,9 @@ status, a change, a project. A piece declares each type with:
 
 1. An operation commits and has named `(type, id)` pairs.
 2. After the commit, the daemon's in-process emitter announces them.
-3. For every subscription of that type, compare its delivered ids with current visibility AND scope membership:
-   `put` in the new scope, `del` in any old scope. Each time-bounded type supplies its next departure time;
-   a daemon timer expires it without polling. Tests move a record between parents and advance past a time limit.
+3. For each window subscribed to that type, the daemon reads the record as that window's viewer and sends `put`
+   if it is now in the window's scope, or `del` if it was and no longer is (deleted, hidden, moved to another
+   parent, or aged out of a time-bounded scope, which a timer handles at the moment it happens).
 
 **A window:**
 
@@ -263,40 +259,40 @@ household project behind it is shared with nobody.
 - **Importing:** an existing task takes the project of its epic where the epic names one; everything else arrives
   with no project and is the household owner's until someone files it.
 
-**The rule,** in one module (`src/policy.ts`): the private row is a complete decision, not a filter before the
-other rows. With no private member, choose the viewer row; empty scope further limits members. Deny wins.
+**The rule,** in one module (`src/policy.ts`), is the only place these decisions are made. It is asked two
+questions, "may this viewer see this record" and "may this viewer do this to it", and answers them in this order:
 
-| Case | Read | Act |
-|---|---|---|
-| `member` is set | matching member only (Comms also requires current agent ownership), or bound runtime delivery | matching member within agent/household limits; bound runtime may append replies/activity and update delivery status only, never answer member asks |
-| Household owner, no private member | all | all |
-| Other member, no private member | if project is set, must match; otherwise must own its agent | what they can read, except household setup and work/setup for agents they do not own |
-| No project, agent or member | household owners only | household owners only |
-| Agent token | non-private: if project is set, must be listed on it; otherwise record must name that agent | same scope; never member answers, household setup, or work/setup for another agent |
-| Runner token | only that runner's assigned job inputs and status | claim/report its assigned jobs; no general app access |
-| Service token (key holder or outside piece) | only declared types and operations granted by a household owner | same; no member impersonation or Comms words |
+1. **A private record** (`member` is set) is seen and acted on by that member alone. A Comms thread is also read
+   by its own agent, through the runtime's delivery to that agent's body and nothing else.
+2. **A household owner** sees and does everything else.
+3. **A record with a project** is seen by that project's members and agents, and by nobody else below a household
+   owner. Owning the agent that made it isn't enough.
+4. **A record with an agent and no project** is seen by that agent and its owners.
+5. **A record with neither** is the household owners'.
+6. **Acting** is allowed on what a viewer sees, with three limits: only an agent's owners give it work or change
+   its setup; household things (members, projects' lists, secrets, runners, pieces) are a household owner's; and
+   an agent never answers an ask meant for a person.
 
-For agent tokens, ownership grants no inherited member powers: the rule is independent of the union or intersection
-of owners. An agent with no owners is disabled until a household owner assigns one. Household setup means members,
-secrets grants, runners and piece registration. Runtime delivery is an internal role bound to a thread and its agent,
-not an agent token or a runner's general credential. Comms' ask-routing exceptions are implemented here, never
-by exposing private words. Private-record tests cover agent ownership removal. Other internal calls preserve the original viewer; a scheduled
-job uses its registered service viewer. Every call still enters the same registry and policy.
+**The other tokens are narrow.** A runner sees and reports only the jobs assigned to it. The secrets key holder
+and an outside piece see only the record types and operations a household owner granted them.
 
-The second-member fixture includes Pond-bot records in another project (both Pollock and Pond-bot are denied): Jonathan owns Art and Mark. Pollock owns Pond-bot; both Pollock and Pond-bot
-are listed on `pond` only. They see pond tasks, changes and non-private conversation metadata, but not another
-member's private threads or words. Pollock may give Pond-bot work, never Art or Mark. Pollock and Pond-bot may also
-see their own agent's unprojected records; "nothing outside pond" means no other project's or agent's records,
-not denial of their own private or unprojected agent records. A member-only record is never owner-only by default.
-Creating a record checks the proposed scope; updating checks both old and proposed scopes. Changing a private
-record's member is forbidden. Project assignment requires membership in the target project; agent assignment
-requires ownership (an agent token can assign only itself). Household project membership and agent-project lists
-are household setup. Policy tests reject unauthorized create, move, reassignment and self-enrollment.
+**Making and moving a record is checked too.** Whoever makes a record must be allowed to see the project and
+agent they put on it, and moving one is checked against both where it was and where it's going. A private
+record's member never changes.
 
-**Where applied:** every operation's `may` and every record's `read` call this module. Any change to membership,
-agent ownership or projects, project sharing or record scope rebuilds affected subscriptions and replaces their
-sets, evicting old records. Removed members and revoked/expired sessions close their sockets. No independent rule
-lives in a piece. No per-frame check or hiding that activity exists is required.
+**The test case** is the owner's example, and the fixture home builds it. Jonathan is the household owner and
+owns Art and Mark. Pollock is a member of the project `pond` and owns the agent Pond-bot, which is also on `pond`.
+
+- Pollock and Pond-bot see pond's tasks, changes and threads, including ones Art made.
+- Pollock gives Pond-bot work. He can't give Art or Mark work or change their setup.
+- Neither sees anything in another project, even a record Pond-bot itself made there.
+- Each sees Pond-bot's own records that have no project, and Pollock sees his own private threads.
+- Neither sees Jonathan's private threads.
+
+**Where it's applied:** in `may` for every operation, and in `read` for every record sent to a window. When a
+member's projects or agents change, or a record moves, the windows affected get their sets again and drop what
+they may no longer see; a removed member's or ended session's socket closes. No piece holds a rule of its own.
+There is no per-frame recheck and no hiding of counts.
 
 **Comms keeps today's promise** ([comms.md](comms.md)): a thread's words are read only by its member and its
 agent. Each message stays encrypted in its row with the Comms key, now by the library in-process. No MCP tool, CLI
@@ -331,16 +327,16 @@ web/src/pieces/<name>/
 onto someone else's tracker, and switching which one is registered.
 
 **What becomes an in-repo piece:** tasks (taskstore), approvals, clock, changes, the runtime's state and
-screens, and the bridges (Discord, Slack, and shuttle, which is about 60 Python files and is rewritten in
-TypeScript at its step). A bridge's connection drops for the few seconds of a restart and reconnects. Approvals, the clock and Changes are Python today and are rewritten in TypeScript; taskstore already is
-TypeScript and moves in with its contract and conformance suite (`spec/taskstore-core`), which keep governing the
-`tasks` role. The source is [taskstore's contract](https://github.com/sleepunit-agents/taskstore/tree/main/spec/taskstore-core)
-and its fixture corpus. Step 3 must vendor that exact pair at a recorded commit and run all its cases unchanged;
-the API wraps its domain results without changing their error codes. Its import source is the store in `~/Art/.taskstore`. Their repos are archived once their piece has cut
-over, and the catalog's pins go with them. The commands people and agents already type (`taskstore`, `approvals`,
-`wake`) remain as generated API-client executables in the npm package's `bin` map. Each is an alias into
-one registry client (`wake` maps to clock operations); `loom wake` remains the distinct identity command.
-Step 3 tests installed taskstore parity; the clock step tests both wake spellings with the daemon stopped.
+screens, and the bridges (Discord, Slack and shuttle). A bridge's connection drops for the few seconds of a
+restart and reconnects.
+
+- **Taskstore** is already TypeScript. It moves in with its contract and fixture cases
+  ([`spec/taskstore-core`](https://github.com/sleepunit-agents/taskstore/tree/main/spec/taskstore-core)), copied
+  at a recorded commit, and every case must pass unchanged. Its data comes from the store in `~/Art/.taskstore`.
+- **Approvals, the clock, Changes and shuttle** are Python and are rewritten in TypeScript at their steps.
+- **Their repos are archived** once each has cut over, and the catalog's pins go with them.
+- **The commands people and agents type** (`taskstore`, `approvals`, `wake`) stay, as names for the one generated
+  client. `loom wake`, which loads identity, is a different command and keeps working with the daemon stopped.
 
 **What stays outside the process,** each speaking the same API with a token, and nothing else does:
 
@@ -349,8 +345,7 @@ Step 3 tests installed taskstore parity; the clock step tests both wake spelling
 
 **Someone else's piece** has one door: a program with a token that calls the API, publishes records of its own
 types, and may describe pages in the block vocabulary (`src/ui/vocab.ts` and the app's block renderer, both kept).
-It ships no script and no markup, as the ruling on data-only pieces says
-(the complete rule here is: the page runs only loom's shipped script; outside pieces supply data). Nothing more is built
+It ships no script and no markup: the page runs only loom's own script, and an outside piece supplies data. Nothing more is built
 for this until someone outside wants it.
 
 **What goes:** running a piece's program to get its page, manifest or data; manifests and their polling; the
@@ -424,13 +419,10 @@ rewritten when step 2 lands: the stdio side is still that; the daemon is the hou
 
 ## What must be true when this is done
 
-Use the fixture home for reproducible checks; the owner's home is an additional acceptance run, never a test
-prerequisite. Step 2 adds a benchmark command and records machine specs, command, raw samples and percentiles.
-Reference environment: Linux x86-64, four dedicated CPU cores, 8 GiB RAM, local SSD, Node 22; record exact hardware
-with results. Workload: 1,000 tasks, 100 pending approvals, the three fixture agents, two viewers and three windows;
-for 60 seconds, read lists at 10 requests/second and commit one task edit/second while two fake bodies report
-status each second. Measure API latency and commit-to-render delay; then sample idle CPU for 60 seconds with
-those windows connected and no writes. All thresholds below must hold; ten under-load suite runs use that workload:
+Each is checked on the fixture home, so anyone can repeat it; the owner's real home is a second run, never a
+requirement. Step 2 adds `loom bench`, which loads 1,000 tasks, 100 pending approvals and three windows, reads
+lists ten times a second and writes once a second for a minute while two fake bodies report status, and records
+the machine, the raw samples and the percentiles. The reference machine is four cores and 8 GB, like loom's.
 
 - One `loom` process is listening. No `spawnSync` is reachable from a request.
 - `$LOOM_HOME` holds `loom.db`, the agents' and commons' stores, and key files; no JSON or lock file holds state.
@@ -441,22 +433,21 @@ those windows connected and no writes. All thresholds below must hold; ten under
 - Policy table tests cover mixed private/project/agent fields, empty fields, both owners and every token kind;
   the second-member fixture passes for reads and writes over every allowed door and denied door.
 - Revoking a session closes its socket; ownership, sharing and scope changes evict records already sent.
-- Retry tests cover duplicate ids, mismatches, principals and restart; export scans find no Comms words in receipts.
-- Import tests interrupt before/after commit, retry and compare content; Comms snapshot rollback and job shutdown tests pass.
+- A write retried with the same id, including across a restart, acts once.
+- An import interrupted at any point leaves either the old store or the new one whole, never a mix.
 - A clean supported Node/npm environment reaches a signed-in desk with the two commands above.
 - A change to one first-party piece is one PR in one repo.
 - The server suite takes under three minutes in the reference environment and passes ten under-load runs.
 
 ## Moving there
 
-No new screens until step 3 lands; bug fixes only. Every step has a gate; do not begin the next before it passes.
-Legacy paths are allowed only for apps not yet cut over. An app's cutover removes all of its old reads, writes,
-streams and storage adapters in that same change. Imports are maintenance stops, not live coexistence. Step 2
-replaces legacy readers of household, token and settings files with adapters to the same `loom.db` tables;
-external unmoved pieces obtain that metadata through the API. No mirror JSON or second writer survives.
-A staging gate exercises every unmoved app after old metadata files are removed. Each adapter dies with its last
-caller. Shared machinery remains only while an unmoved app uses it;
-its last caller's cutover deletes it. Step 6 verifies deletion, rather than permitting deferred parallel paths.
+No new screens until step 3 lands; bug fixes only. Each step has a gate and the next doesn't start before it
+passes.
+
+**The old path lives only for apps that haven't moved.** An app's cutover removes all of its old reads, writes,
+streams and stores in the same change. Shared old machinery goes with its last caller. In step 2 the code that
+still reads `household.json`, `tokens.json` and the settings files is pointed at the same tables in `loom.db`, so
+no JSON copy survives.
 
 1. **This spec,** agreed.
 2. **The foundation:** `loom serve` as one process on Hono; `loom.db` with sign-in state, members and settings
@@ -473,11 +464,8 @@ its last caller's cutover deletes it. Step 6 verifies deletion, rather than perm
 5. **Runtime and the bridges.** The runtime is the largest piece and the riskiest; its runner stays outside. The
    bridges come in-process. Gate: delivery, reconnect and assigned-job token tests pass, with one active adapter
    per venue and all old runtime/bridge services stopped. Secrets' app state moves here too; only its key holder stays out.
-   Before each step 4/5 cutover, enumerate every public verb/route and job from the old implementation in a parity
-   matrix: old entry, new operation, input, expected result, permission and test. No entry may be silently omitted;
-   a removal needs an explicit spec change. Each row passes against both implementations before the old one stops.
-   Include scheduled fire/cancel, approval answer/denial, change sync, body start/report, and bridge receive/send/reconnect.
-   The step's gate includes all assigned store imports, this matrix, and interruption/restart cases.
+   **Before any piece in steps 4 and 5 cuts over,** its PR lists every command, route and job of the old piece
+   beside the operation that replaces it. Anything dropped is named and said so; nothing disappears silently.
 6. **Deletion:** whatever of the old contract nothing uses (the manifest machinery, the pools, the collections
    code, the old shells, the catalog). Gate: no legacy entry points or first-party pins remain; all completion
    measures pass. The same apps on the phone use the new path; its visual redesign is still separate.
