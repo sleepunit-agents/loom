@@ -103,11 +103,11 @@ exits, and the new one starts. A window's socket reconnects and asks again for w
 large file) runs on a worker thread. A piece that must run a program (a body, `git`) does so asynchronously, as a
 job, never inside a request.
 
-**The CLI is a client.** `loom <piece> <operation>` calls the daemon's API with a token. When no daemon holds the
-home, the CLI runs the same operation itself, in its own process, against `loom.db`: the registry is a library,
-and the daemon's start-up lock is what tells the two cases apart. So `taskstore close` works with loom stopped,
-and there is still only ever one writer. The continuity commands (`loom wake`, `recall`, `remember`, `mcp`) keep
-working directly against an agent's stores, as now.
+**The CLI is only a client.** `loom <piece> <operation>` calls the daemon's API with a token, from loom's machine
+or from a house on another one, and has no other way to reach app data. It holds no logic of its own: its
+commands and help are generated from the operation registry. With the daemon down it says so; across a restart it
+retries for a few seconds, which is safe because a write carries an operation id. The continuity commands (`loom
+wake`, `recall`, `remember`, `mcp`) keep working directly against an agent's stores, as now.
 
 The HTTP layer moves to Hono. The 2,900-line `src/ui/handler.ts` goes; its jobs split into the static files, the
 sign-in routes, and the API below.
@@ -304,20 +304,18 @@ web/src/pieces/<name>/
 `runtime`. Replacing taskstore is writing another module that implements the `tasks` role, including an adapter
 onto someone else's tracker, and switching which one is registered.
 
-**What becomes an in-repo piece:** tasks (taskstore), approvals, clock, changes, and the runtime's state and
-screens. Approvals, the clock and Changes are Python today and are rewritten in TypeScript; taskstore already is
+**What becomes an in-repo piece:** tasks (taskstore), approvals, clock, changes, the runtime's state and
+screens, and the bridges (Discord, Slack, and shuttle, which is about 60 Python files and is rewritten in
+TypeScript at its step). A bridge's connection drops for the few seconds of a restart and reconnects. Approvals, the clock and Changes are Python today and are rewritten in TypeScript; taskstore already is
 TypeScript and moves in with its contract and conformance suite (`spec/taskstore-core`), which keep governing the
 `tasks` role. Its import source is the store in `~/Art/.taskstore`. Their repos are archived once their piece has cut
 over, and the catalog's pins go with them. The commands people and agents already type (`taskstore`, `approvals`,
 `wake`) remain as names that call the API.
 
-**What stays outside the process,** each speaking the same API with a token:
+**What stays outside the process,** each speaking the same API with a token, and nothing else does:
 
 - **The secrets key holder.** A separate process holding the age key is a real security property.
 - **A runner:** the program on a machine that starts bodies. It is on other machines and trusted less.
-- **Bridges** (Discord, Slack, and shuttle, which is about 60 Python files) are decided at their step: in-process
-  unless keeping one alive across a daemon restart proves worth a process, and rewritten only if they come
-  in-process.
 
 **Someone else's piece** has one door: a program with a token that calls the API, publishes records of its own
 types, and may describe pages in the block vocabulary (`src/ui/vocab.ts` and the app's block renderer, both kept).
@@ -368,8 +366,8 @@ The first start makes the home, the database and a household of one, and prints 
 else is required: no Python, no `age` binary (encryption uses the library already in the tree), no container, no
 systemd. `loom service install` is an optional convenience that writes one unit.
 
-**The base install is the desk and its own pieces.** Secrets (which needs `sops` and `age` today) and the bridges
-are optional additions and may bring their own requirements until step 5 settles them.
+**The base install is the desk and every in-repo piece.** Secrets is the one optional addition that brings its
+own requirements (`sops` and `age` today), until its step settles whether loom can ship them.
 
 The contributing guide and positioning doc still describe loom as memory for one agent with no daemon. They are
 rewritten when step 2 lands: the stdio side is still that; the daemon is the household's desk.
@@ -420,7 +418,8 @@ No new screens until step 3 lands; bug fixes only.
 4. **The rest, one piece at a time:** approvals, changes, clock, then core's own apps (Inbox and what needs you,
    Comms, People, Projects, Knowledge, Activity). Each piece cuts over whole: its data, its operations, its
    screens, and the deletion of its old path, in one change.
-5. **Runtime and the bridges.** The runtime is the largest piece and the riskiest; its runner stays outside.
+5. **Runtime and the bridges.** The runtime is the largest piece and the riskiest; its runner stays outside. The
+   bridges come in-process.
 6. **Deletion:** whatever of the old contract nothing uses (the manifest machinery, the pools, the collections
    code, the old shells, the catalog).
 7. **The phone's redesign,** as its own project.
@@ -445,9 +444,9 @@ No new screens until step 3 lands; bug fixes only.
 - How a job's timers are held and resumed across a restart.
 - The exact live scope of each record type, within "small enough to send whole".
 
-## Open, for the owner
+## Settled with the owner after the first draft (2026-11-12)
 
-- **Bridges in or out of the process** is settled at step 5 on evidence; say now if you already have a view.
-- **Taskstore's repo:** this spec moves its code and contract into loom and archives the repo. The alternative is
-  keeping it as a published library loom depends on, which keeps it usable by someone who doesn't run loom and
-  keeps one pin.
+- **Taskstore comes in.** Its code and contract move into loom and its repo is archived.
+- **The bridges come in.** "we're bringing everything else in so leaving them out feels strange."
+- **The CLI repeats nothing.** "the minute we repeat anything across those two places I'm out." It is a client
+  generated from the registry, and it must work from a house on another machine, so it never opens the database.
