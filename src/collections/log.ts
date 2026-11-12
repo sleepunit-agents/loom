@@ -29,6 +29,16 @@ export const LEASE_MS = 30_000;
 export const TICK = 'collections.tick';
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS manifest_demand (
+  listener TEXT NOT NULL, scope TEXT NOT NULL, owners TEXT NOT NULL, until INTEGER NOT NULL,
+  PRIMARY KEY(listener, scope, owners)
+);
+CREATE TABLE IF NOT EXISTS manifest_answers (
+  key TEXT PRIMARY KEY, at INTEGER NOT NULL, value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS manifest_invalidations (
+  path TEXT PRIMARY KEY, token TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS domains (
   domain     TEXT PRIMARY KEY,
   epoch      TEXT NOT NULL,

@@ -8,6 +8,7 @@
  * Followers retry every second, below the shortest shared job period. Request/stream delivery stays local.
  */
 import Database from 'better-sqlite3';
+import { periodicContext } from './periodic-context.js';
 import { join } from 'node:path';
 
 export const OWNER_RETRY_MS = 1_000;
@@ -70,7 +71,7 @@ export class PeriodicOwner {
       this.releaseIfDrained();
     });
     this.work.set(name, promise);
-    try { resolve(job()); } catch (e) { reject(e); }
+    try { resolve(periodicContext.run({ home: this.home, job: name }, job)); } catch (e) { reject(e); }
     return promise;
   }
 

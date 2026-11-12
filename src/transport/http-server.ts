@@ -1,3 +1,4 @@
+import { configureManifestBackground } from '../ui/live.js';
 /**
  * loom HTTP MCP transport (c-loom-transport) — the mesh-reachable surface.
  *
@@ -1336,6 +1337,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     });
   });
   const stopCollections = live && !opts.createServer ? configureCollectionBackground(live, () => process.env, periodic) : undefined;
+  const stopManifests = live && !opts.createServer ? configureManifestBackground(live().home, process.env, periodic) : undefined;
   if (!opts.createServer) periodic.setEligible(!workerSocket);
 
   return {
@@ -1350,6 +1352,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       backgroundActive = false;
       await periodic?.close();
       await stopCollections?.();
+      await stopManifests?.();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
