@@ -173,6 +173,17 @@ describe('policy, live records, retry and role binding', () => {
     app.command('comment', { id, text: 'Recent change' });
     expect(await a.next()).toMatchObject({ kind: 'put', record: { id, comments: [{ text: 'Recent change' }] } });
   });
+  it('refreshes relation projections when a referenced task moves out of view', async () => {
+    const app = await loom();
+    const child = app.command('create', { title: 'Child', project: 'pond' }).id;
+    const blocker = app.command('create', { title: 'Blocker', project: 'pond' }).id;
+    app.command('link', { id: child, dependsOn: blocker, type: 'blocks' });
+    const watcher = await socket(app, 'pollock');
+    expect(await watcher.next()).toMatchObject({ kind: 'set', records: [{ id: child, dependsOn: [blocker] }, { id: blocker }] });
+    app.command('update', { id: blocker, set: { project: 'other' } });
+    expect(await watcher.next()).toMatchObject({ kind: 'del', id: blocker });
+    expect(await watcher.next()).toMatchObject({ kind: 'put', record: { id: child, dependsOn: [] } });
+  });
   it('retains unchanged task timestamps, rolls failures back, and retries a write across restart once', async () => {
     const dir = home(); let app = await loom(dir);
     const first = app.command('create', { title: 'First' }).id;
@@ -250,7 +261,7 @@ describe('generated client parity against the frozen legacy binding', () => {
     const env = { LOOM_URL: `${app.url}/mcp`, LOOM_TOKEN_FILE: tokenFile, TASKSTORE_ACTOR: 'art' };
     const old = legacyFixture();
     const file = join(home(), 'comment.txt'); writeFileSync(file, 'A long comment\nwith `quotes` and $dollars.\n');
-    const payload = join(home(), 'import.json'); writeFileSync(payload, JSON.stringify({ tasks: [{ id: 'legacy', title: 'Imported', type: 'task', status: 'open', priority: 1, createdAt: '2026-11-01T12:00:00Z', createdBy: 'art' }], links: [] }));
+    const payload = join(home(), 'import.json'); writeFileSync(payload, JSON.stringify({ at: 'invalid payload timestamp', actor: 'intruder', cli: false, tasks: [{ id: 'legacy', title: 'Imported', type: 'task', status: 'open', priority: 1, createdAt: '2026-11-01T12:00:00Z', createdBy: 'art' }], links: [] }));
     const cases = [
       ['create','First','--goal','It works','--why','Needed'], ['create','Second','--goal','It works','--why','Needed'],
       ['ready'], ['show','t-1'], ['claim','t-1'], ['unclaim','t-1'],

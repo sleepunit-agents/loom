@@ -29,7 +29,10 @@ export async function runApiClient(piece: string, commands: readonly CliCommand[
   for (let i = 0; i < (spec.positional?.length ?? 0); i++) {
     const key = spec.positional![i];
     if (key === 'payload@file') {
-      try { Object.assign(input, JSON.parse(await readFile(positional[i], 'utf8'))); }
+      try {
+        const payload = JSON.parse(await readFile(positional[i], 'utf8')) as Record<string, unknown>;
+        for (const key of spec.fileFields ?? Object.keys(payload)) if (payload[key] !== undefined) input[key] = payload[key];
+      }
       catch { return reject('E_FILE', "can't read import payload"); }
     } else if (positional[i] !== undefined) assign(key, positional[i]);
   }

@@ -13,5 +13,5 @@ export const taskCommands: CliCommand[] = [
   { name: 'list', flags: { status: 'status' } },
   { name: 'search', positional: ['q'], flags: { status: 'status' } },
   ...['ready', 'report', 'export'].map(name => ({ name })),
-  { name: 'import', write: true, positional: ['payload@file'] },
+  { name: 'import', write: true, positional: ['payload@file'], fileFields: ['tasks', 'links'] },
 ];
