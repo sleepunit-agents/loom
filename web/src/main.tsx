@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { lazy, Suspense, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
@@ -25,4 +25,6 @@ noTouchMenus();
 wearMotion(keptFollow('loom-motion'));
 wearContrast(keptFollow('loom-contrast'));
 
-createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><App /></LazyMotion></StrictMode>);
+const Screen = location.pathname === '/_dev/live-example' ? lazy(() => import('./data-demo')) : App;
+
+createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><Suspense fallback={null}><Screen /></Suspense></LazyMotion></StrictMode>);
