@@ -1,3 +1,4 @@
+import { nudge as nudgeCollection } from './collections/pull.js';
 /**
  * Comms (docs/specs/comms.md): an agent's owners talking with it inside loom, in threads. Each thread is a place in
  * core's own venue `loom`, delivered through the runtime like any venue, and core is that venue's adapter.
@@ -731,7 +732,7 @@ const nowIso = (now: Date) => now.toISOString();
 function touch(home: string, db: Database, id: string, sets: Record<string, unknown>, now: Date): void {
   const keys = Object.keys(sets);
   db.prepare(`UPDATE comms_threads SET ${[...keys.map((k) => `${k} = ?`), 'updated = ?'].join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k] as never), now.getTime(), id);
-  bump(home);
+  bump(home, id);
 }
 const withThreadsAt = withThreads;
 
@@ -739,8 +740,10 @@ const withThreadsAt = withThreads;
  * Tell this process's and the other listeners' live streams that a thread moved (src/ui/comms-live.ts watches the
  * tick file and reads comms_threads.updated). The tick holds a time, never a thread or a word.
  */
-export function bump(home: string): void {
+export function bump(home: string, thread?: string): void {
   if (!home) return;
+  void nudgeCollection(home, 'loom/thread', thread);
+  void nudgeCollection(home, 'loom/message');
   // A stamp no other write makes (the time, and this process and a count): a listener here knows its own tick's echo.
   const stamp = `${Date.now()}.${process.pid}.${++bumps}`;
   try { writeFileSync(join(home, 'comms.tick'), stamp); ownTicks.set(home, stamp); } catch { /* the streams' fallback poll still finds it */ }
@@ -868,7 +871,7 @@ export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member,
     return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow);
   }).immediate());
   const seq = append(h.home, env, thread.id, { kind: 'message', from: member.person, id, text, hash, delivered: 'sending' }, now);
-  bump(h.home);
+  bump(h.home, thread.id);
   return { thread, seq, created: true };
 }
 
@@ -897,7 +900,7 @@ export function addMemberMessage(h: Household, env: NodeJS.ProcessEnv, t: Thread
   }
   if (!ageReady(h.home, env)) {
     append(h.home, env, t.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'no-age' } }, now);
-    bump(h.home);
+    bump(h.home, t.id);
     return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
   }
   const seq = append(h.home, env, t.id, { kind: 'message', from: t.member, id, text, hash, delivered: 'sending' }, now);
@@ -1043,7 +1046,7 @@ export function deleteThread(h: Household, t: Thread, now: Date = new Date()): v
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
   finishThreadDeletion(h.home, t.id);
-  bump(h.home);
+  bump(h.home, t.id);
 }
 
 /** Idempotent deletion cleanup, resumed by the startup/minute sweep after a crash.
@@ -1315,7 +1318,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     if (text.length > MAX_TEXT) return { ok: false, reason: `the reply is over ${MAX_TEXT} characters`, permanent: true };
     if (!ageReady(h.home, env)) {
       append(h.home, env, r.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'post-failed', reason: 'the age program is missing, so loom couldn\'t keep it' } }, now);
-      bump(h.home);
+      bump(h.home, r.id);
       return { ok: false, reason: 'the age programs aren\'t installed, so loom can\'t keep the reply' };
     }
     // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
@@ -1359,7 +1362,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   if (status === 'done' && raw.replied === false && typeof raw.run === 'string' && RUN_ID.test(raw.run)) {
     const id = `noreply-${raw.run}`;
     const said = withMessages(h.home, (db) => db.prepare("SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'error' AND id = ?").get(r.id, id));
-    if (!said) { append(h.home, env, r.id, { kind: 'error', from: 'loom', id, run: raw.run, card: { error: 'no-reply' } }, now); bump(h.home); }
+    if (!said) { append(h.home, env, r.id, { kind: 'error', from: 'loom', id, run: raw.run, card: { error: 'no-reply' } }, now); bump(h.home, r.id); }
   }
   withThreadsAt(h.home, (db) => touch(h.home, db, r.id, {
     working_since: status === 'working' ? (r.working_since ?? nowIso(now)) : null,
