@@ -1,3 +1,8 @@
+import { periodicContext } from '../transport/periodic-context.js';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { invalidateManifest, manifestDelivery, manifestToken, saveManifest, sharedManifest } from './manifest-shared.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Talking to installed pieces for the page: each `loom-<piece>` on PATH is
@@ -24,7 +29,8 @@ import { socketManifest } from './piece-socket.js';
 import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { listPieces, resolvePieceName } from '../cli/pieces.js';
 import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
@@ -151,6 +157,7 @@ export function expirePieceManifests(path?: string): void {
 }
 
 export function clearPieceCache(path?: string): void {
+  for (const home of sharedHomes.keys()) invalidateManifest(home, path);
   forgetFailures(path);
   manifestGeneration++;
   movedAt.set(path ?? '', Date.now());
@@ -165,6 +172,7 @@ export function clearPieceCache(path?: string): void {
  * for up to 5 s, then shown while revalidating, would answer with the old one). Its manifests stay.
  */
 export function forgetPiecePages(path: string): void {
+  for (const home of sharedHomes.keys()) invalidateManifest(home, path);
   // A run started before this write cannot consume the hint or restore a
   // failure cooldown when it lands. Invalidate it as a producer change.
   expirePieceManifests(path);
@@ -281,58 +289,81 @@ async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: {
  */
 function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number; onLine?: (line: string) => 'go' | 'stop' }): Promise<Answer> {
   return new Promise((resolve) => {
-    // Its own process group, so a timeout takes the piece's children with it.
-    const child = spawn(path, args, {
+    const background = periodicContext.getStore();
+    let command = path, argv = args;
+    if (background) {
+      const dir = join(background.home, 'periodic-jobs');
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const key = createHash('sha256').update(JSON.stringify([path, args, scopeKey(env)])).digest('hex');
+      const built = fileURLToPath(new URL('../transport/periodic-child.js', import.meta.url));
+      const source = fileURLToPath(new URL('../transport/periodic-child.ts', import.meta.url));
+      argv = existsSync(built) ? [built] : ['--import', createRequire(import.meta.url).resolve('tsx'), source];
+      argv.push(join(dir, `${key}.db`));
+      command = process.execPath;
+    }
+    // A background guardian holds its command lock until its independently bounded child exits.
+    const child = spawn(command, argv, {
       env: pieceEnvFor(path, pieceEnv(env)),
-      stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
+      stdio: [background || opts.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'ignore'],
       detached: true,
     });
     let out = '';
     let bytes = 0;
     let settled = false;
+    let exited = false;
+    let cancelled: Answer | undefined;
     let drain: NodeJS.Timeout | undefined;
     const finish = (r: Answer) => {
       if (settled) return;
+      if (background && !exited && !r.ok) {
+        cancelled ??= r;
+        clearTimeout(timer);
+        child.stdout?.destroy();
+        child.kill('SIGTERM');
+        return; // The admitted promise retains ownership until the guardian drains and exits.
+      }
+      r = cancelled ?? r;
       settled = true;
       clearTimeout(timer);
       if (drain) clearTimeout(drain);
       child.stdout?.destroy();
       // Every time, not only on a timeout: whatever the piece left running in
       // its group goes with it. (A piece that calls setsid on purpose escapes.)
-      killGroup(child.pid);
+      if (background) { if (!r.ok) child.kill('SIGTERM'); } else killGroup(child.pid);
       resolve(r);
     };
-    const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
+    const timer = setTimeout(() => { finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
     // Decoded as a stream, so a character split across two chunks stays whole.
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (d: string) => {
       bytes += Buffer.byteLength(d);
       // Read a line at a time, only the line still coming is held, and the cap is on it: every line before it was
       // already read (and checked) by the caller, so no limit here turns on what an unread line held.
-      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
+      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { finish({ ok: false, reason: 'answer too large' }); return; }
       out += d;
       if (!opts.onLine) return;
-      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { killGroup(child.pid); finish({ ok: false, reason: 'line too long' }); return; }
+      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { finish({ ok: false, reason: 'line too long' }); return; }
       let i;
       while ((i = out.indexOf('\n')) >= 0) {
         const line = out.slice(0, i);
         out = out.slice(i + 1);
-        if (line.trim() && opts.onLine(line) === 'stop') { killGroup(child.pid); finish({ ok: false, reason: 'stopped' }); return; }
+        if (line.trim() && opts.onLine(line) === 'stop') { finish({ ok: false, reason: 'stopped' }); return; }
       }
     });
-    child.on('error', (e) => finish({ ok: false, reason: e.message }));
-    if (opts.stdin !== undefined && child.stdin) {
+    child.on('error', (e) => { exited = true; finish({ ok: false, reason: e.message }); });
+    if ((background || opts.stdin !== undefined) && child.stdin) {
       child.stdin.on('error', () => { /* the piece closed stdin early; its answer decides */ });
-      child.stdin.end(opts.stdin);
+      child.stdin.end(background ? JSON.stringify({ path, args, stdin: opts.stdin, timeout: opts.timeoutMs ?? PIECE_TIMEOUT_MS }) : opts.stdin);
     }
     // Resolve on the piece's own exit (plus a short drain), not on 'close':
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
+      exited = true;
       const done = () => {
         // The last line, unterminated.
         if (opts.onLine && out.trim() && !settled) { const line = out; out = ''; if (opts.onLine(line) === 'stop') return finish({ ok: false, reason: 'stopped' }); }
-        finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
+        finish(code === 0 ? { ok: true, stdout: out } : background && code === 75 ? { ok: false, reason: 'busy' } : { ok: false, reason: 'no ui', code, stdout: out });
       };
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
@@ -357,7 +388,7 @@ export async function runPieceBin(
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
   const execute = async (): Promise<Answer> => {
-    if (opts.serve && opts.stdin !== undefined) {
+    if (opts.serve && opts.stdin !== undefined && !periodicContext.getStore()) {
       const { LOOM_STORE_GRANT: grant, ...rest } = env1;
       let request: unknown;
       try { request = JSON.parse(opts.stdin); } catch { return { ok: false, reason: 'invalid request' }; }
@@ -411,6 +442,57 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
   return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
 }
 
+/** Sharing is enabled only for full HTTP listeners, never scoped/test-only servers. */
+const sharedHomes = new Map<string, number>();
+export function sharePieceManifests(home: string): () => void {
+  sharedHomes.set(home, (sharedHomes.get(home) ?? 0) + 1);
+  let stopped = false;
+  return () => { if (stopped) return; stopped = true; const n = (sharedHomes.get(home) ?? 1) - 1; if (n) sharedHomes.set(home, n); else sharedHomes.delete(home); };
+}
+const observedTokens = new Map<string, string>();
+function sharedKey(path: string, env: NodeJS.ProcessEnv): { home: string; key: string; token: string } | undefined {
+  const home = householdHome(env);
+  if (!sharedHomes.has(home)) return;
+  const token = manifestToken(home, path);
+  return { home, token, key: JSON.stringify([path, resolved(path), scopeKey(env), token]) };
+}
+function hydrateManifest(piece: string, path: string, env: NodeJS.ProcessEnv): void {
+  const shared = sharedKey(path, env);
+  if (!shared) return;
+  const identity = JSON.stringify([shared.home, path, scopeKey(env)]);
+  const previous = observedTokens.get(identity);
+  observedTokens.set(identity, shared.token);
+  if (previous !== shared.token && (previous !== undefined || shared.token !== '[]')) {
+    // An invalidation may be an action in another listener. A pre-action socket answer
+    // must not be republished under its new token, including this listener's first read.
+    movedAt.set(path, Date.now());
+    expirePieceManifests(path);
+  }
+  const hit = sharedManifest(shared.home, shared.key);
+  if (!hit || Date.now() - hit.at >= STALE_MAX_MS) return;
+  // This store holds core's already parsed Manifest, rather than the piece's wire format (which has v:2).
+  let manifest: Manifest;
+  try { manifest = JSON.parse(hit.value) as Manifest; } catch { return; }
+  if (!manifest || !Array.isArray(manifest.asks)) return;
+  turnsOn.set(`${path}\0${resolved(path)}`, { scope: manifest.scope === true, owners: manifest.owners === 2 });
+  const key = keyOf(path, env).key;
+  const old = cache.get(key);
+  if (old && old.at >= hit.at) return;
+  const result: ManifestResult = { piece, path, manifest };
+  cache.set(key, { at: hit.at, result: Promise.resolve(result), settled: result, print: printOf(result) });
+}
+/** A follower reads fingerprints and warms its request cache without invoking providers. */
+export function sharedPiecePrints(env: NodeJS.ProcessEnv, only?: ReadonlySet<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of shownPieces(env)) {
+    if (only && !only.has(p.path)) continue;
+    hydrateManifest(p.name, p.path, env);
+    const entry = cache.get(keyOf(p.path, env).key);
+    out.set(p.path, entry && Date.now() - entry.at < STALE_MAX_MS ? entry.print ?? '' : '');
+  }
+  return out;
+}
+
 /**
  * The pieces whose last manifest came from their service: an answer costs a few milliseconds, so it's asked again
  * after SERVED_CACHE_MS rather than CACHE_MS, and every round (the service says itself when it moved, and its agents'
@@ -455,6 +537,7 @@ function keyOf(path: string, env: NodeJS.ProcessEnv): Keyed {
  */
 function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Keyed): Promise<ManifestResult> {
   const { key, version, on } = k;
+  const shared = sharedKey(path, env);
   const failed = failedManifests.get(key);
   if (failed && Date.now() - failed.at < CACHE_MS) return Promise.resolve(failed.result);
   failedManifests.delete(key);
@@ -463,12 +546,15 @@ function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv, k: Key
   if (under && under.generation === manifestGeneration) return under.result;
   const result = backgroundJob(`piece manifest ${piece}`, () => fetchManifest(piece, path, env).then((r): ManifestResult => {
     if (!('manifest' in r)) {
-      if (generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
+      if (r.reason !== 'busy' && generation === manifestGeneration) failedManifests.set(key, { at: Date.now(), result: r });
       return r;
     }
     const now = { scope: r.manifest.scope === true, owners: r.manifest.owners === 2 };
     turnsOn.set(`${path}\0${version}`, now);
     if (on && ((now.scope && !on.scope) || (now.owners && !on.owners))) return { piece, reason: 'reads a new scope' };
+    if (shared && generation === manifestGeneration && manifestToken(shared.home, path) === shared.token) {
+      saveManifest(shared.home, shared.key, Date.now(), JSON.stringify(r.manifest));
+    }
     return r;
   }).finally(() => { if (running.get(key)?.result === result) running.delete(key); }));
   running.set(key, { generation: manifestGeneration, result });
@@ -494,7 +580,7 @@ function keep(key: string, before: CacheEntry | undefined, generation: number, r
   if (!('manifest' in r)) {
     // A failure is no answer to compare: no print, so the round asks it again. The last good answer keeps its age, so
     // a piece that keeps failing still ages out (STALE_MAX_MS).
-    if (!before) { cache.set(key, { at: Date.now(), result, settled: r }); return; }
+    if (!before) { if (r.reason !== 'busy') cache.set(key, { at: Date.now(), result, settled: r }); return; }
     void before.result.then((last) => {
       if (cache.get(key) !== before || generation !== manifestGeneration) return;
       if ('manifest' in last) { before.refreshing = undefined; before.expired = false; before.same = 0; }
@@ -507,11 +593,18 @@ function keep(key: string, before: CacheEntry | undefined, generation: number, r
 }
 
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
+  hydrateManifest(piece, path, env);
   const k = keyOf(path, env);
   const { key } = k;
   const hit = cache.get(key);
   const timeout: ManifestResult = { piece, reason: 'timed out' };
   const last = hit?.settled;
+  // A stream's automatic re-ask must never become another manifest producer. The owner
+  // refreshes shared results; explicit requests and admitted snapshot jobs can still ask.
+  if (sharedHomes.has(householdHome(env)) && manifestDelivery(householdHome(env)) && !periodicContext.getStore()) {
+    return Promise.resolve(hit && nowMs - hit.at < STALE_MAX_MS && last && 'manifest' in last
+      ? last : { piece, reason: 'waiting for shared manifest' });
+  }
   if (hit && !hit.expired && nowMs - hit.at < (servedPaths.has(path) ? SERVED_CACHE_MS : CACHE_MS)) return within(hit.result, last ?? timeout, PIECE_TIMEOUT_MS);
   const generation = manifestGeneration;
   if (hit && nowMs - hit.at < STALE_MAX_MS) {
@@ -530,7 +623,11 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const result = runManifest(piece, path, env, k);
   const entry: CacheEntry = { at: nowMs, result };
   cache.set(key, entry);
-  void result.then((r) => { entry.settled = r; if ('manifest' in r) entry.print = printOf(r); });
+  void result.then((r) => {
+    entry.settled = r;
+    if ('manifest' in r) entry.print = printOf(r);
+    else if (r.reason === 'busy' && cache.get(key) === entry) cache.delete(key);
+  });
   return within(result, { piece, reason: 'timed out' }, PIECE_TIMEOUT_MS);
 }
 
@@ -567,6 +664,8 @@ async function refreshPieceManifestsWork(env: NodeJS.ProcessEnv, only?: Readonly
   // `only`: just these pieces' paths (the one that said it moved, t-2065); the others keep their last answers.
   const installed = shownPieces(env).filter((p) => !only || only.has(p.path));
   const out = new Map<string, string>();
+  // Reconcile all shared invalidations before starting a generation of parallel producers.
+  for (const p of installed) hydrateManifest(p.name, p.path, env);
   await Promise.all(installed.map(async (p) => {
     const k = keyOf(p.path, env);
     const { key } = k;
@@ -574,6 +673,8 @@ async function refreshPieceManifestsWork(env: NodeJS.ProcessEnv, only?: Readonly
     const before = cache.get(key);
     if (before && !before.expired && before.print !== undefined && Date.now() - before.at < (servedPaths.has(p.path) ? SHARE_MS : roundWait(before))) {
       out.set(p.path, before.print);
+      const shared = sharedKey(p.path, env);
+      if (shared && before.settled && 'manifest' in before.settled) saveManifest(shared.home, shared.key, before.at, JSON.stringify(before.settled.manifest));
       return;
     }
     const result = runManifest(p.name, p.path, env, k);

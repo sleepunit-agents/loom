@@ -1,3 +1,7 @@
+import { withManifestReads } from '../ui/manifest-shared.js';
+import type { Database } from 'better-sqlite3';
+import type { PeriodicOwner } from '../transport/periodic-owner.js';
+import { randomUUID } from 'node:crypto';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * Subscriptions: core to window (docs/specs/collections.md, "Core to window").
@@ -29,7 +33,7 @@ import type { Household } from '../household.js';
 import { isOwnTick, onBump } from '../comms.js';
 import type { TypeDecl } from './contract.js';
 import { compare, matches, type ProviderAnswer } from './memory.js';
-import { domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
+import { publishDemand, sharedDemand, domainHead, domainOf, domainRow, pendingRefreshes, prunedThrough, resetEpoch, rowsAfter, txnAt, withLog, type LogRow } from './log.js';
 import { domainOfType, domainsOf, nudge, Puller, sourceOf } from './pull.js';
 import type { Query } from './query.js';
 import { admits, isHouseholdOwner, parseAudience, providerAdmits, viewerId, type Viewer } from './viewer.js';
@@ -118,6 +122,16 @@ interface HomeState {
   env: () => NodeJS.ProcessEnv;
   streams: Map<string, Stream>;
   puller: Puller;
+  closed: boolean;
+  listener: string;
+  reads: Map<string, number>;
+  demand: Map<string, number>;
+  published: string;
+  publishedAt: number;
+  owned: boolean;
+  readonly background?: PeriodicOwner;
+  backgrounds: Set<PeriodicOwner>;
+  reasks: Set<Promise<void>>;
   watcher?: FSWatcher;
   poll?: NodeJS.Timeout;
   passing: Promise<void> | undefined;
@@ -146,11 +160,55 @@ function homeOf(household: () => Household, env0: () => NodeJS.ProcessEnv): Home
   if (h) return h;
   const state: HomeState = {
     household, env, streams: new Map(), passing: undefined, again: false,
-    puller: new Puller(() => ({ env: env(), household: household() }), () => wantedOf(state)),
+    backgrounds: new Set(), reasks: new Set(),
+    get background() { return [...state.backgrounds].find(o => o.active) ?? state.backgrounds.values().next().value; },
+    closed: false, listener: randomUUID(), reads: new Map(), demand: new Map(), published: '', publishedAt: 0, owned: false,
+    puller: new Puller(() => ({ env: env(), household: household() }),
+      () => state.background ? new Set(state.demand.keys()) : wantedOf(state), {
+        listener: () => state.background ? `periodic:${state.listener}` : undefined,
+        active: () => !state.background || state.background.active,
+        run: async (domain, job) => {
+          if (!state.background) return job();
+          let out: Awaited<ReturnType<typeof job>> | undefined;
+          await state.background.run(`collection pull ${domain}`, async () => { out = await job(); });
+          return out;
+        },
+      }),
   };
   h = state;
   homes.set(home, h);
   return h;
+}
+
+/** A full HTTP listener participates even when all subscriptions are on a follower. */
+export function configureCollectionBackground(household: () => Household, env: () => NodeJS.ProcessEnv, owner: PeriodicOwner): () => Promise<void> {
+  const h = homeOf(household, env);
+  h.backgrounds.add(owner);
+  ensureRunning(h);
+  pass(h);
+  let stopped = false;
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    h.backgrounds.delete(owner);
+    if (h.backgrounds.size) return;
+    h.closed = true;
+    h.streams.clear();
+    stopIfIdle(h);
+    await h.puller.settle();
+    await h.passing;
+    await Promise.allSettled(h.reasks);
+  };
+}
+
+function publishWanted(h: HomeState, db: Database): void {
+  if (!h.background) return;
+  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
+  const serialized = JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b)));
+  const now = Date.now();
+  if (serialized === h.published && now - h.publishedAt < 10_000) return;
+  publishDemand(db, h.listener, wanted, now);
+  h.published = serialized; h.publishedAt = now;
 }
 
 function wantedOf(h: HomeState): Set<string> {
@@ -185,7 +243,8 @@ function ensureRunning(h: HomeState): void {
 }
 
 function stopIfIdle(h: HomeState): void {
-  if (h.streams.size) return;
+  if (h.streams.size || h.background) return;
+  withLog(h.household().home, db => publishDemand(db, h.listener, new Map()));
   h.puller.stop();
   h.watcher?.close(); h.watcher = undefined;
   clearInterval(h.poll); h.poll = undefined;
@@ -229,6 +288,7 @@ export async function prepare(household: () => Household, env: () => NodeJS.Proc
   const h = homeOf(household, env);
   const domain = domainOfType(p, type);
   h.puller.observed(domain);
+  h.reads.set(domain, Date.now());
   const home = h.household().home;
   const row = withLog(home, (db) => domainOf(db, domain, sourceOf(h.env(), p)).row);
   if (p.piece && p.changes && row.mode === 'log' && row.rev === null) await h.puller.now(domain);
@@ -418,6 +478,7 @@ function send(s: Stream, sub: Sub, status?: 'live'): void {
 
 /** One delivery pass over this listener's streams: new log rows, the viewer checked again, frames out. */
 function pass(h: HomeState): void {
+  if (h.closed) return;
   if (h.passing) { h.again = true; return; }
   h.passing = (async () => {
     try { await passOnce(h); } catch (e) { process.stderr.write(`loom: collections delivery failed: ${(e as Error).message}\n`); }
@@ -429,17 +490,30 @@ async function passOnce(h: HomeState): Promise<void> {
 }
 
 async function passOnceWork(h: HomeState): Promise<void> {
+  if (h.closed) return;
   const home = h.household().home;
   const now = Date.now();
   // One read connection per delivery pass, shared across all streams/subscriptions. Opening
   // and closing WAL connections for each metadata/log lookup made hint fan-out CPU-bound.
-  withLog(home, db => {
+  withLog(home, db => withManifestReads(home, db, () => {
+    publishWanted(h, db);
     // A nudge said a domain moved: pull it soon, if a subscription here reads it.
     const nudged = pendingRefreshes(db);
-    const wanted = wantedOf(h);
+    if (h.background?.active) {
+      if (!h.owned) {
+        // The lifetime owner lock proves any previous background owner is gone or fully drained.
+        // Request-scoped leases use a different namespace and must never be displaced here.
+        db.prepare("UPDATE domains SET lease = NULL, lease_until = 0 WHERE lease LIKE 'periodic:%'").run();
+        h.owned = true;
+      }
+      h.demand = sharedDemand(db, now);
+      for (const [domain, readAt] of h.demand) h.puller.observed(domain, readAt);
+    }
+    if (h.background && !h.background.active) h.owned = false;
+    const wanted = h.background ? new Set(h.demand.keys()) : wantedOf(h);
     // Pending hints remain visible until their owner commits. A busy listener must not lose them
     // merely because it saw a tick: the owner may have been suspended or died.
-    for (const n of nudged) if (wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
+    for (const n of nudged) if ((!h.background || h.background.active) && wanted.has(n.domain)) h.puller.pending(n.domain, n.id);
     const installed = providers(h.env());
     for (const s of [...h.streams.values()]) {
       // The viewer, again, before anything is sent: gone is closed; changed is a new scope and every subscription resets.
@@ -499,7 +573,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
         reset(s, biggest, 'gap');
       }
     }
-  });
+  }));
 }
 
 /**
@@ -538,15 +612,19 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
   // The viewer and the provider as they are now, before asking and again before sending: a change to either meanwhile
   // is the next pass's reset, never rows asked or sent under what was.
   let p = p0;
+  const install = p0.install;
   const still = (): Viewer | undefined => {
+    if (h.closed) return;
     const v = s.port.viewer();
     if (!v || viewerId(v) !== s.vid) return undefined;
     const now = providers(h.env()).get(sub.provider);
-    if (!now || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
+    // Unlike the delivery pass (which resets with a specific reason), stale async answers are discarded.
+    if (!now || now.install !== install || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
+    if (withLog(h.household().home, db => domainRow(db, sub.domain)?.epoch) !== sub.epoch) return undefined;
     p = now;
     return v;
   };
-  void (async () => {
+  const pending = (async () => {
     // At most once per AGG_GAP_MS, and at once when the last ask is that long ago: the first change in a while reaches
     // the window without waiting, and a burst still costs one ask per gap (t-2025's measure: 1.7 s became ~0.2 s).
     const wait = Math.max(0, (sub.askedAt ?? 0) + AGG_GAP_MS - Date.now());
@@ -590,6 +668,8 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
     send(s, sub, recovered ? 'live' : undefined);
     if (sub.dirty?.size) pass(h);
   })();
+  h.reasks.add(pending);
+  void pending.finally(() => h.reasks.delete(pending));
 }
 
 /** Run a delivery pass now and wait for it (tests). */
@@ -606,6 +686,7 @@ export async function pullsSettled(home: string): Promise<void> {
   if (!h) return;
   await h.puller.settle();
   await deliverNow(home);
+  while (h.reasks.size) { await Promise.allSettled(h.reasks); await deliverNow(home); }
 }
 
 /** One poll round now, its pulls done and delivered (tests). */
@@ -657,12 +738,11 @@ export function pullPieceSoon(home: string, env: NodeJS.ProcessEnv, piece: strin
   if (domains.length) pullSoon(home, domains);
 }
 
-/** Pull these domains soon (puller.soon: at once if not pulled in the last GAP_MS), here if this listener has a
- * subscription on them, and nudge them for every other listener. Not awaited by anyone. */
+/** Nudge these domains for the background owner. Standalone callers without an owner also pull locally. */
 export function pullSoon(home: string, domains: readonly string[]): void {
   for (const d of domains) void nudge(home, d).then(() => {
     const h = homes.get(home);
-    if (h && wantedOf(h).has(d)) return h.puller.soon(d).then(() => deliverNow(home));
+    if (h && !h.background && wantedOf(h).has(d)) return h.puller.soon(d).then(() => deliverNow(home));
   }).catch(() => undefined);
 }
 
@@ -682,7 +762,7 @@ export async function pullNowAll(home: string, domains: readonly string[]): Prom
 
 /** For tests: forget every stream and stop. */
 export function stopAll(): void {
-  for (const h of homes.values()) { h.streams.clear(); stopIfIdle(h); }
+  for (const h of homes.values()) { h.backgrounds.clear(); h.streams.clear(); stopIfIdle(h); }
 }
 
 /** For a provider's answer: the {rev, txn} it read the domain at, if it said. */

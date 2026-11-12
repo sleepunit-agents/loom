@@ -428,9 +428,11 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const db = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
       db.prepare("DELETE FROM scorecards WHERE measure != 'graded'").run();
       db.close();
+      handle.setBackgroundActive(false);
       const second = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
-      await second.close();
       const today = new Date().toISOString().slice(0, 10);
+      await expect.poll(() => scorecards(h.home, today).filter((r) => r.day === today && r.measure === 'first_reply_s' && r.model === 'claude-opus-4').length).toBe(1);
+      await second.close();
       const rows = scorecards(h.home, today).filter((r) => r.day === today && r.measure === 'first_reply_s' && r.model === 'claude-opus-4');
       expect(rows).toHaveLength(1);
       expect(rows[0].value).toBeGreaterThan(0);
@@ -443,8 +445,9 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const db = new BetterSqlite3(join(h.home, AUDIT_DB));
       db.prepare('UPDATE audit_entries SET at = ? WHERE conversation = ?').run(new Date(Date.now() - 8 * 86_400_000).toISOString(), t.conversation);
       db.close();
+      handle.setBackgroundActive(false);
       const second = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
-      await second.close();
+      try { await expect.poll(() => entryRow(t.conversation, t.seq)).toBeUndefined(); } finally { await second.close(); }
       expect(entryRow(t.conversation, t.seq)).toBeUndefined();
     });
 

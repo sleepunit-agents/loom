@@ -1,9 +1,10 @@
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearPieceCache, expirePieceManifests, pieceManifests, SERVED_CACHE_MS } from './pieces.js';
+import { clearPieceCache, expirePieceManifests, pieceManifests, sharePieceManifests, SERVED_CACHE_MS } from './pieces.js';
 import { clearPieceCache as actedOn } from './pieces.js';
 import { closePieceSockets, manifestSocket, socketManifest } from './piece-socket.js';
 
@@ -190,6 +191,24 @@ describe('a piece\'s manifest from its service socket', () => {
     actedOn(p.path);
     await pieceManifests(p.env);
     expect(seen.at(-1)!.since).toBeGreaterThanOrEqual(t);
+  });
+
+  it('a remote action invalidation refuses the pre-action socket answer in another listener', async () => {
+    const p = managed();
+    const at = Date.now();
+    const seen = await serve(p.sock, id => JSON.stringify({ id, ok: true, version: ver(p.path), at,
+      stdout: JSON.stringify({ v: 2, tile: { label: 'Gizmo', value: 'before action' } }) }) + '\n') as Array<{ since: number }>;
+    const off = sharePieceManifests(p.home);
+    try {
+      expect((await pieceManifests(p.env)).pieces[0].manifest.tile?.value).toBe('before action');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      const code = `import {sharePieceManifests,clearPieceCache} from ${JSON.stringify(new URL('./pieces.ts', import.meta.url).href)};sharePieceManifests(${JSON.stringify(p.home)});clearPieceCache(${JSON.stringify(p.path)});`;
+      const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 10_000 });
+      expect(child.status, child.stderr).toBe(0);
+      expect((await pieceManifests(p.env)).pieces[0].manifest.tile?.value).toBe('exec');
+      expect(seen.at(-1)!.since).toBeGreaterThan(at);
+      expect(p.ran()).toBe(1);
+    } finally { off(); }
   });
 
   it('an agent owner\'s window and a piece home others may write never use the socket (fresh read 1, 5)', async () => {

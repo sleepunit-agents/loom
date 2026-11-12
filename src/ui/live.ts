@@ -1,3 +1,7 @@
+import type { PeriodicOwner } from '../transport/periodic-owner.js';
+import { invalidateManifest, manifestDemand } from './manifest-shared.js';
+import { liveDbPath } from '../collections/log.js';
+import { isSqliteBusy, waitForLocks } from '../lock-gate.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * The page, live (docs/specs/ui-app.md, "Live"; Jonathan, 2026-10-29: "websocket to send own information as it
@@ -29,7 +33,7 @@ import { readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dataChanges } from './live-files.js';
 import { basename, join } from 'node:path';
 import type { ServerResponse } from 'node:http';
-import { ROUND_MS, clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
+import { ROUND_MS, sharePieceManifests, sharedPiecePrints, clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
 
 export const WATCH_MS = ROUND_MS;
 const BEAT_MS = 25_000;
@@ -47,7 +51,7 @@ export type Sees = '*' | readonly string[];
  * `id` is the stream's name (its `hello`, docs/specs/collections.md: queries name it to subscribe on it); `seq` counts
  * the frames this stream was sent and nothing else; `behind` counts writes the socket hasn't drained.
  */
-interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void }
+interface Client { home: string; res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string; id: string; seq: number; behind: number; onClose?: () => void; authorized?: (event?: string) => boolean }
 const clients = new Set<Client>();
 let watcher: FSWatcher | undefined;
 let ticking: NodeJS.Timeout | undefined;
@@ -62,6 +66,54 @@ let tickAgain: boolean | Set<string> = false;
 let roundAgain = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
+
+const sharedBackgrounds = new Map<string, { home: string; env: NodeJS.ProcessEnv; owner: PeriodicOwner; listener: string; scopes: NodeJS.ProcessEnv[] }>();
+const sharedFor = (home: string) => [...sharedBackgrounds.values()].find(s => s.home === home && s.owner.active) ?? [...sharedBackgrounds.values()].find(s => s.home === home);
+/** Keep the owner polling follower demand even when it has no local browser streams. */
+export function configureManifestBackground(home: string, env: NodeJS.ProcessEnv, owner: PeriodicOwner): () => Promise<void> {
+  const stopSharing = sharePieceManifests(home);
+  const state = { home, env: { ...env, LOOM_HOME: home }, owner, listener: randomBytes(12).toString('hex'), scopes: [] as NodeJS.ProcessEnv[] };
+  sharedBackgrounds.set(state.listener, state);
+  let polling: Promise<void> | undefined;
+  const poll = () => polling ??= manifestWrite(home, () => {
+    if (!sharedBackgrounds.has(state.listener)) return;
+    state.scopes = manifestDemand(home, state.listener, [...clients].filter(c => c.home === home).map(c => c.env));
+    if (owner.active) {
+      const word = tickWord(home);
+      if (word.fresh) {
+        invalidatePaths(home, word.paths);
+        void tick(true, word.paths); return;
+      }
+    }
+    void tick();
+  }).finally(() => { polling = undefined; });
+  const timer = setInterval(() => void backgroundJob('manifest demand', poll), 2_000);
+  timer.unref();
+  void poll();
+  let stopped = false;
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    sharedBackgrounds.delete(state.listener);
+    await polling;
+    await manifestWrite(home, () => { manifestDemand(home, state.listener, []); });
+    await tickRunning;
+    stopSharing();
+  };
+}
+
+/** A busy derived-cache writer is retried by the next demand poll; timers/watchers never throw. */
+async function manifestWrite(home: string, write: () => void): Promise<void> {
+  try {
+    if (await waitForLocks({ write: [liveDbPath(home)] })) write();
+  } catch (error) {
+    if (!isSqliteBusy(error)) console.error('loom: manifest live update failed; retrying on the next poll', error);
+  }
+}
+function invalidatePaths(home: string, paths?: ReadonlySet<string>): void {
+  if (paths) for (const path of paths) invalidateManifest(home, path); else invalidateManifest(home);
+}
 
 /** Whether an app whose owner sees `sees` may hear of a change to `about`. */
 const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && about.some((a) => sees.includes(a)));
@@ -87,8 +139,8 @@ function tell(about: Sees): void {
  * Tell only `member`'s open apps that something of theirs changed: a Comms thread is its member's alone
  * (docs/specs/comms.md, rule 4), so another owner of the same agent never hears of it, not even as a bare change.
  */
-export function changedFor(member: string): void {
-  hooks();
+export function changedFor(member: string, notifyHooks = true): void {
+  if (notifyHooks) hooks();
   for (const c of clients) if (c.member === member) nudge(c);
 }
 
@@ -100,8 +152,9 @@ function nudge(c: Client): void {
   }), Math.max(0, (lastSent.get(c) ?? 0) + GAP_MS - Date.now())));
 }
 
-function send(c: Client, text: string): void {
+function send(c: Client, text: string, event?: string): void {
   try {
+    if (c.authorized && !c.authorized(event)) { c.res.end(); drop(c); return; }
     if (!c.res.write(text)) {
       if (!c.behind) c.res.once('drain', () => { c.behind = 0; });
       c.behind++;
@@ -112,7 +165,7 @@ function send(c: Client, text: string): void {
 /** A numbered frame on a stream (collections.md, "Core to window"): its seq is the stream's next. */
 function frame(c: Client, event: string, data: Record<string, unknown>): number {
   c.seq++;
-  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`);
+  send(c, `event: ${event}\ndata: ${JSON.stringify({ seq: c.seq, ...data })}\n\n`, event);
   return c.seq;
 }
 
@@ -138,7 +191,7 @@ function drop(c: Client): void {
   seen.clear();
 }
 
-const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
+const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_HOME ?? ''}\0${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
 /**
  * Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change.
@@ -149,6 +202,9 @@ function tick(now = false, only?: ReadonlySet<string>): Promise<void> {
 }
 
 function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
+  // Empty owner polls must not delay the first browser's baseline (or its first producer hint has nothing to compare).
+  if (!clients.size && ![...sharedBackgrounds.values()].some(s => s.owner.active && s.scopes.length)) return Promise.resolve();
+  const first = [...clients].some(c => !seen.has(scopeOf(c.env)));
   // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
   if (now && tickRunning) {
     tickAgain = !only || tickAgain === true ? true : new Set([...(tickAgain || []), ...only]);
@@ -156,7 +212,7 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
   }
   // The regular round, due while one piece's round runs: it comes straight after, never skipped.
   if (!now && tickRunning && Date.now() - ticked >= TICK_MIN_MS) { roundAgain = true; return tickRunning; }
-  if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
+  if (tickRunning || (!now && !first && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
   // A round of every piece resets the clock; one piece's word doesn't, so the round every WATCH_MS still comes.
   if (!only) ticked = Date.now();
   // A piece's own word: its kept answer goes in every scope (the open ones are asked again just below).
@@ -164,8 +220,18 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
   tickRunning = (async () => {
     const scopes = new Map<string, NodeJS.ProcessEnv>();
     for (const c of clients) scopes.set(scopeOf(c.env), c.env);
+    for (const shared of sharedBackgrounds.values()) if (shared.owner.active) for (const scope of shared.scopes) {
+      const env = { ...shared.env, LOOM_SCOPE: scope.LOOM_SCOPE, LOOM_OWNER_SCOPE: scope.LOOM_OWNER_SCOPE };
+      scopes.set(scopeOf(env), env);
+    }
     for (const [scope, env] of scopes) {
-      const now = await refreshPieceManifests(env, only).catch(() => undefined);
+      const shared = sharedFor(env.LOOM_HOME ?? '');
+      let now: Map<string, string> | undefined;
+      if (!shared) now = await refreshPieceManifests(env, only).catch(() => undefined);
+      else {
+        await shared.owner.run('piece manifests', async () => { now = await refreshPieceManifests(env, only); });
+        now ??= sharedPiecePrints(env, only);
+      }
       if (!now) continue;
       const before = seen.get(scope);
       let moved = false;
@@ -176,7 +242,7 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
       seen.set(scope, only ? new Map([...before!, ...now]) : now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
       // A piece's manifest moving is a piece's asks moving: the hooks hear it (the attention records, t-2025).
-      if (moved) hooks();
+      if (moved && (!shared || shared.owner.active)) hooks();
       // Piece pages stay piece-rendered: a `page` frame says which piece's pages moved (collections.md), beside the bare
       // change that t-2032 retires.
       if (before) for (const [path, print] of now) if (before.get(path) !== print) {
@@ -202,15 +268,15 @@ function tickWork(now = false, only?: ReadonlySet<string>): Promise<void> {
  * What a tick file says: its time, and the piece paths it names (one per line after its time), or none: every piece.
  * One write is often two or three watch events; each word is heard once (t-2110: each event ran the piece again).
  */
-let lastWord = '';
+const lastWords = new Map<string, string>();
 function tickWord(home: string): { fresh: boolean; paths?: Set<string> } {
   try {
     const [at, ...paths] = readFileSync(join(home, PIECES_TICK), 'utf-8').split('\n').filter(Boolean);
     const word = [at, ...paths].join('\n');
-    const fresh = word !== lastWord;
-    lastWord = word;
+    const fresh = word !== lastWords.get(home);
+    lastWords.set(home, word);
     return { fresh, ...(paths.length ? { paths: new Set(paths) } : {}) };
-  } catch { return { fresh: true }; }
+  } catch { return { fresh: false }; }
 }
 
 /**
@@ -219,12 +285,12 @@ function tickWord(home: string): { fresh: boolean; paths?: Set<string> } {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string; authorized?: (event?: string) => boolean; opened?: (h: StreamHandle) => { scope: number; viewer: string; onClose: () => void } | undefined }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
+  const c: Client = { home, res, env: { ...env, LOOM_HOME: home }, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}), authorized: opts.authorized, id: `e-${randomBytes(12).toString('base64url')}`, seq: 0, behind: 0 };
   // Who it is: the collections runtime learns of it, and the window learns its name (collections.md, "Core to window").
   const held = opts.opened?.({ id: c.id, session: c.session, frame: (e, d) => frame(c, e, d), seq: () => c.seq, behind: () => c.behind, close: () => { try { c.res.end(); } catch { /* gone */ } drop(c); } });
   if (held) c.onClose = held.onClose;
@@ -236,7 +302,11 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => backgroundJob('live files watch', () => {
-        if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) void tick(true, w.paths); }
+        if (String(file) === PIECES_TICK) { void manifestWrite(home, () => {
+          const w = tickWord(home); if (!w.fresh) return;
+          if (sharedFor(home)) invalidatePaths(home, w.paths);
+          void tick(true, w.paths);
+        }); }
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
         else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
@@ -264,6 +334,7 @@ export const listening = () => clients.size;
  * and each word used to re-run every piece's `ui --json`); none, every piece.
  */
 export function piecesMoved(home: string, path?: string): void {
+  if (sharedFor(home)) invalidateManifest(home, path);
   // A producer's new observation also matters when no stream is open to watch the tick file.
   expirePieceManifests(path);
   try { writeFileSync(join(home, PIECES_TICK), `${Date.now()}\n${path ?? ''}\n`); } catch { /* the pieces' own tick finds it */ }

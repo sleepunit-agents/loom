@@ -119,7 +119,7 @@ function parseChange(v: unknown, p: Provider, types: readonly string[]): (Change
   return { type, op: 'upsert', id: c.id, rev: c.rev as number, txn: c.txn, audience: audience as Record<string, unknown>, ...(typeof agentV === 'string' ? { agent: agentV } : {}), record, ...(expires !== undefined ? { expires } : {}) };
 }
 
-interface PullContext { env: NodeJS.ProcessEnv; household: Household; now?: () => number }
+interface PullContext { env: NodeJS.ProcessEnv; household: Household; now?: () => number; listener?: string }
 
 /**
  * Pull one domain until its provider has nothing more (or MAX_PAGES), if this listener holds its lease. Writes the
@@ -132,7 +132,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string, 
   if (!types) return 'gone';
   const source = sourceOf(ctx.env, p);
   const { row, minted } = withLog(home, (db) => domainOf(db, domain, source));
-  if (!withLog(home, (db) => takeLease(db, domain, LISTENER, now()))) return 'busy';
+  if (!withLog(home, (db) => takeLease(db, domain, ctx.listener ?? LISTENER, now()))) return 'busy';
   if (minted) tick(home);
   const request = withLog(home, db => refreshRequest(db, domain));
   if (checkOnly === 'hint' && !request.through) return 'quiet';
@@ -151,7 +151,7 @@ export async function pullDomain(ctx: PullContext, p: Provider, domain: string, 
   // advanced the durable cursor and let its own lease expire. Compare it under the write lock.
   const atCursor = <T>(f: Parameters<typeof withLog<T>>[1]): T | undefined => withLog(home, (db) => db.transaction(() => {
     const current = db.prepare('SELECT epoch, rev, txn FROM domains WHERE domain = ?').get(domain) as { epoch: string; rev: number | null; txn: string | null } | undefined;
-    if (!current || current.epoch !== row.epoch || current.rev !== cursor.rev || current.txn !== cursor.txn || !takeLease(db, domain, LISTENER, now())) return undefined;
+    if (!current || current.epoch !== row.epoch || current.rev !== cursor.rev || current.txn !== cursor.txn || !takeLease(db, domain, ctx.listener ?? LISTENER, now())) return undefined;
     return f(db);
   }).immediate());
   let held: Array<Change & { type: string }> = [];
@@ -322,7 +322,7 @@ async function bridge(ctx: PullContext, p: Provider, domain: string, types: read
   });
   const committed = withLog(home, db => db.transaction(() => {
     const current = db.prepare('SELECT epoch FROM domains WHERE domain = ?').get(domain) as { epoch: string } | undefined;
-    if (current?.epoch !== epoch || domainHead(db, domain) !== head || !takeLease(db, domain, LISTENER, now())) return false;
+    if (current?.epoch !== epoch || domainHead(db, domain) !== head || !takeLease(db, domain, ctx.listener ?? LISTENER, now())) return false;
     if (diffs.length) writeTxn(db, domain, epoch, diffs, c => ({ key: (c as Change & { key: string }).key, type: (c as Change & { type: string }).type }), now());
     return true;
   }).immediate());
@@ -342,9 +342,10 @@ export class Puller {
   private running = new Map<string, Promise<PullOutcome>>();
   private poll: NodeJS.Timeout | undefined;
   private readsAt = new Map<string, number>();
-  observed(domain: string): void { this.readsAt.set(domain, Date.now()); }
+  observed(domain: string, at = Date.now()): void { this.readsAt.set(domain, Math.max(at, this.readsAt.get(domain) ?? 0)); }
 
-  constructor(private readonly ctx: () => PullContext, private readonly wanted: () => Set<string>) {}
+  constructor(private readonly ctx: () => PullContext, private readonly wanted: () => Set<string>,
+    private readonly background?: { listener?: () => string | undefined; active: () => boolean; run: (domain: string, job: () => Promise<PullOutcome>) => Promise<PullOutcome | undefined> }) {}
 
   start(): void {
     this.stopped = false;
@@ -363,8 +364,8 @@ export class Puller {
     for (const domain of this.last.keys()) if (!this.running.has(domain)) this.release(domain);
   }
 
-  private release(domain: string): void {
-    try { withLog(this.ctx().household.home, db => db.prepare('UPDATE domains SET lease = NULL, lease_until = 0 WHERE domain = ? AND lease = ?').run(domain, LISTENER)); } catch { /* a dead owner's lease still expires */ }
+  private release(domain: string, listener = this.ctx().listener ?? LISTENER): void {
+    try { withLog(this.ctx().household.home, db => db.prepare('UPDATE domains SET lease = NULL, lease_until = 0 WHERE domain = ? AND lease = ?').run(domain, listener)); } catch { /* a dead owner's lease still expires */ }
   }
 
   /** Every wanted domain that's due, and the expiry pass. */
@@ -373,6 +374,7 @@ export class Puller {
   }
 
   private roundWork(): void {
+    if (this.background && !this.background.active()) return;
     const c = this.ctx();
     try { if (withLog(c.household.home, (db) => expire(db))) tick(c.household.home); } catch (e) { process.stderr.write(`loom: collections expiry failed: ${(e as Error).message}\n`); }
     const wanted = this.wanted();
@@ -410,6 +412,7 @@ export class Puller {
   }
 
   private queue(domain: string, checkOnly: boolean | 'hint' = false): Promise<PullOutcome | undefined> {
+    if (this.background && !this.background.active()) return Promise.resolve(undefined);
     const waiting = this.after.get(domain);
     if (this.timers.has(domain) && waiting) return waiting.promise;
     let resolve!: (v: PullOutcome | undefined) => void;
@@ -421,7 +424,9 @@ export class Puller {
       this.after.delete(domain);
       // A pull already under way may have read before what this one was asked for: this one runs after it, never joins it.
       const on = this.running.get(domain);
-      (on ? on.catch(() => undefined).then(() => (this.stopped ? undefined : this.run(domain, checkOnly))) : this.run(domain, checkOnly)).then(resolve, () => resolve(undefined));
+      const run = () => this.stopped ? Promise.resolve(undefined) : this.background
+        ? this.background.run(domain, () => this.run(domain, checkOnly, true)) : this.run(domain, checkOnly);
+      (on ? on.catch(() => undefined).then(run) : run()).then(resolve, () => resolve(undefined));
     }, wait);
     t.unref?.();
     this.timers.set(domain, t);
@@ -443,16 +448,16 @@ export class Puller {
     return this.run(domain);
   }
 
-  private run(domain: string, checkOnly: boolean | 'hint' = false): Promise<PullOutcome> {
-    return backgroundJob(`collection refresh ${domain}`, () => this.runWork(domain, checkOnly));
+  private run(domain: string, checkOnly: boolean | 'hint' = false, background = false): Promise<PullOutcome> {
+    return backgroundJob(`collection refresh ${domain}`, () => this.runWork(domain, checkOnly, background));
   }
 
-  private runWork(domain: string, checkOnly: boolean | 'hint' = false): Promise<PullOutcome> {
+  private runWork(domain: string, checkOnly: boolean | 'hint' = false, background = false): Promise<PullOutcome> {
     const on = this.running.get(domain);
     if (on) return on;
     const started = Date.now();
     this.last.set(domain, started);
-    const c = this.ctx();
+    const c = { ...this.ctx(), ...(background ? { listener: this.background?.listener?.() } : {}) };
     // A steady stream of hints must not starve repair of an unrelated missed write. Promote
     // the hint itself when a recently-read domain is due, even if the maintenance round was busy.
     if (checkOnly === 'hint' && started - (this.readsAt.get(domain) ?? 0) < 2 * consistencyMs(c.env)) {
@@ -474,7 +479,7 @@ export class Puller {
         this.failures.set(domain, { count, until: Date.now() + Math.min(CONSISTENCY_MS, 2000 * 2 ** Math.min(count, 8)) });
       } else if (out !== 'busy') this.failures.delete(domain);
       return out;
-    }).finally(() => { this.running.delete(domain); if (this.stopped) this.release(domain); });
+    }).finally(() => { this.running.delete(domain); this.release(domain, c.listener ?? LISTENER); });
     this.running.set(domain, run);
     return run;
   }

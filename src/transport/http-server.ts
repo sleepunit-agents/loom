@@ -1,3 +1,4 @@
+import { configureManifestBackground } from '../ui/live.js';
 /**
  * loom HTTP MCP transport (c-loom-transport) — the mesh-reachable surface.
  *
@@ -31,6 +32,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
+import { PeriodicOwner } from './periodic-owner.js';
 import { PieceStore, readGrant, StoreError, storesDir, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -46,7 +48,7 @@ import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../
 import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
-import { spawnBackupTick } from '../backup-tick.js';
+import { runBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
@@ -61,14 +63,14 @@ import { askGrant } from '../grants.js';
 import { grantsAuthority } from '../offers-registry.js';
 import { answerBatch, COLLECTIONS_MAX_BYTES, COLLECTIONS_NUDGE_ROUTE, COLLECTIONS_QUERY_ROUTE } from '../collections/serve.js';
 import { nudge as collectionsNudge } from '../collections/pull.js';
-import { pullPieceSoon } from '../collections/subs.js';
+import { configureCollectionBackground, pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
-import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { watchComms } from '../ui/comms-live.js';
 import { piecesMoved } from '../ui/live.js';
 import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
@@ -260,7 +262,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
   const workerSocket = process.connected ? process.env.LOOM_WORKER_SOCKET : undefined;
-  let backgroundActive = !workerSocket;
+  let backgroundActive = false;
+  let periodic: PeriodicOwner | undefined;
+  let stopComms: (() => void) | undefined;
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
@@ -396,6 +400,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   let closing = false;
   const maintaining = new Map<string, Promise<void>>();
   const maintain = (name: string, work: () => Promise<void>): Promise<void> => {
+    if (periodic) return periodic.run(name, () => stalls.timed(name, work));
     const running = maintaining.get(name);
     if (running) return running;
     const run = stalls.timed(name, work).catch((e) => { process.stderr.write(`loom: ${name} failed: ${(e as Error).name}\n`); })
@@ -454,7 +459,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   commsTimer?.unref();
   if (live && !opts.createServer) {
     void commsSweep();
-    watchComms(live().home);
+    stopComms = watchComms(live().home, () => periodic);
     // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
     void refsBackfill();
   }
@@ -1072,16 +1077,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
   const pushTimer = opts.createServer ? undefined : setInterval(() => {
     if (!backgroundActive) return;
-    backgroundJob('push watch', () => void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
-      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`)));
+    void periodic?.run('push watch', () => backgroundJob('push watch', () => pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`))));
   }, WATCH_S * 1000);
   pushTimer?.unref();
   // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
   // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
   const resolveAll = () => {
     if (!backgroundActive || !live) return;
-    backgroundJob('needs resolve', () => void resolveNeeds(live!(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`)));
+    void periodic?.run('needs resolve', () => backgroundJob('needs resolve', () => resolveNeeds(live!(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`))));
   };
   const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
   needsTimer?.unref();
@@ -1090,7 +1095,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
-  const backupTick = () => { try { if (backgroundActive && live) stalls.timed('backup tick', () => spawnBackupTick(live!(), process.env)); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTick = () => {
+    if (backgroundActive && live && periodic) void stalls.timed('backup tick', () => runBackupTick(periodic!, live!(), process.env));
+  };
   const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
   const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
@@ -1322,23 +1329,33 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const addr = http.address();
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
 
+  // All listeners for this home contend on one lifetime OS lock. A rolling-deploy standby is ineligible
+  // until its supervisor activates it; retirement admits no work and drains the old owner before takeover.
+  periodic = new PeriodicOwner(household?.home ?? opts.contextDir, () => {
+    backgroundActive = true;
+    stalls.timed('worker activation', () => {
+      if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
+      void foldAll(); void sweepAll();
+      if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
+    });
+  });
+  const stopCollections = live && !opts.createServer ? configureCollectionBackground(live, () => process.env, periodic) : undefined;
+  const stopManifests = !opts.createServer ? configureManifestBackground(household?.home ?? opts.contextDir, process.env, periodic) : undefined;
+  if (!opts.createServer) periodic.setEligible(!workerSocket);
+
   return {
     port,
     host: opts.host,
     setBackgroundActive(active) {
-      const was = backgroundActive;
-      backgroundActive = active;
-      if (active && !was) stalls.timed('worker activation', () => {
-        if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-        foldAll(); sweepAll();
-        if (live && !opts.createServer) {
-          void commsSweep();
-          void refsBackfill();
-        }
-      });
+      if (!active) backgroundActive = false;
+      if (!opts.createServer) periodic!.setEligible(active);
     },
     async close() {
       closing = true;
+      backgroundActive = false;
+      await periodic?.close();
+      await stopCollections?.();
+      await stopManifests?.();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
@@ -1347,7 +1364,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
-      if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
+      if (commsTimer) { clearInterval(commsTimer); stopComms?.(); }
       stopPieceServers();
       closePieceSockets();
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);

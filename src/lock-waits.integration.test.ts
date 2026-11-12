@@ -929,6 +929,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   }, 20_000);
 
   it('a maintenance pass delayed by a lock does not write after its listener closes', async () => {
+    // Retire the existing listener: a follower now serves requests without starting maintenance.
+    handle.setBackgroundActive(false);
     const db = openAuditDb(h.home);
     db.prepare('INSERT OR REPLACE INTO audit_entries VALUES (?, ?, ?, ?, ?, ?, ?)').run('art', 'cv-cancelled', 1, 'loom', 'message', '2020-01-01T00:00:00Z', Buffer.from('expired'));
     db.close();
@@ -936,10 +938,11 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     let other: HttpServeHandle | undefined;
     try {
       other = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
-      expect(pendingLockWaits()).toBeGreaterThan(0);
-      await other.close(); other = undefined;
+      await expect.poll(pendingLockWaits).toBeGreaterThan(0);
+      const closed = other.close(); // Shutdown holds ownership until admitted work drains.
       await held.release();
       await expect.poll(pendingLockWaits).toBe(0);
+      await closed; other = undefined;
       const check = new BetterSqlite3(join(h.home, AUDIT_DB));
       try { expect(check.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE conversation = 'cv-cancelled'").get()).toEqual({ n: 1 }); }
       finally { check.close(); }

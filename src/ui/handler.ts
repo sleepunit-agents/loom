@@ -2029,7 +2029,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const now = m ? memberOf(h, m.person) : undefined;
       return now ? memberViewer(h, now) : null;
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}),
+    const initialViewer = householdNow && full ? viewerNow() : null;
+    const authorized = (event?: string) => {
+      if (who.kind === 'session' ? !validSession(who.cookie, sessionOpts) : !auth.live(who.digest)) return false;
+      if (!householdNow || !full) return true;
+      const now = viewerNow();
+      // A current member may receive the control reset that discards their old scope.
+      return now !== null && initialViewer !== null && (event === 'reset' || viewerId(now) === viewerId(initialViewer));
+    };
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, authorized, ...(who.member ? { member: who.member.person } : {}),
       opened: (port) => {
         const v = householdNow && full ? viewerNow() : null;
         if (!v) return undefined;
