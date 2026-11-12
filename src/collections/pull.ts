@@ -511,13 +511,13 @@ export async function nudge(home: string, domain: string, key?: string): Promise
 }
 
 /** Internal receipt for a refresh request; external nudges reveal no domain information. */
-export async function requestRefresh(home: string, domain: string, key?: string, deadline = Infinity): Promise<number> {
+export async function requestRefresh(home: string, domain: string, key?: string): Promise<number> {
   if (typeof domain !== 'string' || !/^[a-z][a-z0-9-]{0,39}\/([a-z][a-z0-9-]{0,31}|\*)$/.test(domain)) return 0;
   if (key !== undefined && (typeof key !== 'string' || !RECORD_ID.test(key))) return 0;
   try {
-    // Share publication policy for hints and action receipts; bounded actions never enter a synchronous fallback.
-    while (Date.now() < deadline) {
-      if (await waitForLocks({ write: [liveDbPath(home)], budgetMs: Math.min(WRITE_WAIT_MS, deadline - Date.now()) })) {
+    // Publication survives the bounded action answer; exhausted budgets never enter a synchronous fallback.
+    while (true) {
+      if (await waitForLocks({ write: [liveDbPath(home)], budgetMs: WRITE_WAIT_MS })) {
         const receipt = withLog(home, db => db.transaction(() => markNudged(db, domain, Date.now(), key)).immediate());
         tick(home);
         return receipt;

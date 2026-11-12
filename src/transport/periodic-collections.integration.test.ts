@@ -47,8 +47,13 @@ if(req.url==='/nudge'){for(let i=0;i<20;i++)queueCollectionNudge(home,'loom/agen
     try { expect(log.prepare("SELECT domain FROM refresh_requests WHERE domain = 'loom/attention'").get()).toEqual({ domain: 'loom/attention' }); } finally { log.close(); }
     // Kill the hint producer immediately after its acknowledged production change, before its delivery poll.
     const producer = await start('producer', false);
-    writeFileSync(join(home, 'value'), 'producer-died'); await fetch(`${producer}/hook`);
-    const producerGone = once(children[2], 'exit'); children[2].kill('SIGKILL'); await producerGone;
+    const heldWriter = new Database(join(home, 'collections', 'live.db')); heldWriter.exec('BEGIN IMMEDIATE');
+    try {
+      writeFileSync(join(home, 'value'), 'producer-died');
+      const started = performance.now(); await fetch(`${producer}/hook`);
+      expect(performance.now() - started).toBeLessThan(1000);
+      const producerGone = once(children[2], 'exit'); children[2].kill('SIGKILL'); await producerGone;
+    } finally { heldWriter.exec('ROLLBACK'); heldWriter.close(); }
     await expect.poll(() => frames, { timeout: 10_000 }).toContain('\"reason\":\"producer-died\"');
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('leader:producer-died');
     // Persist a follower hint with no eligible owner, then kill the old process before takeover.

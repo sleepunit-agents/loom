@@ -288,9 +288,9 @@ it('retirement cancels queued refreshes before waiting on a writer', async () =>
   withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); publishDemand(db, 'remote', new Map([['loom/agent-status', Date.now()]])); });
   await nudge(home, 'loom/agent-status'); await deliverNow(home);
   const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  const started = performance.now();
   const closing = stop(); stop = undefined;
   try {
-    const started = performance.now();
     await new Promise(r => setTimeout(r, 25));
     expect(performance.now() - started).toBeLessThan(500); expect(calls).toBe(0);
     writer.exec('ROLLBACK'); await closing; expect(calls).toBe(0);
@@ -319,7 +319,7 @@ it('production action refreshes on a subscribed follower reach the owner without
 
 it('an action waits for owner refresh completion and local rows, without follower compute', async () => {
   const { pullNowAll } = await import('./subs.js');
-  const { finishRefresh, refreshRequest, writeTxn, tick } = await import('./log.js');
+  const { finishRefresh, refreshRequest, writeTxn } = await import('./log.js');
   const h = { home, agents: ['art'] } as Household, env = () => ({ LOOM_HOME: home });
   let calls = 0; registerCoreSource(home, 'project', async () => { calls++; return []; });
   owner = new PeriodicOwner(home, () => {});
@@ -344,7 +344,6 @@ it('an action waits for owner refresh completion and local rows, without followe
       writeTxn(db, 'loom/project', row.epoch, [{ op: 'upsert', id: 'new', rev: null, txn: 'owner', audience: { household: true }, record: { id: 'new', name: 'owner committed' } }], () => ({ key: 'loom/project/new', type: 'project' }));
       finishRefresh(db, 'loom/project', row.epoch, request.through, Date.now(), true);
     });
-    tick(home);
     await action;
     expect(done).toBe(true); expect(calls).toBe(0);
     expect(JSON.stringify(frames)).toContain('owner committed');
@@ -388,7 +387,7 @@ it('a writer acquired while a core snapshot is pending cannot block its commit o
   } finally { release(); if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await pending; puller.stop(); await puller.settle(); }
 });
 
-it('the change acknowledgment waits for durable hints through writer budget exhaustion', async () => {
+it('the change acknowledgment persists an outbox without waiting for the WAL writer', async () => {
   const { flushCollectionHints, queueCollectionNudge } = await import('./subs.js');
   const { changed, onChanged } = await import('../ui/live.js');
   const h = { home, agents: ['art'] } as Household;
@@ -401,9 +400,11 @@ it('the change acknowledgment waits for durable hints through writer budget exha
   let done = false; const acknowledgment = changed(['art']).then(() => { done = true; });
   try {
     const started = performance.now(); await new Promise(r => setTimeout(r, 25));
-    expect(performance.now() - started).toBeLessThan(500); expect(done).toBe(false);
-    writer.exec('ROLLBACK'); await acknowledgment;
-    expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/agent-status', key: 'art' }]);
+    expect(performance.now() - started).toBeLessThan(500); await acknowledgment; expect(done).toBe(true);
+    writer.exec('ROLLBACK');
+    const { consumeHintOutbox } = await import('./hint-outbox.js');
+    withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); consumeHintOutbox(home, db); });
+    expect(withLog(home, db => db.prepare('SELECT domain, key FROM refresh_requests').all())).toContainEqual({ domain: 'loom/agent-status', key: 'art' });
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await acknowledgment; onChanged(home, () => {}); }
 });
 
@@ -436,4 +437,5 @@ it('the action wait includes publication contention in its three-second budget',
     expect(performance.now() - started).toBeLessThan(PULL_WAIT_MS + 500);
     expect(performance.now() - started).toBeGreaterThan(PULL_WAIT_MS - 100);
   } finally { writer.exec('ROLLBACK'); writer.close(); }
+  await expect.poll(() => withLog(home, db => db.prepare("SELECT domain FROM refresh_requests WHERE domain = 'loom/project'").get())).toEqual({ domain: 'loom/project' });
 }, 6000);

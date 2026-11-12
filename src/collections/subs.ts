@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { persistHints, consumeHintOutbox } from './hint-outbox.js';
 import { waitForLocks } from '../lock-gate.js';
 import { liveDbPath } from './log.js';
 import { withManifestReads } from '../ui/manifest-shared.js';
@@ -231,7 +232,12 @@ export function flushCollectionHints(home: string): Promise<void> {
   if (!h?.background || !h.hints.size) return Promise.resolve();
   return h.publishing ??= (async () => {
     while (h.hints.size) {
-      await publishPendingHints(h);
+      if (await waitForLocks({ write: [liveDbPath(home)], budgetMs: 0 })) withLog(home, db => publishHints(h, db));
+      else {
+        // An action's acknowledgment must not wait on an unrelated WAL writer. The owner imports this durable outbox.
+        persistHints(home, h.hints);
+        h.hints.clear();
+      }
     }
   })().finally(() => { h.publishing = undefined; });
 }
@@ -262,6 +268,7 @@ function publishHints(h: HomeState, db: Database): void {
 function consumeHints(h: HomeState, db: Database): void {
   const owner = h.background;
   if (!owner?.active) return;
+  consumeHintOutbox(h.household().home, db);
   if (!db.prepare('SELECT 1 FROM nudge_requests LIMIT 1').get()) return;
   void owner.run('collection hints', () => backgroundJob('collection owner nudges', () => db.transaction(() => {
     const hints = db.prepare("SELECT domain, key FROM nudge_requests n WHERE key = '*' OR NOT EXISTS (SELECT 1 FROM nudge_requests broad WHERE broad.domain = n.domain AND broad.key = '*')").all() as Array<{ domain: string; key: string }>;
@@ -834,8 +841,10 @@ export function pullSoon(home: string, domains: readonly string[]): void {
 export async function pullNowAll(home: string, domains: readonly string[]): Promise<void> {
   if (!domains.length) return;
   const deadline = Date.now() + PULL_WAIT_MS;
+  // Retain acting-domain hints even if the bounded answer outlives this producer's pending SQL publication.
+  if (homes.get(home)?.background) persistHints(home, new Map(domains.map(d => [d, new Set(['*'])])));
   const work = async () => {
-    const requests = await Promise.all(domains.map(async domain => ({ domain, through: await requestRefresh(home, domain, undefined, deadline) })));
+    const requests = await Promise.all(domains.map(async domain => ({ domain, through: await requestRefresh(home, domain) })));
     const h = homes.get(home);
     if (!h || h.closed) return;
     const wanted = wantedOf(h);

@@ -11,7 +11,7 @@
  *  - a store restored behind core's cursor, the log pruned past a subscription, a viewer's agents narrowed, a session
  *    revoked: reset or closed, never a partial or stale history.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -542,6 +542,41 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
       expect((await act(tok.jonathan, { _action: 'close', id: 't-2', _op: op })).status).toBe(409);
       expect(acted()).toEqual(['close t-1']);
     });
+
+    it('the HTTP action bounds refresh waits and durably retains hints through a held writer', async () => {
+      const { readdirSync } = await import('node:fs');
+      const { default: Database } = await import('better-sqlite3');
+      await live(tok.jonathan);
+      const subs = await import('./subs.js');
+      const actual = subs.pullAfterAction;
+      // Isolate this action's refresh/publication waits from unrelated manifest-cache writes to the same DB.
+      const manifests = await import('../ui/manifest-shared.js');
+      const saveManifest = vi.spyOn(manifests, 'saveManifest').mockImplementation(() => {});
+      let writer: InstanceType<typeof Database> | undefined;
+      let started = 0;
+      const refresh = vi.spyOn(subs, 'pullAfterAction').mockImplementationOnce(async (...args) => {
+        writer = new Database(join(h.home, 'collections', 'live.db')); writer.exec('BEGIN IMMEDIATE');
+        started = performance.now();
+        await actual(...args);
+      });
+      const action = act(tok.jonathan, { _action: 'close', id: 't-1' });
+      try {
+        let timeout: NodeJS.Timeout | undefined;
+        const response = await Promise.race([action, new Promise<undefined>(resolve => { timeout = setTimeout(resolve, 4000); })]).finally(() => clearTimeout(timeout));
+        expect(response).toBeDefined();
+        expect(await response!.json()).toMatchObject({ ok: true, message: 'Closed.' });
+        expect(performance.now() - started).toBeLessThan(3500);
+        const files = readdirSync(join(h.home, 'collections', 'hint-outbox')).filter(f => f.endsWith('.json'));
+        expect(files.length).toBeGreaterThan(0);
+        const retained = files.map(f => readFileSync(join(h.home, 'collections', 'hint-outbox', f), 'utf8')).join('');
+        expect(retained).toContain('tasks/task'); expect(retained).toContain('loom/agent-status');
+      } finally {
+        if (writer) { writer.exec('ROLLBACK'); writer.close(); }
+        refresh.mockRestore(); saveManifest.mockRestore();
+        await action;
+      }
+      await expect.poll(() => withLog(h.home, db => refreshRequest(db, 'tasks/task').through > 0)).toBe(true);
+    }, 15_000);
 
     it('a failed action says so in its receipt, with why', async () => {
       const r = await act(tok.jonathan, { _action: 'close', id: 'nope', _op: 'op-' + 'b'.repeat(20) });
