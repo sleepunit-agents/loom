@@ -245,3 +245,9 @@ a.loom-doing__box:hover, a.loom-doing__box:focus-visible { border-color: var(--c
 .loom-doing__what { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loom-doing__meta { font-size: 11px; color: var(--v-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loom-doing__more { font-size: 11px; color: var(--v-text-3); padding: 0 10px; }
+
+/* Counts stay visible on compact cards without adding four full-height rows per agent. */
+.loom-watches--compact { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.loom-watches--compact .loom-jobs-fold { min-width: 0; padding: .1rem .35rem; font-size: .65rem; line-height: 1.4; }
+.loom-watches--compact .loom-jobs-fold[open] { grid-column: 1 / -1; }
+.loom-watches--compact summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

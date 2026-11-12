@@ -237,7 +237,8 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     await rail(p, 'art').click();
     await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${backup.id.slice(3)}`);
     expect(await labels(p)).toEqual(['Inbox', 'Comms']);
-    await rail(p, 'nova').click();
+    // Comms' screen can make the remaining agents fold to rows; both forms open the same agent.
+    await p.locator('.loom-arail :is(.loom-rcard, .loom-rrow)[data-agent="nova"]').click();
     await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
     await p.context().close();
   });

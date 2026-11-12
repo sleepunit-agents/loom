@@ -379,12 +379,12 @@ function Jobs({ a, compact }: { a: DeskAgent; compact?: boolean }) {
     <small>{({ running: 'Running', waiting: 'Waiting', scheduled: 'Scheduled', backlog: 'Backlog' })[j.status]}</small>
     {j.href ? <Go href={j.href}>{j.text}</Go> : <span>{j.text}</span>}{j.at && <small>{when(j.at)}</small>}
   </li>)}</ul>;
-  const watches = a.watches?.map((g) => <details key={g.kind} className="loom-jobs-fold">
-    <summary>{g.count === null ? 'Unavailable' : g.count} · {g.label}</summary>
+  const watches = <div className={compact ? "loom-watches loom-watches--compact" : "loom-watches"} aria-label="Reported items">{a.watches?.map((g) => <details key={g.kind} className="loom-jobs-fold" data-watch-kind={g.kind}>
+    <summary title={`${g.count === null ? 'Unavailable' : g.count} · ${g.label}`}>{g.count === null ? 'Unavailable' : g.count} · {g.label}</summary>
     <ul className="loom-jobs">{g.items.map((i) => <li key={i.id}>{i.href ? <Go href={i.href}>{i.title}</Go> : <span>{i.title}</span>}<small>{i.state}</small></li>)}</ul>
-  </details>);
-  return <>{watches}{compact ? <details className="loom-jobs-fold"><summary>All jobs · {a.jobs.length}</summary>{list}</details>
-    : <section aria-label="All jobs"><h3>All jobs · {a.jobs.length}</h3>{list}</section>}</>;
+  </details>)}</div>;
+  return <>{watches}{a.jobs.length > 0 && (compact ? <details className="loom-jobs-fold"><summary>All jobs · {a.jobs.length}</summary>{list}</details>
+    : <section aria-label="All jobs"><h3>All jobs · {a.jobs.length}</h3>{list}</section>)}</>;
 }
 
 function Unread({ a }: { a: DeskAgent }) {

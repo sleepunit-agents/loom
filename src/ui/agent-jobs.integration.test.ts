@@ -83,10 +83,29 @@ describe.runIf(existsSync(chrome) && existsSync(`${root}dist/web/index.html`))('
         await rail.locator('.loom-rcard__now').waitFor();
         expect(await rail.locator('.loom-doing').count()).toBe(0);
         const compact = p.locator('.loom-rcard-wrap').filter({ has: p.locator('[data-agent="art"]') });
-        await compact.locator('summary').click();
+        await compact.locator('summary').filter({ hasText: /^All jobs · 14$/ }).click();
         expect(await compact.locator('.loom-jobs li').count()).toBe(14);
         await compact.getByText('Backlog job 11', { exact: true }).waitFor();
       }
     } finally { await ctx.close(); }
   }, 30000);
+  for (const width of [1600, 390]) it(`shows source counts and expands their reported items at ${width}`, async () => {
+    d.report({ art: { jobs: [{ id: 'lane-one', kind: 'lane', status: 'running', text: 'Watching the build' }] } });
+    clearPieceCache(); await d.changed();
+    const ctx = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
+    try {
+      await ctx.addInitScript(() => { sessionStorage.setItem('loom-booted', '1'); sessionStorage.setItem('loom-arrived', '1'); });
+      await ctx.request.post(d.base + '/login', { form: { token: d.tok.jonathan }, maxRedirects: 0 });
+      const p = await ctx.newPage(); p.setDefaultTimeout(5000);
+      await p.goto(d.base + (width === 1600 ? '/people' : '/'), { waitUntil: 'domcontentloaded' });
+      const groups = p.locator(width === 1600 ? '.loom-rcard-wrap .loom-watches' : '.loom-bigcard .loom-watches');
+      const lanes = groups.locator('[data-watch-kind="runtime.lane"]');
+      await lanes.locator('summary').filter({ hasText: '1 · lanes running' }).waitFor();
+      expect(await groups.locator('[data-watch-kind="tasks.task"] summary').textContent()).toBe('Unavailable · tasks reported');
+      await lanes.locator('summary').click();
+      await lanes.getByText('Watching the build', { exact: true }).waitFor();
+      expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    } finally { await ctx.close(); }
+  }, 30000);
+
 });
