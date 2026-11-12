@@ -294,7 +294,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     if (background) {
       const dir = join(background.home, 'periodic-jobs');
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const key = createHash('sha256').update(JSON.stringify([background.job, path, args, scopeKey(env)])).digest('hex');
+      const key = createHash('sha256').update(JSON.stringify([path, args, scopeKey(env)])).digest('hex');
       const built = fileURLToPath(new URL('../transport/periodic-child.js', import.meta.url));
       const source = fileURLToPath(new URL('../transport/periodic-child.ts', import.meta.url));
       argv = existsSync(built) ? [built] : ['--import', createRequire(import.meta.url).resolve('tsx'), source];
@@ -322,22 +322,22 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       if (background) { if (!r.ok) child.kill('SIGTERM'); } else killGroup(child.pid);
       resolve(r);
     };
-    const timer = setTimeout(() => { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
+    const timer = setTimeout(() => { finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
     // Decoded as a stream, so a character split across two chunks stays whole.
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (d: string) => {
       bytes += Buffer.byteLength(d);
       // Read a line at a time, only the line still coming is held, and the cap is on it: every line before it was
       // already read (and checked) by the caller, so no limit here turns on what an unread line held.
-      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
+      if (!opts.onLine && bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { finish({ ok: false, reason: 'answer too large' }); return; }
       out += d;
       if (!opts.onLine) return;
-      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'line too long' }); return; }
+      if (out.length > (opts.maxBytes ?? PIECE_MAX_BYTES) && out.indexOf('\n') < 0) { finish({ ok: false, reason: 'line too long' }); return; }
       let i;
       while ((i = out.indexOf('\n')) >= 0) {
         const line = out.slice(0, i);
         out = out.slice(i + 1);
-        if (line.trim() && opts.onLine(line) === 'stop') { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'stopped' }); return; }
+        if (line.trim() && opts.onLine(line) === 'stop') { finish({ ok: false, reason: 'stopped' }); return; }
       }
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));

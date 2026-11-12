@@ -1340,7 +1340,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     });
   });
   const stopCollections = live && !opts.createServer ? configureCollectionBackground(live, () => process.env, periodic) : undefined;
-  const stopManifests = live && !opts.createServer ? configureManifestBackground(live().home, process.env, periodic) : undefined;
+  const stopManifests = !opts.createServer ? configureManifestBackground(household?.home ?? opts.contextDir, process.env, periodic) : undefined;
   if (!opts.createServer) periodic.setEligible(!workerSocket);
 
   return {

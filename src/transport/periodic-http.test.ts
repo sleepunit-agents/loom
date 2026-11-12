@@ -47,3 +47,33 @@ it('an admitted detached backup drains before retirement releases the HTTP owner
     await expect.poll(() => successor.active).toBe(true);
   } finally { writeFileSync(join(home, 'finish'), 'yes'); await work; await owner.close(); await successor.close(); rmSync(home, { recursive: true, force: true }); }
 });
+it('full standalone HTTP listeners share elected manifest work and retirement suppresses provider calls', async () => {
+  const { request } = await import('node:http');
+  const { chmodSync, readFileSync } = await import('node:fs');
+  const { piecesMoved } = await import('../ui/live.js');
+  const { withLog } = await import('../collections/log.js');
+  const home = mkdtempSync(join(tmpdir(), 'loom-standalone-manifests-'));
+  const path = join(home, 'loom-probe');
+  writeFileSync(path, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(join(home, 'calls'))},'call\\n');console.log(JSON.stringify({v:2,tile:{label:'Probe',value:'one'}}));`); chmodSync(path, 0o755);
+  const priorHome = process.env.LOOM_HOME, priorPath = process.env.PATH;
+  process.env.LOOM_HOME = home; process.env.PATH = `${home}:/usr/bin:/bin`;
+  const first = await startHttpServer({ contextDir: home, host: '127.0.0.1', port: 0, token: 'test' });
+  const follower = await startHttpServer({ contextDir: home, host: '127.0.0.1', port: 0, token: 'test' });
+  const stream = request(`http://127.0.0.1:${follower.port}/events`, { headers: { authorization: 'Bearer test' } }, res => res.resume());
+  stream.on('error', () => {}); stream.end();
+  try {
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT count(*) AS n FROM manifest_answers').get())).toEqual({ n: 1 });
+    const calls = () => readFileSync(join(home, 'calls'), 'utf8');
+    expect(calls()).toBe('call\n');
+    first.setBackgroundActive(false); follower.setBackgroundActive(false);
+    piecesMoved(home, path); await new Promise(r => setTimeout(r, 100));
+    expect(calls()).toBe('call\n');
+    follower.setBackgroundActive(true); piecesMoved(home, path);
+    await expect.poll(calls).toBe('call\ncall\n');
+  } finally {
+    stream.destroy(); await first.close(); await follower.close();
+    if (priorHome === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = priorHome;
+    if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 15_000);

@@ -108,13 +108,14 @@ export function watchComms(home: string, owner?: () => PeriodicOwner | undefined
   h.owners.set(registration, owner);
   if (owner) {
     withLog(home, db => db.prepare('INSERT OR IGNORE INTO comms_scan(id, through) VALUES (1, ?)').run(Date.now()));
-    h.owner = () => [...h.owners.values()].map(get => get?.()).find(o => o?.active) ?? [...h.owners.values()].map(get => get?.()).find(Boolean);
+    h.owner = () => { const owners = [...h.owners.values()].map(get => get?.()); return owners.find(o => o?.active) ?? owners.find(Boolean); };
   }
   let stopped = false;
   return () => {
     if (stopped) return;
     stopped = true;
     h.owners.delete(registration);
+    if (![...h.owners.values()].some(Boolean)) h.owner = undefined;
     if (h.owners.size || homes.get(home) !== h) return;
     h.watcher?.close(); clearInterval(h.poll); clearInterval(h.beat); h.off(); homes.delete(home);
     for (const s of [...streams]) if (s.home === home) drop(s);
