@@ -35,6 +35,7 @@ Commands:
   inject             Write loom identity pointer into harness dotfiles
   harness init      Scaffold a harness manifest from template
   install           Write loom-setup skill into a harness's skills dir
+  fixture <dir>     Build a disposable foundation fixture home
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
@@ -154,6 +155,13 @@ async function resolveSubcommand(
 
 async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<number> {
   switch (sub) {
+    case 'fixture': {
+      if (rest.length !== 1 || rest[0].startsWith('-')) { io.stderr('Usage: loom fixture <empty-dir>\n'); return 2; }
+      const { fixture } = await import('../fixture.js');
+      try { fixture(rest[0]); io.stdout(`Fixture home: ${rest[0]}\n`); return 0; }
+      catch (e) { io.stderr(`${(e as Error).message}\n`); return 1; }
+    }
+
     case 'wake': {
       const { run } = await import('./wake.js');
       return run(rest, io);

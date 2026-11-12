@@ -48,7 +48,7 @@ import { packAsset } from './asset-encoding.js';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot, resolveSqliteDbPath } from '../config.js';
-import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionsLock, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
+import { deviceOf, prefsOf, REF, AGENT_SESSION_MAX_AGE_S, SESSION_MAX_AGE_S, sessionEnded, sessionsLock, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
 import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
 import { askKey, needsAskText, publicKey, pushSub, pushTitle, sendTest, watch, type Announce } from './push.js';
@@ -390,6 +390,30 @@ function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   const d = presented ? opts.auth.check(presented) : null;
   if (d) return { kind: 'bearer', member: opts.auth.member?.(d), digest: d };
   return null;
+}
+
+/** Existing session/token checks shared with the new application doors. */
+export function applicationMember(req: IncomingMessage, opts: UiOptions, csrf = false): { member: Member; valid(): boolean; expiresAt?: number } | undefined {
+  if (!opts.auth.enabled) return;
+  const cookie = readCookie(req, COOKIE);
+  if (cookie && /^[0-9a-f]{64}$/.test(cookie)) {
+    const session = storeFor(opts).get(cookie);
+    if (session && !sessionEnded(session) && opts.auth.live(session.secret)) {
+      if (csrf && !safeEq(String(req.headers['x-loom-csrf'] ?? ''), csrfFor(cookie, storeFor(opts).key))) return;
+      const member = opts.auth.member?.(session.secret);
+      if (!member) return;
+      return { member, expiresAt: (session.issuedAt + (session.agent ? AGENT_SESSION_MAX_AGE_S : SESSION_MAX_AGE_S) + 1) * 1000,
+        valid: () => {
+          const current = storeFor(opts).get(cookie);
+          return !!current && !sessionEnded(current) && safeEq(current.secret.toString('hex'), session.secret.toString('hex'))
+            && opts.auth.live(current.secret) && opts.auth.member?.(current.secret)?.person === member.person;
+        } };
+    }
+  }
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+  const secret = token ? opts.auth.check(token) : null;
+  const member = secret ? opts.auth.member?.(secret) : undefined;
+  return secret && member ? { member, valid: () => opts.auth.live(secret) && opts.auth.member?.(secret)?.person === member.person } : undefined;
 }
 
 /** The WebAuthn user a member's passkeys are made under. */
