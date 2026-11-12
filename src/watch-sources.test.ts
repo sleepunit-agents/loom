@@ -36,6 +36,27 @@ describe('read-only watch registry', () => {
     registry.register(r.source('runtime.lane'));
     expect(() => registry.register(r.source('runtime.lane'))).toThrow('duplicate');
   });
+  it('changes observations when task state or a scheduled deadline changes', () => {
+    const tasks = piece('work', [{ id: 't-1', text: 'Work', status: 'backlog' }]);
+    const clock = piece('alarms', [{ id: 'w-1', text: 'Later', status: 'scheduled', at: '2026-11-13T12:00:00Z' }]);
+    const r = builtinWatchRegistry([tasks, clock], roles);
+    const task = r.source('tasks.task'), taskItem = task.list('art')[0], taskBefore = task.observe(taskItem);
+    tasks.manifest.agents!.art.jobs![0].status = 'waiting';
+    expect(task.observe(taskItem)).not.toBe(taskBefore);
+    const deadline = r.source('clock.deadline'), deadlineItem = deadline.list('art')[0], deadlineBefore = deadline.observe(deadlineItem);
+    clock.manifest.agents!.art.jobs![0].at = '2026-11-14T12:00:00Z';
+    expect(deadline.observe(deadlineItem)).not.toBe(deadlineBefore);
+  });
+  it('reports only scheduled clock jobs with a deadline', () => {
+    const clock = piece('alarms', [
+      { id: 'scheduled', text: 'Later', status: 'scheduled', at: '2026-11-13T12:00:00Z' },
+      { id: 'no-deadline', text: 'Later', status: 'scheduled' },
+      ...(['running', 'waiting', 'backlog'] as const).map(status => ({ id: status, text: 'Other work', status, at: '2026-11-13T12:00:00Z' })),
+    ]);
+    const group = builtinWatchRegistry([clock], roles).list('art').find(g => g.kind === 'clock.deadline')!;
+    expect(group.count).toBe(1);
+    expect(group.items.map(i => i.id)).toEqual(['scheduled']);
+  });
   it('uses the roles public reports for tasks, deadlines and stable approval ids', () => {
     const tasks = piece('work', [{ id: 't-1', text: 'Work', status: 'backlog' }]);
     const clock = piece('alarms', [{ id: 'w-1', text: 'Later', status: 'scheduled', at: '2026-11-13T12:00:00Z', page: 'wake/w-1' }]);
