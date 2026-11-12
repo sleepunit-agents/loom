@@ -180,7 +180,7 @@ export class DataStore {
 }
 function isRecord(value: unknown): value is LiveRecord { return !!value && typeof value === 'object' && 'id' in value && typeof value.id === 'string'; }
 function isResult(value: any): value is Result {
-  return value?.ok === true && 'value' in value || value?.ok === false && ['denied', 'not-found', 'invalid', 'conflict', 'unavailable'].includes(value.code) && typeof value.message === 'string';
+  return value?.ok === true || value?.ok === false && ['denied', 'not-found', 'invalid', 'conflict', 'unavailable'].includes(value.code) && typeof value.message === 'string';
 }
 /** A screen-local projection; never changes the shared authoritative records. */
 export function optimistic<T>(call: Call, before: T, change: (value: T) => T): () => T {

@@ -129,3 +129,11 @@ it('subscription failures are visible values rather than an endless loading stat
   expect(f.snapshot()).toEqual({ records: [], status: 'offline', error: { ok: false, code: 'not-found', message: 'Unknown record type' } });
   f.store.close();
 });
+
+it('settles a successful void result whose value was omitted by JSON', async () => {
+  const f = fixture(); const request = f.store.call('example.acknowledge', {});
+  f.sockets[0].open();
+  f.sockets[0].message({ kind: 'result', request: request.id, result: { ok: true } });
+  expect(await request.result).toEqual({ ok: true });
+  expect(request.getSnapshot().pending).toBe(false); f.store.close();
+});
