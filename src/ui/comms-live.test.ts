@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
-import { withLog } from '../collections/log.js';
+import Database from 'better-sqlite3';
+import { liveDbPath, withLog } from '../collections/log.js';
 import { changedFor } from './live.js';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -134,4 +135,28 @@ it('sends the Comms heartbeat to local thread streams', async () => {
   openThreadStream(response as unknown as import('node:http').ServerResponse, {}, '/missing-comms-heartbeat', { thread: 'thread', session: 'session', from: 0, may: () => true });
   await vi.advanceTimersByTimeAsync(25_000);
   expect(write).toHaveBeenCalledWith(': beat\n\n');
+});
+
+it('an owner waits for a shared WAL writer without blocking the event loop', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-writer-'));
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  reads.movedSince.mockReset().mockReturnValue([]);
+  const intervals = vi.spyOn(globalThis, 'setInterval');
+  const off = watchComms(home, () => owner);
+  const writer = new Database(liveDbPath(home));
+  writer.exec('BEGIN IMMEDIATE');
+  try {
+    const tick = intervals.mock.calls.find(([, ms]) => ms === 2_000)![0] as () => void;
+    const started = performance.now();
+    tick();
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(reads.movedSince).not.toHaveBeenCalled();
+    writer.exec('ROLLBACK');
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+  } finally {
+    if (writer.inTransaction) writer.exec('ROLLBACK');
+    writer.close(); off(); await owner.close(); intervals.mockRestore();
+    rmSync(home, { recursive: true, force: true });
+  }
 });

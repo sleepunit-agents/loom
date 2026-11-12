@@ -3,7 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { withLog } from '../collections/log.js';
+import Database from 'better-sqlite3';
+import { liveDbPath, withLog } from '../collections/log.js';
 import { PeriodicOwner } from '../transport/periodic-owner.js';
 import { configureManifestBackground, piecesMoved } from './live.js';
 import { manifestDemand, invalidateManifest, withManifestReads } from './manifest-shared.js';
@@ -153,3 +154,22 @@ else {fs.appendFileSync(home+'/calls','call\\n');console.log(JSON.stringify({v:2
     expect([...sharedPiecePrints(env).values()][0]).toContain('after');
   } finally { off(); }
 }, 30_000);
+
+it('manifest demand waits for a WAL writer and resumes without blocking or losing demand', async () => {
+  const { home, env, calls } = fixture();
+  manifestDemand(home, 'remote', [env]);
+  const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  const started = performance.now();
+  const off = configureManifestBackground(home, env, owner);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(existsSync(join(home, 'calls'))).toBe(false);
+    writer.exec('ROLLBACK');
+    await expect.poll(calls).toBe(1);
+  } finally {
+    if (writer.inTransaction) writer.exec('ROLLBACK');
+    writer.close(); await off(); await owner.close();
+  }
+});

@@ -310,9 +310,19 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     let out = '';
     let bytes = 0;
     let settled = false;
+    let exited = false;
+    let cancelled: Answer | undefined;
     let drain: NodeJS.Timeout | undefined;
     const finish = (r: Answer) => {
       if (settled) return;
+      if (background && !exited && !r.ok) {
+        cancelled ??= r;
+        clearTimeout(timer);
+        child.stdout?.destroy();
+        child.kill('SIGTERM');
+        return; // The admitted promise retains ownership until the guardian drains and exits.
+      }
+      r = cancelled ?? r;
       settled = true;
       clearTimeout(timer);
       if (drain) clearTimeout(drain);
@@ -340,7 +350,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
         if (line.trim() && opts.onLine(line) === 'stop') { if (!background) killGroup(child.pid); finish({ ok: false, reason: 'stopped' }); return; }
       }
     });
-    child.on('error', (e) => finish({ ok: false, reason: e.message }));
+    child.on('error', (e) => { exited = true; finish({ ok: false, reason: e.message }); });
     if ((background || opts.stdin !== undefined) && child.stdin) {
       child.stdin.on('error', () => { /* the piece closed stdin early; its answer decides */ });
       child.stdin.end(background ? JSON.stringify({ path, args, stdin: opts.stdin, timeout: opts.timeoutMs ?? PIECE_TIMEOUT_MS }) : opts.stdin);
@@ -349,6 +359,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
+      exited = true;
       const done = () => {
         // The last line, unterminated.
         if (opts.onLine && out.trim() && !settled) { const line = out; out = ''; if (opts.onLine(line) === 'stop') return finish({ ok: false, reason: 'stopped' }); }

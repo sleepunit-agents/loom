@@ -114,3 +114,31 @@ it('runs the compiled provider runner and guardian without a source loader', asy
   try { const [exit] = await once(child, 'exit'); expect(exit, error).toBe(0); }
   finally { child.kill('SIGKILL'); rmSync(home, { recursive: true, force: true }); }
 }, 10_000);
+
+it('retirement retains ownership while a cancelled guardian has not yet drained', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-periodic-retire-cancel-')), path = join(home, 'provider');
+  writeFileSync(path, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(join(home, 'pid'))},String(process.pid));setInterval(()=>{},100);\n`);
+  chmodSync(path, 0o755);
+  const owner = new PeriodicOwner(home, () => {}), next = new PeriodicOwner(home, () => {});
+  owner.setEligible(true);
+  let complete = false, guardian: number | undefined;
+  const work = owner.run('retire cancel', async () => {
+    await runPieceBin(path, [], { LOOM_HOME: home }, { timeoutMs: 1500 }); complete = true;
+  });
+  try {
+    await expect.poll(() => existsSync(join(home, 'pid'))).toBe(true);
+    const pid = Number(readFileSync(join(home, 'pid'), 'utf8'));
+    guardian = Number(readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' ')[1]);
+    process.kill(guardian, 'SIGSTOP');
+    owner.setEligible(false); next.setEligible(true);
+    await new Promise(resolve => setTimeout(resolve, 1700));
+    expect(complete).toBe(false); expect(next.active).toBe(false);
+    process.kill(guardian, 'SIGCONT'); guardian = undefined;
+    await work; await expect.poll(() => next.active).toBe(true);
+    try { expect(readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].startsWith('Z')).toBe(true); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  } finally {
+    if (guardian) process.kill(guardian, 'SIGCONT');
+    await work; await owner.close(); await next.close(); rmSync(home, { recursive: true, force: true });
+  }
+}, 10_000);

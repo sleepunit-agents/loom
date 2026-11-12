@@ -140,7 +140,11 @@ function ensure(home: string): void {
     void backgroundJob('comms live tick', async () => {
       do {
         again = false;
-        if (!await waitForLocks({ read: [join(home, HOUSEHOLD_DB), join(home, COMMS_DB), ...(homes.get(home)?.owner ? [liveDbPath(home)] : [])] })) { waiting(); return; }
+        const sharedOwner = registration.owner?.();
+        // The owner writes shared scan results; a WAL reader probe cannot detect another writer.
+        const read = [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)];
+        if (registration.owner && !sharedOwner?.active) read.push(liveDbPath(home));
+        if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home)] : [] })) { waiting(); return; }
         if (homes.get(home) !== registration) return;
         try {
           if (homes.get(home)?.owner) await tellShared(home); else tellMembers(home);

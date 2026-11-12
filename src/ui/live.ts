@@ -1,5 +1,7 @@
 import type { PeriodicOwner } from '../transport/periodic-owner.js';
 import { invalidateManifest, manifestDemand } from './manifest-shared.js';
+import { liveDbPath } from '../collections/log.js';
+import { isSqliteBusy, waitForLocks } from '../lock-gate.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 /**
  * The page, live (docs/specs/ui-app.md, "Live"; Jonathan, 2026-10-29: "websocket to send own information as it
@@ -72,31 +74,45 @@ export function configureManifestBackground(home: string, env: NodeJS.ProcessEnv
   const stopSharing = sharePieceManifests(home);
   const state = { home, env: { ...env, LOOM_HOME: home }, owner, listener: randomBytes(12).toString('hex'), scopes: [] as NodeJS.ProcessEnv[] };
   sharedBackgrounds.set(state.listener, state);
-  const poll = () => {
+  let polling: Promise<void> | undefined;
+  const poll = () => polling ??= manifestWrite(home, () => {
     if (!sharedBackgrounds.has(state.listener)) return;
     state.scopes = manifestDemand(home, state.listener, [...clients].filter(c => c.home === home).map(c => c.env));
     if (owner.active) {
       const word = tickWord(home);
       if (word.fresh) {
-        if (word.paths) for (const p of word.paths) invalidateManifest(home, p); else invalidateManifest(home);
+        invalidatePaths(home, word.paths);
         void tick(true, word.paths); return;
       }
     }
     void tick();
-  };
-  const timer = setInterval(() => backgroundJob('manifest demand', poll), 2_000);
+  }).finally(() => { polling = undefined; });
+  const timer = setInterval(() => void backgroundJob('manifest demand', poll), 2_000);
   timer.unref();
-  poll();
+  void poll();
   let stopped = false;
   return async () => {
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
     sharedBackgrounds.delete(state.listener);
-    manifestDemand(home, state.listener, []);
+    await polling;
+    await manifestWrite(home, () => { manifestDemand(home, state.listener, []); });
     await tickRunning;
     stopSharing();
   };
+}
+
+/** A busy derived-cache writer is retried by the next demand poll; timers/watchers never throw. */
+async function manifestWrite(home: string, write: () => void): Promise<void> {
+  try {
+    if (await waitForLocks({ write: [liveDbPath(home)] })) write();
+  } catch (error) {
+    if (!isSqliteBusy(error)) console.error('loom: manifest live update failed; retrying on the next poll', error);
+  }
+}
+function invalidatePaths(home: string, paths?: ReadonlySet<string>): void {
+  if (paths) for (const path of paths) invalidateManifest(home, path); else invalidateManifest(home);
 }
 
 /** Whether an app whose owner sees `sees` may hear of a change to `about`. */
@@ -285,10 +301,11 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
     try {
       const files = dataChanges(home, DATA);
       watcher = watch(home, { recursive: true }, (_e, file) => backgroundJob('live files watch', () => {
-        if (String(file) === PIECES_TICK) { const w = tickWord(home); if (w.fresh) {
-          if (sharedFor(home)) { if (w.paths) for (const p of w.paths) invalidateManifest(home, p); else invalidateManifest(home); }
+        if (String(file) === PIECES_TICK) { void manifestWrite(home, () => {
+          const w = tickWord(home); if (!w.fresh) return;
+          if (sharedFor(home)) invalidatePaths(home, w.paths);
           void tick(true, w.paths);
-        } }
+        }); }
         // A store's file moved. Not the hooks' news: the records they move are built by reading these stores, and the
         // code that reads them writes to them, so a hook told of it would rebuild itself forever (t-2025, measured).
         else if (file && DATA.test(String(file)) && files.moved(String(file))) tell(whose(String(file)));
