@@ -1,31 +1,38 @@
-/** Value-free hints that must survive their producer while live.db has another writer. */
-import { mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+/** Value-free broad hints that survive their producer while live.db has another writer. */
+import { closeSync, mkdirSync, openSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
 import { markNudged } from './log.js';
 
+const NAME = /^([a-z][a-z0-9-]{0,39})\.([a-z][a-z0-9-]{0,31})\.(pending|processing)$/;
 export function persistHints(home: string, hints: ReadonlyMap<string, ReadonlySet<string>>): void {
   if (!hints.size) return;
   const dir = join(home, 'collections', 'hint-outbox');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, randomUUID());
-  writeFileSync(`${path}.tmp`, JSON.stringify([...hints].map(([domain, keys]) => [domain, [...keys]])), { mode: 0o600 });
-  renameSync(`${path}.tmp`, `${path}.json`);
+  for (const domain of hints.keys()) {
+    const name = `${domain.replace('/', '.')}.pending`;
+    if (!NAME.test(name)) continue;
+    // Existence is the entire value. Exclusive creation coalesces without a read/overwrite race with the owner.
+    try { closeSync(openSync(join(dir, name), 'wx', 0o600)); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+  }
 }
 
-/** Only the lifetime owner calls this. Commit before deleting: a crash may replay a hint, never lose it. */
+/** Only the lifetime owner calls this. Claim before computing, commit before removing; producer writes stay pending. */
 export function consumeHintOutbox(home: string, db: Database): void {
   const dir = join(home, 'collections', 'hint-outbox');
   let files: string[];
-  try { files = readdirSync(dir).filter(f => /^[a-f0-9-]+\.json$/.test(f)).slice(0, 32); }
+  try { files = readdirSync(dir).filter(f => NAME.test(f)); }
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw e; }
-  for (const file of files) {
-    const path = join(dir, file);
-    const hints = JSON.parse(readFileSync(path, 'utf8')) as Array<[string, string[]]>;
-    db.transaction(() => {
-      for (const [domain, keys] of hints) for (const key of keys) markNudged(db, domain, Date.now(), key);
-    }).immediate();
-    unlinkSync(path);
+  // At most one pending and one claimed marker per installed domain, even with a dead producer/owner.
+  for (const base of [...new Set(files.map(f => f.replace(/\.(pending|processing)$/, '')))].slice(0, 32)) {
+    const claimed = `${base}.processing`;
+    if (!files.includes(claimed)) {
+      try { renameSync(join(dir, `${base}.pending`), join(dir, claimed)); }
+      catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
+    }
+    const domain = base.replace('.', '/');
+    db.transaction(() => markNudged(db, domain)).immediate();
+    unlinkSync(join(dir, claimed));
   }
 }

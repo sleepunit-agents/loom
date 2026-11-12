@@ -49,7 +49,8 @@ if(req.url==='/activate')owner.setEligible(true);if(req.url.startsWith('/title/'
     const gone = once(children[0], 'exit'); children[0].kill('SIGKILL'); await gone;
     await fetch(`${follower}/title/second`);
     await expect.poll(count).toBe(2);
-    expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('follower');
+    // The local title frame can precede the successor owner's asynchronous scan. Observe takeover itself.
+    await expect.poll(() => readFileSync(join(home, 'calls'), 'utf8')).toContain('follower');
     writeFileSync(join(home, 'allow'), 'no'); await fetch(`${follower}/title/third`);
     await expect.poll(() => mine.closed).toBe(true);
     expect(count()).toBe(2); expect(other.frames).not.toContain('event: message');

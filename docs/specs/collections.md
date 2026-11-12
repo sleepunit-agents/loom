@@ -1201,7 +1201,11 @@ with a `changes` offer continues to provide its delta log; a legacy snapshot pie
 a full snapshot when nudged. Core thread and agent-card hints can read just the named records;
 thread writers emit their thread id, and scoped UI changes emit the affected agent ids.
 
-Hints live in `collections/live.db` in a bounded, coalesced queue. Each refresh acknowledges only
+Hints reach `collections/live.db` in a bounded, coalesced queue before the owner refreshes them.
+While its writer is busy, a producer may durably coalesce broad invalidations in a filesystem outbox:
+at most one pending and one owner-claimed marker per domain, with no record values. The owner claims
+before reading, imports into the database queue, and removes the claimed marker only after commit;
+a new producer hint stays pending, and owner death replays the claimed marker. Each refresh acknowledges only
 requests present before its read, by monotonically increasing request sequence, including when
 two writes occur in the same millisecond. Failures and lease contention never acknowledge them.
 Repeated provider failures back off exponentially, up to five minutes; a new write retries promptly.

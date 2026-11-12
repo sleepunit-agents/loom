@@ -404,7 +404,7 @@ it('the change acknowledgment persists an outbox without waiting for the WAL wri
     writer.exec('ROLLBACK');
     const { consumeHintOutbox } = await import('./hint-outbox.js');
     withLog(home, db => { domainOf(db, 'loom/agent-status', 'loom'); consumeHintOutbox(home, db); });
-    expect(withLog(home, db => db.prepare('SELECT domain, key FROM refresh_requests').all())).toContainEqual({ domain: 'loom/agent-status', key: 'art' });
+    expect(withLog(home, db => db.prepare('SELECT domain, key FROM refresh_requests').all())).toContainEqual({ domain: 'loom/agent-status', key: '*' });
   } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); await acknowledgment; onChanged(home, () => {}); }
 });
 

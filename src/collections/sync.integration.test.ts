@@ -566,10 +566,8 @@ describe('live collections: ordered changes, and recovering after gaps', () => {
         expect(response).toBeDefined();
         expect(await response!.json()).toMatchObject({ ok: true, message: 'Closed.' });
         expect(performance.now() - started).toBeLessThan(3500);
-        const files = readdirSync(join(h.home, 'collections', 'hint-outbox')).filter(f => f.endsWith('.json'));
-        expect(files.length).toBeGreaterThan(0);
-        const retained = files.map(f => readFileSync(join(h.home, 'collections', 'hint-outbox', f), 'utf8')).join('');
-        expect(retained).toContain('tasks/task'); expect(retained).toContain('loom/agent-status');
+        const files = readdirSync(join(h.home, 'collections', 'hint-outbox'));
+        expect(files).toContain('tasks.task.pending'); expect(files).toContain('loom.agent-status.pending');
       } finally {
         if (writer) { writer.exec('ROLLBACK'); writer.close(); }
         refresh.mockRestore(); saveManifest.mockRestore();
