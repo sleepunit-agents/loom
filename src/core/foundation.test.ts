@@ -200,11 +200,16 @@ describe('in-process HTTP and live socket', () => {
   });
   it.each(['refresh', 'update', 'expiry'] as const)('closes a populated subscriber when a %s read fails', async mode => {
     const clock = new FakeClock(); let broken = false;
+    const at = clock.at.bind(clock), cancelled = vi.fn();
+    clock.at = (time, fn) => { const stop = at(time, fn); return () => { cancelled(); stop(); }; };
+    const cancellationsAtRead: number[] = [];
+    const read = vi.fn(() => {
+      cancellationsAtRead.push(cancelled.mock.calls.length);
+      if (broken) throw new Error('read failed');
+      return { id: 'one' };
+    });
     const loom = await startLoom({ home: home(), clock, authenticate: () => ({ viewer: owner, valid: () => true }), install: app => {
-      app.live.register({ name: 'fragile', ids: () => ['one'], read: () => {
-        if (broken) throw new Error('read failed');
-        return { id: 'one' };
-      }, inScope: () => true, expires: () => clock.now() + 100 });
+      app.live.register({ name: 'fragile', ids: () => ['one'], read, inScope: () => true, expires: () => clock.now() + 100 });
     } }); closes.push(loom.close);
     const client = await socket(loom.url);
     client.ws.send(JSON.stringify({ kind: 'subscribe', type: 'fragile' }));
@@ -215,8 +220,13 @@ describe('in-process HTTP and live socket', () => {
     else clock.advance(100);
     expect(await client.next()).toMatchObject({ code: 'unavailable' });
     expect((await ended)[0]).toBe(1011);
-    // Cancelled timers cannot revive the failed subscription.
+    // The replacement read still had the prior set's active deadline; failure then cancels it.
+    expect(cancellationsAtRead).toEqual([0, 0]);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(2);
+    // Cancelled timers cannot revive the failed subscription or call its reader.
     clock.advance(1000);
+    expect(read).toHaveBeenCalledTimes(2);
   });
   it('fixture survives restart and refuses to overwrite a home', () => {
     const dir = home(); fixture(dir); expect(() => fixture(dir)).toThrow('empty');
