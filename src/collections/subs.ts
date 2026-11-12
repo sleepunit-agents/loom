@@ -612,12 +612,14 @@ function reaskSoon(h: HomeState, reask: Reask, s: Stream, sub: Sub, p0: Provider
   // The viewer and the provider as they are now, before asking and again before sending: a change to either meanwhile
   // is the next pass's reset, never rows asked or sent under what was.
   let p = p0;
+  const install = p0.install;
   const still = (): Viewer | undefined => {
     if (h.closed) return;
     const v = s.port.viewer();
     if (!v || viewerId(v) !== s.vid) return undefined;
     const now = providers(h.env()).get(sub.provider);
-    if (!now || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
+    // Unlike the delivery pass (which resets with a specific reason), stale async answers are discarded.
+    if (!now || now.install !== install || !providerAdmits(v, now.owners2) || outOfContract(now) || !Object.hasOwn(now.types, sub.type) || JSON.stringify(now.types[sub.type]) !== JSON.stringify(sub.decl)) return undefined;
     p = now;
     return v;
   };

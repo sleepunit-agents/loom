@@ -145,11 +145,14 @@ it('shutdown withdraws demand, waits for an automatic reask and suppresses its l
   } finally { release(); await closing; }
 });
 
-it('withdrawn authority while a reask is pending suppresses its late rows', async () => {
+it.each(['viewer', 'install'])('withdrawn %s authority while a reask is pending suppresses its late rows', async mode => {
   const h = { home, agents: ['art'] } as Household;
   owner = new PeriodicOwner(home, () => {});
   stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
-  const p = { name: 'loom', owners2: true, types: { 'agent-status': CORE_TYPES['agent-status'] } };
+  const p = { name: 'loom', owners2: true, types: { 'agent-status': CORE_TYPES['agent-status'] }, install: 'one' };
+  const serving = await import('./serve.js');
+  let install = 'one';
+  const registry = vi.spyOn(serving, 'providers').mockImplementation(() => new Map([['loom', { ...p, install }]]));
   const viewer = { kind: 'core' } as const;
   let current: typeof viewer | null = viewer;
   const frames = vi.fn(() => 1);
@@ -166,9 +169,9 @@ it('withdrawn authority while a reask is pending suppresses its late rows', asyn
     [{ key: 'loom/agent-status/art', type: 'agent-status', id: 'art', op: 'upsert' as const, audience: { members: ['jonathan'] }, agent: 'art', record: { id: 'art', agent: 'art', reason: 'late' } }], c => c); });
   try {
     await deliverNow(home); await expect.poll(() => entered).toBe(true);
-    current = null;
+    if (mode === 'viewer') current = null; else install = 'two';
     const before = frames.mock.calls.length;
     release(); await pullsSettled(home);
     expect(frames).toHaveBeenCalledTimes(before);
-  } finally { release(); }
+  } finally { release(); registry.mockRestore(); }
 });
