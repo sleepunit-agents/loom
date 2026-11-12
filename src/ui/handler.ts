@@ -201,7 +201,7 @@ export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member:
     }) }])) } });
 }
 
-function forOwner(pieces: PieceInfo[], own: string[] | undefined): PieceInfo[] {
+export function forOwner(pieces: PieceInfo[], own: string[] | undefined): PieceInfo[] {
   if (!own) return pieces;
   const mine = <T extends { agent?: string }>(xs: T[] | undefined) => (xs ?? []).filter((x) => x.agent !== undefined && own.includes(x.agent));
   return pieces.filter((p) => p.manifest.owners === 2).map((p) => ({

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createToken, loadHousehold } from '../household.js';
+import { createToken, loadHousehold, mintReviewToken } from '../household.js';
 import { startHttpServer, type HttpServeHandle } from './http-server.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 const read = vi.hoisted(() => vi.fn(async () => ({ observations: [{ value: 'test' }] })));
@@ -23,6 +23,11 @@ beforeEach(async () => {
   symlinkSync(join(home, 'pieces', 'clock', 'cli'), join(home, 'pieces', 'bin', 'loom-clock'));
   process.env.LOOM_HOME = home;
   const h = loadHousehold(home)!;
+  mkdirSync(join(home, 'pieces', 'runtime'), { recursive: true });
+  writeFileSync(join(home, 'pieces', 'runtime', 'piece.json'), JSON.stringify({ v: 1, name: 'runtime', source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: 'runtime', version: '1', bins: ['loom-runtime'], loom: parseLoomBlock({ role: 'runtime' }, 'runtime', ['loom-runtime']) }));
+  tokens.runtime = createToken(h, { role: { kind: 'runtime', piece: 'runtime' }, runtimePieces: ['runtime'], label: 'runtime' }).token;
+  tokens.review = mintReviewToken(h, 'runtime').token;
+  tokens.peer = createToken(h, { role: { kind: 'peer', name: 'neighbour' }, label: 'peer' }).token;
   for (const [name, role] of Object.entries({ clock: { kind: 'piece', piece: 'clock', subject: 'test' },
     other: { kind: 'piece', piece: 'other', subject: 'test' }, owner: { kind: 'owner' }, agent: { kind: 'agent', agent: 'art' } } as const)) {
     tokens[name] = createToken(h, { role, label: name }).token;
@@ -36,7 +41,7 @@ const call = (who: string, data: unknown = body, headers = {}) => fetch(`${base}
   method: 'POST', headers: { authorization: `Bearer ${tokens[who] ?? 'invalid'}`, 'content-type': 'application/json', ...headers }, body: JSON.stringify(data),
 });
 it('admits only the installed clock credential and rejects browser use before reading', async () => {
-  for (const who of ['owner', 'agent', 'other', 'unknown']) expect((await call(who)).status).toBe(who === 'unknown' ? 401 : 403);
+  for (const who of ['owner', 'agent', 'other', 'peer', 'review', 'runtime', 'unknown']) expect((await call(who)).status).toBe(who === 'unknown' ? 401 : 403);
   expect((await call('clock', body, { origin: base })).status).toBe(403);
   expect(read).not.toHaveBeenCalled();
   const r = await call('clock');
@@ -51,5 +56,20 @@ it('rejects malformed or oversized targets and content types before reading', as
   expect((await call('clock', { ...body, targets: Array(21).fill(body.targets[0]) })).status).toBe(400);
   expect((await call('clock', body, { 'content-type': 'text/plain' })).status).toBe(415);
   expect((await call('clock', { padding: 'x'.repeat(17000) })).status).toBe(413);
+  expect(read).not.toHaveBeenCalled();
+});
+it('enforces streamed body budget without a Content-Length and never reads the registry', async () => {
+  const { request } = await import('node:http');
+  const outcome = await new Promise<number | string>((resolve, reject) => {
+    const req = request(`${base}/api/loom/watches/observe`, { method: 'POST', headers: {
+      authorization: `Bearer ${tokens.clock}`, 'content-type': 'application/json', 'transfer-encoding': 'chunked',
+    } }, res => { res.resume(); resolve(res.statusCode!); });
+    req.setTimeout(3000, () => { req.destroy(); reject(new Error('streamed size rejection timed out')); });
+    req.on('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? err.message));
+    req.write(JSON.stringify({ ...body, padding: 'x'.repeat(17000) }));
+    req.end();
+  });
+  // The shared collectBody guard destroys oversized streams; a declared oversize gets 413 before reading.
+  expect([413, 'ECONNRESET']).toContain(outcome);
   expect(read).not.toHaveBeenCalled();
 });
