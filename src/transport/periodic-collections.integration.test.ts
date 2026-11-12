@@ -48,7 +48,7 @@ if(req.url==='/nudge'){for(let i=0;i<20;i++)queueCollectionNudge(home,'loom/agen
     expect(readFileSync(join(home, 'calls'), 'utf8')).toContain('follower:three');
   } finally {
     stream?.destroy();
-    await Promise.all(children.map(async c => { if (c.exitCode !== null) return; const gone = once(c, 'exit'); c.kill('SIGKILL'); await gone; }));
+    await Promise.all(children.map(async c => { if (c.exitCode !== null || c.signalCode !== null) return; const gone = once(c, 'exit'); c.kill('SIGKILL'); await gone; }));
     rmSync(home, { recursive: true, force: true });
   }
 }, 40_000);

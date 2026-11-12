@@ -155,12 +155,15 @@ function ensure(home: string): void {
       do {
         again = false;
         const sharedOwner = registration.owner?.();
+        const wasActive = sharedOwner?.active === true;
         // The owner writes shared scan results; a WAL reader probe cannot detect another writer.
         const localThreads = [...streams].some(s => s.home === home);
         const read = sharedOwner?.active || !registration.owner || localThreads ? [join(home, HOUSEHOLD_DB), join(home, COMMS_DB)] : [];
         if (registration.owner && !sharedOwner?.active) read.push(liveDbPath(home));
         if (!await waitForLocks({ read, write: sharedOwner?.active ? [liveDbPath(home)] : [] })) { waiting(); return; }
         if (homes.get(home) !== registration) return;
+        // Acquisition during the await changes a reader into a writer: probe again for the new role.
+        if (registration.owner?.() !== sharedOwner || (sharedOwner?.active === true) !== wasActive) { again = true; continue; }
         try {
           if (homes.get(home)?.owner) await tellShared(home); else tellMembers(home);
           pass(home);

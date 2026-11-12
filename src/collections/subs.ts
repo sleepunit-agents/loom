@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { waitForLocks } from '../lock-gate.js';
 import { liveDbPath } from './log.js';
 import { withManifestReads } from '../ui/manifest-shared.js';
@@ -197,7 +198,9 @@ export function configureCollectionBackground(household: () => Household, env: (
     if (h.backgrounds.size) return;
     h.closed = true;
     await h.passing;
-    if (h.hints.size && await waitForLocks({ write: [liveDbPath(h.household().home)] })) withLog(h.household().home, db => publishHints(h, db));
+    // Retirement retains queued hints and demand until the writer lets them commit.
+    while (!await waitForLocks({ write: [liveDbPath(h.household().home)] })) await sleep(10);
+    withLog(h.household().home, db => publishHints(h, db));
     h.streams.clear();
     stopIfIdle(h);
     await h.puller.settle();
@@ -214,6 +217,7 @@ export function queueCollectionNudge(home: string, domain: string, key = '*'): b
   if (!keys) h.hints.set(domain, keys = new Set());
   if (key === '*') { keys.clear(); keys.add('*'); }
   else if (!keys.has('*')) keys.add(key);
+  if (keys.size > 1000) { keys.clear(); keys.add('*'); }
   return true;
 }
 
@@ -221,7 +225,15 @@ function publishHints(h: HomeState, db: Database): void {
   if (!h.hints.size) return;
   db.transaction(() => {
     const put = db.prepare('INSERT OR IGNORE INTO nudge_requests(domain, key) VALUES (?, ?)');
-    for (const [domain, keys] of h.hints) for (const key of keys) put.run(domain, key);
+    for (const [domain, keys] of h.hints) {
+      for (const key of keys) put.run(domain, key);
+      const broad = db.prepare("SELECT 1 FROM nudge_requests WHERE domain = ? AND key = '*'").get(domain);
+      const count = (db.prepare('SELECT COUNT(*) AS n FROM nudge_requests WHERE domain = ?').get(domain) as { n: number }).n;
+      if (broad || count > 1000) {
+        db.prepare('DELETE FROM nudge_requests WHERE domain = ?').run(domain);
+        put.run(domain, '*');
+      }
+    }
   }).immediate();
   h.hints.clear();
 }
@@ -235,6 +247,12 @@ function consumeHints(h: HomeState, db: Database): void {
     for (const { domain, key } of hints) markNudged(db, domain, Date.now(), key);
     db.prepare('DELETE FROM nudge_requests').run();
   }).immediate()));
+}
+
+function demandDue(h: HomeState): boolean {
+  if (!h.background) return false;
+  const wanted = new Map([...wantedOf(h)].map(d => [d, h.reads.get(d) ?? 0]));
+  return JSON.stringify([...wanted].sort(([a], [b]) => a.localeCompare(b))) !== h.published || Date.now() - h.publishedAt >= 10_000;
 }
 
 function publishWanted(h: HomeState, db: Database): void {
@@ -529,7 +547,7 @@ async function passOnceWork(h: HomeState): Promise<void> {
   if (h.closed) return;
   const home = h.household().home;
   const now = Date.now();
-  if ((h.hints.size || h.background?.active) && !await waitForLocks({ write: [liveDbPath(home)] })) return;
+  if ((h.hints.size || h.background?.active || demandDue(h)) && !await waitForLocks({ write: [liveDbPath(home)] })) return;
   if (h.closed) return;
   // One read connection per delivery pass, shared across all streams/subscriptions. Opening
   // and closing WAL connections for each metadata/log lookup made hint fan-out CPU-bound.

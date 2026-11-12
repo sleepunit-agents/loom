@@ -219,3 +219,25 @@ it('an idle follower does not probe databases again until publication or fallbac
     expect(waitForLocks).toHaveBeenCalledTimes(1);
   } finally { off(); await follower.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+it('acquiring ownership during a reader probe rechecks the WAL writer before scanning', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-comms-role-fence-'));
+  const owner = new PeriodicOwner(home, () => {});
+  const intervals = vi.spyOn(globalThis, 'setInterval');
+  const off = watchComms(home, () => owner);
+  reads.movedSince.mockReset().mockReturnValue([]);
+  let release!: (ready: boolean) => void;
+  vi.mocked(waitForLocks).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  try {
+    const tick = intervals.mock.calls.find(([, ms]) => ms === 2_000)![0] as () => void;
+    tick(); owner.setEligible(true); release(true);
+    const started = performance.now();
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(reads.movedSince).not.toHaveBeenCalled();
+    expect(waitForLocks).toHaveBeenCalledWith(expect.objectContaining({ write: [liveDbPath(home)] }));
+    writer.exec('ROLLBACK');
+    await expect.poll(() => reads.movedSince.mock.calls.length).toBeGreaterThan(0);
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); off(); await owner.close(); intervals.mockRestore(); rmSync(home, { recursive: true, force: true }); }
+});

@@ -1,3 +1,6 @@
+import Database from 'better-sqlite3';
+import { waitForLocks } from '../lock-gate.js';
+import { liveDbPath } from './log.js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,11 +12,13 @@ import { CORE_TYPES, registerCoreSource } from './core-types.js';
 import { nudge } from './pull.js';
 import type { Household } from '../household.js';
 
+vi.mock('../lock-gate.js', async original => { const actual = await original<typeof import('../lock-gate.js')>(); return { ...actual, waitForLocks: vi.fn(actual.waitForLocks) }; });
+
 let home: string;
 let stop: (() => Promise<void>) | undefined;
 let owner: PeriodicOwner | undefined;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'loom-periodic-demand-')); });
-afterEach(async () => { vi.useRealTimers(); await owner?.close(); await stop?.(); stopAll(); rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await owner?.close(); await stop?.(); stopAll(); rmSync(home, { recursive: true, force: true }); });
 
 it('combines follower demand without letting heartbeats become reads; disconnects and death expire demand', () => {
   withLog(home, db => {
@@ -90,7 +95,7 @@ it('publishes actual follower subscriptions, renews demand without a read, and w
   await deliverNow(home);
   expect(demand().read_at).toBe(first.read_at); expect(demand().until).toBeGreaterThan(first.until);
   closeStream(home, port.id); await deliverNow(home);
-  expect(withLog(home, db => db.prepare('SELECT * FROM listener_demand').all())).toEqual([]);
+  await expect.poll(() => withLog(home, db => db.prepare('SELECT * FROM listener_demand').all())).toEqual([]);
 });
 
 it('a second ineligible registration does not replace or tear down the active owner', async () => {
@@ -139,7 +144,7 @@ it('shutdown withdraws demand, waits for an automatic reask and suppresses its l
   let closed = false; const closing = stop().then(() => { closed = true; });
   try {
     await Promise.resolve(); expect(closed).toBe(false);
-    expect(withLog(home, db => db.prepare('SELECT * FROM listener_demand').all())).toEqual([]);
+    await expect.poll(() => withLog(home, db => db.prepare('SELECT * FROM listener_demand').all())).toEqual([]);
     const before = frames.mock.calls.length; release(); await closing;
     expect(closed).toBe(true); expect(frames).toHaveBeenCalledTimes(before);
   } finally { release(); await closing; }
@@ -206,4 +211,53 @@ it('followers publish coalesced collection hints and only the owner consumes the
   await deliverNow(home);
   expect(hints()).toEqual([]);
   expect(refreshes()).toEqual([{ domain: 'loom/agent-status', key: '*' }, { domain: 'loom/attention', key: '*' }]);
+});
+
+it('bounds local and cross-listener hint batches at one thousand keys per domain', async () => {
+  const { queueCollectionNudge } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  for (let i = 0; i < 600; i++) queueCollectionNudge(home, 'loom/agent-status', `a${i}`);
+  await deliverNow(home);
+  for (let i = 600; i < 1200; i++) queueCollectionNudge(home, 'loom/agent-status', `a${i}`);
+  await deliverNow(home);
+  expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/agent-status', key: '*' }]);
+  withLog(home, db => db.prepare('DELETE FROM nudge_requests').run());
+  for (let i = 0; i < 1200; i++) queueCollectionNudge(home, 'loom/attention', `a${i}`);
+  await deliverNow(home);
+  expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/attention', key: '*' }]);
+});
+
+it('follower demand renewal waits off the event loop for a WAL writer', async () => {
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + 11_000);
+  const writer = new Database(liveDbPath(home)); writer.exec('BEGIN IMMEDIATE');
+  try {
+    const started = performance.now(); const pass = deliverNow(home);
+    await new Promise(r => setTimeout(r, 25));
+    expect(performance.now() - started).toBeLessThan(500);
+    writer.exec('ROLLBACK'); await pass;
+  } finally { if (writer.inTransaction) writer.exec('ROLLBACK'); writer.close(); }
+});
+
+it('retirement retains hints through a spent writer budget and flushes before removing state', async () => {
+  const { queueCollectionNudge } = await import('./subs.js');
+  const h = { home, agents: ['art'] } as Household;
+  owner = new PeriodicOwner(home, () => {});
+  stop = configureCollectionBackground(() => h, () => ({ LOOM_HOME: home }), owner);
+  await deliverNow(home);
+  queueCollectionNudge(home, 'loom/attention');
+  let release!: (ready: boolean) => void;
+  const blocked = new Promise<boolean>(resolve => { release = resolve; });
+  vi.mocked(waitForLocks).mockResolvedValueOnce(false).mockImplementationOnce(() => blocked);
+  let done = false; const ending = stop().then(() => { done = true; }); stop = undefined;
+  await new Promise(r => setTimeout(r, 25));
+  expect(done).toBe(false);
+  release(true); await ending;
+  expect(withLog(home, db => db.prepare('SELECT * FROM nudge_requests').all())).toEqual([{ domain: 'loom/attention', key: '*' }]);
 });
