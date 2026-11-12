@@ -1082,7 +1082,7 @@ function needsCount(h: Household, agent: string, who: Looker): number {
  * to the approvals piece, as the card's would.
  */
 export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv, { tasks: foldTasks = true }: { tasks?: boolean } = {}): HomeAsk[] {
-  // An agent's own views (its Today and its count) don't fold tasks: the tasks piece's card names no agent (t-2098).
+  // An agent's own views keep their existing task/count treatment (t-2098).
   if (foldTasks && asks.some((a) => a.waitsOnTask)) {
     const tasks = pieceWithRole(env, 'tasks')?.name;
     if (tasks) asks = foldTaskAsks(asks, pieceSource(tasks).id);
@@ -1114,8 +1114,10 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv, { tasks
  * piece's own card for it, `task/<id>`, in the same words) is that card. The task's card stays, with its page, where
  * his answer lands on the task; it keeps the ask's call on his attention (a quiet To do card never hides a counted
  * ask). The conversation's ask clears itself once he answers it there (needs-resolve, taskAnswered) or the task closes.
- * Only an ask is dropped, never put under another card's words: one in other words, or waiting on a task with no card
- * of its own (not his to answer), stays as it was.
+ * Only a card naming the same agent can absorb an ask; older unattributed task cards keep both. Missing why/if
+ * lines fall back to the conversation's, with task values taking precedence. Inputs have already been filtered for
+ * the viewing member by conversationAsks/asksFor. Only an ask is dropped, never put under another card's words:
+ * one in other words, or waiting on a task with no card of its own (not his to answer), stays as it was.
  */
 export function foldTaskAsks(asks: HomeAsk[], tasksSource: string): HomeAsk[] {
   const cards = new Map<string, HomeAsk>();
@@ -1126,14 +1128,27 @@ export function foldTaskAsks(asks: HomeAsk[], tasksSource: string): HomeAsk[] {
   if (!cards.size) return asks;
   const folded = (a: HomeAsk) => {
     const card = a.waitsOnTask && a.source.id !== tasksSource ? cards.get(a.waitsOnTask) : undefined;
-    return card && sameAskWords(card.text, a.text) ? card : undefined;
+    return card && !!card.agent && card.agent === a.agent && sameAskWords(card.text, a.text) ? card : undefined;
   };
-  const loud = new Set(asks.flatMap((a) => { const c = folded(a); return c && a.attention !== false ? [c] : []; }));
-  return asks.filter((a) => !folded(a)).map((x) => {
-    if (!loud.has(x) || x.attention !== false) return x;
-    const { attention: _quiet, ...rest } = x;
-    return rest;
-  });
+  const replacements = new Map<HomeAsk, HomeAsk>();
+  for (const a of asks) {
+    const card = folded(a);
+    if (!card) continue;
+    let kept = replacements.get(card) ?? card;
+    const why = kept.needs?.why || kept.why || a.needs?.why || a.why;
+    const if_yes = kept.needs?.if_yes || kept.if_yes || a.needs?.if_yes || a.if_yes;
+    const if_no = kept.needs?.if_no || kept.if_no || a.needs?.if_no || a.if_no;
+    if (why || if_yes || if_no) kept = { ...kept, needs: {
+      answers: 'words', refs: [], details: '', ...kept.needs,
+      ...(why ? { why } : {}), ...(if_yes ? { if_yes } : {}), ...(if_no ? { if_no } : {}),
+    } };
+    if (a.attention !== false && kept.attention === false) {
+      const { attention: _quiet, ...rest } = kept;
+      kept = rest;
+    }
+    replacements.set(card, kept);
+  }
+  return asks.filter((a) => !folded(a)).map((x) => replacements.get(x) ?? x);
 }
 
 /** How many approvals cards a Needs you absorbed (of one agent's, or all): the counts that add asks up take them off once. */

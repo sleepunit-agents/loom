@@ -10,7 +10,7 @@ import type { HomeAsk } from './render.js';
 
 const TASKS = 'tasks';
 const task = (id: string, text = 'Can you check the hotspot?'): HomeAsk =>
-  ({ text, page: `task/${id}`, label: 'Open', kind: 'todo', source: { id: TASKS, base: '/p/tasks/' } }) as HomeAsk;
+  ({ text, agent: 'art', page: `task/${id}`, label: 'Open', kind: 'todo', source: { id: TASKS, base: '/p/tasks/' } }) as HomeAsk;
 const digest = (on: string | undefined, agent = 'art'): HomeAsk =>
   ({ kind: 'alert', text: 'Can you check the hotspot?', page: 'loom:conversation/cv-0123456789ab', agent,
     source: { id: `agent:${agent}`, base: `/a/${agent}/` }, ...(on ? { waitsOnTask: on } : {}) }) as HomeAsk;
@@ -31,8 +31,23 @@ describe('a conversation ask waiting on a task with its own ask', () => {
     expect(foldTaskAsks([lookalike, digest('t-2059')], TASKS)).toHaveLength(2);
     expect(foldTaskAsks([task('t-2059', '  '), digest('t-2059')], TASKS)).toHaveLength(2);
   });
-  it('folds every conversation waiting on that task, from any agent', () => {
-    expect(foldTaskAsks([digest('t-2059'), task('t-2059'), digest('t-2059', 'mark')], TASKS)).toEqual([task('t-2059')]);
+  it('keeps another agent and unattributed cards separate', () => {
+    const mark = digest('t-2059', 'mark');
+    expect(foldTaskAsks([digest('t-2059'), task('t-2059'), mark], TASKS)).toEqual([task('t-2059'), mark]);
+    const { agent: _agent, ...legacy } = task('t-2059');
+    expect(foldTaskAsks([legacy, digest('t-2059')], TASKS)).toHaveLength(2);
+  });
+  it('fills missing why and outcome lines without replacing task values or navigation', () => {
+    const ask = { ...digest('t-2059'), needs: { why: 'Digest why', if_yes: 'Digest yes', if_no: 'Digest no', answers: 'yes-no', refs: [], details: '' } } as HomeAsk;
+    const own = { ...task('t-2059'), why: 'Task why', if_no: 'Task no' };
+    const [kept] = foldTaskAsks([own, ask], TASKS);
+    expect(kept.page).toBe(own.page);
+    expect(kept.text).toBe(own.text);
+    expect(kept.source).toEqual(own.source);
+    expect(kept.needs).toMatchObject({ why: 'Task why', if_yes: 'Digest yes', if_no: 'Task no', answers: 'words' });
+    expect(foldTaskAsks([task('t-2059'), ask], TASKS)[0].needs).toMatchObject({ why: 'Digest why', if_yes: 'Digest yes', if_no: 'Digest no' });
+    expect(foldTaskAsks([{ ...own, if_yes: 'Task yes' }, ask], TASKS)[0].needs).toMatchObject({ why: 'Task why', if_yes: 'Task yes', if_no: 'Task no' });
+    expect(own).not.toHaveProperty('needs');
   });
   it('folds only the same words: another question waiting on the task stays its own card', () => {
     const other = { ...digest('t-2059'), text: 'OK to buy a spare Pi while we wait?' } as HomeAsk;
