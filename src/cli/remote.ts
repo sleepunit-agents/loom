@@ -114,7 +114,7 @@ export function cliEndpoint(url: string): URL {
  * JSON headers, with `Authorization: Bearer <token>` when LOOM_TOKEN_FILE names
  * one. Undefined (and a message on stderr) when the file can't be read.
  */
-async function requestHeaders(io: IOStreams): Promise<Record<string, string> | undefined> {
+export async function requestHeaders(io: IOStreams): Promise<Record<string, string> | undefined> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   const tokenFile = io.env.LOOM_TOKEN_FILE;
   if (tokenFile) {

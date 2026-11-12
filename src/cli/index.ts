@@ -44,6 +44,8 @@ Commands:
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
   backup            The nightly backup: set it, run one, see how it's going
+  collections nudge <domain>
+                     Hint that a provider wrote; listeners pull soon
   store             A piece's own store in loom: get, list, put, del, history, revert
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
@@ -57,7 +59,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person, project; other commands stay local.
+                         memory, knowledge, person, project, collections nudge; other commands stay local.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -97,6 +99,10 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   if (rest.includes('--url') && !url) {
     io.stderr(`--url needs a value (a loom-http URL, e.g. http://host:8787/mcp).\n`);
     return 2;
+  }
+  if (sub === 'collections') {
+    const { run } = await import('./collections.js');
+    return run(rest, io, url ?? io.env.LOOM_URL);
   }
   if (REMOTE_VERBS.has(sub)) {
     const target = url ?? io.env.LOOM_URL;
@@ -154,6 +160,10 @@ async function resolveSubcommand(
 
 async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<number> {
   switch (sub) {
+    case 'collections': {
+      const { run } = await import('./collections.js');
+      return run(rest, io);
+    }
     case 'wake': {
       const { run } = await import('./wake.js');
       return run(rest, io);
