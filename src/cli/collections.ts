@@ -12,6 +12,17 @@ With --url or LOOM_URL, use that loom's authenticated nudge endpoint.
 `;
 
 export async function run(argv: string[], io: IOStreams, url?: string): Promise<number> {
+  // Shared global extraction predates strict missing-value validation. Refuse malformed
+  // globals here before the parser discards them or any local/remote hint is sent.
+  for (let i = 0; i < argv.length; i++) {
+    if (['--context-dir', '--client', '--model', '--url'].includes(argv[i])) {
+      if (!argv[i + 1] || argv[i + 1].startsWith('-')) {
+        if (argv.includes('--help') || argv.includes('-h')) { io.stdout(USAGE); return 0; }
+        io.stderr(USAGE); return 2;
+      }
+      i++;
+    }
+  }
   const p = parseVerb(argv, {}, USAGE, io);
   if (typeof p === 'number') return p;
   const [op, domain, extra] = p.positionals;
