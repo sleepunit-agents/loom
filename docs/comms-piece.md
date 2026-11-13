@@ -91,7 +91,7 @@ data does not remove the behavior it delivered.
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
 | `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Missing: recipient rule, quoted attachment, validation, about-key matching and five recent owned threads. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
-| Push and desktop unread integration | Attention/frame notification seam | Missing: opener-only destinations, foreground/background suppression, no private words on shared events. |
+| Push and desktop unread integration | `Comms.announcements(member)`, Attention/frame notification seam | Partial: trusted metadata-only candidates select opener-owned open unread threads, stable latest-reply keys and exact two-minute per-thread foreground suppression. Production member-subscription matching, dispatch dedupe/rate limiting/staging and desktop binding remain missing. |
 | Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following now keeps the reader at the end only while near it, counts appended non-card records while scrolled back and follows their own sends; attachment/ref rendering and broader disconnected/reconnect parity need completion. |
 
 ## Offline import
@@ -631,3 +631,33 @@ renewal and hidden-page suppression. The existing single browser proof now
 requires a new server timestamp after a 30-second browser tick with no new
 message. Production notification suppression and push integration remain
 unfinished; this timestamp alone does not claim them.
+
+The trusted frame role now exposes `Comms.announcements(member)` for its push
+job. It returns only open threads belonging to that member who still owns the
+agent, with an unread reply and no foreground read within the last two minutes.
+The exact two-minute boundary permits a candidate again. Reading another thread
+does not suppress it. Each candidate has a key based on thread and latest reply
+sequence, the opener member, agent, thread URL, fixed reply wording and the
+thread title. Message words, work details and ciphertext are never selected or
+decrypted. Expired words leave the same metadata candidate; archive, deletion,
+ownership loss and closing the piece remove it. Agent labels currently capitalize
+the agent id, matching the rest of this app; authoritative display names remain
+part of production composition.
+
+This is a synchronous internal candidate reader, not a public operation or a
+push sender. The frame must recompute candidates at dispatch, restrict devices
+to the named member, deduplicate keys, preserve rate-limited work and put sends
+through staging. It must not cache eligibility across asynchronous work. No
+legacy push store or handler is used, and no production push delivery is claimed.
+
+The initial regressions failed with `announcements is not a function`.
+Seven new cases now cover opener isolation, reply-only unread state, stable replay/card
+keys and newer replies, title-only payloads, another thread's presence,
+restart, the exact two-minute boundary, reads, archive/delete/close/revocation,
+retained metadata after word expiry, no crypto and no public operation.
+All 317 affected tests and root TypeScript checking pass. The single browser
+fixture also now anchors its first-message expiry to that message's original
+server timestamp: the foreground test's new 30-second advance had made the
+relative 14-day jump expire the row before Load earlier. No assertion was
+removed. Current-head browser CI must validate this correction; no browser ran
+locally. Review budgets remain backend/security 2/3 and importer 1/3.

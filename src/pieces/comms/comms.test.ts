@@ -13,6 +13,53 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('offers unread reply notifications only to the opener, with metadata and stable latest-reply keys',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ for(const kind of ['card','ask','error'] as const)await s.comms.post('art',place,{id:kind,kind,text:`private ${kind} words`});
+ expect(s.comms.announcements('jonathan')).toEqual([]);
+ const reply={id:'reply-one',kind:'reply' as const,text:'private reply words',run:'private-run'};
+ const {seq}=await s.comms.post('art',place,reply);
+ const expected={key:`comms-${place}-${seq}`,member:'jonathan',agent:'art',open:true,title:'Art replied in a new thread',body:'',url:`/p/comms-preview/thread/${place.slice(3)}`};
+ expect(s.comms.announcements('jonathan')).toEqual([expected]);
+ expect(s.comms.announcements('other')).toEqual([]);
+ await s.comms.post('art',place,reply);
+ await s.comms.post('art',place,{id:'later-card',kind:'card',text:'private later work'});
+ expect(s.comms.announcements('jonathan')).toEqual([expected]);
+ await s.call('change',{thread:place,action:'title',title:'A public thread title'});
+ expect(s.comms.announcements('jonathan')).toEqual([{...expected,title:'Art replied',body:'A public thread title'}]);
+ const second=await s.comms.post('art',place,{id:'reply-two',kind:'reply',text:'private second reply'});
+ expect(s.comms.announcements('jonathan')[0].key).toBe(`comms-${place}-${second.seq}`);
+ expect(JSON.stringify(s.comms.announcements('jonathan'))).not.toMatch(/private/);
+});
+it('suppresses only the foreground thread until the exact two-minute boundary, across restart',async()=>{
+ const s=await setup();const a=await s.open(),b=await s.open();
+ for(const place of [a,b])await s.comms.post('art',place,{id:'reply',kind:'reply',text:'private words'});
+ await s.call('change',{thread:a,action:'read',seq:0});
+ expect(s.comms.announcements('jonathan').map(x=>x.url)).toEqual([`/p/comms-preview/thread/${b.slice(3)}`]);
+ await s.restart();s.clock.advance(119999);
+ expect(s.comms.announcements('jonathan')).toHaveLength(1);
+ s.clock.advance(1);expect(s.comms.announcements('jonathan')).toHaveLength(2);
+ await s.call('change',{thread:a,action:'read',seq:999});s.clock.advance(120000);
+ expect(s.comms.announcements('jonathan').map(x=>x.url)).toEqual([`/p/comms-preview/thread/${b.slice(3)}`]);
+});
+for(const boundary of ['ownership','archive','delete','close'] as const)it(`drops notification candidates after ${boundary}`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.post('art',place,{id:'reply',kind:'reply',text:'private words'});
+ expect(s.comms.announcements('jonathan')).toHaveLength(1);
+ if(boundary==='ownership')s.setSharing({...s.getSharing(),members:{jonathan:{owner:true,agents:[]}}});
+ else if(boundary==='close')await s.comms.close();
+ else await s.call('change',{thread:place,action:boundary});
+ expect(s.comms.announcements('jonathan')).toEqual([]);
+});
+it('keeps notification metadata after words expire without using crypto or exposing a public operation',async()=>{
+ let opens=0;const s=await setup({key:k=>({...k,open:async words=>{opens++;return k.open(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'reply',kind:'reply',text:'private reply'});
+ const before=opens,candidates=s.comms.announcements('jonathan');
+ s.clock.advance(14*86400000);
+ expect(s.comms.announcements('jonathan')).toEqual(candidates);expect(opens).toBe(before);
+ expect(s.app.db.prepare('SELECT words FROM comms_messages WHERE thread=? AND kind=\'reply\'').get(place)).toEqual({words:null});
+ expect((await s.call('announcements',{member:'jonathan'})).ok).toBe(false);
+});
 it('refreshes foreground presence on unchanged reads without moving activity or publishing Live changes',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  const saved=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);

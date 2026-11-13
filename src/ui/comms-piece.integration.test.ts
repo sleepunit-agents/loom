@@ -21,6 +21,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',on:'Codex',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
+ const firstAt=clock.now();
  const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturefirstaaaa',text:'Comms fixture message'},'fixture-first',true);
  if(!first.ok)throw new Error('fixture failed');const place=(first.value as {thread:string}).thread;await comms.deliver('art',place,1);
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -114,7 +115,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);
   // Move the first message outside the live hundred, then load it as an earlier page.
   // Only the browser crosses its deadline: no server sweep can update that cached page.
-  comms.status('art',place,'done');clock.advance(14*86400000-1000);
+  comms.status('art',place,'done');clock.advance(firstAt+14*86400000-1000-clock.now());
   // setSystemTime leaves time running: encrypting/posting the fillers may consume
   // the final second before Load earlier is clicked. Hold it until fastForward.
   await b.clock.pauseAt(clock.now());

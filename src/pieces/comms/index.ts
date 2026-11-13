@@ -486,6 +486,19 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+  announcements(member) {
+   if(closed)return [];
+   // Read routing facts only: no ciphertext is selected or decrypted for push.
+   return agentThreads(member).flatMap(t=>{
+    if(typeof t.inFront==='number'&&clock.now()-t.inFront<120_000)return [];
+    const reply=db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
+    if(reply.seq===null||reply.seq<=t.readSeq)return [];
+    const name=t.agent.charAt(0).toUpperCase()+t.agent.slice(1);
+    return [{key:`comms-${t.id}-${reply.seq}`,member:t.member,agent:t.agent,open:true as const,
+     title:t.title?`${name} replied`:`${name} replied in a new thread`,body:t.title??'',
+     url:`/p/comms-preview/thread/${t.id.replace(/^th:/,'')}`}];
+   });
+  },
   activityCards:threadActivity({db,clock,key,days,decode,available(agent,place){
    const t=requireAgent(agent,place);
    if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');

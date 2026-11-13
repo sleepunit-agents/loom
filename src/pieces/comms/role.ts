@@ -43,7 +43,14 @@ export interface ThreadCard extends ConversationCard {
  items?: {text: string; state: 'done' | 'now' | 'todo'}[];
 }
 export interface ThreadActivity {run: string; cards: readonly ThreadCard[]; alive?: BodyAlive}
+/** Lock-screen-safe candidate for the frame's member-scoped push job, never message words. */
+export interface ReplyAnnouncement {
+ key: string; member: string; agent: string; open: true; title: string; body: string; url: string;
+}
 export interface Comms {
+ /** Trusted frame role only. Recompute immediately before push; do not cache across awaits.
+  * The sender must match subscriptions to member, deduplicate key and pass staging hold. */
+ announcements(member: string): ReplyAnnouncement[];
  /** Runtime-checked private cards; whole-batch validation and atomic persistence. */
  activityCards(agent: string, thread: string, input: ThreadActivity): Promise<{added: number; updated: number}>;
  /** Label-only activity for ordinary conversations. Private venues use post instead. */
