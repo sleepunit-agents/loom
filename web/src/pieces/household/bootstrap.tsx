@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type FormEvent } from 'react';
-import { call } from '../../data';
+import { call, type CallState } from '../../data';
 import { Button, Input } from '../../kit';
 import { frozen, idle, mutation } from './model';
 const noop = () => () => {};
@@ -7,6 +7,9 @@ export interface CreatedAgent { agent: string; contextDir: string; mcp: { comman
 export function createdAgent(value: unknown): CreatedAgent | undefined {
   if (!value || typeof value !== 'object' || !('agent' in value) || !('contextDir' in value) || !('mcp' in value)) return;
   return value as CreatedAgent;
+}
+export function createdFromChange(label: string | undefined, state: CallState) {
+  return label?.startsWith('Create agent ') && state.result?.ok ? createdAgent(state.result.value) : undefined;
 }
 export default function BootstrapAgent({ enabled }: { enabled: boolean }) {
   const held = useSyncExternalStore(mutation.subscribe, mutation.getSnapshot);
@@ -19,7 +22,7 @@ export default function BootstrapAgent({ enabled }: { enabled: boolean }) {
     mutation.set(call('household.bootstrapAgent', input), `Create agent ${input.agent}`);
     event.currentTarget.querySelectorAll<HTMLInputElement>('input[data-confirm]').forEach(input => { input.checked = false; });
   };
-  const made = held.label?.startsWith('Create agent ') && state.result?.ok ? createdAgent(state.result.value) : undefined;
+  const made = createdFromChange(held.label, state);
   return <section aria-label="Create an agent" className="grid min-w-0 gap-3">
     <h2 className="text-xl font-semibold">Create an agent</h2>
     <p>Give a new agent its own identity, memory and relationships. It shares the household’s knowledge and people. Existing contexts are never overwritten.</p>

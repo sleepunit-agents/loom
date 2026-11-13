@@ -524,7 +524,7 @@ Setup's Create an agent form calls `household.bootstrapAgent` (also available in
 `loom-household`) with short name, display name, purpose, voice, rules and when
 to ask first. Only a household owner can create a context. It writes the existing
 voice-neutral scaffold, preferences and self-model in a private directory,
-flushes every file and publishes the complete directory before registering it.
+flushes every file and publishes through exclusive directory reservation and file links before registering the complete context.
 Existing agents, directories, links and files are refused; no overwrite option
 is offered. Existing household metadata, projects and credentials are retained.
 
@@ -533,7 +533,7 @@ publication to its original viewer, operation id and input fingerprint. If the
 row or retry-receipt commit fails, registration and events roll back; only that
 same request can adopt the byte-identical context after restart. A changed
 context refuses recovery. Hidden staging directories left by abrupt interruption
-are inert and never registered. No automatic deletion of abandoned contexts is
+are inert and never registered. Interrupted reservations without a complete receipt, or with unresolved staging hard links, refuse recovery rather than adopting an unproven context. After a receipt is published, an original-request retry can finish missing files with exclusive links, checking every existing byte first. No automatic deletion of abandoned contexts is
 performed. Successful same-id retries return the ordinary stored result without
 rewriting an agent's later preferences or creed.
 

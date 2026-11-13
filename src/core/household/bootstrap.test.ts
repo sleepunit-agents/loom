@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, fsyncSync, openSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, fsyncSync, openSync, linkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -17,22 +17,28 @@ import type { Viewer } from '../../policy.js';
 vi.mock('../../backends/fastembed.js', () => ({ FastEmbedProvider: class { readonly dimensions = 384; async embed() { return new Array(384).fill(0.1); } async embedBatch(texts: string[]) { return texts.map(() => new Array(384).fill(0.1)); } } }));
 vi.mock('node:fs', async original => {
   const actual = await original<typeof import('node:fs')>();
-  return { ...actual, openSync: vi.fn(actual.openSync), fsyncSync: vi.fn(actual.fsyncSync), renameSync: vi.fn(actual.renameSync) };
+  return { ...actual, openSync: vi.fn(actual.openSync), fsyncSync: vi.fn(actual.fsyncSync), linkSync: vi.fn(actual.linkSync), mkdirSync: vi.fn(actual.mkdirSync) };
 });
 const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
 const homes: string[] = [], closes: (() => void | Promise<void>)[] = [];
-afterEach(async () => { vi.mocked(openSync).mockImplementation(actualFs.openSync); vi.mocked(fsyncSync).mockImplementation(actualFs.fsyncSync); vi.mocked(renameSync).mockImplementation(actualFs.renameSync); for (const close of closes.splice(0).reverse()) await close(); closeAllBackends(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { vi.mocked(openSync).mockImplementation(actualFs.openSync); vi.mocked(fsyncSync).mockImplementation(actualFs.fsyncSync); vi.mocked(linkSync).mockImplementation(actualFs.linkSync); vi.mocked(mkdirSync).mockImplementation(actualFs.mkdirSync); for (const close of closes.splice(0).reverse()) await close(); closeAllBackends(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const input = { agent: 'gabe', name: 'Gabe', purpose: 'You help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Ask before spending money.' };
 async function setup() { const home = mkdtempSync(join(tmpdir(), 'loom-bootstrap-')); homes.push(home); fixture(home); const clock = new FakeClock(); const app = await startLoom({ home, clock, next: true }); closes.push(app.close); return { home, clock, app }; }
 it('creates a portable context, publishes Live after commit and mints its first token separately without journaling the bearer', async () => {
   const { app, home } = await setup(), h = new HouseholdDatabase(app.db), before = h.document()!;
+  mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+  writeFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), 'Original Art creed');
+  writeFileSync(join(home, 'agents', 'art', 'private.bin'), Buffer.from([0, 255, 7]));
   const tokens = new HouseholdRows(app.db, 'tokens').entries(), projects = new HouseholdRows(app.db, 'projects').entries();
   const events: unknown[] = []; app.live.observe(changes => { if (changes.length) events.push({ changes, transaction: app.db.inTransaction }); });
   const made = app.operations.call('socket', owner, 'household.bootstrapAgent', input, 'create-gabe');
   const dir = join(home, 'agents', 'gabe');
   expect(made).toEqual({ ok: true, value: { agent: 'gabe', contextDir: dir, mcp: { command: 'loom', args: ['mcp', '--next', '--home', home, '--agent', 'gabe'] } } });
   expect(h.document()).toEqual({ ...before, agents: [...before.agents as string[], 'gabe'] });
+  expect(readFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), 'utf8')).toBe('Original Art creed');
+  expect(readFileSync(join(home, 'agents', 'art', 'private.bin'))).toEqual(Buffer.from([0, 255, 7]));
+  expect(readdirSync(join(home, 'agents', 'art')).sort()).toEqual(['IDENTITY.md', 'private.bin']);
   expect(new HouseholdRows(app.db, 'projects').entries()).toEqual(projects); expect(new HouseholdRows(app.db, 'tokens').entries()).toEqual(tokens);
   expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain('# Gabe\n\nYou help with the garden.');
   for (const content of ['## Voice\n\nWarm and direct.', '## Rules\n\nKeep private things private.', '## When to ask first\n\nAsk before spending money.']) expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain(content);
@@ -117,16 +123,16 @@ it('flushes complete files before publication and retries a failed publication f
     if (fail === 'parent' && path === join(home, 'agents')) throw new Error('publication flush failed');
     flushed.push(path); actualFs.fsyncSync(fd);
   });
-  vi.mocked(renameSync).mockImplementation((a, b) => {
-    const source = String(a);
+  vi.mocked(linkSync).mockImplementation((a, b) => {
+    const source = join(String(a), '..');
     expect(readdirSync(source).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);
     for (const name of readdirSync(source)) expect(flushed).toContain(join(source, name));
     expect(flushed).toContain(source);
-    actualFs.renameSync(a, b);
+    actualFs.linkSync(a, b);
   });
   const call = () => app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'flush');
   expect(call()).toMatchObject({ code: 'unavailable' });
-  expect(vi.mocked(renameSync)).not.toHaveBeenCalled(); expect(readdirSync(join(home, 'agents'))).toEqual([]);
+  expect(vi.mocked(linkSync)).not.toHaveBeenCalled(); expect(readdirSync(join(home, 'agents'))).toEqual([]);
   fail = 'parent'; expect(call()).toMatchObject({ code: 'unavailable' });
   expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
   // Still failing the flush must also block recovery of the already published context.
@@ -153,4 +159,33 @@ it('binds orphan recovery to the original authorized owner and compares exact by
   expect(call()).toMatchObject({ code: 'conflict' });
   expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
   writeFileSync(file, original); expect(call()).toMatchObject({ ok: true });
+});
+
+it('does not overwrite a directory reserved by another filesystem caller during publication', async () => {
+  const { app, home } = await setup();
+  const target = join(home, 'agents', 'gabe');
+  vi.mocked(mkdirSync).mockImplementation((...args: Parameters<typeof mkdirSync>) => {
+    if (String(args[0]) === target) actualFs.mkdirSync(target, { mode: 0o700 });
+    return actualFs.mkdirSync(...args);
+  });
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'race')).toMatchObject({ code: 'conflict' });
+  expect(readdirSync(target)).toEqual([]);
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+});
+
+it('finishes an interrupted exclusive file publication only for its original request', async () => {
+  const { app, home } = await setup(); let fail = true;
+  vi.mocked(linkSync).mockImplementation((a, b) => {
+    if (fail && String(b).endsWith('preferences.md')) throw new Error('Interrupted publication');
+    actualFs.linkSync(a, b);
+  });
+  const call = () => app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'partial');
+  expect(call()).toMatchObject({ code: 'unavailable' });
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+  const target = join(home, 'agents', 'gabe');
+  expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md']);
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'other')).toMatchObject({ code: 'conflict' });
+  fail = false; expect(call()).toMatchObject({ ok: true });
+  expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);
+  expect(readFileSync(join(target, 'preferences.md'), 'utf8')).toContain('Gabe');
 });

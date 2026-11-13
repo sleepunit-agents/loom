@@ -4,7 +4,7 @@
  * only while its initial files are still byte-identical. Never overwrite a context.
  */
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, linkSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { AGENT_NAME } from '../../household.js';
@@ -41,31 +41,45 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
     files: Object.fromEntries(Object.entries(files).map(([name, value]) => [name, hash(value)])) });
   // Do not follow even dangling symlinks, and never adopt an unrelated directory.
   let present = false; try { lstatSync(target); present = true; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  const all = { [marker]: receipt, ...files };
   if (present) {
     realDir(target);
     try {
-      if (readdirSync(target).sort().join('\n') !== [marker, ...Object.keys(files)].sort().join('\n')) throw new Error('Changed context');
-      for (const name of [marker, ...Object.keys(files)]) {
-        const stat = lstatSync(join(target, name));
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Unsafe file');
+      if (!readFileSync(join(target, marker)).equals(Buffer.from(receipt))) throw new Error('Different request');
+      if (readdirSync(target).some(name => !Object.hasOwn(all, name))) throw new Error('Changed context');
+      for (const [name, value] of Object.entries(all)) {
+        const path = join(target, name);
+        let stat;
+        try { stat = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !readFileSync(path).equals(Buffer.from(value))) throw new Error('Changed context');
       }
-      if (!readFileSync(join(target, marker)).equals(Buffer.from(receipt)) || Object.entries(files).some(([name, value]) => !readFileSync(join(target, name)).equals(Buffer.from(value)))) throw new Error('Different context');
     } catch { throw new OperationError('conflict', 'Context already exists; register it separately or retry its original unchanged creation'); }
-    for (const name of [marker, ...Object.keys(files)]) {
-      const fd = openSync(join(target, name), 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+  }
+  const stage = mkdtempSync(join(parent, '.bootstrap-'));
+  try {
+    for (const [name, value] of Object.entries(all)) {
+      const fd = openSync(join(stage, name), 'wx', 0o600);
+      try { writeFileSync(fd, value); fsyncSync(fd); } finally { closeSync(fd); }
     }
-  } else {
-    const stage = mkdtempSync(join(parent, '.bootstrap-'));
-    try {
-      for (const [name, value] of Object.entries({ ...files, [marker]: receipt })) {
-        const fd = openSync(join(stage, name), 'wx', 0o600);
-        try { writeFileSync(fd, value); fsyncSync(fd); } finally { closeSync(fd); }
+    syncDir(stage);
+    if (!present) {
+      // mkdir and hard links are exclusive even against other filesystem callers.
+      // A crash before the receipt link leaves an inert, unregistered reservation;
+      // it is refused on retry, never adopted or automatically deleted.
+      try { mkdirSync(target, { mode: 0o700 }); }
+      catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new OperationError('conflict', 'Context already exists'); throw e; }
+    }
+    for (const name of Object.keys(all)) {
+      const path = join(target, name);
+      if (present) {
+        try { lstatSync(path); continue; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
       }
-      syncDir(stage);
-      // All daemon operations are synchronous and serialized; no incomplete context
-      // is ever registered. Abandoned hidden staging directories are inert.
-      renameSync(stage, target);
-    } finally { if (existsSync(stage)) rmSync(stage, { recursive: true }); }
+      linkSync(join(stage, name), path);
+    }
+  } finally { rmSync(stage, { recursive: true }); }
+  // Flush recovered files too, including a prior publication whose flush failed.
+  for (const name of Object.keys(all)) {
+    const fd = openSync(join(target, name), 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
   }
   // Repeat directory flushes on recovery too: a previous attempt may have
   // published successfully and then failed here before SQLite registration.
