@@ -13,6 +13,49 @@ import { startLoom } from './foundation.js';
 import { fixture, installFixture, fixtureSharing } from './fixture.js';
 import { FakeClock } from './core/clock.js';
 
+it('next installs approvals without a fixture installer and persists guarded decisions over HTTP', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-next-approvals-'));
+  // The new composition must never consult these legacy sources of authority.
+  writeFileSync(join(home, 'approvals.json'), 'not json');
+  writeFileSync(join(home, 'rules.json'), 'not json');
+  const options = { home, next: true, clock: new FakeClock(), sharing: fixtureSharing,
+    authenticate: (req: import('node:http').IncomingMessage) => {
+      const who = req.headers.authorization;
+      return who === 'art' ? { viewer: { kind: 'agent' as const, id: who }, valid: () => true }
+        : who === 'jonathan' || who === 'pollock' ? { viewer: { kind: 'member' as const, id: who }, valid: () => true } : undefined;
+    } };
+  let loom = await startLoom(options);
+  let sequence = 0;
+  const call = async (verb: string, input = {}, who = 'art', id = `next-approvals-${++sequence}`) => {
+    const response = await fetch(`${loom.url}/api/approvals/${verb}`, { method: 'POST',
+      headers: { authorization: who, 'content-type': 'application/json' }, body: JSON.stringify({ input, id }) });
+    return response.json();
+  };
+  const target = `github:acme/app#12@${'a'.repeat(40)}`;
+  const ask = { kind: 'merge', target, ask: 'Merge the fix?', why: 'It fixes the page.', if_yes: 'I merge it.', if_no: 'I leave it open.',
+    principal: 'owner', conversation: 'cv-123456789abc', project: 'pond' };
+  try {
+    expect(loom.operations.has('approvals.list')).toBe(true);
+    const requested = await call('request', ask, 'art', 'request-once');
+    expect(requested).toMatchObject({ ok: true, value: { state: 'pending', for: '?', who: { agent: 'art' } } });
+    const card = requested.value;
+    expect(card.conversation).toBeUndefined(); expect(card.project).toBeUndefined();
+    expect(await call('request', ask, 'art', 'request-once')).toEqual(requested);
+    expect(await call('open', { id: card.id }, 'jonathan')).toMatchObject({ ok: true, value: { open: true, mayAnswer: true } });
+    expect(await call('answer', { id: card.id, action: 'allow' }, 'pollock')).toMatchObject({ ok: false, code: 'denied' });
+    expect(await call('answer', { id: card.id, action: 'allow' }, 'jonathan')).toMatchObject({ ok: true, value: { state: 'allowed' } });
+    expect(await call('use', { id: card.id, kind: 'merge', target }, 'art', 'spend-once')).toMatchObject({ ok: true, value: { state: 'used' } });
+    expect(await call('use', { id: card.id, kind: 'merge', target }, 'art', 'spend-once')).toMatchObject({ ok: true, value: { state: 'used' } });
+    await loom.close(); loom = await startLoom(options);
+    expect(await call('history', {}, 'jonathan')).toMatchObject({ ok: true, value: { approvals: [{ id: card.id, state: 'used' }] } });
+    expect(await call('use', { id: card.id, kind: 'merge', target })).toMatchObject({ ok: false, code: 'denied' });
+    const grant = await call('request', { kind: 'grant', target: 'tasks:art', ask: 'Give Art access to Tasks?', why: 'Work needs Tasks.', if_yes: 'I grant access.', if_no: 'Access stays unchanged.' });
+    expect(grant.ok).toBe(true);
+    expect(await call('answer', { id: grant.value.id, action: 'allow' }, 'jonathan')).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(await call('check', { id: grant.value.id })).toMatchObject({ ok: true, value: { state: 'pending' } });
+  } finally { await loom.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
 it('next serves only the new root, foundation doors and live, ignoring poisoned legacy stores', async () => {
   const home = mkdtempSync(join(tmpdir(),'loom-next-'));
   fixture(home); writeFileSync(join(home,'household.json'),'not json');
