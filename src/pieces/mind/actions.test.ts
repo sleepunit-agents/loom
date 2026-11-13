@@ -139,7 +139,8 @@ it('refuses a locked source before effects and permits reuse only after the thir
   expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'locked')).toMatchObject({ ok: true });
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
   expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 1 });
-});
+  // Waits out SQLite's busy timeout on the locked source, which is about the 5 s default test limit.
+}, 20_000);
 it('rolls verification back without a receipt when the original note would exceed the body cap', async () => {
   const { app, backend, db } = await fixture();
   await backend!.writePage({ slug: 'fact', title: 'Fact', domain: 'systems', body: 'a'.repeat(65536), mode: 'replace' });

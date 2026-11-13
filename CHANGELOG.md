@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
+- Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
 
 - Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
