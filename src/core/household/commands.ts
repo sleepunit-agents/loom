@@ -6,6 +6,7 @@ import { agentAccountsSchema } from './accounts.js';
 import { projectSchema, projectSlug } from './sharing.js';
 
 export const householdResponses = {
+  bootstrapAgent: z.object({ agent: z.string(), contextDir: z.string(), mcp: z.object({ command: z.literal('loom'), args: z.array(z.string()) }).strict() }).strict(),
   show: z.object({ home: z.string(), agents: z.array(z.string()), default: z.string(), owner: z.string().optional() }).strict(),
   setMember: z.array(memberSchema),
   removeMember: z.array(memberSchema),

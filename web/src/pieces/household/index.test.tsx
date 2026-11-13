@@ -49,3 +49,19 @@ it('dispatches the form to the existing operation once and clears its confirmati
   await act(async () => tree.root.findByProps({ 'aria-label': 'Save accounts for art' }).props.onSubmit(event));
   expect(f.call).toHaveBeenCalledOnce();
 });
+
+it('creates a context through the shared retry handle and shows next-mode configuration only after success', async () => {
+  const r = request(); f.call.mockReturnValue(r.handle);
+  const Original = FormData;
+  vi.stubGlobal('FormData', class extends Original { constructor() { super(); for (const [k, v] of Object.entries({ agent: 'gabe', name: 'Gabe', purpose: 'Garden', voice: 'Warm', rules: 'Private', ask: 'Money' })) this.set(k, v); } });
+  await act(async () => { tree = create(h(Setup)); });
+  const confirm = { checked: true }, event = { preventDefault: vi.fn(), currentTarget: { querySelectorAll: () => [confirm] } };
+  await act(async () => tree.root.findByProps({ 'aria-label': 'Create agent' }).props.onSubmit(event));
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('household.bootstrapAgent', { agent: 'gabe', name: 'Gabe', purpose: 'Garden', voice: 'Warm', rules: 'Private', ask: 'Money' });
+  expect(confirm.checked).toBe(false);
+  expect(tree.root.findAllByProps({ 'aria-label': 'Harness configuration' })).toHaveLength(0);
+  await r.finish({ ok: true, value: { agent: 'gabe', contextDir: '/home/agents/gabe', mcp: { command: 'loom', args: ['mcp', '--next', '--home', '/home', '--agent', 'gabe'] } } });
+  expect(tree.root.findByProps({ 'aria-label': 'Harness configuration' }).props.children).toContain('--next');
+  await act(async () => tree.unmount()); await act(async () => { tree = create(h(Setup)); });
+  expect(tree.root.findByProps({ 'aria-label': 'Harness configuration' }).props.children).toContain('gabe');
+});

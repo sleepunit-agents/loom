@@ -73,6 +73,11 @@ it('refuses invalid names, missing directories, files and aliases without creati
   for (const agent of ['../outside', 'Uppercase', '', 'a'.repeat(41), 'missing']) {
     expect(app.operations.call('direct', owner, 'household.addAgent', { agent }, `invalid:${agent}`)).toMatchObject({ code: 'invalid' });
   }
+  const empty = join(h, 'agents', 'empty'); mkdirSync(empty, { recursive: true });
+  expect(app.operations.call('direct', owner, 'household.addAgent', { agent: 'empty' }, 'empty')).toMatchObject({ code: 'invalid' });
+  writeFileSync(join(empty, 'IDENTITY.md'), '   ');
+  expect(app.operations.call('direct', owner, 'household.addAgent', { agent: 'empty' }, 'empty-file')).toMatchObject({ code: 'invalid' });
+  rmSync(empty, { recursive: true });
   const real = context(h, 'real');
   symlinkSync(real, join(h, 'agents', 'alias'));
   symlinkSync(join(h, 'absent'), join(h, 'agents', 'broken'));

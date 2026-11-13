@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Show each Comms thread’s agent letter beside its title in the list.
 
+- Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
 - Show Comms thread activity times in CT and live working state in the thread list.
 
 - Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
@@ -1076,6 +1077,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
 
 - Record token and session last use on the new side, including activity in open windows.
+
+- Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
 
 ## [0.16.1] - 2026-10-25
 
