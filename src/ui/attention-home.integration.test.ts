@@ -128,6 +128,12 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       expect(await panel.getByText('Review the next clock slice',{exact:true}).count()).toBe(0);
     }
 
+    // finishJob refreshes core.access, so the earlier display confirmations are deliberately invalidated.
+    for(const page of [a,b]) {
+      await expect.poll(()=>yes(page).count()).toBe(0);
+      await page.getByRole('button',{name:'Check again',exact:true}).click();
+      await expect.poll(()=>yes(page).isEnabled()).toBe(true);
+    }
     await yes(a).click();await expect.poll(()=>yes(b).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
