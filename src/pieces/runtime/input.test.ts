@@ -48,7 +48,17 @@ it('runs the real queue/claim/input/report protocol through the next staging hol
   expect(f.store.read('job',job)?.state).toBe('starting'); // A claim is not confirmation.
   expect(f.app.db.prepare('SELECT state FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toEqual({state:'due'});
   expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`runtime:input:${job}`},'release').ok).toBe(true);
+  const authority = () => ({tokens:signin(f.app).tokens.document(),
+    principals:f.app.db.prepare('SELECT * FROM household_settings ORDER BY id').all(),
+    grants:f.app.db.prepare('SELECT * FROM runtime_settings ORDER BY id').all()});
+  const beforeAuthority = authority(), changed = vi.spyOn(f.app.live,'changed');
   const input = await f.post(token,'takeInput',{job});
+  expect(authority()).toEqual(beforeAuthority);
+  for(const op of ['listJobs','listBoxes','listBindings','listSettings']) {
+    const records=f.app.operations.call('direct',{kind:'member',id:'jonathan'},`runtime.${op}`,{});
+    expect(records.ok).toBe(true);expect(JSON.stringify(records)).not.toContain('private input');
+  }
+  expect(JSON.stringify(changed.mock.calls)).not.toContain('private input');
   expect(input).toEqual({ok:true,value:{job,agent:'art',brief:'private input',needs:[],house:{repo:'/fixture/art',houseFile:'house/house.json'}}});
   expect(f.store.read('job',job)?.state).toBe('starting');
   expect(await f.post(token,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
@@ -136,4 +146,20 @@ it.each(['hosting','revoked','capabilities','house','policy'] as const)('recheck
     })();
   });
   expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:false,code:'denied'});
+});
+it('consumes a release even when a post-consumption failure loses the payload, including after restart', async () => {
+  const f = await setup(), token = f.bearer('a');
+  expect(await f.post(token,'claimJob',{job:'j'})).toMatchObject({ok:true});
+  f.app.db.prepare('INSERT INTO runtime_inputs VALUES (?,?,?)').run('j','private input','[]');
+  const finish = f.app.effects!.finish;
+  const spy = vi.spyOn(f.app.effects!,'finish').mockImplementation((id,certain)=>{
+    finish(id,certain);throw new Error('response unavailable after consumption');
+  });
+  expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:false,code:'unavailable'});
+  spy.mockRestore();
+  expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:false,code:'conflict'});
+  await f.app.close();
+  const app=await startLoom({home:f.home,clock:f.clock,next:true,stdout:()=>{}});cleanups.push(app.close);
+  expect(await app.operations.callAsync('direct',{kind:'runner',id:'a'},'runtime.takeInput',{job:'j'})).toMatchObject({ok:false,code:'conflict'});
+  expect(runtimeStore(app.db).read('job','j')?.state).toBe('starting');
 });
