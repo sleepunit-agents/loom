@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
+- Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.
+
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 
 - Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.

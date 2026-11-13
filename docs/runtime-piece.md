@@ -944,8 +944,12 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 ### Deleted and private Comms bindings
 
 Both `loom` and `spawn` conversations are private Comms threads. Their mapping
-must name the owning member, checked against the copied `household.db` thread,
-agent, conversation and place. A `th:<id>` place matches the table's bare `<id>`.
+must name the owning member, checked against exactly one copied `household.db`
+thread with the same conversation id, agent and member. For `loom`, the place
+must also match the thread id; `th:<id>` accepts either the table's full
+`th:<id>` or bare `<id>`. For `spawn`, the place is its own `job-h-<n>` or
+`sp-<24 hex>` handle, preserved exactly; it need not equal the thread id.
+Other venues retain their original places, including free-text wake labels with spaces.
 A missing owning thread still refuses unless `comms_deleted` proves that exact
 thread and agent were deleted; a non-null tombstone conversation must also match.
 Conflicting live/deleted evidence refuses.
