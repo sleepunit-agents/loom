@@ -107,7 +107,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(created).toMatchObject({ok:true,value:{result:{ok:true}}});
   const task=(created as {ok:true;value:{result:{id:string}}}).value.result.id;
   await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
-  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/${task}`);
+  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/~${task}`);
   const blocker=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Blocking fixture work',agent:'art',actor:'art',at:new Date(clock.now()).toISOString()},'fixture-blocker');
   expect(blocker).toMatchObject({ok:true,value:{result:{ok:true}}});
   const blockerId=(blocker as {ok:true;value:{result:{id:string}}}).value.result.id;
@@ -129,8 +129,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Done');
   const doneBadge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="ok"]');
   expect(await doneBadge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
-  const importedId='legacy/task %';
-  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.import',{tasks:[{id:importedId,title:'Imported work link',type:'task',status:'open',priority:2,createdBy:'art',createdAt:new Date(clock.now()).toISOString(),agent:'art',source:`conversation:${conversation}`,description:'Imported work detail'}],actor:'art',at:new Date(clock.now()).toISOString()},'fixture-imported-work')).toMatchObject({ok:true,value:{result:{ok:true}}});
+  const importedId='..';
+  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.import',{tasks:[{id:importedId,title:'Imported work link',type:'task',status:'closed',closedAt:new Date(clock.now()-8*86400000).toISOString(),priority:2,createdBy:'art',createdAt:new Date(clock.now()-9*86400000).toISOString(),agent:'art',source:`conversation:${conversation}`,description:'Imported work detail'}],actor:'art',at:new Date(clock.now()).toISOString()},'fixture-imported-work')).toMatchObject({ok:true,value:{result:{ok:true}}});
   await expect.poll(()=>a.getByRole('link',{name:'Imported work link'}).count()).toBe(1);
   await a.getByRole('link',{name:'Imported work link'}).click();
   await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);

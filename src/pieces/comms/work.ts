@@ -23,7 +23,7 @@ export function installCommsWork(o:Options) {
     const blocked=t.status!=='closed'&&blockers.has(t.id);
     const waiting=t.status!=='closed'&&t.assignee!==undefined&&Object.hasOwn(o.sharing().members,t.assignee)&&o.sharing().members[t.assignee].owner;
     items.push({ref:t.id,title:t.title.slice(0,200),from:'tasks',made:true,status:blocked?'Blocked':waiting?(t.assignee===viewer.id?'Waiting on you':`Waiting on ${t.assignee}`):t.status==='open'?'Open':t.status==='in_progress'?'In progress':t.closeReason==='cancelled'?'Cancelled':'Done',
-     ...(blocked?{tone:'bad' as const}:waiting?{tone:'warn' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`});
+     ...(blocked?{tone:'bad' as const}:waiting?{tone:'warn' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/~${encodeURIComponent(t.id)}`});
    }
   } catch {failed.push('Tasks');}
   try {
@@ -43,8 +43,13 @@ export function installCommsWork(o:Options) {
    }
   } catch {failed.push('Changes');}
   const rank=(tone:WorkItem['tone'])=>tone==='bad'?0:tone==='warn'?1:2;
-  items.sort((a,b)=>rank(a.tone)-rank(b.tone)||(Date.parse(b.when??'')||0)-(Date.parse(a.when??'')||0)||a.ref.localeCompare(b.ref));
-  return {id,items:items.slice(0,100),failed,...(expiresAt===undefined?{}:{expiresAt})};
+  // All these items are made here. Match the original piece-name precedence
+  // without mixing fields from a task and a Change sharing an imported id.
+  const unique=new Map<string,WorkItem>();
+  for(const item of [...items].sort((a,b)=>a.from.localeCompare(b.from)))if(!unique.has(item.ref))unique.set(item.ref,item);
+  const ordered=[...unique.values()];
+  ordered.sort((a,b)=>rank(a.tone)-rank(b.tone)||(Date.parse(b.when??'')||0)-(Date.parse(a.when??'')||0)||a.ref.localeCompare(b.ref));
+  return {id,items:ordered.slice(0,100),failed,...(expiresAt===undefined?{}:{expiresAt})};
  };
  o.operations.register(operation({name:'comms.work',doors:['socket'],windowOnly:true,
   input:z.object({thread:z.string().min(1).max(200)}).strict(),output:z.unknown(),

@@ -41,7 +41,7 @@ async function setup() {
 it('returns made-here visible tasks and live status without private words or retry receipts',async()=>{
  const s=await setup();s.task('t-1');s.task('t-2',s.conversation,'hidden');s.task('t-3','cv-000000000000');
  const result=await s.call('work',{thread:s.thread});
- expect(result).toMatchObject({ok:true,value:{items:[{ref:'t-1',title:'Work t-1',status:'Open',made:true,from:'tasks',url:'/p/tasks-preview/task/t-1'}],failed:[]}});
+ expect(result).toMatchObject({ok:true,value:{items:[{ref:'t-1',title:'Work t-1',status:'Open',made:true,from:'tasks',url:'/p/tasks-preview/task/~t-1'}],failed:[]}});
  expect(JSON.stringify(result)).not.toMatch(/Private words|Work t-2|Work t-3/);
  expect(s.app.db.prepare("SELECT * FROM core_operations WHERE name='comms.work'").all()).toEqual([]);
 });
@@ -160,4 +160,11 @@ it('orders warning work ahead of ordinary work and reports progress/cancelled ti
  expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2',tone:'warn'},{ref:'t-3',status:'In progress',when:'2026-11-05T01:00:00Z'},{ref:'t-1'}]}});
  mutate('close',{id:'t-3',reason:'cancelled',at:'2026-11-06T01:00:00Z'},'cancel');
  expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2'},{ref:'t-3',status:'Cancelled',when:'2026-11-06T01:00:00Z'},{ref:'t-1'}]}});
+});
+it('deduplicates made-here refs in piece-name order without mixing fields',async()=>{
+ const s=await setup();s.task('t-1',s.conversation,'pond','open','acme/app#3');s.task('github:acme/app#3');
+ replaceChanges(s.app.db,[change({project:'pond',agent:'art'})]);
+ const result=await s.call('work',{thread:s.thread});expect(result.ok).toBe(true);
+ if(result.ok){const items=(result.value as {items:{ref:string;from:string;title:string;url:string}[]}).items;
+ expect(items.filter(i=>i.ref==='github:acme/app#3')).toEqual([expect.objectContaining({from:'changes',title:'app#3 A change',url:'/p/changes-preview/change/github%3Aacme%2Fapp%233'})]);}
 });
