@@ -1,0 +1,39 @@
+name: Desk shell evidence
+on:
+  pull_request:
+    paths:
+      - 'web/src/shell/**'
+      - 'src/next*'
+      - 'src/ui/desk-shell.integration.test.ts'
+      - '.github/workflows/desk-shell-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: desk-shell-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - name: Build
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Verify desk and capture three looks at three sizes
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          LOOM_DESK_EVIDENCE=1 nice -n 19 npx vitest run src/ui/desk-shell.integration.test.ts --maxWorkers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desk-shell-${{ github.event.pull_request.head.sha }}
+          path: artifacts/desk-shell/
+          if-no-files-found: error

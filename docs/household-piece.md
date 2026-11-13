@@ -378,3 +378,31 @@ When the first owner changes, only preferences rotate between those locations
 in the same membership transaction, keeping each person's choices private.
 Core's ordinary same-id retry returns the original receipt without applying an
 older choice again; after removal, fresh reads and writes are denied.
+
+### Shell appearance controls
+
+The next shell's Appearance menu reads the member-private preference Live record
+and writes patches through `household.setPreferences` on the shared socket.
+Look (Neon Noir, Low Light, Daylight), reduced motion, higher contrast and zoom
+apply to every open window. Follow-device motion/contrast continue responding
+to device changes. Missing choices use the existing defaults; local storage
+warms first paint and is overwritten by the member's server record, including
+when they have no saved choices. Denied access resets these applied choices.
+
+Controls wait for Live data and disable during a save or disconnection. Values
+change only when the authoritative record arrives; errors are shown, and an
+unavailable save can retry the original request id. The legacy Appearance
+endpoint and page are unchanged. The existing shell browser test covers two
+windows and captures the open menu at 390, 1280 and 1920 in Neon Noir and Daylight
+under the CI shard's `artifacts/next-shell/` directory.
+
+| Old Appearance action | New shell behavior |
+| --- | --- |
+| Choose look | Appearance → Look, patch `look` |
+| Reduce motion / Higher contrast | Appearance selectors, patch `motion` / `contrast` |
+| Allow zoom | Appearance checkbox, patch `zoom` |
+
+Ground, sound, pixel faces/icons, haptics and one-window layout still require
+shell integration. Their stored backend choices remain supported; this menu
+does not claim those features are complete. Setup screenshots remain a separate
+delivery under t-2203.

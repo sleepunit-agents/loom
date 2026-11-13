@@ -11,10 +11,11 @@ export const clockCommands: CliCommand[] = [
   ...['set','rm','list','run'].map(action => ({ name: `schedule ${action}`, write: action !== 'list', positional: action === 'list' ? [] : ['name'], flags: action === 'set' ? { ...work, ...fields('at','days') } : action === 'run' ? fields('note') : {} })),
   ...['set','assign','rm','list','text'].map(action => ({ name: `lane ${action}`, write: !['list','text'].includes(action), positional: action === 'list' ? [] : ['name'], flags: action === 'set' ? { ...work, ...fields('agent','at','days','local','no-local') } : action === 'assign' ? fields('agent') : {} })),
   { name: 'vouch', write: true, positional: ['ids'] },
-  ...['ask-vouch','relay','relays','run','reap','fire','bundle','api','ui'].map(name => ({ name })),
+  { name: 'ask-vouch', write: true, positional: ['ids'] },
+  ...['relay','relays','run','reap','fire','bundle','api','ui'].map(name => ({ name })),
 ];
 export const clockOperationCommands: Record<string,string> = {
-  vouch:'vouch', at:'at', in:'in', park:'park', list:'list', log:'log', cancel:'cancel', pause:'pause', resume:'resume', now:'now', rearm:'rearm',
+  vouch:'vouch', askVouch:'ask-vouch', at:'at', in:'in', park:'park', list:'list', log:'log', cancel:'cancel', pause:'pause', resume:'resume', now:'now', rearm:'rearm',
   scheduleSet:'schedule set', scheduleRemove:'schedule rm', schedules:'schedule list', scheduleRun:'schedule run',
   laneSet:'lane set', laneAssign:'lane assign', laneRemove:'lane rm', lanes:'lane list', laneText:'lane text',
 };

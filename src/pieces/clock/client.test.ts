@@ -71,7 +71,7 @@ it('retains central policy and refuses forged identity, malformed grammar and un
   expect(a.run(['in','1h','-p','Work','--note']).exit).toBe(2);
   expect(a.run(['in','1h','-p','Work','-f','routines/x.md']).exit).toBe(1);
   expect(a.run(['lane','set','care','--agent','art','--at','08:31','-f','missing.md']).exit).toBe(1);
-  expect(a.run(['ask-vouch','w-old']).stderr).toContain('not implemented yet');
+  expect(a.run(['ask-vouch','w-old']).stderr).toContain('Permission denied');
   expect(a.run(['fire','w-old']).exit).toBe(1);
   expect(a.run(['relay','--to','mark','--say','hi'])).toEqual({exit:1,stdout:'',stderr:'wake: relays moved to loom\'s runtime: use the relay tool (to, say, why?, reply_to?, from?, approval?), or from a house: loom runtime relay --to <agent> --say "…" [--reply-to r-…] [--approval a-…]; loom runtime relays lists them\n'});
   expect(wakes(a.db)).toEqual([]);
