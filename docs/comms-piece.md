@@ -56,7 +56,7 @@ data does not remove the behavior it delivered.
 | Old surface | New home | State / remaining behavior |
 | --- | --- | --- |
 | `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list and pins work; background jobs, stale working state and aggregate unread still missing. |
-| `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; enforce old 16-character base32 client ids and retain them with drafts. |
+| `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend input validation still needs to enforce the same format. |
 | `/comms/agents`, `agentsComms` | `comms.agents` | Partial: owned ids only; last thread, unread reply count and first unread line missing. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
 | `/send`, `addMemberMessage`, `resendMessage`, delivery receipts | `comms.send`, `comms.resend`, runtime role | Partial: encrypted row and dedupe work; durable delivery/restart reconciliation, stale sends, busy and precise runtime errors missing. |
@@ -82,7 +82,7 @@ data does not remove the behavior it delivered.
 | `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Missing: recipient rule, quoted attachment, validation, about-key matching and five recent owned threads. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
 | Push and desktop unread integration | Attention/frame notification seam | Missing: opener-only destinations, foreground/background suppression, no private words on shared events. |
-| Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread draft text work; stable draft ids, reply following/scroll behavior, attachment/ref rendering and disconnected/reconnect parity need completion. |
+| Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following/scroll behavior, attachment/ref rendering and disconnected/reconnect parity need completion. |
 
 ## Offline import
 
