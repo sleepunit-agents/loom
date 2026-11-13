@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
@@ -147,6 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ends an agent's own sessions when it's done.
 
 ### Added
+
+- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
   other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner

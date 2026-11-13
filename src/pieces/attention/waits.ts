@@ -9,6 +9,8 @@ export interface AttentionWaits {
   /** Undefined means absent, invisible or unavailable; never means gone. */
   approval?(id: string, viewer: Viewer): { state: string } | undefined;
   task?(id: string, viewer: Viewer): { status: string } | undefined;
+  /** Only an owning role's matching, attributed answer since this ask. */
+  taskAnswered?(id: string, ask: string, since: number, viewer: Viewer): boolean | undefined;
 }
 const approvalReasons: Readonly<Record<string, string>> = {
   allowed: 'the approval was allowed', used: 'the approval was allowed and used',
@@ -35,7 +37,11 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
         if ('approval' in ask.waits_on) {
           const result = waits.approval?.(ask.waits_on.approval, ctx.viewer);
           if (result && Object.hasOwn(approvalReasons, result.state)) reason = approvalReasons[result.state];
-        } else if (waits.task?.(ask.waits_on.task, ctx.viewer)?.status === 'closed') reason = `${ask.waits_on.task} is closed`;
+        } else {
+          const task = waits.task?.(ask.waits_on.task, ctx.viewer);
+          if (task?.status === 'closed') reason = `${ask.waits_on.task} is closed`;
+          else if (task && ['open', 'in_progress'].includes(task.status) && waits.taskAnswered?.(ask.waits_on.task, ask.ask, ask.createdAt, ctx.viewer) === true) reason = `you answered it on ${ask.waits_on.task}`;
+        }
       } catch { return ask; }
       if (!reason) return ask;
       // Use the existing operation so policy, transaction, live changes and rollback stay central.
