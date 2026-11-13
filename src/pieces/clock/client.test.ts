@@ -1,5 +1,7 @@
+import { Readable } from 'node:stream';
+import { runWakeClient } from '../../cli/wake-client.js';
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,7 +17,7 @@ const owner: Viewer = {kind:'member',id:'jonathan'};
 async function setup() {
   const home=mkdtempSync(join(tmpdir(),'clock-cli-'));dirs.push(home);
   const clock=new FakeClock(Date.parse('2026-11-13T15:00:00Z'));
-  const app=await startLoom({home,clock, install(app){const jobs=installClock(app.db,app.operations,app.live,()=>({members:{jonathan:{owner:true,agents:['art','other']}},projects:{},services:{}}),{approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}});app.onClose(jobs.close);}});closes.push(()=>app.close());
+  const app=await startLoom({home,clock, authenticate:req => req.headers.authorization === 'Bearer fixture-token' ? {viewer:owner,valid:()=>true} : undefined, install(app){const jobs=installClock(app.db,app.operations,app.live,()=>({members:{jonathan:{owner:true,agents:['art','other']}},projects:{},services:{}}),{approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}});app.onClose(jobs.close);}});closes.push(()=>app.close());
   const run=(argv:string[],viewer=owner,id=randomUUID(),laneFile?:{path:string;text:string})=>{
     const answer=app.operations.call('http',viewer,'clock.command',{argv,agent:'art',laneFile},id);
     if(!answer.ok)throw Error(JSON.stringify(answer));return answer.value as CommandAnswer;
@@ -77,4 +79,17 @@ it('shows already-scheduled output without duplicate work, respects global agent
   expect(answer).toEqual({exit:0,stdout:`already scheduled: other/care, next at ${clockTime(due)} (nothing armed)\n`,stderr:''});
   expect(wakes(a.db)).toHaveLength(1);
   expect(a.run(['schedule','list']).stdout).toBe('art has no schedules\n');
+});
+
+it('crosses the real HTTP door and retries a lost committed response without another wake',async()=>{
+  const a=await setup(), token=join(dirs.at(-1)!,'token');writeFileSync(token,'fixture-token');
+  let stdout='',stderr='',calls=0;const bodies: string[]=[];
+  const code=await runWakeClient(['in','1h','-p','Continue'],{
+    env:{LOOM_URL:a.url,LOOM_TOKEN_FILE:token,WAKE_AGENT:'art'},stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>stdout+=s,stderr:s=>stderr+=s,
+  },{request:async(url,init)=>{
+    bodies.push(String(init?.body));const response=await fetch(url,init);
+    if(++calls===1){await response.body?.cancel();throw Error('lost response');}return response;
+  },retry:async()=>{}});
+  expect(code).toBe(0);expect(stderr).toBe('');expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
+  const rows=wakes(a.db);expect(rows).toHaveLength(1);expect(stdout).toBe(`${rows[0].id} will wake at 2026-11-13 10:00:00\n`);
 });

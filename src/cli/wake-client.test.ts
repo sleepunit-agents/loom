@@ -65,3 +65,18 @@ it('redacts the credential in command error stderr inside a successful envelope'
   const a=setup();a.request.mockResolvedValue(new Response(JSON.stringify({ok:true,value:{stdout:'',stderr:'invalid credential test-bearer\n',exit:1}})));
   expect(await a.run()).toBe(1);expect(a.output()).toEqual({stdout:'',stderr:'invalid credential [redacted]\n'});expect(a.request).toHaveBeenCalledTimes(1);
 });
+
+it('reads only lane set file text on the caller and leaves timed file paths untouched',async()=>{
+  const a=setup({WAKE_AGENT:'art'}), path='routines/care.md';
+  a.request.mockImplementation(async()=>new Response(JSON.stringify({ok:true,value:{stdout:'set\n',stderr:'',exit:0}})));
+  expect(await a.run(['in','1h','-f',path])).toBe(0);
+  expect(JSON.parse(String(a.request.mock.calls[0][1]?.body)).input).toEqual({argv:['in','1h','-f',path],agent:'art'});
+  const file=join(dirs.at(-1)!,'lane.md');writeFileSync(file,'Whole lane\n');
+  expect(await a.run(['lane','set','care','--at','08:31',`--prompt-file=${file}`])).toBe(0);
+  expect(JSON.parse(String(a.request.mock.calls[1][1]?.body)).input.laneFile).toEqual({path:file,text:'Whole lane\n'});
+});
+it('does not treat option values mentioning a file flag as instructions to open it',async()=>{
+  const a=setup();a.request.mockResolvedValue(new Response(JSON.stringify({ok:true,value:{stdout:'ok',stderr:'',exit:0}})));
+  expect(await a.run(['lane','set','care','--note','--prompt-file=missing','-p','Words'])).toBe(0);
+  expect(JSON.parse(String(a.request.mock.calls[0][1]?.body)).input.laneFile).toBeUndefined();
+});
