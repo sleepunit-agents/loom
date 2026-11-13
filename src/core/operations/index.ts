@@ -104,7 +104,13 @@ export class Operations {
         const old = this.db.prepare('SELECT name,input_hash FROM core_operations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as {name:string;input_hash:string}|undefined;
         if (old && (old.name !== receipt.name || old.input_hash !== receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
         let recovered: RecoveredWrite | undefined;
-        for (const recover of this.recoveries) { recovered = recover(ctx); if (recovered) break; }
+        for (const recover of this.recoveries) {
+          const candidate = recover(ctx);
+          if (candidate) {
+            if (recovered) throw new OperationError('conflict','Multiple recovery receipts');
+            recovered = candidate;
+          }
+        }
         if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > now + 30 * 86400_000)
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};

@@ -20,5 +20,5 @@ export function startSecretReconciliation(app: Foundation, recovery: ReturnType<
   // At most one check per interval, even after a large clock advance. Restart
   // checks immediately; failed/negative evidence never releases the lock.
   cancel = app.operations.clock.at(app.operations.clock.now(),()=>{void run();});
-  return {run,close};
+  return {run,close,idle:()=>running ?? Promise.resolve()};
 }

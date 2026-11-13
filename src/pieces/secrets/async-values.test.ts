@@ -321,3 +321,22 @@ it('automatic remove clears grants once and never overwrites later edits on a re
   expect(await next.call('secrets.remove',input,'auto-remove')).toMatchObject({ok:true});
   expect(JSON.parse((next.app.db.prepare('SELECT record FROM secrets_names').get() as {record:string}).record).description).toBe('later');expect(holder.remove).toHaveBeenCalledTimes(1);
 });
+it('retries on the injected clock without manual runs, coalesces large advances and cancels on close',async()=>{
+  const holder=fake();holder.set.mockRejectedValueOnce(Error('lost'));const s=await setup(holder);
+  expect(await s.call('secrets.set',s.input,'clock-auto')).toMatchObject({code:'unavailable'});
+  holder.hasReceipt.mockClear();const job=startSecretReconciliation(s.app,s.recovery);
+  s.clock.advance(0);await job.idle();expect(holder.hasReceipt).toHaveBeenCalledTimes(1);expect(s.rows()[0].state).toBe('pending');
+  holder.receipts.add(s.rows()[0].holder_id);s.clock.advance(60_000);await job.idle();
+  expect(holder.hasReceipt).toHaveBeenCalledTimes(2);expect(s.rows()[0].state).toBe('complete');
+  await s.app.close();s.clock.advance(31*86400_000);await job.idle();expect(holder.hasReceipt).toHaveBeenCalledTimes(2);
+});
+it('positive daemon evidence can reconcile an in-flight lost reply without allowing obsolete completion to overwrite later work',async()=>{
+  const holder=fake(),s=await setup(holder);let release!:()=>void;
+  holder.set.mockImplementationOnce(who=>new Promise<void>(r=>{holder.receipts.add(who.writeId);release=r;}));
+  const original=s.call('secrets.set',s.input,'in-flight');await Promise.resolve();await Promise.resolve();
+  expect(holder.set).toHaveBeenCalledTimes(1);const job=startSecretReconciliation(s.app,s.recovery);await job.run();expect(s.rows()[0].state).toBe('complete');
+  expect(await s.call('secrets.set',{...s.input,mode:'replace',value:'later',writeId:randomUUID()},'later-flight')).toMatchObject({ok:true});
+  const before=s.app.db.prepare('SELECT * FROM secrets_names').all();release();expect(await original).toMatchObject({ok:true});
+  expect(s.app.db.prepare('SELECT * FROM secrets_names').all()).toEqual(before);expect(s.rows().map(r=>r.state)).toEqual(['complete','complete']);
+  expect(s.app.db.prepare('SELECT commit_order FROM secrets_write_intents ORDER BY sequence').all()).toEqual([{commit_order:1},{commit_order:2}]);expect(holder.set).toHaveBeenCalledTimes(2);
+});
