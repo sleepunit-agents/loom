@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
@@ -25,8 +26,8 @@ async function setup(hook: (ctx: Context, ask: Ask) => void = () => {}, supplied
     a.operations.register(operation({ name: 'fixture.other', write: true, input: z.object({ id: z.string() }), output: z.null(), may: () => true,
       run(ctx, input) { other.resolve(ctx, input.id, 'Cross source'); return null; } }));
   } }); closes.push(app.close);
-  let seq = 0;
-  const call = (name: string, input: unknown, viewer = owner) => app.operations.call('direct', viewer, name, input, `op-${++seq}`);
+  let seq = 0; const session = randomUUID();
+  const call = (name: string, input: unknown, viewer = owner) => app.operations.call('direct', viewer, name, input, `op-${session}-${++seq}`);
   return { home, app, call, source: source! };
 }
 it('bounds a source to household scope, its own records and the enclosing database transaction', async () => {
@@ -64,6 +65,7 @@ it('never promotes a public source label into a capability when the source is in
   expect(first.call('attention.raise', { id: 'forged', agent: agent.id, ask: 'Forged scope?', answers: 'yes-no', source: { kind: 'piece', id: 'fixture' } }, agent).ok).toBe(true);
   await first.app.close(); closes.pop();
   const hook = vi.fn(); const second = await setup(hook, first.home);
+  expect(second.call('attention.raise', { id: 'forged', agent: agent.id, ask: 'Changed?', answers: 'yes-no', source: { kind: 'piece', id: 'fixture' } }, agent)).toMatchObject({ ok: true, value: { ask: 'Forged scope?', agent: agent.id, state: 'open' } });
   expect(second.call('fixture.raise', { id: 'forged' }, agent)).toMatchObject({ ok: false, code: 'conflict' });
   expect(second.call('fixture.other', { id: 'forged' })).toMatchObject({ ok: false, code: 'conflict' });
   expect(second.call('attention.get', { id: 'forged' })).toMatchObject({ ok: true, value: { state: 'open', agent: agent.id } });
