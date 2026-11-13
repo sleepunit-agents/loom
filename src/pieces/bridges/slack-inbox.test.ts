@@ -185,6 +185,16 @@ describe('private Slack durable raw inbox',()=>{
     await expect(f.inbox.receive(payload('EvNew'))).rejects.toThrow('binding changed');expect(()=>f.inbox.pending()).toThrow('binding changed');expect(()=>f.inbox.consume(row.id)).toThrow('binding changed');
     expect(f.app.db.prepare('SELECT state FROM bridges_slack_receipts').get()).toEqual({state:'pending'});
   });
+  it('pages in stable received/id order past retained and consumed receipts',async()=>{
+    const f=await fixture();await f.inbox.receive(payload('EvA'));await f.inbox.receive(payload('EvB'));
+    f.clock.advance(1);await f.inbox.receive(payload('EvC'));
+    const rows=f.inbox.pending();const cursor={received:rows[0].received,id:rows[0].id};
+    expect(f.inbox.pending(1,cursor)).toEqual([rows[1]]);f.inbox.consume(rows[0].id);
+    expect(f.inbox.pending(64,cursor)).toEqual(rows.slice(1));
+    expect(f.inbox.pending(64,rows[2])).toEqual([]);
+    expect(()=>f.inbox.pending(1,{received:NaN,id:cursor.id})).toThrow('cursor');
+    expect(()=>f.inbox.pending(1,{received:cursor.received,id:'invalid'})).toThrow('cursor');
+  });
   it('rejects removed setup, snapshots inputs and bounds pending pages',async()=>{
     const f=await fixture();const copy=structuredClone(venue);const inbox=slackInbox(f.app.db,f.clock,{venue:copy,app:'A123'});copy.bot='changed';await inbox.receive(payload());
     await inbox.receive(payload('Ev2'));expect(inbox.pending(1)).toHaveLength(1);

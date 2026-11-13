@@ -439,7 +439,8 @@ refusals erase raw words; metadata waits and failed normalized commits retain th
 Consumption follows the normalized commit. A failure between commits replays the
 same stable engine message ID without a second delivery.
 
-Each pass handles at most 64 raw receipts in receipt order. Failed checks retry
+Each pass handles at most 64 raw receipts in receipt order, using a received/id
+cursor to pass retained failures before wrapping to retry them. Failed checks retry
 after five seconds; backlogs schedule another bounded pass. The conservative raw
 budget starts at the immutable receipt time: exactly one hour remains eligible,
 more than an hour erases raw words and retains the deduplication tombstone. This

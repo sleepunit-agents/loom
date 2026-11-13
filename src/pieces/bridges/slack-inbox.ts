@@ -58,12 +58,15 @@ export function slackInbox(db: Db, clock: Clock, input: SlackBinding) {
     /** Bounded page for the daemon normalizer; no unbounded private-data scan.
      * A stale identity cannot read or consume the prior bot's pending receipts.
      */
-    pending(limit = 32): SlackReceipt[] {
+    pending(limit = 32, after?: Pick<SlackReceipt, 'received' | 'id'>): SlackReceipt[] {
       outsideTransaction(); current();
       if (!Number.isInteger(limit) || limit < 1 || limit > 64) throw Error('Invalid Slack receipt limit');
+      if (after && (!Number.isSafeInteger(after.received) || !/^[a-f0-9]{64}$/.test(after.id))) throw Error('Invalid Slack receipt cursor');
       const rows = db.prepare(`SELECT id,event_id,event,received FROM bridges_slack_receipts
-        WHERE venue=? AND binding=? AND state='pending' ORDER BY received,id LIMIT ?`)
-        .all(binding.venue.id, key, limit) as { id: string; event_id: string; event: string; received: number }[];
+        WHERE venue=? AND binding=? AND state='pending'
+        ${after ? 'AND (received > ? OR (received = ? AND id > ?))' : ''}
+        ORDER BY received,id LIMIT ?`)
+        .all(binding.venue.id, key, ...(after ? [after.received, after.received, after.id] : []), limit) as { id: string; event_id: string; event: string; received: number }[];
       return rows.map(row => ({ id: row.id, eventId: row.event_id, event: JSON.parse(row.event) as Record<string, unknown>, received: row.received }));
     },
     /** Call only after normalized engine.receive commits, or a definite discard.

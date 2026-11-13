@@ -39,6 +39,7 @@ async function fixture(existing?: string) {
   }
   return {home,clock,app,inbox,inspect,receive,name,current,beforeRead,drain,close};
 }
+async function until(condition:()=>boolean) { for(let n=0;n<1000;n++) { if(condition()) return; await Promise.resolve(); } throw Error('condition not reached'); }
 async function settle() { for(let n=0;n<80;n++) await Promise.resolve(); }
 function engineFor(f:Awaited<ReturnType<typeof fixture>>,runtime:BridgeRuntime,group=false) {
   const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
@@ -140,7 +141,22 @@ describe('serialized Slack raw receipt normalization',()=>{
   it('bounds a pass to 64 receipts and schedules the rest',async()=>{
     const f=await fixture();for(let n=0;n<65;n++) {await f.inbox.receive(payload(`Ev${n}`,{ts:`1793828004.${String(n).padStart(6,'0')}`}));f.clock.advance(1);}const d=f.drain();await d.flush();expect(f.receive).toHaveBeenCalledTimes(64);expect(f.inbox.pending()).toHaveLength(1);
     expect(f.receive.mock.calls.map(call=>call[1].id)).toEqual(Array.from({length:64},(_,n)=>`1793828004.${String(n).padStart(6,'0')}`));
-    f.clock.advance(5000);await settle();expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
+    f.clock.advance(5000);await until(()=>f.inbox.pending().length===0);expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
+  });
+  it('pages beyond a waiting prefix, then wraps to retry it',async()=>{
+    const f=await fixture();for(let n=0;n<65;n++) {await f.inbox.receive(payload(`Ev${n}`,{ts:`1793828004.${String(n).padStart(6,'0')}`}));f.clock.advance(1);}
+    f.inspect.mockImplementation(async(_v,message)=>message.id==='1793828004.000064'?{kind:'allow',members:['U123','U200']}:'wait');
+    const d=f.drain();await d.flush();expect(f.inspect).toHaveBeenCalledTimes(64);expect(f.receive).not.toHaveBeenCalled();
+    f.clock.advance(5000);await settle();expect(f.receive).toHaveBeenCalledOnce();expect(f.receive.mock.calls[0][1].id).toBe('1793828004.000064');
+    f.inspect.mockResolvedValue({kind:'allow',members:['U123','U200']});f.clock.advance(5000);await until(()=>f.inbox.pending().length===0);
+    expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
+  });
+  it('allows metadata begun within the raw budget to finish after the hour',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());f.clock.advance(3_600_000);
+    const metadata=deferred<Awaited<ReturnType<SlackDrainOptions['inspect']>>>();f.inspect.mockReturnValue(metadata.promise);
+    const d=f.drain();const flush=d.flush();expect(f.inspect).toHaveBeenCalledOnce();f.clock.advance(1);
+    metadata.resolve({kind:'allow',members:['U123','U200']});await flush;
+    expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
   });
   it('does not hand off or consume inside an enclosing transaction',async()=>{
     const f=await fixture();await f.inbox.receive(payload());const d=f.drain();let flush!:Promise<void>;

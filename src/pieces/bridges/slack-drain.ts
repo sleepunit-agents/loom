@@ -3,7 +3,7 @@ import type { Clock, Db } from '../../core/index.js';
 import type { Message, Venue } from './model.js';
 import type { Inspection } from './role.js';
 import { slackMessage } from './slack.js';
-import { slackInbox, type SlackBinding } from './slack-inbox.js';
+import { slackInbox, type SlackBinding, type SlackReceipt } from './slack-inbox.js';
 
 export interface SlackDrainOptions {
   db: Db;
@@ -31,6 +31,7 @@ export function slackDrain(options: SlackDrainOptions) {
   let closed = false, running: Promise<void> | undefined, again = false;
   let cancel: (() => void) | undefined, retryAt = Infinity;
   const deadlines = new Map<string, number>();
+  let cursor: Pick<SlackReceipt, 'received' | 'id'> | undefined;
   function valid() {
     if (closed) return false;
     if (db.inTransaction) { retry(); return false; }
@@ -50,7 +51,7 @@ export function slackDrain(options: SlackDrainOptions) {
   function consume(id: string) { inbox.consume(id); deadlines.delete(id); }
   async function drain() {
     if (!valid() || !options.beforeRead()) { retry(); return; }
-    const rows = inbox.pending(64);
+    const rows = inbox.pending(64, cursor);
     for (const row of rows) {
       if (!valid()) return;
       // First receipt is immutable across retries/restarts. Exactly one hour is eligible.
@@ -85,7 +86,9 @@ export function slackDrain(options: SlackDrainOptions) {
         consume(row.id);
       } catch { postpone(row.id); } // No upstream error, raw words or credentials escape.
     }
-    if (rows.length === 64) retry(); // Bounded work per pass, including large backlogs.
+    // Advance past retained failures so a waiting prefix cannot starve the rest.
+    cursor = rows.length === 64 ? { received: rows[63].received, id: rows[63].id } : undefined;
+    if (rows.length === 64 || inbox.pending(1).length) retry();
   }
   function flush(): Promise<void> {
     if (closed) return Promise.resolve();
