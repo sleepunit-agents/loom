@@ -1,5 +1,5 @@
 /** One browser proof: real operations/live feed, two windows, six looks/widths. */
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
@@ -134,11 +134,42 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText('Saved',{exact:true}).count()).toBe(1);
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
+    // Keep the pending live record constant while varying only the owning open
+    // response. This discriminates the reader's independent preflight checks.
+    let openMode: 'pass' | 'hold' | 'denied' | 'closed' = 'hold';
+    let releaseOpen: ((result: Awaited<ReturnType<typeof loom.operations.callAsync>>) => void) | undefined;
+    const opened=(open:boolean,mayAnswer:boolean)=>({ok:true as const,value:{open,mayAnswer,mayEveryTime:true,mayAlways:false}});
+    const actualCall=loom.operations.callAsync.bind(loom.operations);
+    const calls=vi.spyOn(loom.operations,'callAsync').mockImplementation((...args)=>{
+      if(args[2]==='approvals.open') {
+        if(openMode==='hold')return new Promise(resolve=>{releaseOpen=resolve;});
+        if(openMode==='denied')return Promise.resolve(opened(true,false));
+        if(openMode==='closed')return Promise.resolve(opened(false,true));
+      }
+      return actualCall(...args);
+    });
+    const decisions=()=>calls.mock.calls.filter(args=>['approvals.answer','approvals.every-time'].includes(args[2])).length;
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Local requests/}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
     const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
     await row(b,'Allow once').click();
+    await expect.poll(()=>!!releaseOpen).toBe(true);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    expect(decisions()).toBe(0);
+    releaseOpen!(opened(true,false));
+    await expect.poll(()=>b.getByText('You cannot answer this question.',{exact:true}).count()).toBe(1);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    openMode='closed';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>calls.mock.calls.filter(args=>args[2]==='approvals.open').length).toBe(2);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    openMode='closed';await b.getByRole('button',{name:'Allow',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    expect(decisions()).toBe(0);
+    expect(load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('pending');
+    openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(1);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
