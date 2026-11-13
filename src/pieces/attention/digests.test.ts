@@ -169,3 +169,28 @@ it('requires separate agent and project visibility when creating a digest', asyn
   expect(write({}, 'run-new', art)).toMatchObject({ ok: true });
   expect(call('digests', { conversation }, carol)).toMatchObject({ value: [{ run: 'run-new' }] });
 });
+it('rejects independently valid over-limit decisions, project slugs, links and reference lists', async () => {
+  const { write } = await setup();
+  const eight = Array.from({ length: 8 }, (_, n) => `t-${n + 1}`);
+  for (const digest of [
+    { decisions: ['x'.repeat(201)] }, { projects: ['x'.repeat(81)] },
+    { needs_owner: { ask: 'Continue?', href: `https://example.com/${'x'.repeat(500)}` } },
+    { needs_owner: { ask: 'Continue?', refs: [...eight, 't-9'] } },
+    { needs_owner: { ask: 'Continue?', refs: eight, waits_on: { task: 't-9' } } },
+    { needs_owner: 'Check round 9 before proceeding.' },
+  ]) expect(write(digest)).toMatchObject({ code: 'invalid' });
+});
+it('preserves explicit answer modes, valid waits_on and inferred approval references', async () => {
+  const { write, call } = await setup();
+  expect(write({ needs_owner: { ...question, answers: 'words', waits_on: { task: 't-40' } } })).toMatchObject({ value: { needs_owner: { answers: 'words', waits_on: { task: 't-40' }, refs: ['t-40'] } } });
+  expect(call('get', { id: `${digestId(conversation, 'run-1')}:1` })).toMatchObject({ value: { answers: 'words', waits_on: { task: 't-40' } } });
+  expect(call('answer', { id: `${digestId(conversation, 'run-1')}:1`, answer: { kind: 'yes' } })).toMatchObject({ code: 'invalid' });
+  expect(call('answer', { id: `${digestId(conversation, 'run-1')}:1`, answer: { kind: 'words', text: 'Choose the smaller change.' } })).toMatchObject({ ok: true });
+  expect(write({ needs_owner: { ask: 'Continue?', answers: 'yes-no', waits_on: { approval: 'a-12345678' } } })).toMatchObject({ value: { needs_owner: { refs: ['a-12345678'], waits_on: { approval: 'a-12345678' } } } });
+  expect(call('get', { id: `${digestId(conversation, 'run-1')}:2` })).toMatchObject({ value: { answers: 'yes-no' } });
+  expect(write({ needs_owner: { ask: 'Continue?', refs: ['a-12345678'] } })).toMatchObject({ value: { needs_owner: { waits_on: { approval: 'a-12345678' } } } });
+  expect(write({ needs_owner: { ask: 'Continue?', refs: ['a-12345678', 'a-87654321'] } })).toMatchObject({ ok: true });
+  const both = call('get', { id: `${digestId(conversation, 'run-1')}:4` });
+  if (!both.ok) throw new Error('missing ask');
+  expect(both.value).not.toHaveProperty('waits_on');
+});

@@ -20,4 +20,9 @@ Round 2: BLOCKING. Frozen source 83b72eef1f4a327f9d7bea9224882ad3c1163ceb; TREE 
 - CRITICAL creation used only mayAct: actionable, new digest ids now use central mayCreate (separate inherited project/agent visibility), existing immutable-scope digests use mayAct. Added shared-project member who can read the conversation but cannot see its agent separately: denied creation, permitted read after the agent creates it. Services likewise cannot create agent-scoped records without satisfying central creation policy.
 - MAJOR independent limits untested: actionable, added decisions count, tasks count, asks item length, projects count, legacy/object question length, why/if_yes/if_no/href length rejections.
 
-Round 3 pending. No further rounds after three; decide by the standing bounded-review rule.
+Round 3: BLOCKING (two MAJOR missing-test findings; no standards findings). Frozen source cae44e2360217ede2039a3b90714fe21f5cb39cd; TREE sha256:bb9e2d9c7cfd7ac0990c4f62b3ec90b743a9611df4330189eea8d3628bcebc87. /home/art/scratch/attention-digest-review/round-3/reply.md.
+
+- MAJOR remaining independent limits: actionable, added decisions item length, project slug length, a valid HTTPS URL over the href cap, nine refs, and eight refs overflowing when waits_on adds a ninth.
+- MAJOR copied question semantics: actionable, added legacy internal-word lint rejection; explicit words overriding yes/no outcome lines; explicit yes-no without lines; valid task and approval waits_on; single-approval inference and no inference with two approvals. Tested central ask mode and actual answer acceptance as well as stored digest shape.
+
+Convergence: all final substantive findings actionable and folded; no CRITICAL; two MAJOR equals the prior substantive count; exact newly covered cases were not previously claimed fixed. Stop at the standing three-round bound. Final reviewer tag remains BLOCKING and is reported as such in the PR/task. No fourth review, no known implementation hole; ship by implementer judgment on green current-head CI. Final validation: 31 attention tests across four files, TypeScript noEmit pass.
