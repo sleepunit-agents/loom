@@ -4,10 +4,35 @@ import { grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
+import { removeSecretMetadata } from './removal.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
  * The registry stores only an input hash and this fixed acknowledgement.
  */
 export function installSecretValues(db: Db, operations: Operations, sharing: () => Sharing, holder: KeyHolder) {
+  operations.register(operation({ name: 'secrets.remove', write: true,
+    input: z.object({ name, writeId: z.uuid() }).strict(), output: z.object({ removed: z.literal(true) }),
+    may: v => mayAct(v, { type: 'secret.name' }, sharing(), 'household', 'secrets.remove'),
+    run(ctx, input) {
+      const receipt = `remove:${ctx.viewer.id}:${input.writeId}`;
+      const old = db.prepare('SELECT value FROM secrets_meta WHERE key=?').get(receipt) as { value: string } | undefined;
+      if (old) {
+        if (old.value !== input.name) throw new OperationError('conflict', 'Removal write id was already used');
+        return { removed: true as const };
+      }
+      if (!db.prepare('SELECT id FROM secrets_names WHERE id=?').get(input.name)) throw new OperationError('not-found', 'Secret name not found');
+      try {
+        const acknowledgement: unknown = holder.remove(input.name, receipt);
+        if (acknowledgement instanceof Promise) {
+          void acknowledgement.catch(() => {});
+          throw new Error('Removal must acknowledge synchronously');
+        }
+      }
+      catch { throw new OperationError('unavailable', 'Key holder could not remove the secret'); }
+      removeSecretMetadata(ctx, input.name);
+      db.prepare('INSERT INTO secrets_meta VALUES (?,?)').run(receipt, input.name);
+      return { removed: true as const };
+    },
+  }));
   operations.register(operation({ name: 'secrets.set', write: true,
     input: z.object({ name, value: z.string().refine(v => Buffer.byteLength(v) > 0 && Buffer.byteLength(v) <= 64 * 1024), mode: z.enum(['add', 'replace']), writeId: z.uuid() }).strict(),
     output: z.object({ saved: z.literal(true) }),
