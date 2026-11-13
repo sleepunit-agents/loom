@@ -66,19 +66,20 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
 export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){
  const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);const path=shellPath??localPath;const selected=path.split('/thread/')[1]?`th:${path.split('/thread/')[1]}`:undefined;const base='/p/comms-preview';
  const [rowRequest,setRowRequest]=useState<Call>();const rowState=useRequest(rowRequest);
- const [folder,setFolder]=useState('live');const [creating,setCreating]=useState(false);const [agent,setAgent]=useState('');
+ const [folder,setFolder]=useState('live');const creating=path===`${base}/new`;const [agent,setAgent]=useState('');
  const {records,status}=useRecords<Thread>('thread','all');
  const [who,setWho]=useState<Call<{member:string;agents:string[]}>>();const identity=useRequest(who);
  useEffect(()=>{if(status==='live')setWho(call('comms.agents',{}));},[status]);
  const mine=identity.result?.ok?identity.result.value:undefined;
- const navigate=(id?:string)=>{const next=id?`${base}/thread/${id.replace(/^th:/,'')}`:base;if(go)go(next);else{history.pushState(null,'',next);setLocalPath(next);}setCreating(false);};
+ const visit=(next:string)=>{if(go)go(next);else{history.pushState(null,'',next);setLocalPath(next);}};
+ const navigate=(id?:string)=>visit(id?`${base}/thread/${id.replace(/^th:/,'')}`:base);
  useEffect(()=>{if(go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
  const conversationPath=path.startsWith(`${base}/conversation/`)?path.slice(`${base}/conversation/`.length):undefined;
  let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
  if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
  const listed=folderThreads(records,folder);const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
  return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'background',label:'Background work'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle={folder==='background'?'Background work':folder==='archived'?'Archived':'Threads'} listMeta={listed.length}
-  listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button><Answer request={rowRequest}/></div>}
+  listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>visit(`${base}/new`)}>New thread</Button><Answer request={rowRequest}/></div>}
   list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{listed.map(t=><ThreadRow key={t.id} thread={t} selected={selected===t.id} disabled={status!=='live'||rowState.pending} onOpen={()=>navigate(t.id)} onAction={action=>setRowRequest(call('comms.change',{thread:t.id,action}))}/>)}</List>}
   reader={creating&&mine?<div className="grid gap-3 p-4"><h1>New thread</h1><label>Agent<select value={ownedAgent} onChange={e=>setAgent(e.target.value)}>{mine.agents.map(id=><option key={id}>{id}</option>)}</select></label>{ownedAgent?<Composer key={ownedAgent} member={mine.member} agent={ownedAgent} onOpened={navigate} enabled={status==='live'}/>:<Empty title="No agents available"/>}</div>:current?<ThreadReader key={current.id} thread={current} onDeleted={()=>navigate()}/>:selected?<Empty title="This thread is no longer in view"/>:null}
   open={!!selected||creating} onBack={()=>navigate()} backLabel="Threads" blank={<Empty title="Open a thread" text="Choose a thread or start one with your agent."/>}/>

@@ -12,9 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Compose explicit authenticated Secrets mutations, retained retry keys and automatic recovery in next startup, with per-write staging holds.
+- Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
 
 - Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
+- Compose explicit authenticated Secrets mutations, retained retry keys and automatic recovery in next startup, with per-write staging holds.
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
 - Persist Runtime owner gates and policy with revision-bound edits and exact archived proposal adoption, refusing unreconciled source restrictions.
 
@@ -25,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
 
 ### Added
+
+- Clock links local-work requests to private chat; its browser proof now files through a real Runtime-bound body before owner review and scheduling.
 
 - Clock’s owning local-request reader now reviews explicit timing and schedules saved private words with one-time or existing every-time authority; Runtime delivery remains held.
 
