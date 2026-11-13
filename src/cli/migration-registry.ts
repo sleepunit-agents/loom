@@ -32,7 +32,7 @@ export interface MigrationImporter<Options = unknown> {
 }
 
 /** Resolve only existing snapshot inputs, including directories containing old stores. */
-export function snapshotPath(context: MigrationContext, path: string): string {
+export function snapshotPath(context: Pick<MigrationContext, 'snapshot'>, path: string): string {
   if (!path || isAbsolute(path)) throw Error('Snapshot input must be relative');
   const root = realpathSync(context.snapshot.root);
   const target = realpathSync(resolve(root, path));

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Attention: public yes/no asks also accept a words answer in Inbox and Home; unsent drafts guard other answers, and private reply words are refused before central storage.
+- Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
 - Name owned Home cards from live shared-directory People entries and open their exact contact pages.
+- Attention: public yes/no asks also accept a words answer in Inbox and Home; unsent drafts guard other answers, and private reply words are refused before central storage.
 - Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
@@ -960,6 +961,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rollback or new settings, and removed with the piece. `keepChildren: true`
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
+
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
 
 ## [0.16.1] - 2026-10-25
 
