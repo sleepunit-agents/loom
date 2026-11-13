@@ -27,6 +27,11 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
  const put=(request:OwnerRequest)=>db.prepare('INSERT INTO runtime_owner_requests VALUES (?,?) ON CONFLICT(target) DO UPDATE SET record=excluded.record').run(request.target,JSON.stringify(request));
  const heard=(job:string)=>(db.prepare('SELECT heard_at FROM runtime_job_heartbeats WHERE job=?').get(job) as {heard_at:number}|undefined)?.heard_at;
  const owner=(v:Parameters<typeof mayAct>[0])=>mayAct(v,{type:'runtime.box'},sharing(),'household');
+ const revoke=(job:string,now:number)=>{
+  if(!credentials)throw new OperationError('unavailable','Central credential revocation is not installed');
+  const result=credentials.revokeJob(db,{job,now});
+  if((result as unknown) instanceof Promise){(result as unknown as Promise<unknown>).catch(()=>{});throw new OperationError('unavailable','Credential revocation must be synchronous');}
+ };
  const boxReady=(box:string,now:number)=>{
   const b=store.read('box',box);
   if(!b||b.local||b.revokedAt!==undefined||b.reportOnly||b.lastSeen===undefined||now-b.lastSeen<silence)throw new OperationError('conflict','This remote box has not been silent for ten minutes');
@@ -72,7 +77,9 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
    // A request made through some other service is not this owning snapshot.
    // Check BEFORE request(), which may enrich a legacy pending card.
    if(owningApprovalCards(db,'box-write-off',target,input.agent).length)throw new OperationError('conflict','An existing card has no matching runtime snapshot');
-   const details=`Box ${b.id}, last heard ${new Date(b.lastSeen!).toISOString()}. Covered jobs: ${jobs.map(j=>j.id).join(', ')}. Only these jobs are written off.`;
+   const heading=`Box ${b.id}, last heard ${new Date(b.lastSeen!).toISOString()}. Covered work: all ${jobs.length} live nonprivate, nonservice jobs for ${input.agent} on this box when this card was filed. Later jobs are excluded.`;
+   const listing=` Job ids: ${jobs.map(j=>j.id).join(', ')}.`;
+   const details=heading+(heading.length+listing.length<=1000?listing:'');
    const r=approvals.call('request',{who:{agent:input.agent,where:"loom's runtime (runtime)"},for:'owner'}, {kind:'box-write-off',target,ask:'Write off this silent box’s covered work?',why:'The box stopped reporting and its covered work cannot be confirmed.',if_yes:'The listed work ends without history and its body credentials stop working.',if_no:'Nothing changes.',details},`runtime-writeoff:${target}`);
    if(!r.ok)throw new OperationError(r.code,r.message);
    const card=r.value as Approval;
@@ -100,8 +107,7 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
      const job=store.read('job',jobId)!;
      if(job.agent!==request.agent||job.conversation!==request.conversation)continue;
      if(job.member!==undefined)throw new OperationError('conflict','Private membership cannot be reset');
-     const result=credentials.revokeJob(db,{job:job.id,now:ctx.now});
-     if((result as unknown) instanceof Promise){(result as unknown as Promise<unknown>).catch(()=>{});throw new OperationError('unavailable','Credential revocation must be synchronous');}
+     revoke(job.id,ctx.now);
      if(live.has(job.state)&&job.endedAt===undefined){const {changedAt:_,...prior}=job;store.put('job',{...prior,state:'stopped',endedAt:ctx.now,principalReset:{approval:a.id,by:ctx.viewer.id,at:ctx.now}},ctx.now);ctx.changed('runtime.job',job.id);}
     }
     const {changedAt:_,home:_home,job:_job,...clean}=binding;
@@ -118,8 +124,7 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
    });
    if(!credentials)throw new OperationError('unavailable','Central credential revocation is not installed');
    for(const {changedAt:_,...j} of jobs){
-    const result=credentials.revokeJob(db,{job:j.id,now:ctx.now});
-    if((result as unknown) instanceof Promise){(result as unknown as Promise<unknown>).catch(()=>{});throw new OperationError('unavailable','Credential revocation must be synchronous');}
+    revoke(j.id,ctx.now);
     store.put('job',{...j,state:'lost',endedAt:ctx.now,writtenOff:{approval:a.id,by:ctx.viewer.id,at:ctx.now}},ctx.now);ctx.changed('runtime.job',j.id);
    }
    ctx.changed('core.access','credentials');put({...request,applied:{by:ctx.viewer.id,at:ctx.now}});return {applied:true as const};

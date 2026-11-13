@@ -854,7 +854,9 @@ and committed notifications succeed together or roll back together.
 | hostHeard | authenticated runtime.bodyHeartbeat, private body operations and runner report timestamps |
 
 Reset applies only to nonprivate household-owned conversations with no named
-nonowner history. Private Comms membership remains unchanged. The card lists at
+nonowner history. Household-owned means its assigned owners equal all household
+owners (or it has no specific assignment and inherits all household owners); an
+agent assigned to just one of two household owners is not household-owned here. Private Comms membership remains unchanged. The card lists at
 most twelve eligible source descriptions within 650 characters. Only those
 original keys can be adopted; late arrivals are recounted. Person sources and
 explicitly named wakes are never adopted. The owner attestation retains its
@@ -871,7 +873,10 @@ not let a source retry rewrite sender history. Queue consumption keeps history.
 
 Write-off requires a remote active non-report-only box silent for ten minutes,
 and snapshots only live, nonprivate, nonservice jobs for the requested agent.
-The card binds the exact box heartbeat epoch and covered body heartbeat times.
+The card covers all eligible jobs present at filing, states their count, and
+lists ids when the whole list fits its 1000-character limit; the durable owning
+request always retains the complete exact set. This keeps large covered sets
+recoverable without silently dropping jobs. The card binds the exact box heartbeat epoch and covered body heartbeat times.
 A renewed box or covered body report prevents Allow. Administrative job writes
 never count as heartbeat. Later jobs, private jobs, services, runner credentials,
 box configuration and preferences are untouched. Covered body credentials are

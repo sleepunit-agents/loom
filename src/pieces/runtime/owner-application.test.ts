@@ -158,3 +158,43 @@ it('applies reset through next HTTP only after a successful atomic receipt and p
  expect(await post('reset-success')).toMatchObject({ok:true});expect(await post('reset-success')).toMatchObject({ok:true});expect(await post('new-answer')).toMatchObject({ok:false});
  expect(p.read(f.conversation)).toMatchObject({history:{owner:true,unknown:false},reset:{approval}});expect(signin(app).tokens.document()!.tokens.find(t=>t.label==='old-body')?.revoked).toBeDefined();
 });
+
+it.each([{local:true},{revokedAt:1},{reportOnly:true},{lastSeen:undefined},{lastSeen:'recent'}])('refuses initial ineligible box %j',async(patch)=>{
+ const f=await setup();f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('box','r1')!;f.store.put('box',{...b,...patch,lastSeen:patch.lastSeen==='recent'?f.clock.now():Object.hasOwn(patch,'lastSeen')?patch.lastSeen:b.lastSeen} as typeof b,1);})();
+ expect(f.call('runtime.askWriteOff',{agent:'art',box:'r1'}).ok).toBe(false);expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_owner_requests').get()).toEqual({n:0});
+});
+it('refuses a recently heard covered body at initial filing',async()=>{
+ const f=await setup();f.app.db.prepare('INSERT INTO runtime_job_heartbeats VALUES (?,?)').run('covered',f.clock.now());
+ expect(f.call('runtime.askWriteOff',{agent:'art',box:'r1'}).ok).toBe(false);
+});
+it('retains the full covered set when job ids exceed the card detail budget',async()=>{
+ const f=await setup();f.app.db.transaction(()=>{for(let n=0;n<40;n++){const id=`long-job-${String(n).padStart(3,'0')}-`+'a'.repeat(80);f.store.put('job',{id,agent:'art',box:'r1',runner:'r1',title:'work',state:'running',createdAt:1},1);}})();
+ const approval=f.ask(),request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
+ expect(request.jobs).toHaveLength(42);expect(request.card.details.length).toBeLessThanOrEqual(1000);expect(request.card.details).toContain('all 42');
+ expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});for(const j of request.jobs)expect(f.store.read('job',j.id)?.writtenOff?.approval).toBe(approval);
+});
+it.each(['lost','uncertain'] as const)('never turns ordinary %s into discarded history',async(state)=>{
+ const f=await setup();f.app.db.transaction(()=>{const {changedAt:_,...j}=f.store.read('job','covered')!;f.store.put('job',{...j,state},1);})();
+ expect(f.call('runtime.jobControl',{job:'covered'},{kind:'runner',id:'r1'})).toEqual({ok:true,value:{stop:false,history:'unknown'}});
+});
+it('binds original card contents and not just its id',async()=>{
+ const f=await resetSetup(),approval=f.ask();
+ f.app.db.prepare("UPDATE approvals_approvals SET record=json_set(record,'$.details','different covered work') WHERE id=?").run(approval);
+ expect(f.call('approvals.answer',{id:approval,action:'allow'}).ok).toBe(false);expect(f.store.read('job','covered')?.state).toBe('running');
+});
+it('bounds displayed reset source descriptions and adopts only the exact listed keys',async()=>{
+ const f=await resetSetup();f.app.db.transaction(()=>{for(let n=0;n<20;n++)f.p.note(f.conversation,'art',{key:`relay-${n}`,sender:{kind:'agent'},at:n+10},['jonathan']);})();
+ const approval=f.ask(),request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
+ expect(request.shown.length).toBeGreaterThan(0);expect(request.shown.length).toBeLessThanOrEqual(12);expect(request.shown.reduce((sum:number,r:{words:string})=>sum+r.words.length+2,0)).toBeLessThanOrEqual(650);expect(request.shown.length).toBeLessThan(22);
+ expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});expect(f.p.read(f.conversation)?.history.unknown).toBe(true);
+});
+it('revokes terminal jobs holding the previous reset transcript too',async()=>{
+ const f=await resetSetup(),auth=signin(f.app);
+ f.app.db.transaction(()=>{const {changedAt:_,...j}=f.store.read('job','done')!;f.store.put('job',{...j,conversation:f.conversation},1);auth.tokens.replace({v:1,tokens:[{role:'agent:art@done',sha256:hash('terminal-fixture'),label:'old-done',created:new Date(f.clock.now()).toISOString()}]},{});})();
+ const approval=f.ask();expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});expect(auth.tokens.document()!.tokens[0].revoked).toBeDefined();expect(f.store.read('job','done')).toMatchObject({state:'done',endedAt:2});
+});
+it('enforces the description character budget independently of the twelve-row bound',async()=>{
+ const f=await resetSetup();f.app.db.transaction(()=>{f.p.consumed(f.conversation,['shown-relay','shown-wake','named-wake']);for(let n=0;n<20;n++)f.p.note(f.conversation,'art',{key:`wake-${n}`,sender:{kind:'schedule',for:'-'},at:n+10},['jonathan']);})();
+ f.ask();const request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
+ expect(request.shown.length).toBeLessThan(12);expect(request.shown.reduce((sum:number,r:{words:string})=>sum+r.words.length+2,0)).toBeLessThanOrEqual(650);
+});
