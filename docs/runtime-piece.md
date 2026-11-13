@@ -1023,7 +1023,10 @@ Bridges intake/replies and their notifications remain unfinished full-rebuild wo
 `body-policy.ts` ports the old `policy.mjs` compilation boundary without
 installing a public operation. The owning source must supply authenticated
 senders, current gates and policy, complete platform roster and current
-principal history. Adapter tiers, grants, cards and brief prose cannot supply
+principal history. Platform descriptions explicitly name `kind: channel|dm|group`;
+DMs and groups require the complete member roster, while channels use owner
+policy and gate venue readers. Missing kind or malformed gate keys refuse.
+Adapter tiers, grants, cards and brief prose cannot supply
 that authority. Standing restrictions follow every named person; standing
 authority appears only for a tier-2 person alone, asking solely for themselves,
 with no other or unknown historical sender or owner participation.

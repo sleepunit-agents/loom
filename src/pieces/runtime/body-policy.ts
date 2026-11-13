@@ -14,7 +14,7 @@ const words = z.union([z.string(), z.array(z.string()), z.record(z.string(), z.u
 const entry = z.object({name:z.string().optional(),tier:z.number().int().min(1).max(3).optional(),
   grant:words.optional(),restrict:words.optional(),venues:z.array(z.string()).optional(),kind:z.string().optional()}).passthrough();
 const metadataOnly = (keys: string[]) => (doc: Record<string, unknown>) => Object.keys(doc).every(k => keys.includes(k) || k.startsWith('_'));
-export const bodyGates = z.object({people:z.record(z.string(),entry).default({}),agents:z.record(z.string(),entry).default({})})
+export const bodyGates = z.object({people:z.record(slug,entry).default({}),agents:z.record(slug,entry).default({})})
   .passthrough().refine(metadataOnly(['people','agents']));
 export const bodyPolicy = z.object({deny:tools.optional(),guest_deny:tools.optional(),
   briefs:z.object({guest:file.optional(),peer:file.optional(),venues:z.record(venue,file).optional(),
@@ -69,6 +69,10 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   const gates=parsed.success?parsed.data:undefined;
   const person=(s:string)=>own(gates?.people,s);
   const tier=(s:string)=>person(s)?.tier;
+  // Channels use configured readers/guest venues. DMs and groups require the
+  // entire authenticated membership; an empty description is never a channel.
+  if(platform&&!['channel','dm','group'].includes(String(about.kind)))fail('Platform audience kind is required');
+  if(platform&&about.kind!=='channel'&&about.members===undefined)fail('The complete roster is required');
   const roster=about.members;
   if(roster!==undefined&&(!Array.isArray(roster)||!roster.length||roster.length>12||new Set(roster).size!==roster.length||!roster.every(s=>slug.safeParse(s).success)))fail('The complete roster is required');
   const members=(roster??[]) as string[];
@@ -130,7 +134,7 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   }
   if(about.peer===true){
     const peers=Object.entries(gates?.agents??{}).filter(([s])=>s!==c.agent).map(([s,e])=>name(s,e));
-    text(`This is a peer venue: other agents talk here (${peers.join('; ')}). A person's message that's only stop ends your work here.\n`);
+    text(`This is a peer venue: other agents talk here (${peers.join('; ')})${typeof about.pair==='string'&&about.pair.length<=40?`; it is a pair channel with ${about.pair}`:''}. A person's message that's only stop ends your work here.\n`);
     if(briefs.peer)addFile(briefs.peer,"a peer venue's rules");
   }
   if(core)for(const line of list(about.brief,z.string().min(1).max(300).regex(/^[^\x00-\x1f\x7f]+$/),3))text(`${line}\n`);
