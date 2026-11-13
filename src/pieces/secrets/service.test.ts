@@ -29,10 +29,10 @@ async function setup() {
 }
 it('requires an owner service grant, distinguishes agent identity and rereads revoke, expiry and never', async () => {
   const {app, call, clock, source, role} = await setup();
-  const use = vi.fn(async () => ({count: 2}));
-  await expect(role().withValue('github', use)).rejects.toMatchObject({code:'denied'});
+  const use = vi.fn(async () => ({count: 2})), bound = role();
+  await expect(bound.withValue('github', use)).rejects.toMatchObject({code:'denied'});
   expect(call('grant', {agent:'changes', kind:'secret', target:'github'}).ok).toBe(true);
-  await expect(role().withValue('github', use)).rejects.toMatchObject({code:'denied'});
+  await expect(bound.withValue('github', use)).rejects.toMatchObject({code:'denied'});
   const grant = {service:'changes', name:'github', expiresAt:clock.now()+1000};
   for (const viewer of [{kind:'member',id:'pollock'}, {kind:'agent',id:'changes'}, {kind:'service',id:'changes'}, {kind:'runner',id:'one'}] as Viewer[]) {
     expect(call('grantService', grant, viewer)).toMatchObject({ok:false,code:'denied'});
@@ -44,15 +44,15 @@ it('requires an owner service grant, distinguishes agent identity and rereads re
   for (const viewer of [{kind:'member',id:'jonathan'}, {kind:'agent',id:'changes'}, {kind:'service',id:'discord'}, {kind:'runner',id:'one'}] as Viewer[]) await expect(role(viewer).withValue('github',use)).rejects.toMatchObject({code:'denied'});
   expect(source.read).not.toHaveBeenCalled();
   clock.advance(999);
-  await expect(role().withValue('github',use)).resolves.toEqual({count:2});
+  await expect(bound.withValue('github',use)).resolves.toEqual({count:2});
   clock.advance(1);
-  await expect(role().withValue('github',use)).rejects.toMatchObject({code:'denied'});
+  await expect(bound.withValue('github',use)).rejects.toMatchObject({code:'denied'});
   expect(call('grantService', {service:'changes',name:'github'}).ok).toBe(true);
   expect(call('policy', {secrets:{github:{grant:'never'}}}).ok).toBe(true);
-  await expect(role().withValue('github',use)).rejects.toMatchObject({code:'denied'});
+  await expect(bound.withValue('github',use)).rejects.toMatchObject({code:'denied'});
   call('policy', {});
   expect(call('revokeService', {service:'changes',name:'github'}).ok).toBe(true);
-  await expect(role().withValue('github',use)).rejects.toMatchObject({code:'denied'});
+  await expect(bound.withValue('github',use)).rejects.toMatchObject({code:'denied'});
   expect(use).toHaveBeenCalledTimes(1);
 });
 it('never stores value bytes, emits Live changes or propagates holder/callback errors; erases the leased buffer', async () => {
