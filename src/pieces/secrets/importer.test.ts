@@ -33,6 +33,11 @@ function setup() {
 it('atomically imports names, separate startup policy, exact temporary authority, history and managed pending asks, then real next mode answers them',async()=>{
   const f=setup(),before=['store.sops.json','policy.json','requests.json','audit.jsonl'].map(n=>readFileSync(join(f.from,n)));
   expect(importSecrets(f.app.db,f.home,f.from,now,options)).toMatchObject({imported:true,names:1,requests:2,grants:1});
+  const legacy=JSON.parse((f.app.db.prepare("SELECT value FROM secrets_meta WHERE key='legacy-snapshot'").get() as {value:string}).value);
+  expect(legacy.audit).toEqual(readFileSync(join(f.from,'audit.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line)));
+  const tables=f.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
+  const output=JSON.stringify(tables.map(t=>f.app.db.prepare(`SELECT * FROM "${t.name}"`).all()));
+  expect(output).not.toContain('ENCRYPTED_CANARY');expect(output).not.toContain('CIPHERTEXT_METADATA');
   const stored=JSON.stringify(f.app.db.prepare('SELECT * FROM secrets_meta').all())+JSON.stringify(f.app.db.prepare('SELECT * FROM secrets_names').all());
   expect(stored).not.toContain('ENCRYPTED_CANARY');expect(stored).not.toContain('CIPHERTEXT_METADATA');
   f.app.close();

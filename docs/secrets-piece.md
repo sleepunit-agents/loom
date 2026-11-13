@@ -536,7 +536,10 @@ activated by editing this metadata.
 `{"agents":{"old-art":"art"},"members":{"old-owner":"jonathan"}}`;
 all referenced identities require exact injective mappings to the imported
 household. There is no answering-owner fallback. Import the household first.
-The final move must separately migrate ciphertext and provision the holder; this
+The copied source and destination must be separate, including canonical aliases;
+overlap refuses before acquiring a write lock. This standalone command accepts an
+explicit copied directory, like the other piece import commands; snapshot-manifest
+validation belongs to migrate plan/all/verify. The final move must separately migrate ciphertext and provision the holder; this
 command never decrypts or installs a credential.
 
 The source files are `store.sops.json` (validated top-level names; encrypted

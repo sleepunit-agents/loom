@@ -1,5 +1,7 @@
 /** Explicit stopped-home metadata migration; no secret values are imported. */
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
+import { canonicalSnapshotPath } from './migration-snapshot.js';
 import { parseArgs } from 'node:util';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { createFoundation } from '../core/app.js';
@@ -15,6 +17,8 @@ export async function migrateSecrets(argv:string[],io:IOStreams):Promise<number>
   let release:(()=>void)|undefined;
   try {
     const options=secretImportOptions.parse(JSON.parse(readFileSync(args.values.identities,'utf8')));
+    const source=realpathSync(args.values.from), destination=canonicalSnapshotPath(resolve(args.values.home));
+    if(source===destination || source.startsWith(destination+sep) || destination.startsWith(source+sep))throw Error();
     release=acquireHttpLock(args.values.home);
     const app=createFoundation({home:args.values.home});
     try {io.stdout(JSON.stringify(importSecrets(app.db,args.values.home,args.values.from,Date.now(),options))+'\n');return 0;}

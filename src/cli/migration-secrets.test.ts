@@ -1,8 +1,10 @@
+import * as secretsImporter from '../pieces/secrets/importer.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
-import {mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {openSnapshotSqlite} from './migration-sqlite.js';
 import {Readable} from 'node:stream';
 import {createSnapshot} from './migration-snapshot.js';
 import {prepareMigrationPlan} from './migration-plan.js';
@@ -34,9 +36,15 @@ it('discovers and registers secrets, runs all with managed pending asks, verifie
  expect(createMigrationRegistry().order(['secrets']).importers.map(e=>e.name)).toEqual(['household','secrets']);
  expect((await runMigrationAll(f.root,f.home,undefined,{now:()=>now})).status).toBe('complete');
  const target=bytes(f.home);
+ const importer=vi.spyOn(secretsImporter,'importSecrets').mockImplementation(()=>{throw Error('Verifier ran importer');});
  expect(await verifyMigration(f.root,f.home)).toMatchObject({status:'verified',pieces:['household','secrets'],differences:[]});
  expect(bytes(f.root)).toEqual(before);expect(bytes(f.home)).toEqual(target);
- expect(JSON.stringify(target)).not.toContain('CANARY_CIPHERTEXT');
+ expect(importer).not.toHaveBeenCalled();importer.mockRestore();
+ const db=openSnapshotSqlite(join(f.home,'loom.db'));
+ try {
+  const tables=db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
+  expect(JSON.stringify(tables.map(t=>db.prepare(`SELECT * FROM "${t.name}"`).all()))).not.toContain('CANARY_CIPHERTEXT');
+ } finally {db.close();}
  expect((await runMigrationAll(f.root,f.home)).pieces.every(p=>p.status==='completed')).toBe(true);expect(bytes(f.home)).toEqual(target);
 });
 it('independent verification detects physical names/policy/request/grant/use/history/ask tampering despite intact receipts and leaves damaged bytes untouched',async()=>{
@@ -70,4 +78,15 @@ it('CLI imports only explicit metadata into a stopped imported household, with s
  expect(await run(args,io)).toBe(0);expect(await run(args,io)).toBe(0);
  writeFileSync(map,'SECRET_INPUT_CANARY');expect(await run(args,io)).toBe(1);
  expect(io.stderr.mock.calls.flat().join('')).not.toContain('SECRET_INPUT_CANARY');
+});
+
+it('refuses source/destination overlap and symlink aliases before creating lock/database or changing source bytes',async()=>{
+ const f=await setup(),io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:vi.fn(),stderr:vi.fn()};
+ const map=join(f.dir,'map.json');writeFileSync(map,JSON.stringify(f.plan.importers.secrets.options));
+ const before=bytes(f.old);
+ const alias=join(f.dir,'alias');symlinkSync(f.source,alias);
+ for(const home of [f.source,join(f.source,'child'),f.old,alias,join(alias,'child')]){
+  expect(await run(['secrets','--home',home,'--from',f.source,'--identities',map],io)).toBe(1);
+  expect(bytes(f.old)).toEqual(before);
+ }
 });
