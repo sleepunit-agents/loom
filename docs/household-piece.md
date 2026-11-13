@@ -148,3 +148,20 @@ readers/writers need explicit routing separately, and the server's household
 gates still use legacy discovery. No entry point selects this configuration yet.
 Keep the local-and-active isolation guard until the entire memory path is
 explicit; this change does not enable the stdio cutover.
+
+Explicit offline servers now refuse `describe_self`, `comms_title` and
+`comms_thread` before discovering a legacy household or Comms store. These are
+app operations and require the daemon API; stdio metadata is not authority to
+change a profile or read thread words. A local offline `conversation_digest`
+still records continuity in the context, but does not infer a project from an
+app-backed thread or nudge the old app. Project inference from the local
+conversation's venue links stays available. Omitted selection keeps legacy
+behavior. Remaining conversation store path selection and the entry-point
+acceptance test are still required before next stdio is exposed.
+
+| Old MCP app behavior | Explicit offline replacement |
+| --- | --- |
+| describe_self updates old household profile | Refused; use the daemon's profile operation when available |
+| comms_title reads and changes the old Comms thread | Refused; use the daemon API |
+| comms_thread reads old thread words | Refused; runtime delivery to the bound body replaces transcript reads (web-foundation.md) |
+| digest uses old Comms project fallback and nudges old attention | Local continuity digest only; app project fallback and app notification are dropped offline |

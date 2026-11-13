@@ -91,3 +91,35 @@ preserves existing metadata and starts empty history; it does not invent old tim
 This is change history only. Read/issue/service-use audit, usage summaries and old
 audit import remain required on t-2208. The service-use role still writes no
 metadata. No new installer is wired into next mode by this increment.
+
+## Offline policy import slice
+
+`importSecretPolicy(db, from)` in `src/pieces/secrets/policy-importer.ts` takes
+an explicit old `policy.json` path. It reads that file only, never discovers a
+home, decrypts values or invokes an old program. It is not wired to a command or
+the daemon. The final offline migration must compose it with the remaining
+metadata importers in one enclosing transaction, behind the stopped-daemon gate.
+
+| Old policy field | Imported meaning |
+| --- | --- |
+| `v: 1` (or absent) | Accepted source version; not a new-side record field. Other versions refuse. |
+| `default`, `secrets` absent | Old defaults `ask` and an empty rule map. |
+| `grant`, `agents` | Exact request level and auto agent membership, independently of start permission. |
+| `houses` | Exact at-start membership, independently of request permission. |
+| Positive integer `minutes` | Preserved up to 480; larger durations clamp to 480 as old `decide` does. |
+
+Malformed or unknown fields refuse with a fixed error, including accidental
+value-bearing input; no raw parse diagnostics are returned. Unlike the old
+runtime reader's silent fallback on malformed JSON, migration requires a valid
+source so an invalid Never rule cannot quietly become Ask or Auto. Unsupported
+invalid durations refuse rather than being silently repaired. This is an
+explicit import validation choice, not a change to the old side.
+
+The source bytes' SHA-256 receipt is committed with schema and policy. Identical
+bytes are a no-op even after a later policy edit; different bytes refuse. A
+first import refuses an existing destination policy. The importer compares the
+complete written policy, including names and array contents, before recording
+the receipt; interruption or comparison/receipt failure rolls everything back.
+The source file is unchanged. Names, requests, grants, carry/revocation and old
+audit import remain required; this slice does not claim the complete secrets
+migration or final command, and does not perform a real import.

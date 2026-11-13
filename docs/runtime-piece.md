@@ -90,17 +90,26 @@ jobs on the box, including terminal jobs, are revoked defensively. No runner or
 container call happens during revocation; the runner loses access and its work
 is recorded as lost.
 
-The central household credential implementation is not yet supplied by next
-mode. `installRuntime` accepts an optional `credentials: RuntimeCredentials`
-role; without it revocation fails `unavailable` before changing anything. The
-role must revoke every runner credential for the box and every body credential
-for the supplied job ids synchronously on the supplied database transaction,
-with no independent commit or outside effect. Absent/already-revoked credentials
-are success. Runtime owns no credential store. Its in-process test fake uses a
-test-only SQL table to prove that credentials roll back with runtime metadata.
-The composition root must wire the central role once household issuance and
-principal binding land, and integration tests must prove real credentials stop
-authenticating. This remains required before enrollment or the final move.
+Next mode now supplies `centralRuntimeCredentials`, an adapter over central
+`TokenDatabase` and `HouseholdRows` on the caller's connection. It revokes all
+exact `runner:<box>` tokens, disables that central runner principal, and revokes
+all agent tokens whose authenticated `@<job>` suffix exactly matches any job
+on the box, including terminal jobs and service-qualified agent roles. Labels
+are never used as identity. Unbound agent tokens and other boxes/jobs remain
+untouched; existing revocation timestamps are preserved. Reactivating the runner
+principal cannot revive its old tokens. No credential is returned or copied.
+
+The role requires the registry transaction. Credential changes, principal
+disabling, runtime metadata and retry receipt commit together or all roll back.
+A committed `core.access` invalidation rechecks existing sockets as well as
+future requests. Integration tests use the real central sign-in resolver and
+bearer HTTP requests, including later-write failure, rollback, exact job ids,
+terminal jobs, duplicate labels and multiple runner tokens. A new empty home
+without a token document still permits disabling/revoking an enrolled box.
+Standalone installers without the optional `RuntimeCredentials` role continue
+to fail unavailable before mutations. Enrollment, credential issuance and
+trusted body/conversation attribution remain future work; this adapter consumes
+the central role grammar already accepted by sign-in and invents no authority.
 
 A retry with the same registry id returns the original acknowledgement without
 calling the role again. A new attempt at a revoked box is `not-found`; local
@@ -201,3 +210,28 @@ remain required before the final move. No runner installation or live host
 change accompanies this endpoint. Earlier lifecycle helper descriptions of a
 future runner operation now refer to this facts-only endpoint; the broader
 runner API remains unfinished.
+
+## Runner claim and progress metadata
+
+| Old route | Registry operation | Delivered scope |
+| --- | --- | --- |
+| `claim` | `runtime.claimJob {job}` | Assigned queued job becomes starting; acknowledgement only |
+| `report` | `runtime.reportJob {job, state}` | Claimed job becomes running or waiting; acknowledgement only |
+
+The authenticated runner id must equal both the assigned job runner and its box
+id. The box must still be enrolled and unrevoked. Central `report-job` policy
+also excludes member-private jobs. Claims recheck current ownership/lending,
+host permission and report-only status. Reports remain accepted after hosting
+permission is withdrawn so an already claimed runner can describe progress.
+Unknown and off-assignment jobs share the same denial. No caller can reassign a
+job or set timestamps through this API. Reports use server `changedAt` and only
+publish when metadata changes. Registry receipts make lost-response retries
+safe without making a fresh claim of a starting job succeed.
+
+This is a metadata handshake, not permission to start a container. It returns
+no credentials, input words or results, calls no runner and performs no outside
+effect, including in staging. Input fetch, credential issuance and terminal
+reports with credential revocation remain required on this task before a real
+runner can execute. A runner cannot end, revive or report uncertain/lost work
+through these two operations. The fake runner test seeds queued jobs internally;
+public job creation and `startBody` remain unfinished.
