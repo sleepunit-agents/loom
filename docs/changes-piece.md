@@ -83,9 +83,12 @@ forged source caches and lock ownership through database close and failure.
 
 Next mode registers the Changes operations and Live records without a fixture
 installer. Reads project stored records through current database-backed household
-project mappings and Sharing. Until trusted runtime attribution is composed, the
-root supplies empty attribution: cached agent/mine labels confer no authority,
-and confirmation/answers remain closed. Refresh records a durable request but
+project mappings and Sharing. Agent authorship comes from the current household
+account metadata (owner-only `household.setAgentAccounts`), never cached/imported
+labels. Assignment, clearing and household edits reproject existing records and
+invalidate live Changes rows. Owner logins and branch guesses remain empty; public
+agent account assignments grant no project membership or service authority.
+Confirmation/answers remain closed until the real Approvals role is composed. Refresh records a durable request but
 does not start a forge read in this read-only composition.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
 current project membership/revocation, and closed approval controls.

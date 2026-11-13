@@ -1,6 +1,7 @@
 /** New-mode composition seam. The root owns close(), before closing the foundation. */
 import type { Foundation } from '../../core/app.js';
 import type { Clock, Sharing, Viewer } from '../../core/index.js';
+import { HouseholdAccounts } from '../../core/household/accounts.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { installChanges } from './index.js';
@@ -14,6 +15,13 @@ export function householdProjects(store: SharingDatabase): Projects {
   const project=store.project(id)!;
   return {slug:project.slug,name:project.name,repos:project.repositories};
  })};
+}
+
+/** Public account metadata is read afresh for every projection; no legacy identity guesses. */
+export function householdAttribution(db: Foundation['db'], home: string): Attribution {
+ const accounts=new HouseholdAccounts(db,home);
+ const agents=new HouseholdDatabase(db).household(home)?.agents??[];
+ return {agents:Object.fromEntries(agents.map(agent=>[agent,{logins:accounts.get(agent).github,branches:[]}])),ownerLogins:[]};
 }
 
 /** Secrets remain injected; installation never discovers credentials or old stores. */
