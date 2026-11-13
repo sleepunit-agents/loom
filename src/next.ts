@@ -22,6 +22,7 @@ import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.
 import { installChanges } from './pieces/changes/index.js';
 import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
+import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
 import { signin, installSignin, sameOrigin } from './core/signin/index.js';
