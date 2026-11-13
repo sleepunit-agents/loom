@@ -12,7 +12,7 @@ import { installAttentionMaintenance } from './daemon.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) await close(); });
-async function setup(staging = false) {
+async function setup(staging = false, denied?: { value: boolean }) {
   const home = mkdtempSync(join(tmpdir(), 'attention-maintenance-'));
   const metadata = createFoundation({ home }); migrateHouseholdTables(metadata.db);
   metadata.db.transaction(() => new HouseholdDatabase(metadata.db).replace(home, {
@@ -20,7 +20,14 @@ async function setup(staging = false) {
     members: [{ person: 'owner', role: 'owner', agents: '*' }],
   }))(); metadata.close();
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const app = await startLoom({ home, next: true, staging, clock, stdout: () => {} });
+  let foundation: ReturnType<typeof createFoundation>;
+  const app = await startLoom({ home, next: true, staging, clock, stdout: () => {},
+    install: current => { foundation = current; },
+    ...(denied ? { sharing: () => {
+      const snapshot = new SharingDatabase(foundation.db, home).sharing();
+      return denied.value ? { ...snapshot, services: {} } : snapshot;
+    } } : {}),
+  });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   let n = 0;
   const write = (place: string, member?: string, at = '2026-07-01T09:00:00Z') => {
@@ -46,7 +53,7 @@ it.each([false, true])('next mode folds authorized old metadata on the next tick
   clock.advance(1); expect(turns()).toHaveLength(2);
   expect(app.db.prepare('SELECT count(*) AS n FROM attention_days').get()).toEqual({ n: 2 });
 });
-it('uses the registered service, honors a later grant refusal, reports no private wording and retries tomorrow', async () => {
+it('uses the registered service, reports no private refusal wording and retries tomorrow', async () => {
   const { app, clock, home, write, turns } = await setup();
   const services = new SharingDatabase(app.db, home).sharing().services;
   expect(services.attention.operations).toEqual(expect.arrayContaining(['attention.retain', 'attention.fold']));
@@ -73,8 +80,27 @@ it('installs one maintenance schedule and cancels it before the foundation close
   installAttentionMaintenance(app); installAttentionMaintenance(app);
   clock.advance(0);
   expect(call.mock.calls.filter(c => c[2] === 'attention.retain')).toHaveLength(1);
+  const closeDb = app.db.close.bind(app.db);
+  vi.spyOn(app.db, 'close').mockImplementation(() => {
+    const beforeClose = call.mock.calls.length;
+    clock.advance(2 * 86_400_000);
+    expect(call).toHaveBeenCalledTimes(beforeClose);
+    return closeDb();
+  });
   await app.close();
   const count = call.mock.calls.length;
   clock.advance(2 * 86_400_000);
   expect(call).toHaveBeenCalledTimes(count);
+});
+
+it('rechecks real central service grants on every sweep without impersonating a member', async () => {
+  const denied = { value: false };
+  const { clock, write, turns } = await setup(false, denied);
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  clock.advance(0); write('old');
+  denied.value = true; clock.advance(86_400_000);
+  expect(turns()).toHaveLength(1);
+  expect(warning).toHaveBeenCalledExactlyOnceWith('Attention retention failed (denied)');
+  denied.value = false; clock.advance(86_400_000);
+  expect(turns()).toHaveLength(0);
 });
