@@ -50,9 +50,8 @@ it('next installs approvals without a fixture installer and persists guarded dec
     expect(await call('history', {}, 'jonathan')).toMatchObject({ ok: true, value: { approvals: [{ id: card.id, state: 'used' }] } });
     expect(await call('use', { id: card.id, kind: 'merge', target })).toMatchObject({ ok: false, code: 'denied' });
     const grant = await call('request', { kind: 'grant', target: 'tasks:art', ask: 'Give Art access to Tasks?', why: 'Work needs Tasks.', if_yes: 'I grant access.', if_no: 'Access stays unchanged.' });
-    expect(grant.ok).toBe(true);
-    expect(await call('answer', { id: grant.value.id, action: 'allow' }, 'jonathan')).toMatchObject({ ok: false, code: 'unavailable' });
-    expect(await call('check', { id: grant.value.id })).toMatchObject({ ok: true, value: { state: 'pending' } });
+    expect(grant).toMatchObject({ ok: false, code: 'invalid' });
+    expect(await call('history', {}, 'jonathan')).toMatchObject({ ok: true, value: { approvals: [{ id: card.id, state: 'used' }] } });
   } finally { await loom.close(); rmSync(home, { recursive: true, force: true }); }
 });
 

@@ -17,6 +17,7 @@ export interface Standing extends Principal {
 }
 export interface Notice { at: string; agent: string; kind: string; target: string; what: string; for?: string }
 export interface State { approvals: Approval[]; rules: Rule[]; grants: Rule[]; standing: Standing[]; notices: Notice[]; audit: Record<string, unknown>[] }
+export const retiredAgentGrantReason = 'no longer applies: agent access follows record scope';
 export const empty = (): State => ({ approvals: [], rules: [], grants: [], standing: [], notices: [], audit: [] });
 export const iso = (now: number) => new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z');
 export const stateOf = (a: Approval, now: number) => a.state === 'allowed' && a.expires && Date.parse(a.expires) <= now ? 'expired' : a.state;
@@ -25,7 +26,7 @@ export const samePrincipal = (a: { for?: string; people?: string[] }, p: Princip
 export const serviceOf = (who: Who) => /\(([^()]*)\)$/.exec(who.where)?.[1];
 export const maySpend = (asked: Who, who: Who) => asked.agent === who.agent && (serviceOf(who) === undefined || serviceOf(who) === serviceOf(asked));
 export const pieceKinds = new Set(['local-wake', 'vouch-wake', 'principal-reset', 'box-write-off']);
-export const ownerApplied = new Set(['grant', 'vouch-wake', 'principal-reset', 'box-write-off']);
+export const ownerApplied = new Set(['vouch-wake', 'principal-reset', 'box-write-off']);
 export const pieceSpent = new Set([...ownerApplied, 'host', 'local-wake']);
 export const ownerAnswered = new Set([...ownerApplied, 'host']);
 

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
+- Next mode retires per-agent piece/path grant approvals in favour of record scope and withdraws pending legacy grant imports.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Show each Comms thread’s agent letter beside its title in the list.

@@ -788,5 +788,50 @@ though its principal remains unknown; losing that suffix would widen spending.
 A shared agent credential, missing job or copied Viewer establishes no principal.
 An authenticated job without current private membership remains `?`; starting a
 job or carrying a project is not evidence of its requesting person. Runtime's
-owner application for grant, principal-reset and box-write-off remains pending.
+owner application for principal-reset and box-write-off remains pending.
 This resolver reads only next-mode state and creates no authority store.
+
+| Old permission command | New behavior |
+| --- | --- |
+| Per-agent piece/path grants (`grants set`, legacy `grant` approval) | Retired in favour of central record scope; no Runtime ACL or blanket service grant substitutes for them. Imported pending approval cards are withdrawn, never applied or spent. Service record-type/operation grants and secret-use grants remain separate. |
+
+### Retirement inventory and scope audit
+
+The complete noncredential inventory is the coordinator's t-2209 comment:
+old `commons/stores/runtime.db`, collection `grants`, key `household`, revision 7,
+updated `2026-11-08T04:38:58Z`. The household has Art and Mark. Every listed
+path is `*`; `*` agent entries expand to those two agents. Relay permits Art to
+Mark and Mark to Art, every possible other-agent pair. This retirement changes
+neither relay nor any secret-use or service authority.
+
+| Old piece | Art | Mark | New boundary (both agents unless stated) |
+| --- | --- | --- | --- |
+| approvals | `*` | `*` | `approvals/index.ts`: scoped cards through central maySee/mayAct/mayCreate; person/owner answers and household rules denied to agents. Legacy grant cards cannot create authority. |
+| box | `*` | `*` | Runtime: household box records/revoke/configure denied; jobs/settings/bindings filtered by record scope. Runner-only reports/claims are unavailable to agent viewers. |
+| clock | `*` | `*` | `clock/index.ts`: wake/schedule/log reads filtered by scope, create/mutate through central policy; lane setup, vouch, pause/resume and rearm owner-only. Self deadman restricted to the authenticated agent. |
+| machine | `*` | `*` | No next-mode machine command/host shell operation. Runtime health is an assigned runner's own report; metadata does not grant host execution. |
+| packages | `*` | `*` | No next-mode package-install operation. Old piece installation/catalog programs are outside the new request path, retired by the foundation spec. |
+| runtime | `*` | `*` | `runtime/index.ts` and scoped operation modules: own/project jobs, settings and bindings only; mayCreate validates new scope. Household boxes and owner setup denied; input/words require exact authenticated runner/job or private body proof. |
+| secrets | `*` | `*` | `secrets/index.ts`: household names/setup/answers denied; own requests/grant metadata and own may/request/require only. Value release still needs the separate owner-granted secret-use role; legacy piece grants never substitute. |
+| shuttle | `*` | `*` | Bridges + Runtime: no public venue-send/receive or bridge reply operation. Private Comms has separate current job/member binding proof. External Runtime delivery is still pending and grants no authority now. |
+| tasks | `*` | `*` | `tasks/index.ts`: read filtering, existing-target checks, mayCreate/mayMove for creation and scope changes, including parent/link targets. Unfiled household records denied. |
+| discord | `*` | `*` | `bridges/index.ts`: all venue/route/link/send metadata is household-only (even though venues name an agent). Setup and disposition require owner. Adapter IO is a trusted service role, not an agent operation. |
+| slack | `*` | denied | Same Bridges boundary as Discord. Mark cannot read Art's Slack venue/routes/links/traffic or change setup/disposition. Agent-scoped Art Slack Runtime bindings are hidden from Mark; the current private reply/read API requires authenticated current job/binding proof. No public external send operation exists. |
+
+`approvals/retirement-scope.test.ts` exercises all 22 pairs against central
+policy (own agent allowed; other agent, absent project, member-private and
+household denied; household/setup/person-answer actions denied). Its actual
+next-mode fixture with an Art Slack venue, route, person link, held send and
+agent-scoped Slack binding verifies positive owner reads, Mark's excluded Live
+reads, real authenticated Mark HTTP setup/disposition/read/reply refusal, no
+binding enumeration, no public bridge reply/delivery operation, and unchanged
+setup/send state. Existing private conversation tests additionally exercise real
+job credentials and cross-binding refusal.
+
+No off-scope or household reach was found. This is evidence about current
+registered operations, not a claim that external Slack delivery is finished.
+When Runtime external delivery lands, it must authenticate the body and bind
+replies to the original agent/venue before invoking the trusted Bridges role;
+never expose the role directly as a viewer-free operation. Its absence is already
+part of this piece's remaining delivery work. The old gate's only denied pair
+therefore gains no authority from this retirement.
