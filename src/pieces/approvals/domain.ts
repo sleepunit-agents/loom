@@ -134,7 +134,7 @@ export function everyTimeOk(a: Approval, c: DomainContext) {
 }
 export function allowEveryTime(s: State, id: string, by: string, c: DomainContext) {
   const a = find(s,id); if (!everyTimeOk(a,c)) invalid("Allow every time is for a job on loom's machine, for you or for someone loom can't name");
-  let same = s.standing.find(j => !j.off && j.agent === a.who.agent && j.digest === a.digest && JSON.stringify(j.who) === JSON.stringify(a.who) && samePrincipal(j,a));
+  let same = s.standing.find(j => !j.off && j.from===id && j.project===a.project && j.agent === a.who.agent && j.digest === a.digest && JSON.stringify(j.who) === JSON.stringify(a.who) && samePrincipal(j,a));
   if (!same) {
     const on = s.standing.filter(j => !j.off); if (on.length >= 50) invalid('50 standing jobs at most: turn one off first');
     same = { id: `s-${randomBytes(4).toString('hex')}`,kind: 'local-wake',agent: a.who.agent,target: a.target,digest: a.digest!,who: a.who,for: forOf(a),...(a.people ? { people: a.people } : {}),...(a.member ? {member:a.member} : {}),...(a.project ? {project:a.project} : {}),from: id,what: a.what,...(a.details ? { details: a.details } : {}),at: iso(c.now),uses: 0,by };

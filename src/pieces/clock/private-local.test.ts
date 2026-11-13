@@ -127,3 +127,29 @@ it('rechecks current private member ownership before replaying standing scheduli
  expect(role.schedule(privateCaller,input,receipt)).toMatchObject({ok:false,code:'denied'});
  expect(wakes(s.app.db)).toHaveLength(1);
 });
+it.each(['once','standing'] as const)('holds due private %s words without invoking Runtime, including legacy member attribution',async mode=>{
+ const received:unknown[]=[];
+ const s=await setupLocal(mode,{async startBody(input){received.push(input);return {state:'started',body:'must-not-start'};}});
+ const id=value<{id:string}>(s.request(prompt,'PRIVATE_DUE',privateCaller)).id;
+ value(await windowCall(s,owner,mode==='once'?'approvals.answer':'approvals.every-time',{id,action:'allow'}));
+ const role=mode==='once'?clockLocalRecovery(s.app.operations):clockLocalStanding(s.app.operations);
+ const w=value<{id:string}>(role.schedule(privateCaller,{approval:id,mode:'in',when:'1h'}));
+ // Private words cannot fall through the old ordinary-wake member-attribution path.
+ const row=wakes(s.app.db)[0];row.by=owner;
+ s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(row),row.id);
+ s.clock.advance(3600_000);
+ expect(wakes(s.app.db).find(row=>row.id===w.id)).toMatchObject({state:'held',hold:'permission',member:'jonathan'});
+ expect(received).toEqual([]);
+ expect(s.app.db.prepare("SELECT record FROM clock_events WHERE wake=?").all(w.id).some(r=>(r as {record:string}).record.includes('"kind":"intent"'))).toBe(false);
+});
+it('creates exact standing authority from a new private approval after expiry and project refiling',async()=>{
+ const s=await setupLocal('standing');
+ const first=value<{id:string}>(s.request(prompt,'PRIVATE_REAPPROVAL',privateCaller)).id;
+ value(await windowCall(s,owner,'approvals.every-time',{id:first}));
+ const old=load(s.app.db).standing[0];s.clock.advance(61*60_000);
+ const current={...privateCaller,project:'other'};
+ const next=value<{id:string}>(s.request(prompt,'PRIVATE_REAPPROVAL',current)).id;expect(next).not.toBe(first);
+ const standing=value<{id:string;from:string;project:string}>(await windowCall(s,owner,'approvals.every-time',{id:next}));
+ expect(standing.id).not.toBe(old.id);expect(standing).toMatchObject({from:next,project:'other'});
+ expect(clockLocalStanding(s.app.operations).schedule(current,{approval:next,mode:'in',when:'1h'})).toMatchObject({ok:true,value:{member:'jonathan',project:'other'}});
+});

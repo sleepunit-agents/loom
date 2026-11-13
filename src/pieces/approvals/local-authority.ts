@@ -2,13 +2,13 @@
  * Services retain their own Viewer; this tests the member's current authority,
  * never grants private record access to a service or an agent token.
  */
-import { mayCreate, type Sharing } from '../../core/index.js';
+import { mayAct, mayCreate, type Sharing } from '../../core/index.js';
 import { serviceOf, type Caller } from './model.js';
 export function localOwner(c:Caller,s:Sharing):boolean {
  if(c.for!=='owner')return false;
  if(c.member===undefined)return !c.people?.length;
  return !!c.conversation && c.people?.length===1 && c.people[0]===c.member
-  && Object.hasOwn(s.members,c.member) && s.members[c.member].owner
+  && mayAct({kind:'member',id:c.member},{type:'approval',member:c.member,agent:c.who.agent,project:c.project},s,'household')
   && mayCreate({kind:'member',id:c.member},{type:'approval',member:c.member,agent:c.who.agent,project:c.project},s);
 }
 export function sameLocalCaller(a:Caller,b:Caller):boolean {

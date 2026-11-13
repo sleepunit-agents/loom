@@ -74,6 +74,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
+  const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
   const get = (id: string) => wake(db, id) ?? (() => { throw new OperationError('not-found', 'Wake not found'); })();
   const disarm = () => { cancelTimer?.(); cancelTimer = undefined; };
   const queue = () => { if (!closed) { cancelTimer?.(); cancelTimer = clock.at(clock.now(), pump); } };
@@ -372,7 +373,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     run: (ctx,input) => command(operations,ctx.viewer,input),
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id))
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && create(v, get(i.id))
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
@@ -464,6 +465,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         // Recheck after the intent commit, immediately before the external call.
         try {
           const current=wake(db,w.id)!;
+          if(privateLocal(current)) throw new OperationError('denied','Private local delivery is not composed');
           if(!create(current.by,current)) throw new OperationError('denied','Dispatch policy changed');
           checkStandingWake(db,operations,current);
         }

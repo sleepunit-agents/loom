@@ -20,6 +20,11 @@ features (lane files, continuations, slots, approvals, local wakes) remain held;
 private body delivery and account selection are refused. Conversation delivery
 and authenticated continuation resolution remain blocked on t-2209.
 
+Runtime dispatch must also replace the existing ordinary-wake background use of
+`w.by` with the piece's service authority, retaining requester scope as data.
+That pre-existing path is not used for newly supported private local dispatch;
+private local wakes are explicitly held before intent and before Runtime.
+
 Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
