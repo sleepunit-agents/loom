@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { mayAct, operation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { mayAct, operation, OperationError, type Db, type Live, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { beginSecretUsage } from './usage.js';
 import { grantsRole, grantId } from './index.js';
 import { secretAgent, secretName } from './input.js';
 import type { Grant } from './role.js';
@@ -43,7 +44,7 @@ export function installSecretServices(db: Db, operations: Operations, sharing: (
  * The callback is trusted credential-using code: it must not log, persist or retain
  * the token (including transformed copies). JS strings cannot be securely erased.
  */
-export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => Sharing, viewer: Viewer, now: () => number): SecretUse {
+export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => Sharing, viewer: Viewer, now: () => number, live: Live): SecretUse {
   const caller = {...viewer};
   const allowed = (name: string) => caller.kind === 'service' && Object.hasOwn(sharing().services, caller.id)
     && grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
@@ -51,13 +52,20 @@ export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => 
   return { async withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T> {
     if (!secretName.safeParse(name).success || !allowed(name)) throw new OperationError('denied', 'Secret use denied');
     let bytes: Uint8Array | undefined;
+    let attempt: ReturnType<typeof beginSecretUsage> | undefined;
+    let released = false;
     try {
+      attempt = beginSecretUsage(db, live, name, 'service-use', {kind: 'service', id: caller.id}, now());
       bytes = await source.read(name);
       // Permission may have changed while the local transport was awaiting its reply.
       if (!allowed(name)) throw new Error('Access ended');
       if (!bytes.byteLength || bytes.byteLength > 64 * 1024) throw new Error('Invalid value');
+      attempt.finish('released'); released = true;
       return await use(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8'));
-    } catch { throw new OperationError('unavailable', 'Secret use failed'); }
+    } catch {
+      if (!released) { try { attempt?.finish('failed'); } catch { /* Keep the durable started attempt. */ } }
+      throw new OperationError('unavailable', 'Secret use failed');
+    }
     finally { bytes?.fill(0); }
   } };
 }

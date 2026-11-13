@@ -112,8 +112,8 @@ it('keeps temporary grants confined to their exact house and service through run
   expect(call(agent, 'may', { agent: agent.id, ...resource, scope })).toMatchObject({ ok: false, code: 'invalid' });
   const handed: string[] = [];
   const holder: KeyHolder = { names: () => [], set() {}, remove() {}, rotate() {}, handTo(_name, sink) { handed.push(sink); } };
-  expect(handSecret(app.db, holder, agent.id, resource.target, 'sink', clock.now())).toBe(false);
-  expect(handSecret(app.db, holder, agent.id, resource.target, 'sink', clock.now(), scope)).toBe(true);
+  expect(handSecret(app.db, app.live, holder, agent.id, resource.target, 'sink', clock.now())).toBe(false);
+  expect(handSecret(app.db, app.live, holder, agent.id, resource.target, 'sink', clock.now(), scope)).toBe(true);
   expect(handed).toEqual(['sink']);
   expect(call(owner, 'revoke', { agent: agent.id, ...resource, scope }).ok).toBe(true);
   expect(grants.mayUse(agent.id, resource, clock.now(), scope)).toBe(false);

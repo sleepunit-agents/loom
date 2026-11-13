@@ -13,4 +13,7 @@ DROP TABLE secrets_grants_v1;
 CREATE INDEX secrets_grants_resource ON secrets_grants(agent,kind,target);
 ` }, { number: 3, sql: `
 CREATE TABLE secrets_changes (id TEXT PRIMARY KEY, record TEXT NOT NULL);
+` }, { number: 4, sql: `
+CREATE TABLE secrets_uses (id TEXT PRIMARY KEY, name TEXT NOT NULL, record TEXT NOT NULL);
+CREATE INDEX secrets_uses_name ON secrets_uses(name);
 ` }];

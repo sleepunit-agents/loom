@@ -11,6 +11,7 @@ import { digestData, digestForContext } from '../backends/salience.js';
 import { getProposal, listProposals, propose } from '../backends/proposals.js';
 import { recordTurn, writeDigest } from '../backends/conversations.js';
 import { openProjectsStore } from '../backends/projects.js';
+import { projectHubOf, readProject, projectHistoryOf, listProjects, projectOrphans } from '../tools/project.js';
 import { closeAllBackends, createBackend } from '../backends/index.js';
 
 vi.mock('../backends/fastembed.js', () => ({
@@ -32,8 +33,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
-async function connect(contextDir: string, memorySelection: LoomServerConfig['memorySelection']) {
-  const { server } = createLoomServer({ contextDir, memorySelection });
+async function connect(contextDir: string, memorySelection: LoomServerConfig['memorySelection'], extra: Partial<LoomServerConfig> = {}) {
+  const { server } = createLoomServer({ contextDir, memorySelection, ...extra });
   const client = new Client({ name: 'continuity-test', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a); await client.connect(b);
@@ -165,3 +166,76 @@ it('isolates raw tape, identity, salience and proposal operations for two agents
   expect(digestForContext(dirs[0])).toContain('Canon 3');
   expect(listProposals(dirs[0]).map(r => r.title)).toEqual(['Draft 3']);
 }, 30_000);
+
+
+it('isolates project cards, hub memories, counts, revisions and writes beside a poisoned legacy selector', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-project-context-')); homes.push(home);
+  const dirs = ['art', 'mark', 'solo', 'legacy'].map(agent => {
+    const dir = join(home, agent); mkdirSync(dir); writeFileSync(join(dir, 'IDENTITY.md'), `I am ${agent}.`); return dir;
+  });
+  for (const [i, dir] of dirs.entries()) {
+    const backend = createBackend(dir, null);
+    await backend.remember({ category: 'project', title: `Hub private ${i}`, content: `Selected memory ${i}`, project: 'alias' });
+    await backend.remember({ category: 'reference', title: `Orphan private ${i}`, content: 'unfiled', project: `orphan-${i}` });
+    const projects = openProjectsStore(dir, { selection: null })!;
+    projects.write({ slug: 'loom', name: `Project ${i}`, links: { aliases: ['alias'] }, where: { now: { value: `Work ${i}` } } });
+    projects.close();
+  }
+  closeAllBackends();
+  const override = join(dirs[3], 'memories.db');
+  const before = readFileSync(override);
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', override);
+  vi.stubEnv('LOOM_IDENTITY', 'legacy');
+  const calls = await Promise.all(dirs.slice(0, 3).map((dir, i) => connect(dir, i === 2 ? null : { agent: ['art', 'mark'][i] }, {
+    peopleSelection: null, conversationSelection: null,
+  })));
+  for (const [i, call] of calls.entries()) {
+    const hub = JSON.parse(await call('project_hub', { slug: 'alias' }));
+    expect(hub).toMatchObject({ found: true, resolved_from: 'alias', card: { name: `Project ${i}` } });
+    expect(hub.sections.find((s: { key: string }) => s.key === 'memories')).toMatchObject({ total: 1, counts: { project: 1 }, items: [{ snippet: `Hub private ${i} — Selected memory ${i}` }] });
+    for (let j = 0; j < 4; j++) if (j !== i) expect(JSON.stringify(hub)).not.toContain(`Hub private ${j}`);
+    expect(JSON.parse(await call('project_list'))).toMatchObject([{ name: `Project ${i}`, memories_since_synthesis: 1 }]);
+    expect(JSON.parse(await call('project_orphans'))).toEqual([{ tag: `orphan-${i}`, count: 1 }]);
+    expect(JSON.parse(await call('project', { slug: 'alias' })).card.name).toBe(`Project ${i}`);
+    await call('project_write', { slug: 'alias', name: `Changed ${i}` });
+    const history = JSON.parse(await call('project_history', { slug: 'loom' }));
+    expect(history.revisions).toHaveLength(1);
+    expect(history.revisions[0].actor).toBe(['art', 'mark', 'solo'][i]);
+    await call('project_revision_restore', { slug: 'loom', revision_id: history.revisions[0].id });
+    expect(JSON.parse(await call('project', { slug: 'loom' })).card.name).toBe(`Project ${i}`);
+    await call('project_verify', { slug: 'loom', fields: ['now'], source: `Witness ${i}` });
+    expect(JSON.parse(await call('project', { slug: 'loom' })).card.where.now.source).toBe(`Witness ${i}`);
+    await call('project_archive', { slug: 'loom', reason: 'retired for test' });
+    expect(JSON.parse(await call('project_list'))).toEqual([]);
+    const store = openProjectsStore(dirs[i], { readonly: true, selection: null })!;
+    expect(store.resolve('loom')!.row.archived_by).toBe(['art', 'mark', 'solo'][i]); store.close();
+    await call('project_restore', { slug: 'loom' });
+    expect(JSON.parse(await call('project_list'))).toMatchObject([{ name: `Project ${i}` }]);
+  }
+  closeAllBackends();
+  expect(readFileSync(override)).toEqual(before);
+  expect(process.env.LOOM_SQLITE_DB_PATH).toBe(override);
+  expect(process.env.LOOM_IDENTITY).toBe('legacy');
+  // Existing callers still follow the old override when selection is omitted.
+  const legacyCall = await connect(dirs[0], undefined, { peopleSelection: null, conversationSelection: null });
+  expect(JSON.parse(await legacyCall('project', { slug: 'loom' })).card.name).toBe('Project 3');
+  expect(await legacyCall('project_hub', { slug: 'loom' })).toContain('Hub private 3');
+}, 30_000);
+
+
+it('does not fall back to a legacy project store when an explicitly selected private database is absent', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-project-absent-')); homes.push(home);
+  const selected = join(home, 'selected'); mkdirSync(selected);
+  const legacy = join(home, 'legacy'); mkdirSync(legacy);
+  const store = openProjectsStore(legacy, { selection: null })!;
+  store.write({ slug: 'loom', name: 'Legacy project' }); store.close();
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', join(legacy, 'memories.db'));
+  for (const selection of [null, { agent: 'selected' }]) {
+    expect(readProject(selected, 'loom', false, selection)).toEqual({ found: false });
+    expect(projectHistoryOf(selected, 'loom', selection)).toEqual({ revisions: [] });
+    expect(listProjects(selected, {}, selection)).toEqual([]);
+    expect(projectOrphans(selected, selection)).toEqual([]);
+    expect(await projectHubOf(selected, { slug: 'loom' }, { memorySelection: selection })).toEqual({ found: false });
+  }
+  expect(readProject(selected, 'loom')).toMatchObject({ found: true, card: { name: 'Legacy project' } });
+});

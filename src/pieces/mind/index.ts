@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 /** Read operations for portable agent content; content never enters loom.db. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
@@ -9,6 +10,7 @@ import { knowledgeView, type KnowledgeOpen } from './knowledge.js';
 export function installMindKnowledge(operations: Operations, live: Live, options: {
   path?: string; sharing(): Sharing;
 }) {
+  registerBuiltinService(operations, 'mind', ['knowledge']);
   // One retained read-only connection, including across live notifications.
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { readonly: true, fileMustExist: true, timeout: 0 }) : undefined;
   const visible = (viewer: Viewer) => maySee(viewer, { type: 'knowledge' }, options.sharing());

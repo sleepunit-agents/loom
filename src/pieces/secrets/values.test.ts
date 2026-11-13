@@ -56,10 +56,10 @@ it('writes a value but leaks none to records, operation results, live feed, or l
     expect(failed).toEqual({ ok: false, code: 'unavailable', message: 'Key holder could not save the secret' });
     expect(JSON.stringify(logs)).not.toContain(sentinel);
     failing.mockRestore();
-    expect(handSecret(app.db, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(false);
+    expect(handSecret(app.db, app.live, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(false);
     expect(holder.handTo).not.toHaveBeenCalled();
     app.operations.call('direct', owner, 'secrets.grant', { agent: 'art', kind: 'secret', target: 'api-key' }, 'grant');
-    expect(handSecret(app.db, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(true);
+    expect(handSecret(app.db, app.live, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(true);
     expect(holder.handTo).toHaveBeenCalledWith('api-key', 'runtime-sink');
     expect(app.operations.call('socket', { kind: 'agent', id: 'art' }, 'secrets.set', input, 'agent-write')).toMatchObject({ ok: false, code: 'denied' });
   } finally { ws.terminate(); log.mockRestore(); error.mockRestore(); warn.mockRestore(); }

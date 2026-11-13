@@ -13,9 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
+- Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
+
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+
+- Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
 
 - Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
 - Add next-mode Knowledge on live records: topics, page reader and durable check actions, with source socket lifecycle owned by the daemon.

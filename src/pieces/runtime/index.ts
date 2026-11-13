@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { records, type RecordKind } from './records.js';
@@ -9,6 +10,7 @@ import type { RuntimeCredentials } from './credentials.js';
 const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
 /** Control metadata. Execution is installed separately with its runner implementation. */
 export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: { credentials?: RuntimeCredentials } = {}) {
+  registerBuiltinService(operations, 'runtime', ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding']);
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);

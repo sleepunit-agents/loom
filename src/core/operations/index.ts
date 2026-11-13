@@ -1,3 +1,4 @@
+import { unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 import type { Db } from '../db/index.js';
@@ -52,7 +53,7 @@ export class Operations {
     migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
     this.expire();
   }
-  close() { this.stopExpiry?.(); }
+  close() { this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
     this.stopExpiry?.();
     this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(this.clock.now());

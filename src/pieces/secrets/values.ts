@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { operation, mayAct, OperationError, type Db, type Operations, type Sharing } from '../../core/index.js';
+import { operation, mayAct, OperationError, type Db, type Live, type Operations, type Sharing } from '../../core/index.js';
 import { grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
+import { beginSecretUsage } from './usage.js';
 import { recordSecretChange } from './history.js';
 import { removeSecretMetadata } from './removal.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
@@ -60,7 +61,15 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
 /** Runtime-only seam, never offered on any browser/API registry door.
  * Sink names are assigned by the authenticated runtime, never a caller's path.
  */
-export function handSecret(db: Db, holder: KeyHolder, agent: string, name: string, sink: string, now: number, context?: GrantContext): boolean {
+export function handSecret(db: Db, live: Live, holder: KeyHolder, agent: string, name: string, sink: string, now: number, context?: GrantContext, action: 'read' | 'issue' = 'read'): boolean {
   if (!grantsRole(db).mayUse(agent, { kind: 'secret', target: name }, now, context)) return false;
-  try { holder.handTo(name, sink); return true; } catch { return false; }
+  let attempt: ReturnType<typeof beginSecretUsage> | undefined;
+  let handed = false;
+  try {
+    attempt = beginSecretUsage(db, live, name, action, {kind: 'agent', id: agent}, now, context);
+    holder.handTo(name, sink); handed = true; attempt.finish('released'); return true;
+  } catch {
+    if (!handed) { try { attempt?.finish('failed'); } catch { /* Keep the durable started attempt. */ } }
+    return false;
+  }
 }
