@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { discordMessage, type DiscordChannel } from './discord.js';
 import { addressed } from './routing.js';
 import { routeSchema, venueSchema } from './model.js';
+
+const io = vi.hoisted(() => ({attempt: vi.fn(() => {throw new Error('Discord intake attempted IO');})}));
+// Guard the intake boundary, including named imports, without changing the test runner's IO.
+vi.mock('node:fs', async original => ({...await original<typeof import('node:fs')>(),
+  readFileSync:io.attempt,writeFileSync:io.attempt,readFile:io.attempt,writeFile:io.attempt}));
+vi.mock('node:fs/promises', async original => ({...await original<typeof import('node:fs/promises')>(),readFile:io.attempt,writeFile:io.attempt}));
+vi.mock('node:http', async original => ({...await original<typeof import('node:http')>(),request:io.attempt,get:io.attempt}));
+vi.mock('node:https', async original => ({...await original<typeof import('node:https')>(),request:io.attempt,get:io.attempt}));
 
 const art = venueSchema.parse({id:'art',platform:'discord',agent:'art',workspace:'1',bot:'100',tokenSecret:'discord',botRoles:['900']});
 const mark = venueSchema.parse({...art,id:'mark',agent:'mark',bot:'101',botRoles:['901']});
@@ -70,8 +78,13 @@ describe('Discord intake contract',()=>{
     expect(addressed(art,m,undefined,[art,mark])).toBe(true);
   });
   it('retains attachment descriptions as text without fetching their URLs',()=>{
-    expect(convert({attachments:[{filename:'report.pdf',url:'https://cdn.discordapp.com/attachments/report.pdf'}]})!.text)
-      .toBe('hello [attachment: report.pdf https://cdn.discordapp.com/attachments/report.pdf]');
-    expect(convert({attachments:[{filename:'report.pdf'}]})).toBeNull();
+    const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(io.attempt);
+    io.attempt.mockClear();
+    try {
+      expect(convert({attachments:[{filename:'report.pdf',url:'https://cdn.discordapp.com/attachments/report.pdf'}]})!.text)
+        .toBe('hello [attachment: report.pdf https://cdn.discordapp.com/attachments/report.pdf]');
+      expect(convert({attachments:[{filename:'report.pdf'}]})).toBeNull();
+      expect(io.attempt).not.toHaveBeenCalled();
+    } finally {fetch.mockRestore();}
   });
 });
