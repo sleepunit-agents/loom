@@ -10,6 +10,7 @@ import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { installClock, type ClockOptions } from './index.js';
+import { deskJobs, agentNext } from './desk.js';
 import { clockRole } from './role.js';
 import { wake, wakes, schedules, type Schedule, type Wake } from './store.js';
 import type { StartResult } from './dependencies/runtime.js';
@@ -73,7 +74,8 @@ describe('durable daemon clock', () => {
     const helper: Viewer = { kind: 'member', id: 'helper' };
     for (const viewer of [helper, { kind: 'agent', id: 'art' } as Viewer]) {
       expect(app.value<Array<{ id: string }>>('jobs', { agent: 'art' }, viewer).map(w => w.id)).toEqual([publicWake.id]);
-      expect(app.value('agentNext', { agent: 'art' }, viewer)).toMatchObject({ next: { id: publicWake.id } });
+      expect(clockRole(app.operations).agentNext(viewer, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { id: publicWake.id } } });
+      expect(clockRole(app.operations).jobs(viewer, { agent: 'art' })).toMatchObject({ ok: true, value: [{ id: publicWake.id }] });
     }
     expect(app.value('agentNext', { agent: 'art' })).toMatchObject({ next: { id: privateWake.id } });
     expect(JSON.stringify(app.value('jobs', { agent: 'art' }))).not.toContain('Private words');
@@ -81,6 +83,9 @@ describe('durable daemon clock', () => {
       expect(app.call(verb, { agent: 'art' }, { kind: 'member', id: 'guest' })).toMatchObject({ ok: false, code: 'denied' });
       expect(app.call(verb, { agent: 'art' }, { kind: 'agent', id: 'stranger' })).toMatchObject({ ok: false, code: 'denied' });
     }
+    privateWake.state = 'held'; privateWake.hold = 'permission';
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(privateWake), privateWake.id);
+    expect(clockRole(app.operations).agentNext(helper, { agent: 'art' })).toMatchObject({ ok: true, value: { held: 0, next: { id: publicWake.id } } });
     access.members.helper.agents = [];
     expect(app.call('jobs', { agent: 'art' }, helper)).toMatchObject({ ok: false, code: 'denied' });
   });
@@ -100,6 +105,8 @@ describe('durable daemon clock', () => {
     const future = wakes(app.db).find(w => w.schedule === s.id && w.state === 'pending')!;
     expect(role.agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { id: future.id } } });
     expect(app.db.prepare('SELECT * FROM clock_wakes ORDER BY id').all()).toEqual(before);
+    app.value('pause', { agent: 'art' });
+    expect(role.jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ id: occurrence.id, status: 'running' }, { status: 'waiting' }] });
     // Central type grants permit collection reads but never private member rows.
     const access = structuredClone(sharing);
     access.services.desk = { types: ['wake'], operations: [] };
@@ -109,6 +116,22 @@ describe('durable daemon clock', () => {
     expect(other.value<unknown[]>('jobs', { agent: 'art' }, { kind: 'service', id: 'desk' })).toHaveLength(1);
     for (const viewer of [{ kind: 'service', id: 'unknown' }, { kind: 'runner', id: 'box' }] as Viewer[])
       expect(other.call('agentNext', { agent: 'art' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+  });
+  it('bounds desk labels, uses empty-note file fallbacks and breaks equal-deadline ties by id', async () => {
+    const app = await loom();
+    const long = app.value('in', { agent: 'art', prompt: 'Words stay private', note: 'x'.repeat(301), when: '1m' });
+    expect(clockRole(app.operations).jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ text: 'x'.repeat(300) }] });
+    expect(clockRole(app.operations).agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { text: 'x'.repeat(300) } } });
+    // Construct an imported-format row without granting its opaque provenance.
+    const file: Wake = { ...long, id: 'w-imported', prompt: undefined, file: 'routines/upkeep.md', note: '', legacy: { for_in: 'cv-0123456789ab', continuation: 'untrusted' } };
+    app.db.prepare('DELETE FROM clock_wakes').run();
+    app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(file.id, JSON.stringify(file), file.changedAt);
+    expect(clockRole(app.operations).jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ text: file.file }] });
+    expect(clockRole(app.operations).agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { text: file.file } } });
+    expect(JSON.stringify(clockRole(app.operations).jobs(owner, { agent: 'art' }))).not.toMatch(/cv-0123456789ab|untrusted|legacy|continuation/);
+    const a = { ...file, id: 'w-a' }, z = { ...file, id: 'w-z' };
+    expect(deskJobs([z, a], false).map(w => w.id)).toEqual(['w-a', 'w-z']);
+    expect(agentNext('art', [z, a], false).next?.id).toBe('w-a');
   });
   it('answers a file lane self-rearm within six hours without creating another wake, even at capacity', async () => {
     const app = await loom();
@@ -263,6 +286,9 @@ describe('durable daemon clock', () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
     const app = await loom({ runtime: { startBody } }, home(), new FakeClock(), access);
     const w = app.value('in', { agent: 'art', project: 'pond', prompt: 'X', note: 'x', when: '1m' }, { kind: 'member', id: 'helper' });
+    privateWake.state = 'held'; privateWake.hold = 'permission';
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(privateWake), privateWake.id);
+    expect(clockRole(app.operations).agentNext(helper, { agent: 'art' })).toMatchObject({ ok: true, value: { held: 0, next: { id: publicWake.id } } });
     access.members.helper.agents = [];
     expect(app.value<Wake[]>('list', {}, { kind: 'member', id: 'helper' }).map(w => w.id)).toContain(w.id);
     app.clock.advance(60_000); await settled();

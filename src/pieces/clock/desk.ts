@@ -1,4 +1,4 @@
-/** Read projections of visible active wakes. No prompt, principal or capability words. */
+/** Read projections of visible active wakes. No prompt fields, principals or capability metadata. */
 import type { Wake } from './store.js';
 export interface ClockJob {
   id: string;
