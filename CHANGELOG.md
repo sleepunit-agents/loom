@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show Comms thread activity times in CT and live working state in the thread list.
+
 - Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
 
