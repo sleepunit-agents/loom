@@ -7,12 +7,13 @@ External stores are explicit, read-only inputs:
 loom migrate snapshot --from <old-home> --tasks <taskstore.db> \
   --clock <old-WAKE_DATA> --wake <Art/.wake> \
   --approvals <old-approvals-directory> --changes <v1-Changes-snapshot.json> \
+  --secrets <old-secrets-directory> \
   --to <fresh-directory> --dry-run
 ```
 
 Remove `--dry-run` only after reviewing the inventory. No external locations are
 inferred from the machine running the command. Omitted roots are not covered;
-a supplied missing root is refused. `--changes` accepts a regular v1 snapshot
+a supplied missing or empty root is refused. `--changes` accepts a regular v1 snapshot
 file at any name, copying it to `changes/changes.json`; plan refuses an invalid
 explicit export instead of silently omitting it. It never runs the old piece or
 exports live data itself.
@@ -25,6 +26,19 @@ exports live data itself.
 | Art's flat `.wake` | `clock/art/` |
 | Approvals directory (`approvals.json`, `rules.json`, `audit.jsonl`) | `approvals/` |
 | Changes v1 export | `changes/changes.json` |
+| Secrets directory (`store.sops.json`, `policy.json`, `requests.json`, `audit.jsonl`) | `secrets/` |
+
+| Old CLI behavior dropped | Replacement |
+| --- | --- |
+| Explicit empty external root silently counted as omitted | Every explicitly empty `--clock`, `--wake`, `--approvals`, `--changes` or `--secrets` refuses before destination creation; omit an optional flag to omit its input. |
+
+The old Secrets default is `~/.config/loom-secrets`, outside loom's home,
+overridden by `LOOM_SECRETS_DIR`. Supply the inventoried path explicitly here;
+the generic snapshot CLI never reads that default or environment variable. It copies
+the four importer files without decryption; unrelated holder keys/programs are skipped.
+The Secrets metadata importer and independent verifier must be present in the pinned
+release for plan/all/verify coverage. Copying ciphertext does not activate a holder or
+import credential values into the database.
 
 Clock collection retains only the importer-read files (including archival logs,
 filed approvals, sessions, vouch and places). Art's flat files join the other
