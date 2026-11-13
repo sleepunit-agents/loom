@@ -365,6 +365,8 @@ function addCounts(base: Record<string, unknown>, more: Record<string, StoreCoun
 // ─── The merge ───────────────────────────────────────────────────────────────
 
 export interface MergeScope {
+  /** Explicit composition ignores process-wide private-store overrides. */
+  memorySelection?: { agent?: string } | null;
   /** The household: its directory and every agent's store. */
   household?: Household;
   /** Outside a household: the one context dir whose store holds the cards. */
@@ -445,7 +447,7 @@ export function mergePeople(scope: MergeScope, input: PersonMergeInput): PersonM
   const h = scope.household;
   if (h) return mergeInHousehold(h, scope, from, into, dry, now, at);
   if (!scope.contextDir) throw new PersonMergeError('no store to merge in', 400);
-  return mergeInStore(scope.contextDir, scope.agentName ?? 'agent', scope.actor, from, into, dry, now, at);
+  return mergeInStore(scope.contextDir, scope.agentName ?? 'agent', scope.actor, from, into, dry, now, at, scope.memorySelection);
 }
 
 function openStore(dbPath: string, dry: boolean, actor: string, now: () => number): PeopleStore | null {
@@ -453,9 +455,9 @@ function openStore(dbPath: string, dry: boolean, actor: string, now: () => numbe
   return new PeopleStore({ dbPath, readonly: dry, actor, now });
 }
 
-function mergeInStore(contextDir: string, agent: string, actor: string, from: string, into: string, dry: boolean, now: () => number, at: string): PersonMergeResult {
+function mergeInStore(contextDir: string, agent: string, actor: string, from: string, into: string, dry: boolean, now: () => number, at: string, selection?: { agent?: string } | null): PersonMergeResult {
   const nowMs = Date.parse(at);
-  const st = openStore(resolveSqliteDbPath(contextDir), dry, actor, now);
+  const st = openStore(resolveSqliteDbPath(contextDir, selection), dry, actor, now);
   if (!st) throw fail404(from);
   try {
     const fromRow = st.migrated ? st.rawRow(from) : null;
@@ -532,7 +534,7 @@ function mergeInHousehold(h: Household, scope: MergeScope, from: string, into: s
     const steps: Array<{ agent: string; st: PeopleStore; step: StoreStep; counts: StoreCounts; plan: CardMerge | null }> = [];
     const projects: PersonMergeResult['projects'] = [];
     for (const agent of reach) {
-      const st = openStore(resolveSqliteDbPath(agentDir(h, agent)), dry, actor, now);
+      const st = openStore(resolveSqliteDbPath(agentDir(h, agent), scope.memorySelection), dry, actor, now);
       if (!st) continue;
       opened.push({ agent, st });
       const relFromRow = st.migrated ? st.rawRow(from) : null;
