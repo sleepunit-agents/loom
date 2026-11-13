@@ -8,6 +8,7 @@ import { workingView } from './working';
 import { EarlierPages, retainedMessage } from './pages';
 import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
+import { bindComposerViewport } from './viewport';
 import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
@@ -17,6 +18,8 @@ function Answer({request}:{request?:Call}){const state=useRequest(request);retur
 function Composer({member,place,agent,onOpened,enabled}:{member:string;place?:string;agent:string;onOpened(id:string):void;enabled:boolean}){
  const key=place??`new:${agent}`;const [draft,setDraft]=useState(()=>readDraft(member,key));const currentDraft=useRef<Draft>(draft);const [request,setRequest]=useState<Call<Ack>>();const state=useRequest(request);
  const [preview,setPreview]=useState<()=>Message[]>();
+ const form=useRef<HTMLFormElement>(null),input=useRef<HTMLTextAreaElement>(null);
+ useEffect(()=>form.current?bindComposerViewport(form.current):undefined,[]);
  const edit=(value:string)=>{const next=editDraft(currentDraft.current,value);currentDraft.current=next;setDraft(next);writeDraft(member,key,next);};
  async function send(event:FormEvent){event.preventDefault();if(!currentDraft.current.text.trim()||state.pending||!enabled)return;
   const sent=currentDraft.current;const {text,id}=sent;const task=call<Ack>(place?'comms.send':'comms.open',{...(place?{thread:place}:{agent}),id,text});
@@ -24,10 +27,10 @@ function Composer({member,place,agent,onOpened,enabled}:{member:string;place?:st
   const result=await task.result;
   if(result.ok){clearDraft(member,key,sent);if(currentDraft.current===sent){const empty={id:'',text:''};currentDraft.current=empty;setDraft(empty);}if(!place)onOpened(result.value.thread);} // Failed sends retain the same words and id, including after reload.
  }
- return <form onSubmit={send} className="grid gap-2 border-t p-4">
+ return <form ref={form} onSubmit={send} className="grid gap-2 border-t p-4">
   {preview?.().map(m=><p key={m.id} className="whitespace-pre-wrap" aria-label="Sending message">{m.text} · Sending…</p>)}
-  <label>Message<Textarea value={draft.text} maxLength={40000} rows={3} onChange={e=>edit(e.target.value)} disabled={!enabled}/></label>
-  <div><Button type="submit" disabled={!enabled||state.pending||!draft.text.trim()}>Send</Button></div><Answer request={request}/>
+  <label>Message<Textarea ref={input} value={draft.text} maxLength={40000} rows={3} onChange={e=>edit(e.target.value)} disabled={!enabled}/></label>
+  <div><Button type="submit" onPointerDown={e=>{if(e.button===0&&document.activeElement===input.current)e.preventDefault();}} disabled={!enabled||state.pending||!draft.text.trim()}>Send</Button></div><Answer request={request}/>
  </form>;
 }
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){

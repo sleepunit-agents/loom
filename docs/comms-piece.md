@@ -504,3 +504,22 @@ an older Send again control can scroll the reader back, and the subsequent
 card-only arrivals correctly preserve that choice. It now scrolls to the end
 and dispatches scroll before the width checks, then separately scrolls back for
 the incoming-reply/no-jump assertion. No follow assertion was removed.
+
+The composer now caps its own Comms Split at the visual viewport's bottom when
+an unzoomed keyboard obscures at least 80 pixels and that composer has focus.
+Resize and visual-viewport pan update the local cap; blur, keyboard dismissal
+and unmount remove it and its listeners. A tile keeps its kit container height
+with this additional maximum. The keyboard layout allows the header to scroll
+and releases the dock padding, preserving space for messages and the composer.
+Send keeps an already-focused text field focused, so the keyboard does not
+collapse before its click; Enter remains a newline.
+
+The previous viewport-only layout did not react when only the visual viewport
+shrank. A focused regression tests resize/pan, zoom exclusion, focus changes and
+cleanup. The existing single browser proof now models a 450px visual viewport
+inside an unchanged 900px layout viewport, checks composer visibility and real
+message height, pans it, sends once without losing focus, and dismisses it before
+continuing the original following and retention proofs. This is a simulated
+keyboard in Chromium, not a claim of physical iOS-device testing. Current-head
+CI must validate the extension; broader parity and production integration remain
+unfinished, with review budgets unchanged.

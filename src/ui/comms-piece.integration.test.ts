@@ -119,6 +119,35 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).evaluate(el=>el.closest('form')!.getBoundingClientRect().bottom)).toBeLessThanOrEqual(900);
    await expect.poll(gap,{message:`following after resize to ${width}px`}).toBeLessThanOrEqual(80);
   }
+  // Chromium does not open an OS keyboard. Change only visualViewport metrics,
+  // leaving the layout viewport at 900px, as iOS does when its keyboard opens.
+  await b.setViewportSize({width:390,height:900});
+  const composer=b.getByRole('textbox',{name:'Message',exact:true});
+  await composer.focus();
+  await b.evaluate(()=>{
+   Object.defineProperties(window.visualViewport!,{height:{configurable:true,value:450},offsetTop:{configurable:true,value:50},scale:{configurable:true,value:1}});
+   window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  const composerBottom=()=>composer.evaluate(el=>el.closest('form')!.getBoundingClientRect().bottom);
+  await expect.poll(composerBottom).toBeLessThanOrEqual(500);
+  expect(await messages.evaluate(el=>el.clientHeight)).toBeGreaterThan(0);
+  expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  // Panning the visual viewport updates its bottom without a layout resize.
+  await b.evaluate(()=>{Object.defineProperty(window.visualViewport!,'offsetTop',{configurable:true,value:20});window.visualViewport!.dispatchEvent(new Event('scroll'));});
+  await expect.poll(composerBottom).toBeLessThanOrEqual(470);
+  await composer.fill('Sent above the keyboard');await composer.press('Enter');
+  expect(await composer.inputValue()).toBe('Sent above the keyboard\n');
+  const beforeKeyboardSend=starts.length;
+  await b.getByRole('button',{name:'Send',exact:true}).click();
+  await expect.poll(()=>starts.length).toBe(beforeKeyboardSend+1);
+  expect(await composer.evaluate(el=>document.activeElement===el)).toBe(true);
+  expect(await composer.inputValue()).toBe('');
+  await expect.poll(composerBottom).toBeLessThanOrEqual(470);
+  await b.evaluate(()=>{
+   for(const key of ['height','offsetTop','scale'])Reflect.deleteProperty(window.visualViewport!,key);
+   window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(()=>b.locator('.loom-comms').getAttribute('data-comms-keyboard')).toBe(null);
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
   expect(await gap()).toBeGreaterThan(80);

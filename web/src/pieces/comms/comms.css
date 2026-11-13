@@ -4,3 +4,9 @@
 .loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
 .loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; }
 .loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }
+
+/* Visual keyboards can resize only the visual viewport (100dvh stays tall).
+   The local cap also limits a tile without replacing the kit's 100cqh height. */
+.loom-comms { max-height: var(--comms-visible-height, none); }
+.loom-comms[data-comms-keyboard] > .loom-split__reader { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.loom-comms[data-comms-keyboard] article > header { max-height: 30%; flex-shrink: 1; overflow-y: auto; }
