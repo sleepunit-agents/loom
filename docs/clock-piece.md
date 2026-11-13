@@ -667,7 +667,9 @@ is enabled by this slice.
 `clock.askVouch {target}` and `ask-vouch <id> [<id> …]` let the authenticated
 assignee agent or current household owner request adoption of selected eligible
 unknown imports. Every row must remain visible and pass current create policy.
-Known-person, steered, other-agent and capability-bearing imports are refused;
+Private/member-scoped and project-scoped imports are also refused by this filing
+path: an agent-scoped approval cannot carry their saved words. Scope-preserving
+filing remains future work. Known-person, steered, other-agent and capability-bearing imports are refused;
 archived words supply no authority. The target uses the same canonical grammar
 and bounds as owner vouch. Clock generates the question and lists every id and
 saved due time within Approvals' details cap, shortening only the note.

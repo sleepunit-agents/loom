@@ -301,3 +301,12 @@ it('keeps every maximum-size selection id and due time under the owning details 
   expect(details.length).toBeLessThanOrEqual(1000);
   for(const id of which) expect(details).toContain(`${id} fires ${new Date(base.due).toISOString()}`);
 });
+
+it('does not copy private or project-scoped saved words into an agent-scoped approval even for an owner', async () => {
+  const s=await setup(), original=wake(s.app.db,ids[0])!;
+  for(const patch of [{member:'jonathan'},{project:'pond'}]) {
+    s.change(ids[0],{...original,...patch,note:'private words'});
+    expect(s.call('clock.askVouch',{target:`art:${ids[0]}`})).toMatchObject({ok:false,code:'invalid'});
+    expect(load(s.app.db).approvals).toHaveLength(0);
+  }
+});

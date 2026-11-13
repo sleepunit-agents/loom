@@ -19,7 +19,7 @@ export function vouchable(w: Wake): boolean {
 
 /** Archived strings can exclude a request, never authenticate its asker. */
 export function askable(w: Wake): boolean {
-  return vouchable(w) && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
+  return vouchable(w) && w.member === undefined && w.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
     && !['steered', 'other-agent'].includes(String(w.legacy?.for_why));
 }
 /** Every id and due time survives the owning card's 1000-character details cap. */
