@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync, linkSync, unlinkSync } from 'node:fs';
+import https from 'node:https';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -133,4 +135,41 @@ it('serve composes an explicit authenticated source and public GitHub bindings',
     expect(changes.github).toEqual({acme:'github'});
     const bytes=await changes.source.read('github');expect(Buffer.from(bytes).toString()).toBe('CLI-FIXTURE-VALUE');bytes.fill(0);
   } finally {process.emit('SIGTERM');expect(await running).toBe(0);started.mockRestore();}
+});
+
+async function rawPeer(handler:(req:IncomingMessage,res:ServerResponse)=>void) {
+  const {home,client,server:config}=setup();
+  const peer=https.createServer({key:privateBytes(config.key),cert:privateBytes(config.cert),ca:privateBytes(config.ca),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},handler);
+  await new Promise<void>((resolve,reject)=>{peer.once('error',reject);peer.listen(config.socket,resolve);});chmodSync(config.socket,0o600);
+  closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
+  const received:Buffer[]=[];const actual=https.request;
+  const observed=(options:https.RequestOptions,callback?:(res:IncomingMessage)=>void)=>actual(options,response=>{response.on('data',(chunk:Buffer)=>received.push(chunk));callback?.(response);});
+  vi.spyOn(https,'request').mockImplementation(observed as typeof https.request);
+  return {home,client,received};
+}
+it('rejects an authenticated oversized response and erases accumulated client plaintext',async()=>{
+  const {client,received}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end(Buffer.alloc(65537,65));});
+  await expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(received.reduce((n,b)=>n+b.length,0)).toBeGreaterThan(65536);
+  expect(received.every(b=>b.every(v=>v===0))).toBe(true);
+});
+it('erases partially received client plaintext when an authenticated peer disconnects',async()=>{
+  let disconnect!:()=>void;
+  const {client,received}=await rawPeer((_req,res)=>{disconnect=()=>res.destroy();res.writeHead(200,{'content-type':'application/octet-stream','content-length':100});res.write('PARTIAL-PLAINTEXT');});
+  const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+  await vi.waitFor(()=>expect(received.length).toBeGreaterThan(0));disconnect();await result;
+  expect(received.every(b=>b.every(v=>v===0))).toBe(true);
+});
+it('refuses an occupied socket without disrupting the original authenticated holder',async()=>{
+  const {client,server}=setup();const holder=await listenLocalHolder(server,{read:async()=>Buffer.from('ORIGINAL')});closes.push(holder.close);
+  await expect(listenLocalHolder(server,{read:async()=>Buffer.from('IMPOSTOR')})).rejects.toThrow(/^Local secret holder unavailable$/);
+  const bytes=await localSecretSource(client).read('github');expect(Buffer.from(bytes).toString()).toBe('ORIGINAL');bytes.fill(0);
+});
+it('rejects foreign ownership, hardlinks and malformed private TLS configuration',()=>{
+  const {home,client}=setup();
+  const uid=process.getuid!();const getuid=vi.spyOn(process,'getuid').mockReturnValue(uid+1);
+  expect(()=>privateBytes(client.key)).toThrow(/^Local secret holder unavailable$/);getuid.mockRestore();
+  const link=join(home,'hardlink');linkSync(client.key,link);
+  expect(()=>privateBytes(client.key)).toThrow();expect(()=>privateBytes(link)).toThrow();unlinkSync(link);
+  writeFileSync(client.cert,'NOT-A-CERTIFICATE');expect(()=>localSecretSource(client)).toThrow(/^Local secret holder unavailable$/);
 });

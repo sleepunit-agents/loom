@@ -2,6 +2,7 @@
  * mutual TLS authenticates both peers before a name or value is sent. No TCP.
  */
 import https from 'node:https';
+import { createSecureContext } from 'node:tls';
 import { constants, openSync, fstatSync, readFileSync, closeSync, lstatSync, chmodSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import type { SecretValueSource } from './service.js';
@@ -23,13 +24,14 @@ export function privateBytes(path: string, limit = 64 * 1024): Buffer {
   } catch { throw failed(); }
   finally { if (fd !== undefined) closeSync(fd); }
 }
-function privateDirectory(socket: string) {
-  if (!isAbsolute(socket)) throw failed();
-  const s = lstatSync(dirname(socket));
+export function assertPrivateDirectory(path: string) {
+  if (!isAbsolute(path)) throw failed();
+  const s = lstatSync(path);
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
 }
 function privateSocket(socket: string) {
-  privateDirectory(socket);
+  if (!isAbsolute(socket)) throw failed();
+  assertPrivateDirectory(dirname(socket));
   const s = lstatSync(socket);
   if (!s.isSocket() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
 }
@@ -43,6 +45,7 @@ export interface LocalHolderConfig {
 export function localSecretSource(config: LocalHolderConfig): SecretValueSource {
   const ca = privateBytes(config.ca), cert = privateBytes(config.cert), key = privateBytes(config.key);
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
+  try { createSecureContext({ca, cert, key, minVersion:'TLSv1.3'}); } catch { throw failed(); }
   return { async read(name) {
     if (!secretName.safeParse(name).success) throw failed();
     try { privateSocket(config.socket); } catch { throw failed(); }
@@ -72,14 +75,15 @@ export function localSecretSource(config: LocalHolderConfig): SecretValueSource 
       const deadline = setTimeout(() => { fail(); request.destroy(); }, 5000);
       request.on('close', () => clearTimeout(deadline));
       request.on('error', fail); request.end();
-    });
+    }).catch(() => { throw failed(); });
   }};
 }
 /** Run in the holder process. The provider is crypto-only and returns owned bytes.
  * Refuses existing sockets; restart cleanup is an explicit operator step.
  */
 export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource) {
-  privateDirectory(config.socket);
+  if (!isAbsolute(config.socket)) throw failed();
+  assertPrivateDirectory(dirname(config.socket));
   const key = privateBytes(config.key), cert = privateBytes(config.cert), ca = privateBytes(config.ca);
   const server = https.createServer({key, cert, ca, requestCert: true, rejectUnauthorized: true,
     maxHeaderSize: 8192, minVersion: 'TLSv1.3'}, async (req, res) => {

@@ -2,16 +2,14 @@
  * legacy secrets store. Explicit private age ciphertext directory and identity.
  */
 import { Decrypter } from 'age-encryption';
-import { join, isAbsolute } from 'node:path';
-import { lstatSync } from 'node:fs';
-import { privateBytes } from './local-holder.js';
+import { join } from 'node:path';
+import { privateBytes, assertPrivateDirectory } from './local-holder.js';
 import { secretName } from './input.js';
 import type { SecretValueSource } from './service.js';
 export function ageSecretSource(directory: string, identityFile: string): SecretValueSource {
   const failed = () => new Error('Secret decryption unavailable');
   const check = () => {
-    const s = lstatSync(directory);
-    if (!isAbsolute(directory) || !s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
+    assertPrivateDirectory(directory);
   };
   const decrypt = new Decrypter();
   try {
