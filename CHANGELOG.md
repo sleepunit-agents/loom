@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
+
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
@@ -1880,5 +1882,3 @@ Initial public release.
 [0.4.0-alpha.2]: https://github.com/sleepunit-agents/loom/compare/v0.4.0-alpha.1...v0.4.0-alpha.2
 [0.4.0-alpha.1]: https://github.com/sleepunit-agents/loom/compare/v0.3.1...v0.4.0-alpha.1
 [0.3.1]: https://github.com/sleepunit-agents/loom/releases/tag/v0.3.1
-
-- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
