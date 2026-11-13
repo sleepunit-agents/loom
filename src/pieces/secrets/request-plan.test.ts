@@ -131,3 +131,11 @@ it('retains exact answering member on attributed owner history without assigning
   expect(Object.hasOwn(result.requests[1].source, 'who')).toBe(false);
   expect(plan({ ...plain, who: attributed.who, state: 'revoked', decided: later }).requests[0].source.who).toBe(attributed.who);
 });
+it('maps two distinct source identities to their distinct registered principals in requests and grants', () => {
+  const other = { ...plain, id: carried.id, agent: 'old--bridge', house: 'h-999' };
+  const result = planLegacySecretRequests(bytes(plain, other), {
+    bindings: new Map([['art-', 'art'], ['old--bridge', 'bridge']]), registered: new Set(['art', 'bridge']),
+  }, now);
+  expect(result.requests.map(row => [row.source.agent, row.agent])).toEqual([['art-', 'art'], ['old--bridge', 'bridge']]);
+  expect(result.grants.map(row => [row.requestId, row.agent])).toEqual([[plain.id, 'art'], [other.id, 'bridge']]);
+});
