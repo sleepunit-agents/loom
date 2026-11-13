@@ -71,6 +71,8 @@ it('keeps own types narrow, private records closed, household actions closed, an
   expect(app.operations.call('direct', changes, 'tasks.list', {})).toMatchObject({ code: 'denied' });
   expect(() => snapshot.services.changes.types.push('task')).toThrow(TypeError);
   expect(() => snapshot.services.changes.operations.push('tasks.list')).toThrow(TypeError);
+  expect(() => { snapshot.services.changes.types = ['task']; }).toThrow(TypeError);
+  expect(() => { snapshot.services.changes.operations = ['tasks.list']; }).toThrow(TypeError);
   expect(() => { snapshot.services.changes = { types: ['task'], operations: ['tasks.list'] }; }).toThrow(TypeError);
   expect(() => { snapshot.services.intruder = { types: ['task'], operations: ['tasks.list'] }; }).toThrow(TypeError);
   expect(builtinServices(app.db).changes.types).not.toContain('task');
