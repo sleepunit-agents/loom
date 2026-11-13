@@ -1,5 +1,5 @@
 import { lazy, Suspense, createElement } from 'react';
-import { Loading } from '../../kit';
+import { Loading } from '../../kit/loading';
 const Home = lazy(() => import('./home'));
 export function HomeSurface(props: { go?: (path:string)=>void }) {
   return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening Home…'})},createElement<{go?:(path:string)=>void}>(Home,props));

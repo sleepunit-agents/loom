@@ -1,5 +1,5 @@
-import { animate, type Transition } from "motion";
-import { createMotionLane, motionTokens, trackMotion } from "@/lib/cojeev-motion/choreography";
+import { type Transition } from "motion";
+import { createMotionLane, motionTokens } from "@/lib/cojeev-motion/choreography";
 import { getSettingsSnapshot, getFlowSettings, FLOW_INTENSITY, type FlowVariant } from "@/lib/cojeev-motion/settings";
 
 /** Distinct travel response, including locally pinned presets. Positive dimensions
@@ -94,12 +94,13 @@ export function animateFlowLanding(element: HTMLElement, variant: string, direct
       boxShadow: variant === "ripple" ? `inset 0 0 0 ${1 + intensity}px var(--v-pink)` : `0 0 ${12 * intensity}px ${4 * intensity}px var(--v-pink)`,
     });
     element.append(aura);
-    const bloom = animate(aura, { scale: [1, 1 + .3 * intensity], opacity: [.6, 0] }, {
-      duration: .5 / speed, ease: [...motionTokens.ease.settle],
+    const bloom = createMotionLane(0, progress => {
+      aura.style.transform = `scale(${1 + .3 * intensity * progress})`;
+      aura.style.opacity = String(.6 * (1 - progress));
     });
-    const stopAura = trackMotion(bloom);
-    removeAura = () => { stopAura(); aura.remove(); };
-    void bloom.finished.then(() => aura.remove(), () => aura.remove());
+    removeAura = () => { bloom.dispose(); aura.remove(); };
+    bloom.jump(0);
+    bloom.to(1, { duration: .5 / speed, ease: [...motionTokens.ease.settle] }, removeAura);
   }
   const cleanup=()=>{if(disposed)return;disposed=true;lane.dispose();removeAura();restore()};
   lane.jump(0);lane.to(1,transition,cleanup);

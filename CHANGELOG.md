@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Reduce first-page JavaScript while keeping app screens loaded on demand.
+
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.

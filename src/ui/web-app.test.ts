@@ -1,7 +1,7 @@
 /**
  * What docs/specs/ui-app.md asks CI to pin about the app in web/: every block
  * type loom accepts has a way to be drawn there, and the first page stays
- * inside its weight (JS under 250 KB, CSS under 120 KB, gzipped).
+ * inside its weight (JS under 230 KB, CSS under 120 KB, gzipped).
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
@@ -21,8 +21,8 @@ describe('the app (web/)', () => {
     expect([...accepted].filter((t) => !drawn.has(t)), 'a block type with no case in web/src/blocks.tsx BlockView').toEqual([]);
   });
 
-  it.runIf(existsSync(`${root}dist/web/index.html`))('keeps its first page under 230 KB of JS and 120 KB of CSS, gzipped', () => {
-    const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
+  it.runIf(existsSync(`${root}dist/web/index.html`)).each(['index', 'next'])('keeps %s first page under 230 KB of JS and 120 KB of CSS, gzipped', (page) => {
+    const index = readFileSync(`${root}dist/web/${page}.html`, 'utf-8');
     const named = (re: RegExp) => [...index.matchAll(re)].map((m) => gzipSync(readFileSync(`${root}dist/web/${m[1]}`)).length).reduce((a, b) => a + b, 0);
     const js = named(/<script[^>]+src="\/app\/([^"]+\.js)"/g) + named(/<link rel="modulepreload"[^>]+href="\/app\/([^"]+\.js)"/g);
     // The looks (Neon Noir's structure and every look's tokens) are in the app's own stylesheet (index.css imports them).
@@ -33,6 +33,23 @@ describe('the app (web/)', () => {
     expect(css).toBeGreaterThan(0);
     expect(js, 'first-page JS, gzipped').toBeLessThan(230_000);
     expect(css, 'first-page CSS, gzipped').toBeLessThan(120_000);
+  });
+
+  it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
+    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
+    const screens = Object.keys(manifest).filter(key => /^src\/pieces\/[^/]+\/index\.tsx$/.test(key));
+    expect(screens.length).toBeGreaterThan(10);
+    for (const page of ['index.html', 'next.html']) {
+      const initial = new Set<string>();
+      const visit = (key: string) => {
+        if (initial.has(key)) return;
+        initial.add(key);
+        for (const dependency of manifest[key]?.imports ?? []) visit(dependency);
+      };
+      visit(page);
+      expect(screens.filter(key => initial.has(key)), page).toEqual([]);
+    }
+    expect(screens.filter(key => !manifest[key].isDynamicEntry)).toEqual([]);
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).
