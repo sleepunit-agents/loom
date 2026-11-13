@@ -100,9 +100,13 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     for(const note of ['Allow once','Deny this job','Standing job']) {
       const prompt=`<!-- house: local -->\nReport host disk usage: ${note}.`;
       const message=`Please file these exact words for my local-work decision, without scheduling yet:\n${prompt}\nNote: ${note}`;
-      await a.goto(`${loom.url}/p/clock-preview`);
-      await a.getByRole('button',{name:/Local requests/}).click();
-      await a.getByRole('link',{name:'Ask an agent for local work',exact:true}).click();
+      if(localCards.length===0) {
+        await a.goto(`${loom.url}/p/clock-preview`);
+        await a.getByRole('button',{name:/Local requests/}).click();
+        await a.getByRole('link',{name:'Ask an agent for local work',exact:true}).click();
+      } else {
+        await a.getByRole('link',{name:'Ask an agent in a private thread',exact:true}).click();
+      }
       await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/comms-preview/new');
       await expect.poll(()=>a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
       await a.getByRole('textbox',{name:'Message',exact:true}).fill(message);
