@@ -142,3 +142,61 @@ still must select existing stores, supply source viewers and canonical resolvers
 hold the daemon home lock, and handle stale endpoints before starting the group.
 An occupied endpoint is always refused; this helper never removes one. Knowledge
 actions/receipts and the complete source binding remain required before enablement.
+
+## Knowledge page actions and durable retries
+
+`installMindKnowledgeActions(operations, {path, sharing, verify})` adds the two
+page actions beside the read installer. Composition injects the synchronous
+`verifyKnowledgePages` primitive; the piece does not import the old backend or
+initialize its content schema. The connection requires an existing file and
+never creates a missing Knowledge store. Both actions use central `mayAct` for
+the household Knowledge surface and require an operation id.
+
+| Old page action | New operation | Preserved effect |
+| --- | --- | --- |
+| `knowledge-verify` / Still true | `mind.knowledgeVerify({slug})` | Confirmed audit, successful stamp, original confirmation note |
+| `knowledge-recheck` / Check again | `mind.knowledgeRecheck({slug})` | Stale audit and original recheck note; successful stamp stays unchanged |
+
+Attribution is the authenticated viewer id, and timestamps use the operation
+clock. Missing pages return not-found; archived pages require restoration. The
+installer remains additive and is not yet registered in next mode.
+
+A write's `Context.receipt` carries the registry's canonical viewer, operation
+id/name, parsed-input hash and thirty-day expiry. The action installer applies
+numbered source metadata migrations, recorded in `mind_source_migrations`;
+unknown or changed migration history refuses startup. Each migration is atomic.
+The separate source transaction commits verification and
+`mind_operation_receipts` together. These are retry metadata, not content tables
+or pending intents: only migration SQL, identity, hash, expiry and the small
+verification result are retained. No page body or note is copied into loom.db or
+the receipt table. Existing content table definitions and old callers are unchanged.
+
+The content transaction and the core receipt are **not** one atomic transaction.
+If content commits but the core receipt fails, the caller gets unavailable;
+that must never be interpreted as an unchanged content store. Retrying the same
+id, including after restart, finds the source receipt, returns the original
+result and republishes the changed slug without another audit, note or stamp.
+The registry's optional `recover` hooks run before `may` for every registered
+write, deduplicated by function identity. Each source checks the shared viewer/id
+namespace, so an unrelated operation cannot reuse an id whose source committed
+but whose core receipt failed. Like the core receipt lookup, replay acknowledges
+an already-committed effect even after permission
+loss. Fresh effects still require authorization. A `RecoveredWrite` carries the
+original expiry into the core receipt, so delayed recovery never renews the
+thirty-day window. Source lookup is checked again under its immediate write lock
+to handle another daemon committing between lookup and mutation.
+Different input or either action with that id conflicts. Source receipts expire
+at thirty days and are pruned on the next action, matching the core retry window;
+a new request after that window may act again. Source receipt failures roll back
+the content effect. Live publication occurs after the core transaction succeeds,
+so recovery also repairs publication missed by a failed core receipt.
+
+This does not close the remaining daemon source/socket lifecycle work, enable
+next mode, or finish any of the four apps. The composition root must install and
+close both connections and bind outside-write notifications before rollout.
+
+External receipt readers participate in the registry's global write-id lookup.
+If an installed source receipt reader fails, new writes fail closed: the source
+may already reserve that viewer/id. Cached core retries remain available. This
+couples new-write availability to the installed source's metadata reader; silently
+skipping an unreadable source would sacrifice the global conflict guarantee.

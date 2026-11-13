@@ -263,14 +263,15 @@ export function conversationOwner(h: Household, v: Viewer, id: string): string |
  * label, people, last, the newest digest's summary, any open needs_owner, and `new` (last after
  * `since`). `since` marks, it doesn't filter. project_hub calls this with the project's slug.
  */
-export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env): { key: 'conversations'; items: HubConversation[] } | null {
+export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): { key: 'conversations'; items: HubConversation[] } | null {
   // No conversations store yet: the section is absent, as projects.md has it for a missing store.
   const db = openConversationsReadonly(contextDir);
   if (!db) return null;
   db.close();
-  const home = homeFor(contextDir, env);
+  const home = homeFor(contextDir, env, selection);
   // Comms threads filed under the project count from their first message, digest or not (comms.md, "Project").
-  const agent = householdOf(contextDir)?.agent;
+  // Explicit offline readers use core records only; filing belongs to the running Comms app.
+  const agent = selection === undefined ? householdOf(contextDir)?.agent : undefined;
   const filed = home && agent ? filedThreads(home, agent, slug) : [];
-  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v), filed) };
+  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => selectedVenueLabel(home, v, selection), filed) };
 }

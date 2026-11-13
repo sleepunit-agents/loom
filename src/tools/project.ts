@@ -19,7 +19,7 @@
  * the CLI pass `managedPieceSections` (src/project-feeds.ts).
  */
 import { existsSync } from 'node:fs';
-import { conversationsSection } from '../conversations.js';
+import { conversationsSection, type ConversationSelection } from '../conversations.js';
 import type { HubConversation } from '../backends/conversations.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveIdentityName } from '../config.js';
@@ -42,7 +42,7 @@ import {
   type ProjectWriteInput,
   type HubMemory,
 } from '../backends/projects.js';
-import { openPeople } from './person.js';
+import { openPeople, type PeopleSelection } from './person.js';
 import { managedPieceSections } from '../project-feeds.js';
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -234,6 +234,8 @@ export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard;
 export const noPieceSections: PieceSectionSource = async () => [];
 
 export interface HubOptions {
+  peopleSelection?: PeopleSelection;
+  conversationSelection?: ConversationSelection;
   nowMs?: number;
   pieceSections?: PieceSectionSource;
   /** Leave out the conversations section: a house's caller reads only the conversation it holds (t-2118). */
@@ -307,8 +309,8 @@ function notesSection(contextDir: string, card: ProjectCard, since: string, nowM
  * Active person cards with a `where` field named by any of the project's
  * field names (a name with `-` replaced by `_`), ordered by the person's name.
  */
-function peopleSection(contextDir: string, card: ProjectCard, nowMs: number): HubSection | null {
-  const store = openPeople(contextDir, { readonly: true });
+function peopleSection(contextDir: string, card: ProjectCard, nowMs: number, selection?: PeopleSelection): HubSection | null {
+  const store = openPeople(contextDir, { readonly: true, selection });
   if (!store) return null;
   try {
     if ('migrated' in store && !store.migrated) return null;
@@ -388,9 +390,9 @@ export async function projectHubOf(
         return m ? { key: 'memories', ...m } : null;
       }),
       section('notes', () => notesSection(contextDir, row.card, since, nowMs)),
-      section('people', () => peopleSection(contextDir, row.card, nowMs)),
+      section('people', () => peopleSection(contextDir, row.card, nowMs, opts.peopleSelection)),
       // After people (docs/specs/conversations.md, "Projects"): digests store project slugs, resolved at write.
-      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
+      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since, process.env, opts.conversationSelection)),
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
@@ -447,7 +449,7 @@ export async function projectHub(
   input: { slug: string; since?: string; include_archived?: boolean },
   opts: HubOptions = {},
 ): Promise<string> {
-  return text(() => projectHubOf(contextDir, input, { pieceSections: managedPieceSections(), ...opts }));
+  return text(() => projectHubOf(contextDir, input, { pieceSections: opts.conversationSelection === undefined ? managedPieceSections() : noPieceSections, ...opts }));
 }
 
 export async function projectOrphansText(contextDir: string): Promise<string> {
