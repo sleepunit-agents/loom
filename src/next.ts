@@ -20,7 +20,7 @@ import { householdProjects } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
-import { signin, installSignin, cookieId, sameOrigin } from './core/signin/index.js';
+import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -101,9 +101,9 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
         if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }
-        // A session-created link cannot refresh a stale sign-in. Only the CLI/bearer door mints links.
-        if (cookieId(req) && req.url?.split('?')[0] === '/api/signin/link') { res.writeHead(403); res.end(); return; }
-        if (req.url?.startsWith('/api/')) return api(req, res);
+        // The ephemeral credential endpoint authenticates a bearer itself. Generic
+        // operation routing cannot mint a link, even with encoded path parameters.
+        if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});

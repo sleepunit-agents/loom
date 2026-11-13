@@ -8,6 +8,14 @@ export function signinRoutes(app: Foundation) {
   routes.use('*',bodyLimit({maxSize:32768}));
   routes.use('*',async(c,next)=>{c.header('cache-control','no-store');c.header('referrer-policy','no-referrer');c.header('x-content-type-options','nosniff');if(c.req.method==='POST'&&!sameOrigin(c.env.incoming))return c.json({error:'Cross-site request'},403);await next();});
   routes.onError(()=>Response.json({error:'Sign-in could not complete'},{status:400,headers:{'cache-control':'no-store'}}));
+  routes.post('/api/signin/link',async c=>{
+    const req=c.env.incoming;
+    if(!/^Bearer\s+.+$/i.test(req.headers.authorization ?? ''))return c.json({error:'Bearer authentication required'},403);
+    const auth=s.resolve(req);if(!auth?.valid())return c.json({error:'Authentication required'},401);
+    const body=await c.req.json();
+    const result=app.operations.call('direct',auth.viewer,'signin.link',body?.input);
+    return c.json(result,result.ok?200:result.code==='denied'?403:400);
+  });
   routes.get('/auth/session',c=>{
     const id=cookieId(c.env.incoming), current=id?s.session(id):undefined;
     return current?c.json({viewer:current.viewer,csrf:s.csrf(id!)}):c.json({viewer:null});

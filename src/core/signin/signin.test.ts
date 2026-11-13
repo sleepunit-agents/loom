@@ -51,7 +51,8 @@ it('CLI links are member-bound, GET-safe, single-use, expiring, and absent from 
   expect((await fetch(url,{method:'POST'})).status).toBe(401);
   expect(JSON.stringify(f.loom.db.prepare('SELECT * FROM core_operations').all())).not.toContain(url.split('/').pop());
   const next=f.s.link('pollock',undefined,false,undefined,1);f.clock.advance(1000);expect((await f.post(next)).status).toBe(401);
-  expect((await f.post('/api/signin/link',{input:{member:'pollock'}},{cookie:`loom_ui=${f.cookie}`})).status).toBe(403);
+  const csrf=(await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).csrf;
+  for(const path of ['/api/signin/link','/api/signin/%6cink'])expect((await f.post(path,{input:{member:'pollock'}},{cookie:`loom_ui=${f.cookie}`,'x-loom-csrf':csrf})).status).toBe(403);
 });
 it('session expiry closes sockets and cross-origin or missing-origin cookie sockets are refused',async()=>{
   const f=await setup();
@@ -100,7 +101,59 @@ it('runner and service tokens keep their viewer kinds; expired and unknown-agent
 });
 it('headless browser sessions end in six hours and a stale link cannot authorize adding a passkey',async()=>{
   const f=await setup();const path=f.s.link('jonathan',undefined,false,f.clock.now()/1000-601);
-  const res=await f.post(path,{}, {'user-agent':'Mozilla/5.0 HeadlessChrome/120 Linux'});expect(res.status).toBe(303);
+  const res=await f.post(path,{}, {'user-agent':'Mozilla/5.0 '+ 'x'.repeat(100) +' HeadlessChrome/120 Linux'});expect(res.status).toBe(303);
   const cookie=res.headers.get('set-cookie')!.split(';')[0], id=cookie.slice(8);expect(f.s.fresh(id)).toBeUndefined();
   expect(f.s.session(id)?.s.agent).toBe(true);f.clock.advance(6*3600_000);expect(f.s.session(id)).toBeUndefined();
+});
+class Authenticator {
+  id=randomBytes(16);keys=generateKeyPairSync('ec',{namedCurve:'prime256v1'});counter=0;
+  constructor(readonly origin:string){}
+  data(attested=false, flags=attested?0x45:5, rp=new URL(this.origin).hostname){const b=Buffer.alloc(attested?55+this.id.length:37);createHash('sha256').update(rp).digest().copy(b);b[32]=flags;b.writeUInt32BE(this.counter,33);if(attested){b.writeUInt16BE(this.id.length,53);this.id.copy(b,55);}return b;}
+  registration(challenge:string){return {id:this.id.toString('base64url'),clientDataJSON:Buffer.from(JSON.stringify({type:'webauthn.create',challenge,origin:this.origin})).toString('base64url'),authenticatorData:this.data(true).toString('base64url'),publicKey:this.keys.publicKey.export({type:'spki',format:'der'}).toString('base64url'),publicKeyAlgorithm:-7};}
+  assertion(challenge:string, changes:{origin?:string;type?:string;flags?:number;rp?:string;forge?:boolean}={}){const cd=Buffer.from(JSON.stringify({type:changes.type ?? 'webauthn.get',challenge,origin:changes.origin ?? this.origin})),ad=this.data(false,changes.flags,changes.rp);return {id:this.id.toString('base64url'),clientDataJSON:cd.toString('base64url'),authenticatorData:ad.toString('base64url'),signature:sign('sha256',changes.forge?Buffer.from('forged'):Buffer.concat([ad,createHash('sha256').update(cd).digest()]),this.keys.privateKey).toString('base64url')};}
+}
+it('independently enforces WebAuthn checks, challenge lifetimes, single use and counters',async()=>{
+  const f=await setup(), origin=f.loom.url.replace('http:','https:');vi.stubEnv('LOOM_PUBLIC_URL',origin);
+  const headers={cookie:`loom_ui=${f.cookie}`,origin},csrf=(await(await f.get('/auth/session',headers)).json()).csrf,device=new Authenticator(origin);
+  const opts=()=>f.post('/passkeys/options',{_csrf:csrf},headers).then(r=>r.json());
+  for(const path of ['/passkeys/options','/passkeys'])for(const token of [undefined,'wrong'])expect((await f.post(path,{_csrf:token},headers)).status).toBe(403);
+  const o=await opts(),registration=device.registration(o.challenge);
+  const changeCd=(r:typeof registration,change:Record<string,unknown>)=>({...r,clientDataJSON:Buffer.from(JSON.stringify({...JSON.parse(Buffer.from(r.clientDataJSON,'base64url').toString()),...change})).toString('base64url')});
+  for(const bad of [
+    {...registration,authenticatorData:device.data(true,0x41).toString('base64url')},
+    {...registration,authenticatorData:device.data(true,0x44).toString('base64url')},
+    {...registration,authenticatorData:device.data(true,0x45,'wrong.test').toString('base64url')},
+    {...registration,id:randomBytes(16).toString('base64url')},
+    {...registration,publicKeyAlgorithm:-8},
+    changeCd(registration,{origin:'https://wrong.test'}),changeCd(registration,{type:'webauthn.get'}),
+  ])expect((await f.post('/passkeys',{_csrf:csrf,...bad},headers)).status).toBe(400);
+  expect((await f.post('/passkeys',{_csrf:csrf,...registration},headers)).status).toBe(200);
+  const other=new Authenticator(origin);expect((await f.post('/passkeys',{_csrf:csrf,...other.registration(o.challenge)},headers)).status).toBe(400);
+  const expiring=await opts();f.clock.advance(300000);expect((await f.post('/passkeys',{_csrf:csrf,...other.registration(expiring.challenge)},headers)).status).toBe(400);
+  const challenge=()=>f.post('/login/passkey/options',{}, {origin}).then(r=>r.json());
+  device.counter=1;
+  for(const change of [{forge:true},{flags:1},{flags:4},{rp:'wrong.test'},{origin:'https://wrong.test'},{type:'webauthn.create'}]){
+    const c=await challenge();expect((await f.post('/login/passkey',device.assertion(c.challenge,change),{origin})).status).toBe(401);
+  }
+  const expired=await challenge();f.clock.advance(300000);expect((await f.post('/login/passkey',device.assertion(expired.challenge),{origin})).status).toBe(401);
+  const valid=await challenge();expect((await f.post('/login/passkey',device.assertion(valid.challenge),{origin})).status).toBe(200);
+  const unchanged=await challenge();expect((await f.post('/login/passkey',device.assertion(unchanged.challenge),{origin})).status).toBe(401);
+  device.counter=2;expect((await f.post('/login/passkey',device.assertion(valid.challenge),{origin})).status).toBe(401);
+});
+it('isolates member user handles and excluded credentials and invalidates a removed member',async()=>{
+  const f=await setup(),origin=f.loom.url.replace('http:','https:');vi.stubEnv('LOOM_PUBLIC_URL',origin);
+  const cookieA=`loom_ui=${f.cookie}`,link=await f.post(f.s.link('pollock'));const cookieB=link.headers.get('set-cookie')!.split(';')[0];
+  const add=async(cookie:string)=>{const csrf=(await(await f.get('/auth/session',{cookie})).json()).csrf;const o=await(await f.post('/passkeys/options',{_csrf:csrf},{cookie,origin})).json();const d=new Authenticator(origin);expect((await f.post('/passkeys',{_csrf:csrf,...d.registration(o.challenge)},{cookie,origin})).status).toBe(200);return {o,csrf,d};};
+  const a=await add(cookieA),b=await add(cookieB);
+  expect(a.o.user.id).toBe(Buffer.from(hash('loom-owner|127.0.0.1'),'hex').subarray(0,16).toString('base64url'));
+  expect(b.o.user.id).toBe(Buffer.from(hash('loom-member|pollock|127.0.0.1'),'hex').subarray(0,16).toString('base64url'));
+  expect(a.o.user.id).not.toBe(b.o.user.id);
+  for(const [cookie,entry] of [[cookieA,a],[cookieB,b]] as const){const o=await(await f.post('/passkeys/options',{_csrf:entry.csrf},{cookie,origin})).json();expect(o.excludeCredentials).toEqual([{type:'public-key',id:entry.d.id.toString('base64url')}]);}
+  const memberToken=randomBytes(32).toString('hex');f.s.tokens.change(tokens=>tokens.push({role:'owner',member:'pollock',sha256:hash(memberToken),label:'member',created:new Date(f.clock.now()).toISOString()}));
+  expect((await f.post('/api/signin/link',{input:{member:'pollock'}},{authorization:`Bearer ${memberToken}`})).status).toBe(403);
+  const ws=await f.open({cookie:cookieB,origin});const closed=once(ws,'close');
+  const {HouseholdDatabase}=await import('../household/document.js');new HouseholdDatabase(f.loom.db).change(f.home,raw=>{raw.members=(raw.members as Array<{person:string}>).filter(m=>m.person!=='pollock');});
+  f.loom.live.changed([{type:'core.access',id:'household'}]);expect((await closed)[0]).toBe(1008);
+  expect((await(await f.get('/auth/session',{cookie:cookieB})).json()).viewer).toBeNull();expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${memberToken}`})).status).toBe(401);
+  const c=await(await f.post('/login/passkey/options',{}, {origin})).json();b.d.counter=1;expect((await f.post('/login/passkey',b.d.assertion(c.challenge),{origin})).status).toBe(401);
 });

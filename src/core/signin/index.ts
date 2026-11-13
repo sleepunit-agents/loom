@@ -9,7 +9,8 @@ import { HouseholdDatabase } from '../household/document.js';
 import { HouseholdRows } from '../household/rows.js';
 import { TokenDatabase } from '../household/tokens.js';
 import { SessionDatabase } from '../../ui/session-db.js';
-import type { Viewer } from '../../policy.js';
+import { mayAct, type Viewer } from '../../policy.js';
+import { SharingDatabase } from '../household/sharing.js';
 import { ALGS, relyingParty, verifyAssertion, verifyRegistration } from './webauthn.js';
 export { relyingParty } from './webauthn.js';
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -18,6 +19,13 @@ interface StoredSession { issuedAt: number; secret: string; signedInAt?: number;
 interface BrowserSession { s: StoredSession; viewer: Viewer; expiresAt: number }
 const MONTH = 30 * 86400, HOURS = 6 * 3600;
 const clean = (s?: string) => (s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu,' ').replace(/\s+/g,' ').trim().slice(0,60);
+/** Normalize before truncation: ordinary headless UAs begin with Mozilla and can be long. */
+function deviceOf(ua?: string): string | undefined {
+  if (!ua) return;
+  const browser = /HeadlessChrome\//.test(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /^curl\//.test(ua) ? 'curl' : undefined;
+  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
+  return browser && system ? `${browser} on ${system}` : browser ?? system;
+}
 const eq = (a: string,b: string) => timingSafeEqual(Buffer.from(hash(a),'hex'),Buffer.from(hash(b),'hex'));
 export function cookieId(req: IncomingMessage): string | undefined {
   const value = (req.headers.cookie ?? '').split(';').map(p=>p.trim()).find(p=>p.startsWith('loom_ui='))?.slice(8);
@@ -46,7 +54,7 @@ export class Signin {
   }
   now() { return Math.floor(this.app.operations.clock.now()/1000); }
   household() { return new HouseholdDatabase(this.app.db).household(''); }
-  owner(id: string) { return this.household()?.members.some(m=>m.person===id && m.agents==='*') ?? false; }
+  owner(id: string) { return mayAct({kind:'member',id},{},new SharingDatabase(this.app.db,'').sharing(),'household'); }
   token(digest: string): { viewer: Viewer; expiresAt?: number } | undefined {
     const now=this.app.operations.clock.now(), h=this.household(); if (!h) return;
     const t=this.tokens.records(digest).find(t=>!t.revoked && (!t.expires || Date.parse(t.expires)>now)); if (!t) return;
@@ -115,7 +123,7 @@ export class Signin {
     return this.app.db.transaction(()=>{
       const link=this.sessions.get('links',hash(code)); if (!link || link.expires<=this.now() || this.token(link.secret)?.viewer.kind!=='member') return;
       this.sessions.change(f=>{delete f.links![hash(code)];});
-      return this.createSession(link.secret,{label:link.label,signedInAt:link.signedInAt,agent:link.agent,via:'link',device:clean(device)});
+      return this.createSession(link.secret,{label:link.label,signedInAt:link.signedInAt,agent:link.agent,via:'link',device:deviceOf(device)});
     }).immediate();
   }
   challenge(purpose: 'login'|'register', secret?: string) {
@@ -132,12 +140,12 @@ export class Signin {
   register(id: string, body: Record<string,unknown>, rp: {origin:string;rpId:string}) {
     this.app.db.transaction(()=>{
       const s=this.fresh(id); if (!s) throw new Error('Sign in again before adding a passkey');
-      const p=verifyRegistration(body,rp), c=this.sessions.get('challenges',hash(p.challenge));
-      if(!c || c.purpose!=='register' || c.expires<=this.now() || c.secret!==s.s.secret)throw new Error('Challenge refused');
-      if(this.sessions.get('passkeys',p.id) || Object.keys(this.sessions.read().passkeys ?? {}).length>=20)throw new Error('Passkey already exists or limit reached');
-      const label=clean(typeof body.label==='string'?body.label:'') || 'A passkey', secret=hash(random()), tokenLabel=`Passkey: ${label} · ${s.viewer.id.slice(0,30)} · ${hash(p.id).slice(0,12)}`;
-      this.tokens.change(tokens=>{tokens.push({role:'owner',member:s.viewer.id,label:tokenLabel,sha256:secret,passkey:hash(p.id),from_sha256:s.s.secret,created:new Date(this.app.operations.clock.now()).toISOString()});});
-      this.sessions.change(f=>{delete f.challenges![hash(p.challenge)];f.passkeys ??={};f.passkeys[p.id]={id:p.id,publicKey:p.publicKey,alg:p.alg,counter:p.counter,label,secret,tokenLabel,created:this.now()};});
+      const registration=verifyRegistration(body,rp), challenge=this.sessions.get('challenges',hash(registration.challenge));
+      if(!challenge || challenge.purpose!=='register' || challenge.expires<=this.now() || challenge.secret!==s.s.secret)throw new Error('Challenge refused');
+      if(this.sessions.get('passkeys',registration.id) || Object.keys(this.sessions.read().passkeys ?? {}).length>=20)throw new Error('Passkey already exists or limit reached');
+      const label=clean(typeof body.label==='string'?body.label:'') || 'A passkey', secret=hash(random()), tokenLabel=`Passkey: ${label} · ${s.viewer.id.slice(0,30)} · ${hash(registration.id).slice(0,12)}`;
+      this.tokens.change(tokens=>{tokens.push({role:'owner',member:s.viewer.id,label:tokenLabel,sha256:secret,passkey:hash(registration.id),from_sha256:s.s.secret,created:new Date(this.app.operations.clock.now()).toISOString()});});
+      this.sessions.change(f=>{delete f.challenges![hash(registration.challenge)];f.passkeys ??={};f.passkeys[registration.id]={id:registration.id,publicKey:registration.publicKey,alg:registration.alg,counter:registration.counter,label,secret,tokenLabel,created:this.now()};});
     }).immediate();
   }
   login(body: Record<string,unknown>, rp: {origin:string;rpId:string}, device?: string) {
@@ -146,13 +154,13 @@ export class Signin {
       const a=verifyAssertion(body,k,rp),c=this.sessions.get('challenges',hash(a.challenge));
       if(!c || c.purpose!=='login' || c.expires<=this.now() || ((a.counter!==0 || k.counter!==0) && a.counter<=k.counter))throw new Error('Challenge or counter refused');
       this.sessions.change(f=>{delete f.challenges![hash(a.challenge)];f.passkeys![k.id]={...k,counter:a.counter,lastUsed:this.now()};});
-      return this.createSession(k.secret,{via:'passkey',device:clean(device)});
+      return this.createSession(k.secret,{via:'passkey',device:deviceOf(device)});
     }).immediate();
   }
 }
 export function installSignin(app: Foundation) {
   const s=signin(app);
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
-  app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct','http'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
+  app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
   app.operations.register({name:'signin.revokeToken',write:true,input:z.object({label:z.string()}),output:z.object({revoked:z.boolean()}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{const revoked=s.tokens.change(tokens=>{let found=false;for(const t of tokens)if(t.label===i.label&&!t.revoked){t.revoked=new Date(ctx.now).toISOString();found=true;}return found;});ctx.changed('core.access','credentials');return {revoked};}});
 }
