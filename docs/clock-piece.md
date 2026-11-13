@@ -907,7 +907,9 @@ The Clock app's Local requests folder shows local-wake cards through the owning
 Approvals live scope. It reuses Approvals' exact-word reader, current-open check,
 and Allow/Deny/Allow-every-time actions; decisions create no wake. Private words
 still require the owning member's signed-in window. Standing jobs can be turned
-off in Approvals → Rules. CI screenshots cover this decision reader at all six
+off in Approvals → Rules. The folder keeps Approvals feed readiness separate
+from ordinary Clock controls and their request state, preserving the existing
+Clock layout rather than unifying these independent feeds. CI screenshots cover this decision reader at all six
 required widths/looks, with real Signin sessions and cross-window answers.
 
 Remaining in this workflow: owner-facing local filing/recovery scheduling controls.
