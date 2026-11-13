@@ -183,31 +183,41 @@ control, even when a stale effect still says due. Non-bridge effects are exclude
 Offline or denied subscriptions clear detail and release controls. Completed or
 evicted effects leave the reader instead of retaining an actionable snapshot.
 
+The Connections folder creates, edits and removes setup with existing
+`bridges.putVenues`/`bridges.removeVenues`. It includes agent, platform, workspace,
+bot, enabled state, token/app secret **names**, only/ignore channels and bot roles.
+No value lookup or grant creation is performed. Untouched strings and lists retain
+exact values; edited lists use one reference per line and omit empty lines.
+New connections receive stable random ids; removal requires confirmation and holds
+pending intake/replies through the existing operation. Setup changes observed while
+editing latch a reload requirement, including edit-and-restore. Traffic-only updates
+do not invalidate the draft. This is an observed-change guard, not atomic compare-and-swap.
+
 The Routes folder creates, edits and removes routes using the existing
 `bridges.putRoutes` and `bridges.removeRoutes` operations. Fields cover platform,
 workspace/channel, parent, primary agent, paired webhook, peers, guests, reader agents
 and note references. Reader and note lists use one reference per line; blank lines
 are omitted when editing a list; untouched strings and lists retain their exact values. New routes receive a stable random id. Removal requires confirmation.
-A pending route write blocks other route writes across in-app navigation, and refusal stays inline.
+A pending setup write blocks other connection and route writes across in-app navigation, and refusal stays inline.
 If the window observes a live route change while a draft is open, saving and removal
 stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
 the existing put operation remains last-write-wins, without an atomic revision check.
 The daemon continues to enforce the existing household-owner policy for every write.
-Connection and person-link editing, uncertain-send disposition and held intake
+Person-link editing, uncertain-send disposition and held intake
 repair remain required work before the full rebuild is complete. No live
 connections start merely by opening this app or installing next-mode metadata.
 
 The CI-only `bridges-preview.integration.test.ts` uses two windows and fake venue IO
 on a disposable staged `startLoom --next` home. It verifies shared status, route and
 send reads, reload/deep-link selection, one release reaching one uncertain attempt,
-and both windows losing the release action afterward. Its twelve screenshots cover route editing and staged sends at
+and both windows losing the release action afterward. Its eighteen screenshots cover connection editing, route editing and staged sends at
 390/1280/1920 widths in Neon Noir and Daylight. The dedicated Bridges preview
 evidence workflow uploads them with the exact PR head in the artifact name.
 
 | Existing surface | Preview replacement / remaining work |
 | --- | --- |
-| Bridge connection and traffic metadata | Connections folder, saved state and daily counts |
+| Bridge connection setup and traffic metadata | Connections form with create/edit/confirmed removal, saved state and daily counts |
 | Channel/thread route configuration | Routes form with create/edit/confirmed removal |
 | Staging-held reply | Pending sends and staged effects, one-item release |
 | Partial or interrupted send | Uncertain state, review guidance and no replay control; explicit disposition pending |

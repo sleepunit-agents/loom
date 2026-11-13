@@ -13,11 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
+- Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
+- Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+- Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
+
 - Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
+- Add connection creation, editing and confirmed removal to the Bridges preview, with secret-name references and shared pending setup guards.
 - Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
@@ -37,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
 - Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
@@ -956,6 +962,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rollback or new settings, and removed with the piece. `keepChildren: true`
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
+
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
 
 ## [0.16.1] - 2026-10-25
 

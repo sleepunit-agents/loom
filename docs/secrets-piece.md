@@ -157,3 +157,22 @@ aliases. A duplicated `default`, secret rule or `grant` cannot silently discard
 an earlier Never rule. Unknown fields cannot be hidden behind a duplicate key.
 Both public parsers keep their fixed redacted error messages. This is input
 validation only; it adds no command, daemon registration or real import.
+
+## Offline carry-link validation
+
+`parseLegacySecretRequestLinks(Buffer)` layers cross-row validation over the
+request source parser. Surviving partners must be reciprocal, keep the same
+agent, secret, exact service and expiry, move to a different house, and represent
+a plain owner Allow moved only once. Paired revocations must agree in state and
+revocation time. Multiple rows cannot claim the same partner, even if retention
+pruned that partner. A pruned middle row cannot hide a second carry, and carry
+creation must precede the inherited expiry even for a later-revoked row.
+Contradictions refuse with a fixed value-free error.
+
+The function returns the original metadata, including expired stored grants and
+missing historical partners, without inventing member attribution. It performs
+no current-time check, principal mapping, grant creation or DB/file access.
+Missing partners are retained for history, never proof of authorization; the
+final importer must refuse unsupported effective-grant composition, suppress
+claimed originals and map every identity to a registered principal. The complete
+transactional importer and daemon registration remain pending on t-2208.

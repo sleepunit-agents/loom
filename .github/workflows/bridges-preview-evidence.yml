@@ -27,11 +27,13 @@ jobs:
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
       - name: Prove the Bridges preview only
+        env:
+          CI: 'true'
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_TEST_SHOTS="$PWD/artifacts/bridges-preview"
           nice -n 19 npx vitest run src/ui/bridges-preview.integration.test.ts --maxWorkers=1
-          test "$(find artifacts/bridges-preview -name '*.png' | wc -l)" -eq 12
+          test "$(find artifacts/bridges-preview -name '*.png' | wc -l)" -eq 18
       - uses: actions/upload-artifact@v7
         if: always()
         with:

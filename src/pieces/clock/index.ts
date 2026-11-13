@@ -10,6 +10,7 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
+import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
 const day = 86400_000;
 const scope = (w: Work, type = 'wake') => ({ type, agent: w.agent, project: w.project, member: w.member });
@@ -37,7 +38,7 @@ function quotaDue(reset: unknown, now: number): number {
   const when = Number.isFinite(parsed) ? parsed : now + 60 * 60_000;
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
-export interface ClockOptions { runtime?: Runtime; approvals?: Approvals }
+export interface ClockOptions { runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
   registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
@@ -237,7 +238,22 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       else if (++w.failures >= 6 || w.continuation) w.state = 'failed';
       else { w.state = 'pending'; w.due = Math.max(ctx.now + 1, r.retryAt ?? ctx.now + 15 * 60_000 * 2 ** (w.failures-1)); }
     } else { w.state = 'held'; w.hold = r.state === 'uncertain' ? 'uncertain' : 'staging'; w.outcome = r.reason; }
-    saveWake(ctx, w); event(ctx, w, eventKind ?? w.state); return w;
+    saveWake(ctx, w); event(ctx, w, eventKind ?? w.state);
+    // Source-owned ids survive receipt retries and restarts. Household notices
+    // deliberately carry no prompt, note, file, scope or runtime error words.
+    const notice = r.state === 'not-started' && w.state !== 'cancelled'
+      ? r.code === 'quota' ? 'quota' : w.state === 'failed' ? 'failed' : w.failures === 3 ? 'retry' : undefined
+      : eventKind === 'quota-notice' ? 'quota' : undefined;
+    if (notice) options.notices?.raise(ctx, {
+      id: `clock:${w.id}:${notice}`,
+      ask: notice === 'quota' ? 'Review clock work waiting for model capacity.'
+        : notice === 'failed' ? 'Review clock work that could not start.' : 'Review clock work after three failed starts.',
+      why: notice === 'quota' ? 'The runtime reported no model capacity; the clock recorded its bounded wait or stopped quota triage.'
+        : notice === 'failed' ? 'The clock stopped automatic retries. Inspect the wake before deciding what to do next.'
+        : 'The clock will retry definite start failures up to six times.',
+      href: '/p/clock-preview', refs: [w.id],
+    });
+    return w;
   }, true);
   register('checkPark', idInput, true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'parked' || !w.wait) return null;
