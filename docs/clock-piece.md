@@ -807,7 +807,8 @@ details, owner decision and caller. Turning it off or a later target Deny refuse
 Standing authority survives the original one-shot expiry or consumption.
 
 Mode `use` calls direct-only `approvals.piece-standing-local`, increments use and
-audit atomically, and deduplicates the operation receipt. Mode `check` calls the
+audit atomically, and privately retains the exact use result in `approvals_meta`
+so retries still deduplicate after the core receipt expires at 30 days. Mode `check` calls the
 separately granted read-only `approvals.piece-standing-local-check`: it always
 reads current authority even if an operation id is reused, and never increments
 use or audit. No original words or full standing record is returned. This is the

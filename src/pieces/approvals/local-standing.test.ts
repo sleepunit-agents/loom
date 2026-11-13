@@ -38,11 +38,11 @@ async function setup() {
 }
 it('uses an exact standing filing after restart, deduplicates once, and checks without changing authority or audit',async()=>{
   const s=await setup();expect(s.call().ok).toBe(false);const job=s.every();await s.restart();
-  const before=load(s.app.db);expect(s.call({mode:'check'})).toMatchObject({ok:true,value:{id:job.id,state:'on',uses:0}});
+  const before=load(s.app.db);expect(s.call({mode:'check'})).toEqual({ok:true,value:{id:job.id,state:'on',uses:0}});
   expect(load(s.app.db)).toEqual(before);
-  const receipt=randomUUID(),used=s.call({},caller,receipt);expect(used).toMatchObject({ok:true,value:{id:job.id,uses:1}});
+  const receipt=randomUUID(),used=s.call({},caller,receipt);expect(used).toEqual({ok:true,value:{id:job.id,state:'on',uses:1}});
   expect(s.call({},caller,receipt)).toEqual(used);
-  expect(s.call({mode:'check'})).toMatchObject({ok:true,value:{uses:1}});
+  expect(s.call({mode:'check'})).toEqual({ok:true,value:{id:job.id,state:'on',uses:1}});
   expect(s.call({}, {...caller,who:{agent:'art',where:'next house (queue)'}})).toMatchObject({ok:true,value:{uses:2}});
   expect(load(s.app.db).audit.filter(r=>r.event==='standing-use')).toHaveLength(2);
 });
@@ -96,13 +96,16 @@ it('checks are fresh even when the caller reuses an operation id',async()=>{
 });
 it('requires current central agent/project policy and an explicit Clock grant; refuses all public actors and doors',async()=>{
   const s=await setup();s.every();const before=load(s.app.db);
-  s.access.projects.pond.agents=[];expect(s.call().ok).toBe(false);s.access.projects.pond.agents=['art'];
-  s.access.services.clock.operations=[];expect(s.call().ok).toBe(false);s.access.services.clock.operations=['approvals.piece-standing-local','approvals.piece-standing-local-check'];
-  const input={...s.input,caller};
-  for(const door of ['http','mcp','direct'] as const)for(const viewer of [owner,{kind:'agent',id:'art'},
-    {kind:'runner',id:'r'},{kind:'service',id:'runtime'}] as Viewer[])
-    expect(s.app.operations.call(door,viewer,'approvals.piece-standing-local',input,randomUUID()).ok).toBe(false);
-  for(const door of ['http','mcp'] as const)expect(s.app.operations.call(door,{kind:'service',id:'clock'},'approvals.piece-standing-local',input,randomUUID()).ok).toBe(false);
+  for(const mode of ['use','check'] as const) {
+    s.access.projects.pond.agents=[];expect(s.call({mode}).ok).toBe(false);s.access.projects.pond.agents=['art'];
+    s.access.services.clock.operations=[];expect(s.call({mode}).ok).toBe(false);
+    s.access.services.clock.operations=['approvals.piece-standing-local','approvals.piece-standing-local-check'];
+    const input={...s.input,mode,caller},op=mode==='use'?'approvals.piece-standing-local':'approvals.piece-standing-local-check';
+    for(const door of ['http','socket','mcp','direct'] as const)for(const viewer of [owner,{kind:'agent',id:'art'},
+      {kind:'runner',id:'r'},{kind:'service',id:'runtime'}] as Viewer[])
+      expect(s.app.operations.call(door,viewer,op,input,randomUUID()).ok).toBe(false);
+    for(const door of ['http','socket','mcp'] as const)expect(s.app.operations.call(door,{kind:'service',id:'clock'},op,input,randomUUID()).ok).toBe(false);
+  }
   expect(load(s.app.db)).toEqual(before);
 });
 it('rolls back use, audit and operation receipt when owning persistence aborts',async()=>{
@@ -110,4 +113,18 @@ it('rolls back use, audit and operation receipt when owning persistence aborts',
   s.app.db.exec("CREATE TRIGGER abort_standing BEFORE UPDATE ON approvals_rules BEGIN SELECT RAISE(ABORT,'fixture'); END");
   expect(s.call({},caller,receipt).ok).toBe(false);expect(load(s.app.db)).toEqual(before);
   s.app.db.exec('DROP TRIGGER abort_standing');expect(s.call({},caller,receipt)).toMatchObject({ok:true,value:{uses:1}});
+});
+
+it('retains the exact use receipt across core expiry and restart without counting or auditing again',async()=>{
+  const s=await setup();s.every();const receipt=randomUUID(),r=s.call({},caller,receipt);
+  const before=load(s.app.db);s.clock.advance(31*86400_000);await s.restart();
+  expect(s.call({},caller,receipt)).toEqual(r);expect(load(s.app.db)).toEqual(before);
+  expect(s.call({expected:{...s.input.expected,details:'changed'}},caller,receipt)).toMatchObject({ok:false,code:'conflict'});
+});
+it('rolls back the already-updated standing use when audit insertion fails',async()=>{
+  const s=await setup();s.every();const before=load(s.app.db),receipt=randomUUID();
+  s.app.db.exec("CREATE TRIGGER abort_audit BEFORE INSERT ON approvals_audit BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect(s.call({},caller,receipt).ok).toBe(false);expect(load(s.app.db)).toEqual(before);
+  expect(s.app.db.prepare("SELECT key FROM approvals_meta WHERE key LIKE 'local-standing-use:%'").all()).toEqual([]);
+  s.app.db.exec('DROP TRIGGER abort_audit');expect(s.call({},caller,receipt)).toMatchObject({ok:true,value:{uses:1}});
 });
