@@ -12,7 +12,7 @@ import { slackInbox } from './slack-inbox.js';
 import { slackDrain, type SlackDrainOptions } from './slack-drain.js';
 import { slackApi } from './slack-api.js';
 import { Bridges } from './engine.js';
-import type { Incoming } from './role.js';
+import type { BridgeRuntime, Incoming } from './role.js';
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home,{recursive:true,force:true}); });
 const venue = venueSchema.parse({ id:'art-slack',platform:'slack',agent:'art',workspace:'T123',bot:'U123',tokenSecret:'bot' });
@@ -39,6 +39,13 @@ async function fixture(existing?: string) {
   }
   return {home,clock,app,inbox,inspect,receive,name,current,beforeRead,drain,close};
 }
+async function settle() { for(let n=0;n<80;n++) await Promise.resolve(); }
+function engineFor(f:Awaited<ReturnType<typeof fixture>>,runtime:BridgeRuntime,group=false) {
+  const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
+  const engine=new Bridges(f.app,f.clock,runtime,{may:async()=>true,get:async()=> 'fixture'},
+    [{platform:'slack',connect:async()=>({close(){}}),inspect:async()=>group?{kind:'allow',members:['U123','U200','U201']}:'allow',send:async()=>({id:'post'})}],effects);
+  closes.unshift(()=>engine.close());return engine;
+}
 function deferred<T>() { let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve}; }
 describe('serialized Slack raw receipt normalization',()=>{
   it('uses fresh authenticated metadata and trusted People names, then hands off before erasing words',async()=>{
@@ -64,7 +71,9 @@ describe('serialized Slack raw receipt normalization',()=>{
     const f=await fixture();await f.inbox.receive(payload());const pending=deferred<Awaited<ReturnType<SlackDrainOptions['inspect']>>>();
     f.inspect.mockReturnValueOnce(pending.promise);const d=f.drain();const first=d.flush();const second=d.flush();
     expect(first).toBe(second);expect(f.inspect).toHaveBeenCalledOnce();pending.resolve('wait');await first;
-    expect(f.inspect).toHaveBeenCalledTimes(2);expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
+    expect(f.inspect).toHaveBeenCalledOnce();expect(f.receive).not.toHaveBeenCalled();
+    f.clock.advance(4999);await d.flush();expect(f.inspect).toHaveBeenCalledOnce();
+    f.clock.advance(1);await settle();expect(f.inspect).toHaveBeenCalledTimes(2);expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
   });
   it.each(['wait','throw','bare-allow','missing-bot','duplicate','wrong-dm-members'] as const)('retains raw receipt for retry on %s',async mode=>{
     const f=await fixture();await f.inbox.receive(payload());const before=f.inbox.pending();
@@ -76,7 +85,7 @@ describe('serialized Slack raw receipt normalization',()=>{
     });
     const d=f.drain();await expect(d.flush()).resolves.toBeUndefined();expect(f.receive).not.toHaveBeenCalled();expect(f.inbox.pending()).toEqual(before);
     f.inspect.mockResolvedValue({kind:'allow',members:['U123','U200']});f.name.mockReturnValue('New name');
-    f.clock.advance(5000);await d.flush();expect(f.receive).toHaveBeenCalledOnce();expect(f.receive.mock.calls[0][1].label).toBe('DM with New name');
+    f.clock.advance(5000);await settle();expect(f.receive).toHaveBeenCalledOnce();expect(f.receive.mock.calls[0][1].label).toBe('DM with New name');
   });
   it.each([{subtype:'message_deleted'},{type:'reaction_added'},{bot_id:'B123'},{user:'U123'},{ts:'bad'}])('erases definite unsupported event %j without metadata or delivery',async event=>{
     const f=await fixture();await f.inbox.receive(payload('Ev123',event));await f.drain().flush();
@@ -108,14 +117,30 @@ describe('serialized Slack raw receipt normalization',()=>{
     const f=await fixture();await f.inbox.receive(payload());f.beforeRead.mockReturnValue(false);const d=f.drain();await d.flush();
     expect(f.inspect).not.toHaveBeenCalled();expect(f.receive).not.toHaveBeenCalled();await d.close();f.beforeRead.mockReturnValue(true);f.clock.advance(10_000);await d.flush();expect(f.inspect).not.toHaveBeenCalled();
   });
+  it.each(['metadata','receive'] as const)('close waits for deferred %s and raw consumption waits for receive',async stage=>{
+    const f=await fixture();await f.inbox.receive(payload());const gate=deferred<void>();
+    if(stage==='metadata') f.inspect.mockImplementation(async()=>{await gate.promise;return {kind:'allow',members:['U123','U200']};});
+    else f.receive.mockImplementation(()=>gate.promise);
+    const d=f.drain();const flush=d.flush();await settle();expect(f.inbox.pending()).toHaveLength(1);
+    if(stage==='receive') expect(f.receive).toHaveBeenCalledOnce();else expect(f.inspect).toHaveBeenCalledOnce();
+    let closed=false;const close=d.close().then(()=>{closed=true;});await settle();expect(closed).toBe(false);
+    gate.resolve();await close;await flush;expect(closed).toBe(true);expect(f.inbox.pending()).toHaveLength(1);
+    if(stage==='metadata') expect(f.receive).not.toHaveBeenCalled();
+  });
+  it('cancels the scheduled retry rather than only suppressing its callback',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());const at=f.clock.at.bind(f.clock);const active=new Set<()=>void>();
+    vi.spyOn(f.clock,'at').mockImplementation((time,fn)=>{let stop!:()=>void;const cancel=at(time,()=>{active.delete(stop);fn();});stop=()=>{active.delete(stop);cancel();};active.add(stop);return stop;});
+    f.inspect.mockResolvedValue('wait');const d=f.drain();await d.flush();expect(active.size).toBe(1);await d.close();expect(active.size).toBe(0);
+  });
   it('expires from immutable receipt time across restart; exactly one hour is still eligible',async()=>{
     const f=await fixture();await f.inbox.receive(payload());f.inspect.mockResolvedValue('wait');const d=f.drain();await d.flush();await d.close();await f.close();
     const g=await fixture(f.home);g.clock.advance(3_600_000);g.inspect.mockResolvedValue('wait');const next=g.drain();await next.flush();expect(g.inspect).toHaveBeenCalledOnce();expect(g.inbox.pending()).toHaveLength(1);
     g.clock.advance(1);await next.flush();expect(g.inspect).toHaveBeenCalledOnce();expect(g.inbox.pending()).toEqual([]);expect(g.receive).not.toHaveBeenCalled();
   });
   it('bounds a pass to 64 receipts and schedules the rest',async()=>{
-    const f=await fixture();for(let n=0;n<65;n++) await f.inbox.receive(payload(`Ev${n}`));const d=f.drain();await d.flush();expect(f.receive).toHaveBeenCalledTimes(64);expect(f.inbox.pending()).toHaveLength(1);
-    f.clock.advance(5000);await d.flush();expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
+    const f=await fixture();for(let n=0;n<65;n++) {await f.inbox.receive(payload(`Ev${n}`,{ts:`1793828004.${String(n).padStart(6,'0')}`}));f.clock.advance(1);}const d=f.drain();await d.flush();expect(f.receive).toHaveBeenCalledTimes(64);expect(f.inbox.pending()).toHaveLength(1);
+    expect(f.receive.mock.calls.map(call=>call[1].id)).toEqual(Array.from({length:64},(_,n)=>`1793828004.${String(n).padStart(6,'0')}`));
+    f.clock.advance(5000);await settle();expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
   });
   it('does not hand off or consume inside an enclosing transaction',async()=>{
     const f=await fixture();await f.inbox.receive(payload());const d=f.drain();let flush!:Promise<void>;
@@ -124,10 +149,8 @@ describe('serialized Slack raw receipt normalization',()=>{
   });
   it('replays after a normalized commit and failed raw consumption without a second delivery',async()=>{
     const f=await fixture();const delivered:Incoming[]=[];
-    const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
-    const engine=new Bridges(f.app,f.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},
-      {may:async()=>true,get:async()=> 'fixture'},[{platform:'slack',connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],effects);
-    closes.unshift(()=>engine.close());await f.inbox.receive(payload());
+    const engine=engineFor(f,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}});
+    await f.inbox.receive(payload());
     f.app.db.exec("CREATE TRIGGER fail_consume BEFORE UPDATE ON bridges_slack_receipts BEGIN SELECT RAISE(ABORT,'simulated consumption failure'); END;");
     const first=f.drain({receive:engine.receive.bind(engine)});await first.flush();await engine.flush();
     expect(delivered).toHaveLength(1);expect(f.inbox.pending()).toHaveLength(1);
@@ -139,10 +162,7 @@ describe('serialized Slack raw receipt normalization',()=>{
   it.each(['allow','drop'] as const)('the real engine freshly admits every group member, including %s',async verdict=>{
     const f=await fixture();const delivered:Incoming[]=[];
     const admit=vi.fn(async(input:{person:string})=>input.person==='mark'?verdict:'allow' as const);
-    const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
-    const engine=new Bridges(f.app,f.clock,{admit,deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},
-      {may:async()=>true,get:async()=> 'fixture'},[{platform:'slack',connect:async()=>({close(){}}),inspect:async()=>({kind:'allow',members:['U123','U200','U201']}),send:async()=>({id:'post'})}],effects);
-    closes.unshift(()=>engine.close());
+    const engine=engineFor(f,{admit,deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},true);
     await f.inbox.receive(payload('EvGroup',{channel:'G123'}));f.inspect.mockResolvedValue({kind:'allow',members:['U123','U200','U201']});
     await f.drain({receive:engine.receive.bind(engine)}).flush();await engine.flush();
     expect(f.inbox.pending()).toEqual([]);expect(admit.mock.calls).toHaveLength(2);expect(delivered).toHaveLength(verdict==='allow'?1:0);if(verdict==='allow') expect(delivered[0]).toMatchObject({person:'jonathan',label:'group DM with Jonathan, Mark',at:'2026-11-04T21:33:24.242Z'});

@@ -29,7 +29,8 @@ export function slackDrain(options: SlackDrainOptions) {
   const venue = structuredClone(options.binding.venue);
   const inbox = slackInbox(db, clock, { venue, app: options.binding.app });
   let closed = false, running: Promise<void> | undefined, again = false;
-  let cancel: (() => void) | undefined;
+  let cancel: (() => void) | undefined, retryAt = Infinity;
+  const deadlines = new Map<string, number>();
   function valid() {
     if (closed) return false;
     if (db.inTransaction) { retry(); return false; }
@@ -37,16 +38,25 @@ export function slackDrain(options: SlackDrainOptions) {
     // Enforces the persistent setup revision, including edits restored mid-await.
     try { inbox.pending(1); return true; } catch { closed = true; cancel?.(); return false; }
   }
-  function retry() {
-    if (!closed && !cancel) cancel = clock.at(clock.now() + 5000, () => { cancel = undefined; void flush(); });
+  function retry(at = clock.now() + 5000) {
+    if (closed || retryAt <= at) return;
+    cancel?.(); retryAt = at;
+    cancel = clock.at(at, () => { cancel = undefined; retryAt = Infinity; void flush(); });
   }
+  function postpone(id: string) {
+    const at = clock.now() + 5000;
+    deadlines.set(id, at); retry(at);
+  }
+  function consume(id: string) { inbox.consume(id); deadlines.delete(id); }
   async function drain() {
     if (!valid() || !options.beforeRead()) { retry(); return; }
     const rows = inbox.pending(64);
     for (const row of rows) {
       if (!valid()) return;
       // First receipt is immutable across retries/restarts. Exactly one hour is eligible.
-      if (clock.now() - row.received > 3_600_000) { inbox.consume(row.id); continue; }
+      if (clock.now() - row.received > 3_600_000) { consume(row.id); continue; }
+      const deadline = deadlines.get(row.id);
+      if (deadline !== undefined && clock.now() < deadline) { retry(deadline); continue; }
       if (!options.beforeRead()) { retry(); return; }
       // This provisional kind is conservative: non-D ids are always group gated.
       // It is never delivered until authenticated conversations.info agrees.
@@ -54,33 +64,32 @@ export function slackDrain(options: SlackDrainOptions) {
       const channel = typeof raw.channel === 'string' ? raw.channel : '';
       const probe = slackMessage(raw, venue, { id: channel, workspace: venue.workspace,
         kind: channel.startsWith('D') ? 'dm' : 'group', members: [] });
-      if (!probe) { inbox.consume(row.id); continue; }
+      if (!probe) { consume(row.id); continue; }
       try {
         const inspected = await options.inspect(structuredClone(venue), probe);
         if (!valid()) return;
         if (!options.beforeRead()) { retry(); return; }
-        if (inspected === 'drop') { inbox.consume(row.id); continue; }
-        if (typeof inspected !== 'object' || inspected.kind !== 'allow') { retry(); continue; }
+        if (inspected === 'drop') { consume(row.id); continue; }
+        if (typeof inspected !== 'object' || inspected.kind !== 'allow') { postpone(row.id); continue; }
         const members = inspected.members;
         if (new Set(members).size !== members.length || !members.includes(venue.bot) || !members.includes(probe.user)
-          || (probe.group ? members.length < 3 : members.length !== 2)) { retry(); continue; }
+          || (probe.group ? members.length < 3 : members.length !== 2)) { postpone(row.id); continue; }
         const message = slackMessage(raw, venue, { id: probe.channel, workspace: venue.workspace,
           kind: probe.group ? 'group' : 'dm', members: members.map(user => ({ user, name: options.name(user) })) });
-        if (!message) { inbox.consume(row.id); continue; }
+        if (!message) { consume(row.id); continue; }
         if (!valid() || !options.beforeRead()) { retry(); return; }
         // Never join an operation transaction and then erase the only durable copy.
         if (db.inTransaction) throw Error('Slack normalization requires its own transaction');
         await options.receive(venue.id, message, structuredClone(venue));
         if (!valid()) return;
-        inbox.consume(row.id);
-      } catch { retry(); } // No upstream error, raw words or credentials escape.
+        consume(row.id);
+      } catch { postpone(row.id); } // No upstream error, raw words or credentials escape.
     }
     if (rows.length === 64) retry(); // Bounded work per pass, including large backlogs.
   }
   function flush(): Promise<void> {
     if (closed) return Promise.resolve();
     if (running) { again = true; return running; }
-    cancel?.(); cancel = undefined;
     running = (async () => { do { again = false; await drain(); } while (again && !closed); })()
       .finally(() => { running = undefined; });
     return running;
