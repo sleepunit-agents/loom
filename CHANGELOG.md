@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
+
 - Show each Comms thread’s agent letter beside its title in the list.
 
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.

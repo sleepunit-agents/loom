@@ -981,3 +981,13 @@ name. It requires no display registry, portrait request or additional record.
 The single browser proof checks the letter and absence of horizontal page
 overflow in all six list captures. Reader pixel portraits and channel treatment,
 newest digest summaries, gestures and dock unread counts remain unfinished.
+
+
+## Stop control visibility
+
+The reader shows Stop only for an unarchived working thread that the member has
+joined. Idle and Watching readers omit it. It is disabled while the message
+subscription is disconnected or a thread action is pending. The existing single
+browser proof covers working/done updates and Watching/join.
+This corrects control presentation only; broader interrupt/resume/model parity
+and the runtime integration obligations above remain unfinished.
