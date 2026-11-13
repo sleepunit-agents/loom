@@ -49,8 +49,11 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
         const stat = lstatSync(join(target, name));
         if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Unsafe file');
       }
-      if (readFileSync(join(target, marker), 'utf8') !== receipt || Object.entries(files).some(([name, value]) => readFileSync(join(target, name), 'utf8') !== value)) throw new Error('Different context');
+      if (!readFileSync(join(target, marker)).equals(Buffer.from(receipt)) || Object.entries(files).some(([name, value]) => !readFileSync(join(target, name)).equals(Buffer.from(value)))) throw new Error('Different context');
     } catch { throw new OperationError('conflict', 'Context already exists; register it separately or retry its original unchanged creation'); }
+    for (const name of [marker, ...Object.keys(files)]) {
+      const fd = openSync(join(target, name), 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+    }
   } else {
     const stage = mkdtempSync(join(parent, '.bootstrap-'));
     try {
@@ -61,9 +64,12 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
       syncDir(stage);
       // All daemon operations are synchronous and serialized; no incomplete context
       // is ever registered. Abandoned hidden staging directories are inert.
-      renameSync(stage, target); syncDir(parent);
+      renameSync(stage, target);
     } finally { if (existsSync(stage)) rmSync(stage, { recursive: true }); }
   }
+  // Repeat directory flushes on recovery too: a previous attempt may have
+  // published successfully and then failed here before SQLite registration.
+  syncDir(target); syncDir(parent); syncDir(home);
   addHouseholdAgent(ctx.db, home, input.agent);
   ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
   return { agent: input.agent, contextDir: target, mcp: { command: 'loom', args: ['mcp', '--next', '--home', home, '--agent', input.agent] } };

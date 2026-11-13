@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, fsyncSync, openSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -15,8 +15,13 @@ import { signin } from '../signin/index.js';
 import { readContinuityHousehold } from '../../continuity/household.js';
 import type { Viewer } from '../../policy.js';
 vi.mock('../../backends/fastembed.js', () => ({ FastEmbedProvider: class { readonly dimensions = 384; async embed() { return new Array(384).fill(0.1); } async embedBatch(texts: string[]) { return texts.map(() => new Array(384).fill(0.1)); } } }));
+vi.mock('node:fs', async original => {
+  const actual = await original<typeof import('node:fs')>();
+  return { ...actual, openSync: vi.fn(actual.openSync), fsyncSync: vi.fn(actual.fsyncSync), renameSync: vi.fn(actual.renameSync) };
+});
+const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
 const homes: string[] = [], closes: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); closeAllBackends(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { vi.mocked(openSync).mockImplementation(actualFs.openSync); vi.mocked(fsyncSync).mockImplementation(actualFs.fsyncSync); vi.mocked(renameSync).mockImplementation(actualFs.renameSync); for (const close of closes.splice(0).reverse()) await close(); closeAllBackends(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const input = { agent: 'gabe', name: 'Gabe', purpose: 'You help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Ask before spending money.' };
 async function setup() { const home = mkdtempSync(join(tmpdir(), 'loom-bootstrap-')); homes.push(home); fixture(home); const clock = new FakeClock(); const app = await startLoom({ home, clock, next: true }); closes.push(app.close); return { home, clock, app }; }
@@ -100,4 +105,52 @@ it('refuses adoption when a rolled-back context was changed or replaced by a lin
   rmSync(path); symlinkSync(join(home, 'loom.db'), path);
   expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'conflict' });
   expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+});
+
+it('flushes complete files before publication and retries a failed publication flush before registration', async () => {
+  const { app, home } = await setup(), dirs = new Map<number, string>(), flushed: string[] = [];
+  let fail = 'file';
+  vi.mocked(openSync).mockImplementation((...args: Parameters<typeof openSync>) => { const fd = actualFs.openSync(...args); dirs.set(fd, String(args[0])); return fd; });
+  vi.mocked(fsyncSync).mockImplementation(fd => {
+    const path = dirs.get(fd)!;
+    if (fail === 'file' && path.endsWith('IDENTITY.md')) throw new Error('file flush failed');
+    if (fail === 'parent' && path === join(home, 'agents')) throw new Error('publication flush failed');
+    flushed.push(path); actualFs.fsyncSync(fd);
+  });
+  vi.mocked(renameSync).mockImplementation((a, b) => {
+    const source = String(a);
+    expect(readdirSync(source).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);
+    for (const name of readdirSync(source)) expect(flushed).toContain(join(source, name));
+    expect(flushed).toContain(source);
+    actualFs.renameSync(a, b);
+  });
+  const call = () => app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'flush');
+  expect(call()).toMatchObject({ code: 'unavailable' });
+  expect(vi.mocked(renameSync)).not.toHaveBeenCalled(); expect(readdirSync(join(home, 'agents'))).toEqual([]);
+  fail = 'parent'; expect(call()).toMatchObject({ code: 'unavailable' });
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+  // Still failing the flush must also block recovery of the already published context.
+  expect(call()).toMatchObject({ code: 'unavailable' });
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+  fail = ''; flushed.length = 0;
+  expect(call()).toMatchObject({ ok: true });
+  expect(flushed.slice(-3)).toEqual([join(home, 'agents', 'gabe'), join(home, 'agents'), home]);
+});
+it('binds orphan recovery to the original authorized owner and compares exact bytes, not UTF-8 decoding', async () => {
+  const { app, home } = await setup();
+  app.db.transaction(() => new HouseholdDatabase(app.db).change(home, raw => {
+    (raw.members as unknown[]).push({ person: 'other-owner', role: 'owner', agents: '*' });
+  }))();
+  app.db.exec("CREATE TRIGGER fail_bootstrap BEFORE INSERT ON core_operations WHEN NEW.id='bytes' BEGIN SELECT RAISE(ABORT,'retry failed'); END");
+  const special = { ...input, purpose: 'Garden \ufffd' };
+  const call = (viewer: Viewer = owner) => app.operations.call('direct', viewer, 'household.bootstrapAgent', special, 'bytes');
+  expect(call()).toMatchObject({ code: 'unavailable' }); app.db.exec('DROP TRIGGER fail_bootstrap');
+  expect(call({ kind: 'member', id: 'other-owner' })).toMatchObject({ code: 'conflict' });
+  const file = join(home, 'agents', 'gabe', 'IDENTITY.md'), original = readFileSync(file);
+  const altered = Buffer.concat([original.subarray(0, original.indexOf(Buffer.from('\ufffd'))), Buffer.from([0xff]), original.subarray(original.indexOf(Buffer.from('\ufffd')) + 3)]);
+  expect(altered.toString('utf8')).toBe(original.toString('utf8')); expect(altered).not.toEqual(original);
+  writeFileSync(file, altered);
+  expect(call()).toMatchObject({ code: 'conflict' });
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+  writeFileSync(file, original); expect(call()).toMatchObject({ ok: true });
 });
