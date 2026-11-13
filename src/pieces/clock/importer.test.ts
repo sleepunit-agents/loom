@@ -23,7 +23,7 @@ function fixture() {
     { id: 'w-444444', kind: 'watch', at, created, house: 'house-1', wake: { id: 'w-111111' }, note: 'Watch old body' },
   ];
   writeFileSync(join(from, 'art/spool.jsonl'), source.map(r => JSON.stringify(r)).join('\n') + '\n');
-  for (const agent of ['art','other']) writeFileSync(join(from, agent, 'schedules.json'), JSON.stringify({ B: { at: '03:47', prompt: 'Sort me' }, night: { at: ['01:37','22:47'], days: 'mon-fri', prompt_file: 'routines/night.md', note: 'night', for: 'owner' } }));
+  for (const agent of ['art','other']) writeFileSync(join(from, agent, 'schedules.json'), JSON.stringify({ B: { at: '03:47', prompt: 'Sort me' }, night: { at: ['01:37','22:47'], days: 'mon-fri', prompt_file: 'routines/night.md', note: 'night', model: 'chosen-model', slot: 'night-slot', lane: 'night', for: 'owner' } }));
   writeFileSync(join(from, 'art/paused'), JSON.stringify({ since: created, by: 'owner' }));
   writeFileSync(join(from, 'lanes.json'), JSON.stringify({ night: { text: 'Exact lane words', agent: 'art' } }));
   writeFileSync(join(from, 'art/vouch.json'), JSON.stringify({ denied: ['w-333333'] }));
@@ -41,7 +41,9 @@ it('preserves ids, content, pauses and opaque provenance without promoting legac
   expect(rows[1]).toMatchObject({ hold: 'uncertain', schedule: 'art/night' });
   expect(rows[2].wait).toMatchObject({ id: 'a-12345678' }); expect(rows[3].hold).toBe('uncertain');
   expect(schedules(f.db).map(s => [s.id, s.enabled])).toEqual([['art/B',false],['art/night',false],['other/B',false],['other/night',false]]);
-  expect(f.db.prepare('SELECT agent FROM clock_pauses').all()).toEqual([{ agent: 'art' }]);
+  expect(schedules(f.db).find(s => s.id === 'art/night')).toMatchObject({ agent: 'art', at: ['01:37','22:47'], days: 'mon-fri', file: 'routines/night.md', note: 'night', model: 'chosen-model', slot: 'night-slot', lane: 'night', enabled: false });
+  expect(schedules(f.db).find(s => s.id === 'art/B')).toMatchObject({ prompt: 'Sort me', at: ['03:47'], days: '' });
+  expect(f.db.prepare('SELECT agent,since FROM clock_pauses').all()).toEqual([{ agent: 'art', since: Date.parse('2026-11-13T01:47:00Z') }]);
   const raw = f.db.prepare("SELECT value FROM clock_meta WHERE key='legacy-snapshot'").get() as { value: string };
   for (const path of ['art/vouch.json','art/filed.json','art/sessions.json','art/wake.log','lanes.json','fire']) expect(Buffer.from(JSON.parse(raw.value)[path], 'base64')).toEqual(readFileSync(join(f.from,path)));
   expect(importClock(f.db, f.from, f.now + 1000)).toMatchObject({ imported: false, checksum: result.checksum });
@@ -85,4 +87,10 @@ it('does not start jobs, run programs, or read prompt files during offline impor
     expect(timeout).not.toHaveBeenCalled(); expect(interval).not.toHaveBeenCalled();
     for (const fn of [spawn,execFile,exec,spawnSync,execSync,execFileSync]) expect(fn).not.toHaveBeenCalled();
   } finally { timeout.mockRestore(); interval.mockRestore(); }
+});
+
+it.each(['clock_wakes','clock_schedules'])('compares persisted primary keys as well as record ids for %s', table => {
+  const f = fixture();
+  expect(() => importClock(f.db,f.from,f.now,{ interrupt() { f.db.prepare(`UPDATE ${table} SET id=id || '-changed'`).run(); } })).toThrow('comparison failed');
+  expect(f.db.prepare("SELECT name FROM sqlite_master WHERE name='clock_wakes'").get()).toBeUndefined();
 });

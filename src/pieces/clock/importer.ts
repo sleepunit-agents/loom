@@ -16,7 +16,7 @@ function work(r: Row, agent: string): Work {
   const prompt = r.prompt === undefined ? undefined : string(r.prompt, 'prompt');
   const file = r.prompt_file === undefined ? undefined : string(r.prompt_file, 'prompt file');
   if (!!prompt === !!file) throw new Error('Legacy work must have exactly one prompt or prompt_file');
-  return { agent, note: typeof r.note === 'string' ? r.note : '', ...(prompt ? { prompt } : { file }), ...(typeof r.model === 'string' ? { model: r.model } : {}) };
+  return { agent, note: typeof r.note === 'string' ? r.note : '', ...(prompt ? { prompt } : { file }), ...(typeof r.model === 'string' ? { model: r.model } : {}), ...(typeof r.slot === 'string' ? { slot: r.slot } : {}) };
 }
 /** --from is the old WAKE_DATA directory (agent subdirectories and lanes.json).
  * All imported work requires provenance review; old strings never become grants.
@@ -83,8 +83,10 @@ export function importClock(db: Db, from: string, now: number, options: { interr
     // They are archival data only, never dispatch credentials or executable inputs.
     db.prepare("INSERT INTO clock_meta VALUES ('legacy-snapshot',?)").run(source);
     options.interrupt?.();
+    const wakeIds = (db.prepare('SELECT id FROM clock_wakes ORDER BY id').all() as { id: string }[]).map(r => r.id);
+    const scheduleIds = (db.prepare('SELECT id FROM clock_schedules ORDER BY id').all() as { id: string }[]).map(r => r.id);
     const actualPauses = db.prepare('SELECT agent,since FROM clock_pauses ORDER BY agent').all();
-    if (canonical(wakes(db)) !== canonical(expectedWakes) || canonical(schedules(db)) !== canonical(expectedSchedules) || canonical(actualPauses) !== canonical(pauses)) throw new Error('Clock import comparison failed: ids, counts or content differ');
+    if (canonical(wakeIds) !== canonical(expectedWakes.map(w => w.id)) || canonical(scheduleIds) !== canonical(expectedSchedules.map(s => s.id)) || canonical(wakes(db)) !== canonical(expectedWakes) || canonical(schedules(db)) !== canonical(expectedSchedules) || canonical(actualPauses) !== canonical(pauses)) throw new Error('Clock import comparison failed: ids, counts or content differ');
     db.prepare("INSERT INTO clock_meta VALUES ('source-checksum',?)").run(checksum);
     return { ok: true, imported: true, checksum, wakes: expectedWakes.length, schedules: expectedSchedules.length };
   })();
