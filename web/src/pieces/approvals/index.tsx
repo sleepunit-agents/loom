@@ -44,7 +44,7 @@ function Reader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot
     setRequest(action === 'every-time' || action === 'always' ? call(`approvals.${action}`,{id:approval.id,...(action === 'always' ? {scope:check.value.alwaysScope} : {})}) : call('approvals.answer',{id:approval.id,action}));
     setConfirmation(undefined);
   }
-  return <article className="grid gap-5 p-5">
+  return <article className="grid min-w-0 gap-5 p-5 [overflow-wrap:anywhere]">
     <header><p>{approval.kind} · {approval.state}</p><h1 className="text-2xl font-semibold">{approval.title}</h1><p>{approval.who.agent} · for {approval.for === 'owner' ? 'you' : approval.for}</p></header>
     <section><h3>Why</h3><p>{approval.why}</p></section>
     {approval.if_yes && <section><h3>If you allow</h3><p>{approval.if_yes}</p></section>}
@@ -53,7 +53,7 @@ function Reader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot
     {confirmed && state.result?.ok && state.result.value.mayAlways && <p>Always allows future merges across {state.result.value.alwaysScope?.replace('project:','the entire project ')}, for this same person, without asking.</p>}
     {approval.details && <section><h3>Details</h3><p className="whitespace-pre-wrap break-words">{approval.details}</p></section>}
     <section><h3>Exactly what this allows</h3><p className="break-words">{approval.kind}: {approval.target}</p></section>
-    {confirmed && <div role="group" aria-label="Answer approval" className="flex gap-2"><Button disabled={checking || saving.pending} onClick={() => void answer('allow')}>Allow</Button>{state.result?.ok && state.result.value.mayEveryTime && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('every-time')}>Allow every time</Button>}{state.result?.ok && state.result.value.mayAlways && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('always')}>Always for {state.result.value.alwaysScope?.replace('project:','project ')}</Button>}<Button variant="outline" disabled={checking || saving.pending} onClick={() => void answer('deny')}>Deny</Button></div>}
+    {confirmed && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2 [&_button]:max-w-full [&_button]:whitespace-normal"><Button disabled={checking || saving.pending} onClick={() => void answer('allow')}>Allow</Button>{state.result?.ok && state.result.value.mayEveryTime && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('every-time')}>Allow every time</Button>}{state.result?.ok && state.result.value.mayAlways && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('always')}>Always for {state.result.value.alwaysScope?.replace('project:','project ')}</Button>}<Button variant="outline" disabled={checking || saving.pending} onClick={() => void answer('deny')}>Deny</Button></div>}
     {approval.state === 'pending' && !confirmed && <p>{state.result?.ok && !state.result.value.mayAnswer ? 'You cannot answer this question.' : state.result?.ok === false ? state.result.message : 'Checking whether this question is still open…'}</p>}
     {approval.state==='pending' && !confirmed && !checking && !saving.pending && <Button variant="outline" onClick={()=>setConfirmation({records:snapshot.records,request:call<Open>('approvals.open',{id:approval.id})})}>Check again</Button>}
     <Result request={request} />
