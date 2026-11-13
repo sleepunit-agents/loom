@@ -79,7 +79,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
-  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations))) : installedAttentionSources(app.operations);
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
   if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing,
     attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);

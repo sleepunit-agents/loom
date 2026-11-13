@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
 
+- Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
 
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
 - Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
 
+- Migration snapshots collect registered importer data and keys only, skip legacy aliases and live/program entries safely, explain refusals, and support a no-write `--dry-run` inventory.
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 - Add read-only `migrate verify` that independently compares imported IDs, counts, metadata and content against the snapshot and full plan on every invocation.
 - Add offline `migrate plan` and resumable `migrate all` with snapshot-bound receipts and stopped-home destination checks.
@@ -50,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 - Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
 - Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
+- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 - Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
@@ -153,6 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ends an agent's own sessions when it's done.
 
 ### Added
+
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
   other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner
@@ -998,6 +1002,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-only next-mode registration of existing agent contexts with atomic retries and live household updates.
 
 - Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
+
+- Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
 
 ## [0.16.1] - 2026-10-25
 

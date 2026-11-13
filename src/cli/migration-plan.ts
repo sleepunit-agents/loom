@@ -60,7 +60,7 @@ function regularFiles(root: string): string[] {
 function assertInventory(root: string, manifest: SnapshotManifest, regular: string[]): void {
   const schema = z.object({ version: z.literal(1), consistency: z.literal('per-database'), files: z.array(z.object({
     path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative(), kind: z.enum(['sqlite','file']),
-  }).strict()) }).strict();
+  }).strict()), skipped: z.array(z.object({ path: z.string(), rule: z.string(), bytes: z.number().nonnegative().nullable() }).strict()).optional(), followed: z.array(z.object({ path: z.string(), realPath: z.string() }).strict()).optional() }).strict();
   schema.parse(manifest);
   const paths = new Set(manifest.files.map(f => f.path));
   if (paths.has('manifest.json')) throw Error('Manifest cannot inventory itself');
@@ -86,10 +86,14 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const context = { snapshot: { root, manifest } };
   const path = (relative: string) => snapshotPath(context, relative);
   const json = (relative: string) => JSON.parse(readFileSync(path(relative), 'utf8'));
-  const files = new Set(manifest.files.map(f => f.path));
+  const physical = new Set(manifest.files.map(f => f.path));
+  // File aliases needed by fixed-path importers are regular copies, not links.
+  // Discover through their importer-visible path once, rather than twice.
+  const aliased = new Set((manifest.followed ?? []).filter(alias => physical.has(`home/${alias.path}`) && physical.has(`home/${alias.realPath}`)).map(alias => `home/${alias.realPath}`));
+  const files = new Set([...physical].filter(path => !aliased.has(path)));
   if (!files.has('home/household.json')) throw Error('Snapshot household is required');
   const household = parseHouseholdDocument(path('home'), json('home/household.json'));
-  const memories = manifest.files.filter(f => f.kind === 'sqlite' && basename(f.path) === 'memories.db').map(f => f.path).sort();
+  const memories = manifest.files.filter(f => files.has(f.path) && f.kind === 'sqlite' && basename(f.path) === 'memories.db').map(f => f.path).sort();
   const scopes: Record<string, Record<string, string>> = {};
   const attentionPaths: string[] = [];
   for (const source of memories) sqlite(path(source), db => {
