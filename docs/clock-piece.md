@@ -493,3 +493,16 @@ The offline registry merged in #951 already registers Clock after household;
 `loom migrate all` invokes the same transactional importer as the standalone
 command, with its old WAKE_DATA directory selected from the validated snapshot.
 No import or live move is performed by either implementation slice.
+
+## Home Clock composition
+
+The new Home subscribes to the scoped live `wake` and `clock` records. Each owned
+agent card shows Clock's Next and complete active Clock jobs, independently of a
+reported runtime status. The browser and server share the same projection; paused
+clocks, parked answer checks and held starts never become a promised Next. Job
+rows open the Clock app. Reported jobs remain separately labelled as reports.
+Both streams must be live before Home shows Clock words or times. Losing either
+stream clears stale values; losing ownership removes the card. The existing Home
+browser proof checks two-window create/pause/cancel updates and captures the
+composed panels in its six-size/look evidence. No caller authority or dispatch
+capability is added by these read-only panels.

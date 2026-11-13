@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
+
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
 

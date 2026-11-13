@@ -31,6 +31,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     jobs:[{id:'task',label:'Finish the shared Home',href:'/p/tasks-preview/task/t-2205'},{id:'queued',label:'Waiting for the next runtime connection'}],
     watched:[{id:'pr',label:'Home preview pull request',href:'https://github.com/sleepunit-agents/loom/pull/927'},{id:'plain',label:'A reported item without a destination'}],
   },'home-work').ok).toBe(true);
+  const scheduled=loom.operations.call('direct',owner,'clock.in',{agent:'art',when:'2h',prompt:'Private runtime words',note:'Review the next clock slice'},'home-clock');
+  expect(scheduled.ok).toBe(true);if(!scheduled.ok)throw Error('Clock fixture failed');
+  const wakeId=(scheduled.value as {id:string}).id;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
@@ -46,6 +49,12 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     expect(await b.getByText('Nothing right now',{exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByRole('button',{name:'Finish the shared Home',exact:true}).count()).toBe(1);
     expect(await b.getByRole('link',{name:'Home preview pull request'}).getAttribute('href')).toBe('https://github.com/sleepunit-agents/loom/pull/927');
+    for(const page of [a,b]) {
+      const panel=page.getByRole('region',{name:'Art E Fish clock',exact:true});
+      await expect.poll(()=>panel.getByText('Nov 13, 2026, 4:00 AM CT · Review the next clock slice',{exact:true}).count()).toBe(1);
+      expect(await panel.getByRole('heading',{name:'Clock jobs · 1',exact:true}).count()).toBe(1);
+      expect(await page.getByText('Private runtime words',{exact:true}).count()).toBe(0);
+    }
     await a.getByRole('button',{name:'Check again',exact:true}).click();await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     const shots=resolve('artifacts/attention-home');mkdirSync(shots,{recursive:true});
@@ -68,6 +77,17 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       await b.screenshot({path:join(shots,`home-work-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     expect(overflows).toEqual([]);
+    expect(loom.operations.call('direct',owner,'clock.pause',{agent:'art'},'home-pause').ok).toBe(true);
+    for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Art E Fish clock',exact:true}).getByText('Clock paused',{exact:true}).count()).toBe(1);
+    expect(loom.operations.call('direct',owner,'clock.cancel',{id:wakeId},'home-cancel').ok).toBe(true);
+    expect(loom.operations.call('direct',owner,'clock.resume',{agent:'art'},'home-resume').ok).toBe(true);
+    for(const page of [a,b]) {
+      const panel=page.getByRole('region',{name:'Art E Fish clock',exact:true});
+      await expect.poll(()=>panel.getByText('No clock jobs.',{exact:true}).count()).toBe(1);
+      expect(await panel.getByText('No wake scheduled',{exact:true}).count()).toBe(1);
+      expect(await panel.getByText('Review the next clock slice',{exact:true}).count()).toBe(0);
+    }
+
     await yes(a).click();await expect.poll(()=>yes(b).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
