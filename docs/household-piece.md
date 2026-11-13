@@ -548,3 +548,27 @@ remote API access, separately. No harness or host config is installed by Setup.
 This flow creates an agent in an initialized household. Fresh-household ownership
 and offline `household init`/commons migration remain in the inventory, as do
 appearance/profile/health controls. Setup does not edit existing identity files.
+
+### Fresh next-mode household
+
+Starting `loom serve --next --home NEW_HOME` on a fresh private home creates the
+OS-user-bound household owner and a complete `assistant` context before printing
+the existing five-minute first sign-in link. The context contains a voice-neutral
+identity, preferences and self-model, using the same exclusive publication,
+flush and recovery checks as Setup. The owner can sign in, deliberately mint the
+assistant's first token, or use Create an agent for a named agent with their own
+purpose, voice and rules. No token is implicitly minted for the context.
+
+The initial context and household/link rows cannot commit together. Failed row
+or audit writes leave no registered household or usable credential. Restart may
+recover only the unchanged publication bound to this OS uid and initialization
+version. Existing directories refuse adoption. Once initialized, startup never
+recreates or rewrites an agent's files, including a missing or edited identity.
+A stopped daemon still permits the default `loom mcp --next --home NEW_HOME`
+identity load. Existing imported households are unchanged.
+
+This closes the fresh-start missing-context gap. It does not move an old
+standalone directory, create a compatibility symlink, or split old knowledge and
+People into commons. Those explicit offline migration deliveries remain in the
+replacement inventory; this is no claim of a complete old `household init` or
+`commons` replacement.

@@ -1078,6 +1078,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
 
+- Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

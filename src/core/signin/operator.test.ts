@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chmodSync, existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -122,6 +122,14 @@ it('first start creates a household and prints one owner link, with no second pr
   const path = home(), clock = new FakeClock(); let output = '';
   const first = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } });
   const member = signin(first).household()!.members[0].person;
+  const context = join(path, 'agents', 'assistant');
+  expect(signin(first).household()!.default).toBe('assistant');
+  expect(readFileSync(join(context, 'IDENTITY.md'), 'utf8')).toContain('# Assistant\n');
+  expect(readFileSync(join(context, 'preferences.md'), 'utf8')).toContain(member);
+  expect(readFileSync(join(context, 'self-model.md'), 'utf8')).toContain('## Strengths');
+  expect(lstatSync(context).mode & 0o777).toBe(0o700);
+  const identity = readFileSync(join(context, 'IDENTITY.md'));
+
   expect(first.db.prepare('SELECT member, label, expires FROM signin_audit').all()).toEqual([{ member, label: 'First sign-in', expires: clock.now() / 1000 + 300 }]);
   expect(JSON.stringify(first.db.prepare('SELECT * FROM signin_audit').all())).not.toContain(new URL(output.trim()).pathname.slice('/login/'.length));
   expect(output.trim()).toMatch(/^http:\/\/127.0.0.1:\d+\/login\/[0-9a-f]{64}$/);
@@ -129,6 +137,7 @@ it('first start creates a household and prints one owner link, with no second pr
   const linkPath = new URL(output.trim()).pathname; await first.close();
   output = ''; const second = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } }); cleanup.push(() => second.close());
   expect(output).toBe('');
+  expect(readFileSync(join(context, 'IDENTITY.md'))).toEqual(identity);
   const res = await fetch(second.url + linkPath, { method: 'POST', redirect: 'manual' }); expect(res.status).toBe(303);
   const cookie = res.headers.get('set-cookie')!.split(';')[0]; expect((await (await fetch(second.url + '/auth/session', { headers: { cookie } })).json()).viewer.id).toBe(member);
 });
@@ -177,4 +186,41 @@ it('the CLI and daemon startup refuse a home owned by a different OS user', asyn
   const path = home(); fault.wrongOwner = path;
   await expect(startLoom({ home: path, next: true, stdout: () => {} })).rejects.toThrow('Operator home must belong');
   expect(existsSync(join(path, 'loom.db'))).toBe(false); expect(existsSync(join(path, 'operator.sock'))).toBe(false);
+});
+
+it('first-start rollback publishes no household or credential and retries only the unchanged OS-owner context', async () => {
+  const path = home(), clock = new FakeClock();
+  const seed = await startLoom({ home: path, next: true, clock, stdout: () => {} });
+  // Reset only this test home to the pre-first-start app state, retaining schemas.
+  seed.db.exec("DELETE FROM household_settings; DELETE FROM household_agents; DELETE FROM household_members; DELETE FROM household_tokens; DELETE FROM household_sessions; DELETE FROM household_links; DELETE FROM signin_audit");
+  rmSync(join(path, 'agents'), { recursive: true });
+  seed.db.exec("CREATE TRIGGER fail_first_audit BEFORE INSERT ON signin_audit BEGIN SELECT RAISE(ABORT, 'fail'); END");
+  await seed.close();
+  let output = '';
+  await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
+  expect(output).toBe('');
+  const context = join(path, 'agents', 'assistant'), identity = readFileSync(join(context, 'IDENTITY.md'));
+  const db = createFoundation({ home: path });
+  expect(new HouseholdDatabase(db.db).document()).toBeUndefined();
+  expect(new HouseholdRows(db.db, 'tokens').entries()).toEqual([]);
+  expect(new HouseholdRows(db.db, 'sessions').entries()).toEqual([]);
+  expect(new HouseholdRows(db.db, 'links').entries()).toEqual([]);
+  db.db.exec('DROP TRIGGER fail_first_audit'); db.close();
+  writeFileSync(join(context, 'IDENTITY.md'), 'Changed after rollback');
+  await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
+  expect(output).toBe(''); expect(readFileSync(join(context, 'IDENTITY.md'), 'utf8')).toBe('Changed after rollback');
+  writeFileSync(join(context, 'IDENTITY.md'), identity);
+  const recovered = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } }); cleanup.push(() => recovered.close());
+  expect(readFileSync(join(context, 'IDENTITY.md'))).toEqual(identity);
+  expect(signin(recovered).household()!.agents).toEqual(['assistant']);
+  expect(output.trim()).toMatch(/\/login\/[0-9a-f]{64}$/);
+});
+it('fresh startup never adopts an unrelated existing initial context or changes an initialized household', async () => {
+  const path = home(), context = join(path, 'agents', 'assistant');
+  mkdirSync(context, { recursive: true }); writeFileSync(join(context, 'IDENTITY.md'), 'Existing identity');
+  await expect(startLoom({ home: path, next: true, stdout: () => {} })).rejects.toThrow();
+  expect(readdirSync(context)).toEqual(['IDENTITY.md']); expect(readFileSync(join(context, 'IDENTITY.md'), 'utf8')).toBe('Existing identity');
+  const f = await setup();
+  expect(signin(f.app).household()!.agents).toEqual(['art']);
+  expect(existsSync(join(f.path, 'agents', 'assistant'))).toBe(false);
 });

@@ -18,7 +18,7 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | --- | --- |
 | `loom household show` | `loom-household show '{}'`; same summary fields, JSON instead of aligned text |
 | `loom household add AGENT` | `loom-household addAgent '{"agent":"AGENT"}'`; registers an existing context (also in Setup), JSON agent list instead of `Agents: …` |
-| `loom household init AGENT [--owner PERSON]` | **Pending** fresh-household initialization. The old directory move/symlink and implicit commons split have no next command; importing an existing household is a separate operation |
+| `loom household init AGENT [--owner PERSON]` | Fresh `serve --next --home NEW_HOME` creates an OS-owned household and complete default assistant context before its first sign-in link; Setup creates additional named agents. **Pending** old directory move/symlink and implicit commons split; importing an existing household is separate |
 | `loom household commons` | **Pending** explicit offline commons migration. The app importer does not move knowledge or split People; neither the daemon nor stdio runs this old command implicitly |
 | `loom household sprite AGENT SHEET PIXELLAB` and its weight/variant options | **Pending** artwork installation on the new side |
 | `loom household sprite AGENT --manifest MANIFEST [SHEETS…]` | **Pending** manifest/sheet replacement on the new side |
