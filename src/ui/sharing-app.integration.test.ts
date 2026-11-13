@@ -39,6 +39,9 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Project sharing create
     await a.getByRole('button',{name:'Create project',exact:true}).click();
     const row=(page:typeof a,title:string)=>page.locator('[data-split-row]').filter({hasText:title});
     await expect.poll(()=>row(b,'Garden').count()).toBe(1);
+    await a.getByRole('button',{name:'Create project',exact:true}).click();
+    await expect.poll(()=>a.getByRole('alert').textContent()).toContain('conflict: Project already exists');
+    expect(await a.getByRole('textbox',{name:'Name',exact:true}).inputValue()).toBe('Garden');
     await row(a,'Garden').click(); await row(b,'Garden').click();
     await a.getByRole('checkbox',{name:'pollock',exact:true}).check();
     await a.getByRole('button',{name:'Save members',exact:true}).click();
