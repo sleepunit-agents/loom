@@ -14,6 +14,7 @@ import { OperationError } from '../../core/index.js';
 import { venueSchema, routeSchema, type Message, type Venue } from './model.js';
 import { addressed } from './routing.js';
 import { eventTime } from './time.js';
+import { postReply } from './outbound.js';
 const sharing: Sharing = {members:{jonathan:{owner:true,agents:['art','mark']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['pond-bot']}},services:{}};
 const owner = {kind:'member',id:'jonathan'} as const;
 const roots: string[] = [], closes: (()=>Promise<void>)[] = [];
@@ -311,6 +312,43 @@ describe('in-process bridge delivery',()=>{
     await f.close(); closes.splice(closes.indexOf(f.close),1);
     const restarted=await fixture('discord',false,f.home); await restarted.engine.sync(); expect(restarted.adapter.posts).toHaveLength(0);
     const records=restarted.app.db.prepare('SELECT result FROM core_operations').all(); expect(JSON.stringify(records)).not.toContain('token-value');
+  });
+  it.each(['discord','slack'] as const)('%s releases one whole split reply attempt in staging and keeps its thread address',async platform=>{
+    const f=await fixture(platform,true);
+    const address=platform==='slack'?{channel:'D300',thread:'1794503533.000001',dm:true}:{channel:'400',parent:'300',thread:'400'};
+    await f.engine.receive(f.venue.id,f.message(address)); await f.engine.flush();
+    const posts: {text:string;channel:string;thread?:string}[]=[];
+    f.adapter.send=async(v,_token,address,text)=>postReply(v.platform,text,async part=>{
+      posts.push({text:part,channel:address.channel,thread:address.thread}); return {id:`part-${posts.length}`};
+    });
+    const text='line\n'.repeat(1800), incomingId=[...f.deliveries.keys()][0];
+    f.engine.reply({id:'split',incomingId,text}); await f.engine.flush();
+    expect(posts).toEqual([]);
+    expect(f.app.operations.call('direct',owner,'core.releaseEffect',{id:'bridges:split'},'release-split').ok).toBe(true);
+    await f.engine.flush();
+    expect(posts.length).toBeGreaterThan(1);
+    expect(posts.map(p=>p.text).join('')).toBe(text);
+    expect(posts.every(p=>p.channel===address.channel&&p.thread===address.thread)).toBe(true);
+    expect(f.app.db.prepare('SELECT state,remote_id FROM bridges_outbox').get()).toEqual({state:'sent',remote_id:`part-${posts.length}`});
+    f.engine.reply({id:'split',incomingId,text}); await f.engine.flush();
+    expect(posts.map(p=>p.text).join('')).toBe(text);
+  });
+  it.each(['discord','slack'] as const)('%s never replays any of a partially posted reply, even after restart',async platform=>{
+    const f=await fixture(platform);
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const posts:string[]=[];
+    f.adapter.send=async(v,_token,_address,text)=>postReply(v.platform,text,async part=>{
+      posts.push(part); if(posts.length===2)throw new Error('token-value-do-not-store'); return {id:'first-part'};
+    });
+    f.engine.reply({id:'partial',incomingId:[...f.deliveries.keys()][0],text:'x'.repeat(9000)}); await f.engine.flush();
+    expect(posts).toHaveLength(2);
+    expect(f.app.db.prepare('SELECT state,remote_id FROM bridges_outbox').get()).toEqual({state:'uncertain',remote_id:null});
+    f.clock.advance(120000); await f.engine.flush(); expect(posts).toHaveLength(2);
+    await f.close(); closes.splice(closes.indexOf(f.close),1);
+    const next=await fixture(platform,false,f.home); await next.engine.sync();
+    expect(next.adapter.posts).toEqual([]);
+    expect(next.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'uncertain'});
+    expect(JSON.stringify(next.app.db.prepare('SELECT * FROM core_effects').all())).not.toContain('token-value-do-not-store');
   });
   it('reconnects after a drop with a fake clock and cancels reconnect on shutdown',async()=>{
     const f=await fixture(); await f.engine.sync(); f.adapter.callbacks!.dropped(); expect(f.adapter.connections).toBe(1);
