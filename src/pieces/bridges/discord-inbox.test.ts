@@ -31,10 +31,12 @@ async function fixture(existing?:string) {
 it('atomically persists words and resume cursor through restart, preserving first receipt across sessions',async()=>{
  const f=await fixture();await f.inbox.commit(ready(),cursor(1));await f.inbox.commit(message(),cursor(2));const rows=f.inbox.pending();
  await f.close();const g=await fixture(f.home);expect(g.inbox.load()).toEqual(cursor(2));expect(g.inbox.pending()).toEqual(rows);
- await g.inbox.reset();expect(g.inbox.load()).toBeUndefined();expect(g.inbox.pending()).toEqual(rows);
- await g.inbox.commit(ready(),cursor(1));await g.inbox.commit(message(2,'300','CHANGED'),cursor(2));expect(g.inbox.pending()).toEqual(rows);
- g.inbox.consume(rows[0].id);await g.inbox.commit(message(3),cursor(3));expect(g.inbox.pending()).toEqual([]);
- expect(g.app.db.prepare('SELECT event,state FROM bridges_discord_receipts').get()).toEqual({event:null,state:'consumed'});
+ await g.inbox.reset();await g.close();const h=await fixture(f.home);
+ expect(h.inbox.load()).toBeUndefined();expect(h.inbox.pending()).toEqual(rows);
+ await h.inbox.commit(ready(),cursor(1));await h.inbox.commit(message(2,'300','CHANGED'),cursor(2));expect(h.inbox.pending()).toEqual(rows);
+ h.inbox.consume(rows[0].id);await h.close();const j=await fixture(f.home);
+ expect(j.inbox.load()).toEqual(cursor(2));await j.inbox.commit(message(3),cursor(3));expect(j.inbox.pending()).toEqual([]);
+ expect(j.app.db.prepare('SELECT event,state FROM bridges_discord_receipts').get()).toEqual({event:null,state:'consumed'});
 });
 it.each(['receipt','checkpoint'])('rolls back both sides on failed %s write',async target=>{
  const f=await fixture();await f.inbox.commit(ready(),cursor(1));
