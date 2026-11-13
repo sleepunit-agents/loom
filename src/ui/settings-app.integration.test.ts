@@ -59,6 +59,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
    await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
    await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+   await expect.poll(()=>b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
    await b.screenshot({path:join(shots,`settings-${look}-${width}.png`),fullPage:true,animations:'disabled'});
   }
   expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.policy',{default:'ask',secrets:{API:{grant:'never',houses:['art']}}},randomUUID()).ok).toBe(true);
