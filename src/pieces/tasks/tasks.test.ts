@@ -80,6 +80,17 @@ async function socket(app: { url: string }, viewer = 'jonathan') {
   return { ws, next };
 }
 describe('policy, live records, retry and role binding', () => {
+  it('derives readiness from hidden blockers and republishes it when they close', async () => {
+    const app = await loom();
+    const blocker = app.command('create', { title: 'Hidden blocker', project: 'other' }).id;
+    const task = app.command('create', { title: 'Pond task', project: 'pond' }).id;
+    app.command('link', { id: task, dependsOn: blocker, type: 'blocks' });
+    const { next } = await socket(app, 'pollock');
+    const initial = await next();
+    expect(initial.records).toEqual([expect.objectContaining({ id: task, blocked: true, ready: false, dependsOn: [] })]);
+    app.command('close', { id: blocker });
+    expect(await next()).toMatchObject({ kind: 'put', record: { id: task, blocked: false, ready: true } });
+  });
   it('filters every collection, inherits parent scope, denies hidden references and checks both sides of moves', async () => {
     const app = await loom();
     const pond = app.command('create', { title: 'Pond work', type: 'epic', project: 'pond', agent: 'art' }).id;

@@ -1,3 +1,4 @@
+import { appAt } from './apps';
 // One page, loaded and kept current (docs/specs/desk-tiling.md, "One page loader per tile"): the JSON loom answers for
 // an address, its error or its wait, the last copy of it this tab has seen, and the page's own refresh rules (the live
 // stream, its timer, coming back online, the tab shown again). App.tsx runs it once for the whole screen; a desktop's
@@ -185,6 +186,14 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
 
   const load = useCallback<Load>(async (to, push, quiet = false) => {
     const n = navNow.current;
+    const app = appAt(new URL(to, 'http://loom').pathname);
+    if (app) {
+      showing.current = to;
+      if (push && to !== n.here()) n.push(to);
+      setUrl(to); setData(previous => previous ? { view: 'sheet', which: 'registered-app', chrome: previous.chrome } : null); setError(null); setWaiting(false); setPending(null); setSavedAt(undefined); setFresh(true);
+      if (!quiet) n.top();
+      return;
+    }
     const have = kept.get(to);
     if (!quiet) {
       showing.current = to;
@@ -233,17 +242,18 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const [live, setLive] = useState(false);
   const shownView = useRef('');
   useEffect(() => {
+    if (appAt(new URL(url, 'http://loom').pathname)) return;
     // Revalidate in the background without making a confirmed page look like a cached copy.
     const again = (live: (view: string, url: string) => boolean) => () => { if (!document.hidden && !live(shownView.current, showing.current)) { void load(showing.current, false, true); } };
     const onChange = again(changeLive), onShown = again(readLive);
     const stop = listen({ change: onChange, open: setLive });
     document.addEventListener('visibilitychange', onShown);
     return () => { stop(); document.removeEventListener('visibilitychange', onShown); };
-  }, [load]);
+  }, [load, url]);
 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
   // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
-  const every = refreshEvery(data as Showing | null, live);
+  const every = appAt(new URL(url, 'http://loom').pathname) ? 0 : refreshEvery(data as Showing | null, live);
   shownView.current = (data as Showing | null)?.view ?? '';
   useEffect(() => {
     if (!every) return;

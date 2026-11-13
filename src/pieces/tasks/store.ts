@@ -37,7 +37,7 @@ export function persist(db: Db, state: StoreState, now: number): string[] {
     for (const id of changed) db.prepare('UPDATE tasks_tasks SET changed_at=? WHERE id=?').run(now, id);
   }
   // A referenced task moving scope changes the viewer's projected relation fields.
-  for (const link of state.links) if (moved.has(link.dependsOn)) changed.add(link.id);
+  for (const link of state.links) if (moved.has(link.dependsOn) || (link.type === 'blocks' && changed.has(link.dependsOn))) changed.add(link.id);
   db.prepare("INSERT INTO tasks_meta VALUES ('seq',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(state.seq));
   return [...changed];
 }

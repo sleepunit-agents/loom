@@ -1,3 +1,4 @@
+import { apps, appAt } from './apps';
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { phoneRowAbout } from './row-about';
@@ -462,6 +463,8 @@ export default function App() {
   // pages that agent's; Home is no tile.
   const agentOf = (key: string) => chrome?.shell?.agents.find((a) => key === `/a/${a.id}`);
   const tileOf = (at: string): { key: string; label: string } | null => {
+    const registered = appAt(new URL(at, 'http://loom').pathname);
+    if (registered) return { key:registered.path,label:registered.title };
     if (at === '/' || !chrome?.shell) return null;
     const agent = /^\/a\/([a-z][a-z0-9-]*)/.exec(at)?.[1];
     if (agent) { const a = chrome.shell.agents.find((x) => x.id === agent); return a ? { key: `/a/${a.id}`, label: a.label } : null; }
@@ -479,7 +482,7 @@ export default function App() {
   };
   /** An app by its name in the tiles' address (the last part of its key): a household app's first, then an agent's. */
   const tileNamed = (name: string) => {
-    const hrefs = [...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
+    const hrefs = [...apps.map(app => ({ href: app.path })), ...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
       .concat('/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
     for (const h of hrefs) { const r = tileOf(h); if (r && tileName(r.key) === name) return { ...r, href: h }; }
     return null;
@@ -510,6 +513,8 @@ export default function App() {
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
   const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
+    const registered = appAt(new URL(pg.url, 'http://loom').pathname);
+    if (registered) return <Suspense fallback={<Skeleton />}><registered.Screen /></Suspense>;
     const data = withAgentCards(withThreads(withAttention(pg.data, attention), threads), cards);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
