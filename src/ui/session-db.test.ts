@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -27,7 +28,7 @@ describe('session database persistence before activation', () => {
 
   it('round trips all fields, unknown fields and omitted fields, without credential normalization', () => {
     const raw = {
-      v: 1, sessions: { [hash('cookie')]: { issuedAt: 1000, secret: digest.toString('hex'), signedInAt: 950, future: 'kept' } },
+      v: 1, sessions: { [hash('cookie')]: { issuedAt: 1000, secret: digest.toString('hex'), signedInAt: 950, device: 'Safari on iPhone', label: 'original', via: 'passkey', agent: true, future: 'kept' } },
       links: { [hash('link')]: { expires: 1200, secret: digest.toString('hex'), label: 'old link', signedInAt: 950 } },
       challenges: { [hash('challenge')]: { purpose: 'register', expires: 1200, secret: digest.toString('hex') } },
       passkeys: { credential: passkey }, prefs: { look: '000h', mode: 'light', tiling: false, at: 3 },
@@ -43,7 +44,7 @@ describe('session database persistence before activation', () => {
     expect(new HouseholdRows(db, 'readers').get('pollock')).toEqual(raw.members!.pollock);
     expect(() => persistence.replace(raw)).toThrow('requires a transaction');
     const store = new SessionStore(home, persistence);
-    expect(store.get('cookie')).toEqual({ issuedAt: 1000, signedInAt: 950, secret: digest });
+    expect(store.get('cookie')).toEqual({ issuedAt: 1000, signedInAt: 950, secret: digest, agent: true });
     expect(store.prefs()).toMatchObject({ look: 'daylight', oneWindow: true });
     store.setPrefs({ sound: true }, undefined, 4);
     expect(persistence.read().prefs).toEqual({ ...raw.prefs, sound: true, at: 4 });
@@ -60,6 +61,9 @@ describe('session database persistence before activation', () => {
     const id = s.create(digest, 1000), link = s.createLink(digest, 100, 1000);
     const challenge = s.createChallenge('register', digest, 100, 1000);
     s.addPasskey(passkey);
+    db.pragma('ignore_check_constraints = ON');
+    for (const table of ['sessions', 'links', 'challenges', 'passkeys']) db.prepare(`INSERT INTO household_${table} VALUES (?, ?)`).run('unrelated', 'invalid-json');
+    db.pragma('ignore_check_constraints = OFF');
     const read = vi.spyOn(persistence, 'read').mockImplementation(() => { throw new Error('whole store read'); });
     expect(s.get(id)).toEqual({ issuedAt: 1000, secret: digest });
     expect(s.peekLink(link, 1001)).toEqual(digest);
@@ -72,6 +76,7 @@ describe('session database persistence before activation', () => {
     expect(persistence.get('sessions', hash(id))?.seenAt).toBe(1001 + SEEN_EVERY_S);
     expect(read).not.toHaveBeenCalled();
     read.mockRestore();
+    for (const table of ['sessions', 'links', 'challenges', 'passkeys']) db.prepare(`DELETE FROM household_${table} WHERE id = ?`).run('unrelated');
     expect(existsSync(join(home, 'ui-sessions.json'))).toBe(false);
   });
 
@@ -120,6 +125,25 @@ describe('session database persistence before activation', () => {
     const id = sql.create(digest, 1000);
     expect(json.get(id)).toBeNull();
     expect(readFileSync(join(home, 'ui-sessions.json'), 'utf8')).toBe(source);
+  });
+
+  it('does not read ui-sessions.json, even when a source file is present', () => {
+    writeFileSync(join(home, 'ui-sessions.json'), '{"v":1,"sessions":{}}');
+    new SessionStore(home, persistence); // create the independent CSRF key first
+    const originalRead = fs.readFileSync;
+    const read = vi.spyOn(fs, 'readFileSync').mockImplementation((path, options) => {
+      if (String(path) === join(home, 'ui-sessions.json')) throw new Error('session JSON was read');
+      return originalRead(path, options as never);
+    });
+    try {
+      const s = new SessionStore(home, persistence);
+      const id = s.create(digest, 1000);
+      expect(s.get(id)).toEqual({ issuedAt: 1000, secret: digest });
+      s.setPrefs({ sound: true });
+      expect(s.prefs()).toMatchObject({ sound: true });
+      expect(read).toHaveBeenCalledWith(join(home, 'ui-cookie.key'));
+      expect(read.mock.calls.some(([path]) => String(path) === join(home, 'ui-sessions.json'))).toBe(false);
+    } finally { read.mockRestore(); }
   });
 
   it('rolls all concerns back if interrupted, and permits a complete retry', () => {
