@@ -1,3 +1,4 @@
+import type { KnowledgeSelection } from './config.js';
 import type { PeopleSelection } from './tools/person.js';
 import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
@@ -87,6 +88,8 @@ function agentOfDir(contextDir: string): string {
 export interface LoomServerConfig {
   /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
   peopleSelection?: PeopleSelection;
+  /** Explicit commons selection; null uses the local knowledge store, omitted keeps legacy discovery. */
+  knowledgeSelection?: KnowledgeSelection;
   contextDir: string;
   /**
    * The house this session's agent token names, and its service if it's one (t-2061): set by the household HTTP server
@@ -934,7 +937,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   // since this server runs as whichever identity owns contextDir, not only
   // Art. The standalone knowledge-only service (knowledge-http-server.ts)
   // resolves identity per-connection from its per-identity bearer token instead.
-  registerKnowledgeTools(server, { contextDir, gapsDir, identity: resolveIdentityName(contextDir), personCards: true });
+  registerKnowledgeTools(server, {
+    contextDir, gapsDir, identity: resolveIdentityName(contextDir), personCards: true,
+    peopleSelection: config.peopleSelection, knowledgeSelection: config.knowledgeSelection,
+  });
 
   server.registerTool(
     'memory_history',
@@ -1186,7 +1192,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ domain }) => ({ content: [{ type: 'text' as const, text: JSON.stringify(await knowledgeFreshness(contextDir, domain)) }] }),
+    async ({ domain }) => ({ content: [{ type: 'text' as const, text: JSON.stringify(await knowledgeFreshness(contextDir, domain, config.knowledgeSelection)) }] }),
   );
 
   // ─── Notes (src/notes.ts): what the agent holds on to for a while ───────────

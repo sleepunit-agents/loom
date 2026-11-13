@@ -15,6 +15,8 @@
  * — as a second identity's calls through the scoped service, so the two
  * cannot silently diverge in how they read/write knowledge.db.
  */
+import type { KnowledgeSelection } from '../config.js';
+import type { PeopleSelection } from '../tools/person.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { knowledgeWrite } from '../tools/knowledge-write.js';
@@ -31,6 +33,8 @@ import { knowledgeHistory } from '../tools/knowledge-history.js';
 
 export interface RegisterKnowledgeToolsOptions {
   contextDir: string;
+  knowledgeSelection?: KnowledgeSelection;
+  peopleSelection?: PeopleSelection;
   /** Knowledge-gaps dir for recall-miss logging (see knowledge-recall.ts). */
   gapsDir?: string;
   /**
@@ -62,7 +66,7 @@ export interface RegisterKnowledgeToolsOptions {
 
 /** Registers the full knowledge_* tool surface (11 tools) on `server`. */
 export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledgeToolsOptions): void {
-  const { contextDir, gapsDir, identity, restrictCreatedByToIdentity = false, personCards = false } = opts;
+  const { knowledgeSelection, peopleSelection, contextDir, gapsDir, identity, restrictCreatedByToIdentity = false, personCards = false } = opts;
 
   server.registerTool(
     'knowledge_write',
@@ -149,6 +153,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         contextDir,
         { title, domain, body, slug, freshness_anchor, mode, citations, created_by, version },
         identity,
+        knowledgeSelection,
       );
       return { content: [{ type: 'text' as const, text: result }] };
     },
@@ -199,6 +204,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         { slug, query, domain, limit, detail, sort_by_verified },
         gapsDir,
         identity,
+        knowledgeSelection,
       );
       return { content: [{ type: 'text' as const, text: result }] };
     },
@@ -244,7 +250,8 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         thinBodyThreshold: thin_body_threshold,
         coldDays: cold_days,
         personCards,
-      });
+        peopleSelection,
+      }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -266,7 +273,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ slug, note }) => {
-      const result = await knowledgeArchive(contextDir, { slug, note });
+      const result = await knowledgeArchive(contextDir, { slug, note }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -285,7 +292,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ slug }) => {
-      const result = await knowledgeRestore(contextDir, { slug });
+      const result = await knowledgeRestore(contextDir, { slug }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -308,7 +315,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ old_slug, new_slug, note }) => {
-      const result = await knowledgeSupersede(contextDir, { old_slug, new_slug, note });
+      const result = await knowledgeSupersede(contextDir, { old_slug, new_slug, note }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -352,7 +359,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
     async ({ slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix }) => {
       const result = await knowledgeMove(contextDir, {
         slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix,
-      });
+      }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -392,7 +399,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
     async ({ source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies }) => {
       const result = await knowledgeMerge(contextDir, {
         source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies,
-      });
+      }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -419,7 +426,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slugs, confirm }) => {
-      const result = await knowledgePurge(contextDir, { slugs, confirm });
+      const result = await knowledgePurge(contextDir, { slugs, confirm }, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -474,6 +481,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         contextDir,
         { slug, slugs, verified_at, freshness_anchor, note, outcome, citation_checked },
         identity,
+        knowledgeSelection,
       );
       return { content: [{ type: 'text' as const, text: result }] };
     },
@@ -501,7 +509,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slug, revision_id, restore }) => {
-      const result = await knowledgeHistory(contextDir, { slug, revision_id, restore }, identity);
+      const result = await knowledgeHistory(contextDir, { slug, revision_id, restore }, identity, knowledgeSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

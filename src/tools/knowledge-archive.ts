@@ -5,6 +5,7 @@
  * excluded from knowledge_recall and knowledge_maintain but remain in the DB
  * and are recoverable via knowledge_restore. Mirror of memory_archive.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeArchiveToolInput {
@@ -15,8 +16,9 @@ export interface KnowledgeArchiveToolInput {
 export async function knowledgeArchive(
   contextDir: string,
   input: KnowledgeArchiveToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.archivePage({ slug: input.slug, note: input.note });
     if (!result.archived) {

@@ -18,6 +18,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'node:fs';
+import type { Household } from './household.js';
 import { commonsKnowledgePath, contextFromHome, householdOf } from './household.js';
 
 /**
@@ -84,12 +85,18 @@ export function resolveSqliteDbPath(contextDir: string): string {
   return process.env.LOOM_SQLITE_DB_PATH ?? resolve(contextDir, 'memories.db');
 }
 
+/** Null explicitly selects a standalone store; undefined preserves legacy discovery. */
+export type KnowledgeSelection = { household: Household } | null;
+
 /**
  * Knowledge is facts about the world. In a household it's the commons, shared
  * by every agent (docs/specs/household.md); otherwise it lives in the
- * agent's own context dir, as it always has.
+ * agent's own context dir, as it always has. Explicit selection bypasses
+ * environment overrides and JSON discovery; omitted selection preserves both.
  */
-export function resolveKnowledgeDbPath(contextDir: string): string {
+export function resolveKnowledgeDbPath(contextDir: string, selection?: KnowledgeSelection): string {
+  if (selection !== undefined) return selection === null
+    ? resolve(contextDir, 'knowledge.db') : commonsKnowledgePath(selection.household);
   if (process.env.LOOM_KNOWLEDGE_DB_PATH) return process.env.LOOM_KNOWLEDGE_DB_PATH;
   const hh = householdOf(contextDir);
   if (hh) return commonsKnowledgePath(hh.household);
@@ -130,9 +137,9 @@ export function resolveTelemetryDir(contextDir: string): string {
  * Assert that the knowledge database path does not co-locate with the memory
  * database path. If they resolve to the same file (or inode), throw.
  */
-export function assertKnowledgePathsNotCoLocated(contextDir: string): void {
+export function assertKnowledgePathsNotCoLocated(contextDir: string, selection?: KnowledgeSelection): void {
   const memPath = resolveSqliteDbPath(contextDir);
-  const knPath = resolveKnowledgeDbPath(contextDir);
+  const knPath = resolveKnowledgeDbPath(contextDir, selection);
 
   if (memPath === knPath) {
     throw new Error(

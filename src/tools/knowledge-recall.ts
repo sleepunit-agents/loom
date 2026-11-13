@@ -22,6 +22,7 @@
  * expansion engine. The append is best-effort; a write failure never
  * disrupts the caller.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createKnowledgeBackend } from '../backends/index.js';
@@ -144,10 +145,11 @@ export async function knowledgeRecall(
    * per-identity bearer token. Attributes stamped reads in knowledge_access.
    */
   identity: string = 'art',
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   const detail = input.detail ?? (input.query ? 'full' : 'index');
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     // Exact-slug lookup short-circuits the search path entirely.
     if (input.slug) {

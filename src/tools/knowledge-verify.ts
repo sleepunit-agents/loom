@@ -7,6 +7,7 @@
  * and replaced 13 page bodies. An optional note appends a dated
  * "## Verification" section — append-only, never replace.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeVerifyToolInput {
@@ -30,9 +31,10 @@ export async function knowledgeVerify(
    * per-identity bearer token. Recorded as the verification's verifier.
    */
   identity: string = 'art',
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   const verifier = identity;
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.verifyPages({
       slug: input.slug,

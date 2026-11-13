@@ -90,8 +90,14 @@ registry or environment changes. Person ensure/merge helpers accept the same
 selection for later new-side route composition. The room reader closes its
 explicit store and keeps its existing rendering limits and failure handling.
 
-This still does not enable a new stdio entry point: knowledge routing and the
-remaining server household consumers must be composed explicitly before that
+Knowledge tools now also accept explicit selection (`knowledgeSelection` on
+`createLoomServer` and `registerKnowledgeTools`). Every call, including freshness,
+uses the selected commons or standalone database without JSON discovery or the
+legacy knowledge-path environment override. Omitted selection preserves existing
+callers. Maintain receives the explicit People selection for its person-page
+check; isolation checks inspect the selected knowledge path, including hard links.
+
+This still does not enable a new stdio entry point: the remaining server household consumers must be composed explicitly before that
 entry point is exposed. The new MCP continuity tests cover two simultaneous
 agents' Owners and room cards, shared directory/private relationships,
 standalone override beside legacy JSON, and an agent-scoped merge with the
