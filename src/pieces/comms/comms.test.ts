@@ -89,6 +89,20 @@ it('sweeps all encrypted message and step words at fourteen days; deletes rows a
 it('staging holds runtime delivery and never leaks words to another effect',async()=>{
  const s=await setup({hold:true});const place=await s.open();await s.comms.deliver('art',place,1);expect(s.deliveries).toEqual([]);
 });
+for(const boundary of ['decryption','staging'] as const)it(`revoking ownership during delivery ${boundary} prevents the runtime from receiving words`,async()=>{
+ let resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const pause=async()=>{started();await wait;};
+ const s=await setup(boundary==='decryption'
+  ?{key:key=>({...key,open:async blob=>{await pause();return key.open(blob);}})}
+  :{hold:async run=>{await pause();return run();}});
+ const place=await s.open();await begin;
+ expect(s.app.db.inTransaction).toBe(false);
+ const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);
+ resume();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([]);
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery).toBe('failed');
+});
 it('sends encrypted records as plaintext only to its member signed-in socket; bearer subscriptions are denied',async()=>{
  const s=await setup();const place=await s.open();await s.comms.post('art',place,{id:'reply',kind:'reply',text:'agent secret'});
  for(const [who,window] of [['jonathan',true],['other',true],['jonathan',false]] as const) {
