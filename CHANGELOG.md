@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
+
 - Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
 
