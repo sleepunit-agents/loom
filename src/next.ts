@@ -14,6 +14,7 @@ import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { installClock } from './pieces/clock/index.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { installChanges } from './pieces/changes/index.js';
@@ -45,6 +46,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     projects: () => {
       try {

@@ -1,3 +1,4 @@
+import { HouseholdAccounts } from '../../core/household/accounts.js';
 import { registerBuiltinService } from '../../core/services.js';
 import type { Foundation } from '../../core/app.js';
 import { installHouseholdProjects } from '../../core/household/operations.js';
@@ -17,7 +18,7 @@ export function installSharing(app: Foundation, home: string) {
     read(id, viewer) {
       if (!mayAct(viewer, {}, store.sharing(), 'household')) return;
       const household = new HouseholdDatabase(app.db).household(home);
-      return household ? { id, members: household.members.map(m => m.person), agents: household.agents } : undefined;
+      return household ? { id, members: household.members.map(m => m.person), agents: household.agents, agentAccounts: Object.fromEntries(household.agents.map(agent => [agent, new HouseholdAccounts(app.db, home).get(agent)])) } : undefined;
     },
     inScope: () => true,
   });

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
 
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
