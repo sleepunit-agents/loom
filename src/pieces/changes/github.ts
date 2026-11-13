@@ -34,14 +34,13 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
    for(const states of [['OPEN'],['MERGED','CLOSED']]) {
     let after:string|null=null;const seen=new Set<string>();
     for(;;) {
-     const response=await request('https://api.github.com/graphql',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query,variables:{owner,name,states,after}}),signal:AbortSignal.timeout(20000)});
+     const response=await request('https://api.github.com/graphql',{method:'POST',redirect:'error',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query,variables:{owner,name,states,after}}),signal:AbortSignal.timeout(20000)});
      if(!response.ok) throw new Error('GitHub read failed');
      // Even an upstream error or malicious PR text cannot smuggle the supplied token into app data.
-     const text=(await response.text()).split(token).join('[redacted]').replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g,'[redacted]');
-     const data=JSON.parse(text);const page=data.data?.repository?.pullRequests;
+     const data=JSON.parse(await response.text(),(_key,value:unknown)=>typeof value==='string'?value.split(token).join('[redacted]').replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g,'[redacted]'):value);const page=data.data?.repository?.pullRequests;
      if(data.errors?.length||!page||!Array.isArray(page.nodes)) throw new Error('GitHub read failed');
      const rows=page.nodes.filter(Boolean).map((n:unknown)=>normalize(repo,n));out.push(...rows.filter((c:Change)=>active(c,now)));
-     if(!page.pageInfo?.hasNextPage||states[0]!=='OPEN'&&rows.some((c:Change)=>!active(c,now))) break;
+     if(!page.pageInfo?.hasNextPage) break;
      const cursor=page.pageInfo.endCursor;if(typeof cursor!=='string'||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
     }
    }

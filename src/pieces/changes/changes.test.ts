@@ -143,3 +143,23 @@ it('denies runner and ungranted service reads and prevents members and agents an
  }
  expect(answer).not.toHaveBeenCalled();
 });
+
+it('redacts escaped credentials after JSON decoding and reads past old closures updated recently',async()=>{
+ const node=JSON.parse(readFileSync(new URL('./github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
+ const token='private-secret';const calls:RequestInit[]=[];
+ const secrets={resolveGitHub:async()=> 'github-acme',withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use(token)};
+ const request=(async(_url:unknown,init?:RequestInit)=>{
+  calls.push(init!);expect(init?.redirect).toBe('error');const {variables}=JSON.parse(String(init?.body));
+  const open=variables.states[0]==='OPEN';const more=!open&&!variables.after;
+  const nodes=open?[]:[{...node,number:more?1:2,state:'CLOSED',closedAt:more?'2020-01-01T00:00:00Z':'2026-11-11T00:00:00Z',mergedAt:null,title:token,bodyText:'github_pat_ANOTHERSECRET'}];
+  const text=JSON.stringify({data:{repository:{pullRequests:{nodes,pageInfo:{hasNextPage:more,endCursor:'next'}}}}}).replaceAll(token,Array.from(token,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')).join(''));
+  return new Response(text);
+ }) as typeof fetch;
+ const rows=await githubReader(secrets,request)('acme/app',Date.parse('2026-11-12T00:00:00Z'));
+ expect(calls).toHaveLength(3);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({number:2,title:'[redacted]',body:'[redacted]'});expect(JSON.stringify(rows)).not.toContain(token);
+});
+it('rejects a GitHub redirect without reading its body',async()=>{
+ const secrets={resolveGitHub:async()=> 'github-acme',withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('secret')};
+ let calls=0;
+ await expect(githubReader(secrets,(async(_url,init)=>{calls++;expect(init?.redirect).toBe('error');return new Response('secret upstream',{status:307,headers:{location:'https://api.github.com/other'}});}) as typeof fetch)('acme/app',0)).rejects.toThrow('GitHub read unavailable');expect(calls).toBe(1);
+});

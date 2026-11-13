@@ -77,3 +77,45 @@ it('routes loom changes to scoped operations despite a legacy executable and ref
  expect(stdout).toBe('');expect(stderr).toContain('use /api/changes operations directly');
  expect(app.db.prepare('SELECT due FROM changes_jobs').get()).toBeUndefined();
 });
+
+it('rejects implicit and malformed origins before reading or sending credentials',async()=>{
+ const app=await setup();
+ for(const url of [undefined,'ftp://example.com','https://user:pass@example.com','https://example.com/path','https://example.com/?query','https://example.com/#fragment']) {
+  let calls=0,stdout='',stderr='';
+  const code=await runChangesClient(['refresh'],{stdout:s=>stdout+=s,stderr:s=>stderr+=s,stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:url,LOOM_TOKEN_FILE:join(app.home,'token')}},{request:async()=>{calls++;throw Error('secret');},retry:async()=>{}});
+  expect(code).toBe(1);expect(stdout).toBe('');expect(calls).toBe(0);expect(stderr).not.toContain('secret');
+ }
+});
+it('rejects HTTP failures and malformed success values and redacts decoded credentials',async()=>{
+ const app=await setup();
+ for(const [args,value,status] of [
+  [['list'],{stdout:'diagnostic'},401], [['refresh'],{message:'diagnostic'},500],
+  [['thread-feed','--conversation','cv-123456789abc'],{items:[{title:'bad'}]},200],
+  [['project-feed'],{groups:'diagnostic'},200], [['cited-by','t-1'],{},200],
+  [['list'],null,200], [['refresh'],{message:'arbitrary diagnostic'},200],
+ ] as [string[],unknown,number][]) {
+  const result=await app.run(args,async()=>Response.json({ok:true,value},{status}));
+  expect(result).toMatchObject({code:1,stdout:''});expect(result.stderr).not.toContain('diagnostic');
+ }
+ const result=await app.run(['list'],async()=>Response.json({ok:true,value:{stdout:'fixture-token ghp_OTHERSECRET'}}));
+ expect(result).toMatchObject({code:0,stdout:'[redacted] [redacted]'});
+});
+it('retries a committed refresh after a dropped response body with the same id',async()=>{
+ const app=await setup();let calls=0;
+ const result=await app.run(['refresh'],async(url,init)=>{
+  const response=await fetch(url,init);
+  if(++calls===1){await response.body?.cancel();return new Response(new ReadableStream({start(controller){controller.error(Error('secret body'));}}));}
+  return response;
+ });
+ expect(result).toMatchObject({code:0,stdout:'asked for a read\n'});expect(result.bodies).toHaveLength(2);expect(result.bodies[0]).toBe(result.bodies[1]);
+ expect(app.db.prepare('SELECT count(*) AS n FROM core_operations WHERE name=?').get('changes.refresh')).toEqual({n:1});
+});
+it('refuses a same-origin redirect before it can receive the bearer at another path',async()=>{
+ const {createServer}=await import('node:http');let redirected=0;
+ const server=createServer((req,res)=>{if(req.url==='/api/changes/list'){res.writeHead(307,{location:'/unexpected'});res.end();}else{redirected++;res.end('{}');}});
+ await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));close.push(()=>new Promise<void>(ok=>server.close(()=>ok())));
+ const address=server.address();if(!address||typeof address==='string')throw Error('no address');
+ const app=await setup();let stdout='';
+ const code=await runChangesClient(['list'],{stdout:s=>stdout+=s,stderr:()=>{},stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:`http://127.0.0.1:${address.port}`,LOOM_TOKEN_FILE:join(app.home,'token')}},{request:fetch,retry:async()=>{}});
+ expect(code).toBe(1);expect(stdout).toBe('');expect(redirected).toBe(0);
+});

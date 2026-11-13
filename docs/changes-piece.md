@@ -23,7 +23,7 @@ untouched by this branch.
 | `api` refusal | Registered scoped read operations | New API supports reads and owner refresh/answers; still no forge mutation API. |
 | Snapshot JSON and owner settings | Explicit offline importer plus injected roles | No runtime legacy reads, token discovery, executable adapter, or settings fallback. |
 
-The package supplies `loom-changes` as an API client. It uses `LOOM_URL` and
+The package supplies `loom-changes` as an API client. It requires an explicit HTTP(S) origin in `LOOM_URL` and
 `LOOM_TOKEN_FILE`, shares command metadata with operation registration, and retries
 writes using the same operation id. It does not wrap the Taskstore formatter.
 `loom changes ...` calls that same generated client directly. This built-in path
@@ -41,7 +41,10 @@ private records are suppressed before feed construction.
 
 Secrets are injected as `resolveGitHub(owner)` and `withValue(reference, use)`.
 The reader uses a fixed GitHub GraphQL URL and read-only query with pagination.
-Credentials and upstream error text are redacted; persistent errors are generic.
+Decoded credentials are redacted before normalization; persistent errors are generic.
+Both transports reject redirects. The client validates HTTP status and command
+response shape before printing, and redacts credentials from its output. Closed
+pagination continues past recently updated old closures to retain newer closures.
 A failed repository keeps its last successful snapshot. Staging holds external
 reads. The root must authorize the job viewer centrally and call the job's
 `close()` before closing the foundation; a late response cannot commit afterward.
