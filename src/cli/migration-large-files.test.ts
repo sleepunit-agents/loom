@@ -24,6 +24,11 @@ vi.mock('node:fs',async original=>{
 
 it('streams a sparse file over 600 MiB through snapshot, plan, all, repeat and both independent verifiers',async()=>{
   const root=mkdtempSync(join(tmpdir(),'loom-large-migration-'));
+  const concat=Buffer.concat,alloc=Buffer.alloc,unsafe=Buffer.allocUnsafe;
+  const allocation=(size:number)=>{if(size>migrationChunkBytes)throw Error('Unbounded migration allocation');};
+  vi.spyOn(Buffer,'concat').mockImplementation((list,size)=>{allocation(size??list.reduce((n,b)=>n+b.length,0));return concat(list,size);});
+  vi.spyOn(Buffer,'alloc').mockImplementation((size,fill,encoding)=>{allocation(size);return alloc(size,fill,encoding);});
+  vi.spyOn(Buffer,'allocUnsafe').mockImplementation(size=>{allocation(size);return unsafe(size);});
   try {
     const old=join(root,'old'),state=join(root,'state'),data=join(root,'data'),snapshot=join(root,'snapshot'),home=join(root,'new');
     mkdirSync(old);mkdirSync(state);mkdirSync(join(data,'delivery','slots'),{recursive:true});
@@ -53,5 +58,5 @@ it('streams a sparse file over 600 MiB through snapshot, plan, all, repeat and b
     const copied=join(snapshot,'runtime-data','delivery','slots','opaque.age'),changed=openSync(copied,'r+');
     try{writeSync(changed,Buffer.from('X'),0,1,size-1);}finally{closeSync(changed);}
     expect(()=>readSnapshot(snapshot)).toThrow('integrity');
-  } finally {rmSync(root,{recursive:true,force:true});}
+  } finally {vi.restoreAllMocks();rmSync(root,{recursive:true,force:true});}
 },120000);
