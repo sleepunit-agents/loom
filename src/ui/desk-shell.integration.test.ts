@@ -69,7 +69,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
     const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});
     for (const look of ['neon','lowlight','daylight']) {
-      set({look},'look-'+look);
+      set({look,contrast:'off',motion:'on',sound:false},'look-'+look);
       await expect.poll(() => a.locator('html').getAttribute('data-look')).toBe(look);
       for (const width of [390,1280,1920]) {
         const page = width===390?b:a;
