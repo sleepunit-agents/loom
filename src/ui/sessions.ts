@@ -98,7 +98,7 @@ export interface Passkey {
   tokenLabel?: string;
 }
 interface Challenge { expires: number; purpose: 'register' | 'login'; secret?: string }
-interface File {
+export interface SessionFile {
   v: 1;
   sessions: Record<string, Stored>;
   links?: Record<string, Link>;
@@ -227,7 +227,7 @@ export const SEEN_GAP_S = 15 * 60;
 export const DONE_MAX = 50;
 
 /** Where a reader's `seen` and `opened` live: the household's for the first owner (no reader), else their own. */
-function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[]; prefs?: Prefs } {
+function readerOf(f: SessionFile, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[]; prefs?: Prefs } {
   if (!reader) return f;
   f.members ??= {};
   return (f.members[reader] ??= {});
@@ -246,6 +246,14 @@ const LOCK_STALE_MS = 10_000;
 
 const hashId = (id: string) => createHash('sha256').update(id).digest('hex');
 
+/** Persistence supplied by the daemon after import; absent means the legacy JSON home. */
+export interface SessionPersistence {
+  read(): SessionFile;
+  get<K extends 'sessions' | 'links' | 'challenges' | 'passkeys'>(concern: K, id: string): NonNullable<SessionFile[K]>[string] | undefined;
+  change<T>(fn: (file: SessionFile) => T): T;
+  touch(id: string, nowS: number): boolean;
+}
+
 export class SessionStore {
   private readonly changes = new EventEmitter();
   onChange(fn: () => void): () => void { this.changes.on('changed', fn); return () => { this.changes.off('changed', fn); }; }
@@ -253,7 +261,7 @@ export class SessionStore {
   private readonly lockFile: string;
   readonly key: Buffer;
 
-  constructor(dir: string) {
+  constructor(dir: string, private readonly persistence?: SessionPersistence) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.file = join(dir, 'ui-sessions.json');
     this.lockFile = join(dir, 'ui-sessions.lock');
@@ -275,16 +283,24 @@ export class SessionStore {
     }
   }
 
-  private read(): File {
+  private exists(): boolean { return !!this.persistence || existsSync(this.file); }
+
+  private read(): SessionFile {
+    if (this.persistence) return this.persistence.read();
     try {
-      const f = JSON.parse(readFileSync(this.file, 'utf-8')) as File;
+      const f = JSON.parse(readFileSync(this.file, 'utf-8')) as SessionFile;
       if (f && f.v === 1 && typeof f.sessions === 'object') return f;
     } catch { /* missing or torn: no sessions */ }
     return { v: 1, sessions: {} };
   }
 
   /** Read, change and write the file under its lock, waiting up to `waitMs` for it (0: one try, no wait). */
-  private withLock<T>(fn: (f: File) => T, waitMs = LOCK_WAIT_MS): T {
+  private withLock<T>(fn: (f: SessionFile) => T, waitMs = LOCK_WAIT_MS): T {
+    if (this.persistence) {
+      const out = this.persistence.change(fn);
+      queueMicrotask(() => this.changes.emit('changed'));
+      return out;
+    }
     const deadline = Date.now() + waitMs;
     let fd: number | undefined;
     while (fd === undefined) {
@@ -338,7 +354,7 @@ export class SessionStore {
   }
 
   get(id: string): Session | null {
-    const s = this.read().sessions[hashId(id)];
+    const s = this.persistence ? this.persistence.get('sessions', hashId(id)) : this.read().sessions[hashId(id)];
     return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex'), ...(s.signedInAt !== undefined ? { signedInAt: s.signedInAt } : {}), ...(isAgent(s) ? { agent: true as const } : {}) } : null;
   }
 
@@ -365,13 +381,13 @@ export class SessionStore {
   /** Check a link without spending or locking it. A valid caller may then wait asynchronously before spendLink,
    * which still checks and spends it under the lock (expiry and another browser can win while we wait). */
   peekLink(code: string, nowS = Math.floor(Date.now() / 1000)): Buffer | null {
-    const l = this.read().links?.[hashId(code)];
+    const l = this.persistence ? this.persistence.get('links', hashId(code)) : this.read().links?.[hashId(code)];
     return l && l.expires > nowS ? Buffer.from(l.secret, 'hex') : null;
   }
 
   /** useLink, with the label the link was made with. */
   spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string; signedInAt?: number; agent?: true } | null {
-    if (!existsSync(this.file)) return null;
+    if (!this.exists()) return null;
     return this.withLock((f) => {
       const l = f.links?.[hashId(code)];
       if (!l) return null;
@@ -382,7 +398,7 @@ export class SessionStore {
 
   /** Every session, the most recently used first (else the most recently signed in), as the owner sees them: refs, never ids. */
   list(): SessionInfo[] {
-    if (!existsSync(this.file)) return [];
+    if (!this.exists()) return [];
     return Object.entries(this.read().sessions)
       .map(([k, s]) => ({ ref: k.slice(0, 16), issuedAt: s.issuedAt, ...(s.seenAt ? { seenAt: s.seenAt } : {}), ...(s.device ? { device: s.device } : {}),
         ...(s.label ? { label: s.label } : {}), ...(s.via ? { via: s.via } : {}), ...(isAgent(s) ? { agent: true as const } : {}), secret: Buffer.from(s.secret, 'hex') }))
@@ -402,6 +418,10 @@ export class SessionStore {
    */
   touch(id: string, nowS = Math.floor(Date.now() / 1000)): void {
     const key = hashId(id);
+    if (this.persistence) {
+      try { if (this.persistence.touch(key, nowS)) queueMicrotask(() => this.changes.emit('changed')); } catch { /* busy: a later request notes it */ }
+      return;
+    }
     const s = this.read().sessions[key];
     if (!s || (s.seenAt !== undefined && nowS - s.seenAt < SEEN_EVERY_S)) return;
     try {
@@ -415,7 +435,7 @@ export class SessionStore {
    * goes on. False when no session, or more than one, has it. Housekeeping (the cap, `delete`) keeps them (PushDevice).
    */
   revoke(ref: string): boolean {
-    if (!REF.test(ref) || !existsSync(this.file)) return false;
+    if (!REF.test(ref) || !this.exists()) return false;
     return this.withLock((f) => {
       const keys = Object.keys(f.sessions).filter((k) => k.startsWith(ref));
       if (keys.length !== 1) return false;
@@ -428,7 +448,7 @@ export class SessionStore {
   /** An agent ends its own sessions by the label its sign-in link had (`loom sessions revoke --label`): agents' only. */
   revokeAgent(label: string): number {
     const l = cleanLabel(label);
-    if (!l || !existsSync(this.file)) return 0;
+    if (!l || !this.exists()) return 0;
     return this.withLock((f) => {
       const keys = Object.keys(f.sessions).filter((k) => isAgent(f.sessions[k]) && f.sessions[k].label === l);
       for (const k of keys) delete f.sessions[k];
@@ -455,13 +475,13 @@ export class SessionStore {
 
   /** Non-consuming check before a verified assertion joins a wait. useChallenge still consumes it under the lock. */
   hasChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): boolean {
-    const c = this.read().challenges?.[hashId(challenge)];
+    const c = this.persistence ? this.persistence.get('challenges', hashId(challenge)) : this.read().challenges?.[hashId(challenge)];
     return !!c && c.expires > nowS && c.purpose === purpose;
   }
 
   /** Spend a challenge: it's gone either way; null unless it was this purpose and unexpired. */
   useChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): { secret: Buffer | null } | null {
-    if (!existsSync(this.file)) return null;
+    if (!this.exists()) return null;
     return this.withLock((f) => {
       const c = f.challenges?.[hashId(challenge)];
       if (!c) return null;
@@ -476,7 +496,7 @@ export class SessionStore {
   }
 
   passkey(id: string): Passkey | null {
-    return this.read().passkeys?.[id] ?? null;
+    return (this.persistence ? this.persistence.get('passkeys', id) : this.read().passkeys?.[id]) ?? null;
   }
 
   addPasskey(p: Passkey): void {
@@ -503,7 +523,7 @@ export class SessionStore {
 
   /** Move a passkey onto its own token (migratePasskeys): only if it still signs in as `from` and has none yet. */
   bindPasskey(id: string, from: string, to: { secret: string; tokenLabel: string }): boolean {
-    if (!existsSync(this.file)) return false;
+    if (!this.exists()) return false;
     return this.withLock((f) => {
       const p = f.passkeys?.[id];
       if (!p || p.tokenLabel || p.secret !== from) return false;
@@ -514,7 +534,7 @@ export class SessionStore {
   }
 
   removePasskey(id: string): boolean {
-    if (!existsSync(this.file)) return false;
+    if (!this.exists()) return false;
     return this.withLock((f) => {
       if (!f.passkeys?.[id]) return false;
       delete f.passkeys[id];
@@ -568,14 +588,14 @@ export class SessionStore {
 
   /** This reader's own outcomes, newest first. */
   doneItems(reader?: string): Done[] {
-    if (!existsSync(this.file)) return [];
+    if (!this.exists()) return [];
     return this.withLock((f) => [...(readerOf(f, reader).done ?? [])]);
   }
 
   /** This reader's Appearance, as they last chose it (none chosen: empty). */
   prefs(reader?: string): Prefs {
     // A read, not a locked write: every page asks it. A torn read (mid-rename can't happen: writes land by rename) is none.
-    if (!existsSync(this.file)) return {};
+    if (!this.exists()) return {};
     const f = this.read();
     const p = { ...((reader ? f.members?.[reader]?.prefs : f.prefs) ?? {}) };
     if (p.look) p.look = lookOf(p.look, p.mode);
@@ -603,7 +623,7 @@ export class SessionStore {
 
   /** The items this reader's Inbox has opened, and when (epoch seconds): an item's trail says when it was seen. */
   openedAt(reader?: string): Map<string, number> {
-    if (!existsSync(this.file)) return new Map();
+    if (!this.exists()) return new Map();
     return this.withLock((f) => new Map(Object.entries(readerOf(f, reader).opened ?? {})));
   }
 
@@ -655,7 +675,7 @@ export class SessionStore {
 
   /** The devices that get this member's notifications (none: the first household owner's), most recently seen first. */
   pushDevices(member: string | undefined): PushDeviceInfo[] {
-    if (!existsSync(this.file)) return [];
+    if (!this.exists()) return [];
     return Object.values(this.read().push?.subs ?? {})
       .filter((d) => (d.member ?? undefined) === (member ?? undefined))
       .map((d) => ({ ref: pushRef(d.sub.endpoint), at: d.at, ...(d.seenAt ? { seenAt: d.seenAt } : {}), ...(d.device ? { device: d.device } : {}), session: d.session.slice(0, 16) }))
@@ -664,14 +684,14 @@ export class SessionStore {
 
   /** One of this member's devices, by its ref, to send to (Profile's "Send a test notification"). */
   pushDevice(ref: string, member: string | undefined): PushSub | null {
-    if (!REF.test(ref) || !existsSync(this.file)) return null;
+    if (!REF.test(ref) || !this.exists()) return null;
     const d = Object.values(this.read().push?.subs ?? {}).find((x) => pushRef(x.sub.endpoint) === ref && (x.member ?? undefined) === (member ?? undefined));
     return d ? d.sub : null;
   }
 
   /** A token revoked as compromised (`loom token revoke --with-devices`): every device signed in with one of these goes. */
   removePushByTokens(digests: string[]): number {
-    if (!digests.length || !existsSync(this.file)) return 0;
+    if (!digests.length || !this.exists()) return 0;
     const set = new Set(digests);
     return this.withLock((f) => {
       let n = 0;
@@ -686,7 +706,7 @@ export class SessionStore {
 
   /** Removed on Profile, by its person: it stops, and the device sending it again by itself doesn't bring it back. */
   removePushDevice(ref: string, member: string | undefined): boolean {
-    if (!REF.test(ref) || !existsSync(this.file)) return false;
+    if (!REF.test(ref) || !this.exists()) return false;
     return this.withLock((f) => {
       const hit = Object.entries(f.push?.subs ?? {}).find(([ep, d]) => pushRef(ep) === ref && (d.member ?? undefined) === (member ?? undefined));
       if (!hit) return false;
@@ -726,14 +746,14 @@ export class SessionStore {
   }
 
   delete(id: string): void {
-    if (!existsSync(this.file)) return;
+    if (!this.exists()) return;
     const key = hashId(id);
     this.withLock((f) => { delete f.sessions[key]; });
   }
 }
 
 /** A subscription kept before they carried their token gets its session's, while that session is still on file. */
-function backfillTokens(f: File): void {
+function backfillTokens(f: SessionFile): void {
   for (const d of Object.values(f.push?.subs ?? {})) if (!d.token && f.sessions[d.session]) d.token = f.sessions[d.session].secret;
 }
 

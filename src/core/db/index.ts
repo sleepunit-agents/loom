@@ -1,14 +1,24 @@
 import Database from 'better-sqlite3';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 export type Db = Database.Database;
 export interface Migration { number: number; sql: string }
 const opened = new Map<string, { db: Db; refs: number }>();
 export function openDb(home: string): { db: Db; close(): void } {
-  mkdirSync(home, { recursive: true });
+  mkdirSync(home, { recursive: true, mode: 0o700 });
   const path = join(realpathSync(home), 'loom.db');
   const existing = opened.get(path);
   if (existing) { existing.refs++; return lease(path, existing); }
+  // SQLite inherits the main file's mode for WAL/SHM. Secure it before SQLite
+  // can create a journal or accept credentials, including an older public DB.
+  const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+  try { fchmodSync(fd, 0o600); } finally { closeSync(fd); }
+  for (const suffix of ['-wal', '-shm']) {
+    let side: number;
+    try { side = openSync(path + suffix, constants.O_RDWR | constants.O_NOFOLLOW); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+    try { fchmodSync(side, 0o600); } finally { closeSync(side); }
+  }
   const db = new Database(path, { timeout: 0 });
   try {
     db.pragma('journal_mode = WAL');
