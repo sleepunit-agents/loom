@@ -21,6 +21,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
   metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
   metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
+  for(const directory of ['commons','agents/art','agents/other'])mkdirSync(join(home,directory),{recursive:true});
   const directory=new PeopleStore({dbPath:join(home,'commons/people.db'),now:()=>clock.now()});
   const relationship=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});
   const other=new PeopleStore({dbPath:join(home,'agents/other/memories.db'),now:()=>clock.now()});

@@ -85,3 +85,8 @@ Second rebase: GitHub reported CONFLICTING at 192314d after main 2adfcfc
 registered Inbox. Resolved only web/src/apps.ts by retaining both Inbox and
 People. No old branch was rebased. All 100 affected tests, root TypeScript and
 full web build passed again on the resulting composition.
+
+First hosted People browser run at 7a6ce9e failed before browser launch:
+PeopleStore requires existing parent directories. Fixed disposable fixture setup
+to create commons and the two agent directories. This is an author-owned failure,
+not a blindly rerun job; a new head will run the corrected test. No local browser.
