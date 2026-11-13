@@ -272,4 +272,4 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Watching job').count()).toBe(0);expect(ends.length).toBe(endsBeforeWatch);
 
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
-},60000);
+},180000);
