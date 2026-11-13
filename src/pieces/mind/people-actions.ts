@@ -37,7 +37,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
     may:v=>mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd') && !!options.agent && mayAct(v,{type:'person',agent:options.agent},options.sharing(),'act','mind.personAdd'),
     run(ctx,input){
       if(sources.length!==2 || !options.agent) throw new OperationError('not-found','People sources are absent');
-      const slug=input.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64);
+      const slug=input.name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').replace(/^[^a-z]+/,'').slice(0,40);
       if(!slug) throw new OperationError('invalid','A person needs a name that makes an address');
       const person={...input,slug,actor:ctx.viewer.id}, receipt=ctx.receipt!,result={slug,slugs:[slug]};
       const expires=Math.min(receipt.expires,...sources.flatMap(db=>{const old=prior(db,ctx);return old?[old.expires]:[];}));

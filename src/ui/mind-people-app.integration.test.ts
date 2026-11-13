@@ -13,8 +13,10 @@ import { HouseholdDatabase } from '../core/household/document.js';
 import { PeopleStore } from '../backends/people.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
-if(process.env.CI&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
-it.runIf(!!process.env.CI&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
+const enabled=!!process.env.CI&&process.env.LOOM_PEOPLE_EVIDENCE==='1';
+if(enabled&&process.env.RUNNER_ENVIRONMENT==='self-hosted')throw new Error('People browser evidence requires a hosted runner');
+if(enabled&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
+it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'people-app-'));const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
   metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();

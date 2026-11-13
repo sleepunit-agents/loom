@@ -314,3 +314,9 @@ Neither drafts nor calls persist across page reloads. Contact staleness preserve
 the existing default of fourteen days and strict greater-than boundary. Partial
 creation completion preserves the original source receipt expiry in both sources
 and the core; it never renews the thirty-day window.
+
+People browser evidence is isolated in the existing hosted `app-kit-evidence`
+after job (`LOOM_PEOPLE_EVIDENCE=1`); the general CI suite cannot launch it. Its
+artifact contains six `people-{neon,daylight}-{390,1280,1920}.png` images and the
+browser report. Creation uses the old form's exact normalized, letter-leading,
+forty-character slug rule. Contact labels never replace underlying handles.

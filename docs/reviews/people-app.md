@@ -52,3 +52,24 @@ rule and tested both explicit/default thresholds before and after the exact
 boundary. Tests with a populated private project now discriminate the
 person-only service grant as well as the populated private memory.
 After folds: 73 affected tests, root TypeScript and web build pass.
+
+## Round 3 — bounded end
+
+Frozen commit d67b9212c6deeb99052168befe5a1fc1870890c7; tree
+`sha256:92905660326f59a93304f8c77c7227aecfd7896f4153ff0ab61e10bbe35a44ad`.
+Current ledger excluded. Raw verdict BLOCKING / UNCONVERGED. No fourth round.
+
+- MAJOR, component tests separate from source: folded. Tests now sit at web/src/pieces/people/index.test.ts; browser integration retains the repository's required src/ui placement.
+- NIT, conversation link repeats navigation logic: folded into internal.
+- CRITICAL, generic CI could run browser on a lab runner: folded. People evidence now runs only in the existing app-kit workflow's hosted ubuntu-latest after job. General CI lacks its explicit opt-in flag. A self-hosted environment with the flag fails before launch. Runner contract test guards the split. The inspected prior CI job actually used GitHub Actions' ubuntu-latest runner; no local browser ran.
+- CRITICAL, label hides raw contact handle: folded. Projection retains label and value separately; backend/UI tests assert both for a Slack id with a friendly label.
+- MAJOR, destination/fallback callbacks not exercised: folded. Backend fixture injects projectHref and asserts the resulting encoded destination; UI asserts a supplied destination and explicit unavailable fallback.
+
+Additional author correction after frozen bytes: creation now exactly matches
+old slugOf's NFKD normalization, letter-leading and forty-character cap. Tests
+cover accented/digit-leading names, long names and a name without letters.
+
+Final author judgment: all identified defects folded and checked; no known
+blocking defect left. This is an unconverged bounded review, not cold-clear.
+After folds: 100 affected tests, root TypeScript and web build pass. Exact-head
+CI and hosted People browser/screenshots remain the merge gate. No host rollout.

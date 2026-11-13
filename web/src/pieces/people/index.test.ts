@@ -1,12 +1,12 @@
 import { afterEach,expect,it,vi } from 'vitest';
-import { createElement as h } from '../../web/node_modules/react/index.js';
-import { act,create } from '../../web/node_modules/react-test-renderer/index.js';
-import type { CallState,Snapshot } from '../../web/src/data/store';
+import { createElement as h } from '../../../node_modules/react/index.js';
+import { act,create } from '../../../node_modules/react-test-renderer/index.js';
+import type { CallState,Snapshot } from '../../data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,access:{records:[{id:'people',allowed:true,canAdd:true,agents:['art']}],status:'live'} as Snapshot,conversations:{records:[],status:'live'} as Snapshot,call:vi.fn()}));
-vi.mock('../../web/src/data',()=>({useRecords:(type:string,scope?:string)=>type==='people.access'?f.access:type==='people.conversations'?f.conversations:type==='person'&&!scope?f.feed:{records:[],status:f.feed.status},call:f.call}));
-vi.mock('../../web/src/kit',()=>({Split:(p:{list:unknown;reader:unknown;listTop:unknown;search:unknown})=>h('div',null,p.search,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button'}));
-import People, {peopleSession} from '../../web/src/pieces/people/index';
-import { contacts,contactLink } from '../../web/src/pieces/people/model';
+vi.mock('../../data',()=>({useRecords:(type:string,scope?:string)=>type==='people.access'?f.access:type==='people.conversations'?f.conversations:type==='person'&&!scope?f.feed:{records:[],status:f.feed.status},call:f.call}));
+vi.mock('../../kit',()=>({Split:(p:{list:unknown;reader:unknown;listTop:unknown;search:unknown})=>h('div',null,p.search,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button'}));
+import People, {peopleSession} from './index';
+import { contacts,contactLink } from './model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>|undefined;
 const props={path:'/p/people-preview',go:()=>{}};
@@ -45,10 +45,12 @@ it('maps only safe contact destinations and filters authorized records',()=>{
 });
 
 it('renders owner roles, linked projects and supplied conversation links, with explicit unavailable fallback',async()=>{
-  const p={id:'commons:friend',slug:'friend',name:'Friend',kind:'person',card:{slug:'friend',name:'Friend',where:{},how:{},may:[]},fields:[],evidence:[],projects:[{agent:'art',slug:'box',name:'Box project',status:'active',href:'/p/projects-preview/project/art%3Abox'}],ownership:{owner:true,agents:['art']},updated:'2026-11-13T00:00:00Z',synthesizedAt:null,newer:0};
+  const p={id:'commons:friend',slug:'friend',name:'Friend',kind:'person',card:{slug:'friend',name:'Friend',where:{},how:{},may:[]},fields:[{key:'slack',value:'U12345',label:'Jonathan on Slack',state:'unverified'}],evidence:[],projects:[{agent:'art',slug:'box',name:'Box project',status:'active',href:'/p/projects-preview/project/art%3Abox'}],ownership:{owner:true,agents:['art']},updated:'2026-11-13T00:00:00Z',synthesizedAt:null,newer:0};
   f.feed={records:[p],status:'live'};f.conversations={records:[{id:p.id,available:false,rows:[]}],status:'live'};
   await act(async()=>{tree=create(h(People,{...props,path:'/p/people-preview/person/friend'}));});
-  expect(text()).toContain('The household and every agent');expect(text()).toContain('Box project');expect(tree!.root.findAllByType('a').find(a=>a.props.children==='Box project')?.props.href).toBe('/p/projects-preview/project/art%3Abox');expect(text()).toContain('Conversation service is not available yet');
+  expect(text()).toContain('U12345');expect(text()).toContain('Jonathan on Slack');expect(text()).toContain('The household and every agent');expect(text()).toContain('Box project');expect(tree!.root.findAllByType('a').find(a=>a.props.children==='Box project')?.props.href).toBe('/p/projects-preview/project/art%3Abox');expect(text()).toContain('Conversation service is not available yet');
+  f.feed={records:[{...p,projects:[{...p.projects[0],href:undefined}]}],status:'live'};
+  await act(async()=>tree!.update(h(People,{...props,path:'/p/people-preview/person/friend'})));expect(text()).toContain('Projects app is not available yet');
   f.conversations={records:[{id:p.id,available:true,rows:[{id:'cv-test',title:'A private conversation',href:'/p/comms-preview/cv-test'}]}],status:'live'};
   await act(async()=>tree!.update(h(People,{...props,path:'/p/people-preview/person/friend'})));
   const sharingLink=tree!.root.findAllByType('a').find(a=>a.props.children==='Open Sharing')!;const prevented=vi.fn();await act(async()=>sharingLink.props.onClick({preventDefault:prevented}));expect(prevented).toHaveBeenCalledOnce();

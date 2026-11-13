@@ -58,7 +58,7 @@ export function installMindPeople(operations: Operations, live: Live, options: {
           if(agentId===slug || [p.slug,...(p.links.aliases??[])].some(key=>Object.hasOwn(where,key.replace(/-/g,'_')))) projects.push({agent:agentId,slug:p.slug,name:p.name,status:p.status,...(options.projectHref?.(agentId,p.slug)?{href:options.projectHref(agentId,p.slug)}:{})});
         }
       }
-      const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: field.label ?? (Array.isArray(field.value) ? field.value.join(', ') : String(field.value)),
+      const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: Array.isArray(field.value) ? field.value.join(', ') : String(field.value),...(field.label?{label:field.label}:{}),
         ...(field.source ? {source:field.source} : {}), ...(field.verified_at ? {verifiedAt:field.verified_at} : {}),
         state: !field.verified_at ? 'unverified' as const : now > Date.parse(field.verified_at)+(field.stale_after_days??14)*86400000 ? 'stale' as const : 'fresh' as const }));
       return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,

@@ -22,7 +22,7 @@ const clock=()=>new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
 function source(path=join(dir(),'people.db')) {const store=new PeopleStore({dbPath:path,now:()=>Date.parse('2026-11-12T12:00:00Z')});closes.push(()=>store.close());return store;}
 async function fixture(directory:string,art:string,other?:string,create=createPersonHalf) {
   const app=await startLoom({home:dir(),clock:clock(),authenticate:req=>({viewer:req.url?.includes('partial')?partial:owner,valid:()=>true}),install(app){
-    const reader=installMindPeople(app.operations,app.live,{directory,agents:[{agent:'art',memories:art},...(other?[{agent:'other',memories:other}]:[])],sharing:()=>sharing,
+    const reader=installMindPeople(app.operations,app.live,{directory,projectHref:(agent,slug)=>`/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`,agents:[{agent:'art',memories:art},...(other?[{agent:'other',memories:other}]:[])],sharing:()=>sharing,
       conversations:{list:(v,slug)=>({available:true,rows:v.id==='owner'?[{id:'cv-example',title:slug,href:'/p/comms-preview/cv-example'}]:[]})}});
     app.onClose(()=>reader.close());
     installTouched(app.operations,(v,c)=>v.kind==='agent'&&v.id==='art'?c:undefined);
@@ -30,7 +30,7 @@ async function fixture(directory:string,art:string,other?:string,create=createPe
   }});let closed=false;closes.push(async()=>{if(!closed){closed=true;await app.close();}});return {...app,close:async()=>{if(!closed){closed=true;await app.close();}}};
 }
 it('projects directory and only each authorized agent relationship, without project escalation',async()=>{
-  const d=source(),a=source(),b=source();d.write({slug:'jonathan',name:'Jonathan',where:{github:{value:'jbarket',verified_at:'2026-11-01T00:00:00Z',stale_after_days:3}}});
+  const d=source(),a=source(),b=source();d.write({slug:'jonathan',name:'Jonathan',where:{slack:{value:'U12345',label:'Jonathan on Slack'},github:{value:'jbarket',verified_at:'2026-11-01T00:00:00Z',stale_after_days:3}}});
   a.write({slug:'jonathan',name:'Jonathan',summary:'Art knows Jonathan'});b.write({slug:'jonathan',name:'Jonathan',summary:'Other private relationship'});
   const app=await fixture(d.database.name,a.database.name,b.database.name);
   function list(v:Viewer){const r=app.operations.call('direct',v,'mind.peopleList',{});if(!r.ok)throw Error(r.message);return r.value as PersonRecord[];}
@@ -39,7 +39,7 @@ it('projects directory and only each authorized agent relationship, without proj
   expect(list({kind:'agent',id:'other'}).map(p=>p.id)).toEqual(['other:jonathan']);
   expect(list({kind:'runner',id:'one'})).toEqual([]);
   expect(app.operations.call('direct',partial,'mind.personRead',{id:'other:jonathan'})).toMatchObject({code:'denied'});
-  expect(list(owner)[0].fields[0].state).toBe('stale');
+  expect(list(owner)[0].fields.find(f=>f.key==='github')?.state).toBe('stale');expect(list(owner)[0].fields.find(f=>f.key==='slack')).toMatchObject({value:'U12345',label:'Jonathan on Slack'});
   expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:no-such-person'})).toMatchObject({code:'not-found'});
 });
 it('does not create missing source files, including sources that appear after installation',async()=>{
@@ -150,7 +150,7 @@ it('projects owner roles and authorized alias-linked projects, refreshing after 
   const projects=new ProjectsStore({dbPath:a.database.name});closes.push(()=>projects.close());projects.write({slug:'project-one',name:'First project',links:{aliases:['team-hub']}});
   const hidden=new ProjectsStore({dbPath:b.database.name});closes.push(()=>hidden.close());hidden.write({slug:'project-two',name:'Private project',links:{aliases:['team-hub']}});
   const app=await fixture(d.database.name,a.database.name,b.database.name);
-  expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:owner'})).toMatchObject({value:{ownership:{owner:true},projects:[{slug:'project-one',name:'First project'},{slug:'project-two'}]}});
+  expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:owner'})).toMatchObject({value:{ownership:{owner:true},projects:[{slug:'project-one',name:'First project',href:'/p/projects-preview/project/art%3Aproject-one'},{slug:'project-two'}]}});
   const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');
   const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'person',scope:'commons:owner'}));await initial;
   const change=once(ws,'message');projects.archive({slug:'project-one',actor:'owner',reason:'Finished'});
@@ -188,4 +188,13 @@ it('reserves partial creation ids against unrelated writes across a restart',asy
   app.operations.register(operation({name:'unrelated.write',write:true,input:z.object({}),output:z.unknown(),may:()=>true,run:()=>{writes++;return {};}}));
   expect(app.operations.call('direct',owner,'unrelated.write',{},'global-id')).toMatchObject({code:'conflict'});expect(writes).toBe(0);
   expect(app.operations.call('direct',owner,'mind.personAdd',{name:'Reserved'},'global-id')).toMatchObject({ok:true});
+});
+
+it('preserves the old form’s normalized forty-character, letter-leading slug rules',async()=>{
+  const d=source(),a=source(),app=await fixture(d.database.name,a.database.name);
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'123 Élodie'},'normalized')).toMatchObject({value:{slug:'e-lodie'}});
+  const long='A'.repeat(70);
+  const result=app.operations.call('direct',owner,'mind.personAdd',{name:long},'long-name');expect(result).toMatchObject({ok:true});
+  if(result.ok)expect((result.value as {slug:string}).slug).toHaveLength(40);
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'123'},'no-letter')).toMatchObject({code:'invalid'});
 });
