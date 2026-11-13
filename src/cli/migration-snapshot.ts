@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
@@ -11,7 +11,7 @@ export interface SnapshotManifest {
   files: { path: string; sha256: string; bytes: number; kind: 'sqlite' | 'file' }[];
 }
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
-const excluded = new Set(['node_modules', '.git', 'dist', 'http.sock', 'http.lock']);
+const excluded = new Set(['node_modules', '.git']);
 function canonical(path: string): string {
   if (existsSync(path)) return realpathSync(path);
   return join(canonical(dirname(path)), path.slice(dirname(path).length + 1));
@@ -26,7 +26,8 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
   if (within(target, source) || within(source, target)) throw new Error('Snapshot and source must be separate directories');
   if (existsSync(target)) throw new Error('Snapshot destination already exists');
   mkdirSync(dirname(target), { recursive: true });
-  const staging = target + `.partial-${process.pid}`;
+  // Exclusive mkdir reserves the final path; the manifest is the completion marker.
+  const staging = target;
   mkdirSync(staging, { mode: 0o700 });
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [] };
   async function copy(input: string, path: string): Promise<void> {
@@ -34,7 +35,13 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     if (stat.isSymbolicLink()) throw new Error('Snapshot source contains a symbolic link');
     if (stat.isDirectory()) {
       for (const name of readdirSync(input).sort()) {
-        if (excluded.has(name) || /(?:-wal|-shm|-journal)$/.test(name)) continue;
+        if (excluded.has(name)) continue;
+        // Only omit actual SQLite sidecars belonging to a database file.
+        const base = name.replace(/(?:-wal|-shm|-journal)$/, '');
+        if (base !== name && existsSync(join(input, base))) {
+          const bytes = readFileSync(join(input, base)).subarray(0, 16);
+          if (bytes.toString() === 'SQLite format 3\0') continue;
+        }
         await copy(join(input, name), join(path, name));
       }
       return;
@@ -66,7 +73,6 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     await copy(source, 'home');
     if (tasks) await copy(realpathSync(tasks), 'tasks/store.db');
     writeFileSync(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-    renameSync(staging, target);
     return manifest;
   } catch {
     rmSync(staging, { recursive: true, force: true });
@@ -76,7 +82,9 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
 }
 export function readSnapshot(dir: string): SnapshotManifest {
   const root = realpathSync(dir);
-  const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as SnapshotManifest;
+  const manifestPath = join(root, 'manifest.json');
+  if (lstatSync(manifestPath).isSymbolicLink()) throw new Error('Invalid manifest link');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as SnapshotManifest;
   if (manifest.version !== 1 || !Array.isArray(manifest.files)) throw new Error('Invalid snapshot manifest');
   const seen = new Set<string>();
   for (const file of manifest.files) {
