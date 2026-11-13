@@ -117,6 +117,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByRole('region',{name:'Work in this thread'}).count()).toBe(0);
   await b.getByRole('button',{name:'Work (1 · 1 needs a look)',exact:true}).click();
   await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Blocked');
+  const badge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="bad"]');
+  expect(await badge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
   await capture('comms-work',true);
   // At desktop widths the region is visible beside the message column without a toggle.
   expect(await b.getByRole('button',{name:/^Work/}).count()).toBe(0);
@@ -125,6 +127,15 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const closed=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.close',{id:task,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work-close');
   expect(closed).toMatchObject({ok:true,value:{result:{ok:true}}});
   for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Done');
+  const doneBadge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="ok"]');
+  expect(await doneBadge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
+  const importedId='legacy/task %';
+  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.import',{tasks:[{id:importedId,title:'Imported work link',type:'task',status:'open',priority:2,createdBy:'art',createdAt:new Date(clock.now()).toISOString(),agent:'art',source:`conversation:${conversation}`,description:'Imported work detail'}],actor:'art',at:new Date(clock.now()).toISOString()},'fixture-imported-work')).toMatchObject({ok:true,value:{result:{ok:true}}});
+  await expect.poll(()=>a.getByRole('link',{name:'Imported work link'}).count()).toBe(1);
+  await a.getByRole('link',{name:'Imported work link'}).click();
+  await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);
+  await a.goto(`${loom.url}/p/comms-preview/thread/${place.replace(/^th:/,'')}`);
+  await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.pauseAt(await b.evaluate(()=>Date.now()));
   await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(0);

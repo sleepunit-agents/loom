@@ -25,3 +25,7 @@
 .loom-comms:not([data-mode="one"]) .comms-work-strip { display: none; }
 .loom-comms:not([data-mode="one"]) .comms-work-body { display: block; max-height: none; overflow-y: visible; }
 .loom-comms:not([data-mode="one"]) .comms-work-desktop { display: grid; gap: 8px; }
+
+.comms-work [data-tone="bad"] { color: var(--status-danger-ink, var(--v-pink)); background: var(--status-danger-bg, transparent); }
+.comms-work [data-tone="warn"] { color: var(--status-warn-ink, var(--v-yellow)); background: var(--status-warn-bg, transparent); }
+.comms-work [data-tone="ok"] { color: var(--status-ok-ink, var(--v-olive)); background: var(--status-ok-bg, transparent); }

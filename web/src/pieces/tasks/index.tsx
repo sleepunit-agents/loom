@@ -38,9 +38,9 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0];
   const base = path.split('/task/')[0];
-  const selected = /\/task\/(t-\d+)$/.exec(path)?.[1];
+  const selected = (() => { try { return decodeURIComponent(/\/task\/([^/]+)$/.exec(path)?.[1] ?? '') || undefined; } catch { return undefined; } })();
   const navigate = (id?: string) => {
-    const next = id ? `${base}/task/${id}` : base;
+    const next = id ? `${base}/task/${encodeURIComponent(id)}` : base;
     if (go) go(next);
     else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
   };

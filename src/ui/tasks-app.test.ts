@@ -69,3 +69,10 @@ describe('Tasks component on a fake store', () => {
     await act(async()=>tree.unmount());
   });
 });
+
+it('opens imported task ids from encoded links and refuses malformed escapes',async()=>{
+ const id='legacy/task %';f.snapshot={records:[task(id,{description:'Imported task detail'})],status:'live'};
+ await draw(h(TasksApp,{path:`/p/tasks-preview/task/${encodeURIComponent(id)}`}));
+ expect(text()).toContain('Imported task detail');await act(async()=>tree.unmount());
+ await draw(h(TasksApp,{path:'/p/tasks-preview/task/%zz'}));expect(text()).not.toContain('Imported task detail');await act(async()=>tree.unmount());
+});

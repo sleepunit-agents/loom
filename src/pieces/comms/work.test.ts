@@ -147,3 +147,17 @@ it('refreshes a subscribed Change after updates and removal',async()=>{
  replaceChanges(s.app.db,[]);s.app.live.changed([{type:'change',id:c.id}]);
  expect(await a.next()).toMatchObject({kind:'put',record:{items:[{ref:'t-1'}]}});
 });
+it('removes a deleted task from an existing subscription',async()=>{
+ const s=await setup();s.task('t-1');const a=await socket(s);await a.next();
+ expect(s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.delete',{id:'t-1',actor:'other',at:'2026-11-01T00:00:00Z'},'delete-visible-task')).toMatchObject({ok:true,value:{result:{ok:true}}});
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:[]}});
+});
+it('orders warning work ahead of ordinary work and reports progress/cancelled timestamps',async()=>{
+ const s=await setup();s.task('t-1');s.task('t-2');s.task('t-3');
+ const mutate=(verb:string,input:object,id:string)=>{expect(s.app.operations.call('direct',{kind:'member',id:'other'},`tasks.${verb}`,{actor:'other',at:'2026-11-05T01:00:00Z',...input},id)).toMatchObject({ok:true,value:{result:{ok:true}}});};
+ mutate('update',{id:'t-2',set:{assignee:'other'}},'waiting');
+ mutate('claim',{id:'t-3',actor:'art'},'progress');
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2',tone:'warn'},{ref:'t-3',status:'In progress',when:'2026-11-05T01:00:00Z'},{ref:'t-1'}]}});
+ mutate('close',{id:'t-3',reason:'cancelled',at:'2026-11-06T01:00:00Z'},'cancel');
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2'},{ref:'t-3',status:'Cancelled',when:'2026-11-06T01:00:00Z'},{ref:'t-1'}]}});
+});
