@@ -19,7 +19,7 @@ const usage = 'usage: loom migrate changes --from <snapshot.json> --attribution 
 export async function migrateChanges(argv: string[], io: IOStreams): Promise<number> {
   let args;
   try { args = parseArgs({ args: argv, options: { from: { type: 'string' }, home: { type: 'string' }, attribution: { type: 'string' } }, strict: true, allowPositionals: false }); }
-  catch (e) { io.stderr(`${(e as Error).message}\n${usage}`); return 2; }
+  catch { io.stderr(`Invalid Changes import arguments.\n${usage}`); return 2; }
   if (!args.values.from || !args.values.attribution) { io.stderr(usage); return 2; }
   const home = args.values.home ?? io.env.LOOM_HOME ?? join(homedir(), '.config', 'loom');
   let release: (() => void) | undefined;

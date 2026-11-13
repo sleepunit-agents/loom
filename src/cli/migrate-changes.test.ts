@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createFoundation } from '../core/app.js';
+import * as foundation from '../core/app.js';
 import { migrateHouseholdTables } from '../core/household/schema.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { SharingDatabase } from '../core/household/sharing.js';
@@ -12,7 +13,7 @@ import { change } from '../pieces/changes/fixture.js';
 import { loadChanges } from '../pieces/changes/store.js';
 import { migrateChanges } from './migrate-changes.js';
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'changes-cli-')); dirs.push(home);
   const source = join(home, 'source.json'), attribution = join(home, 'attribution.json');
@@ -48,7 +49,7 @@ it('takes the real stopped-home lock, then uses imported household projects and 
 it('rejects missing household, unknown agents and malformed attribution without creating Changes tables', async () => {
   const f = fixture();
   expect(await migrateChanges(f.args, f.io)).toBe(1); f.seed();
-  for (const map of [{ agents: { stranger: { logins: [], branches: [] } }, ownerLogins: [] }, { agents: { art: { logins: [], branches: [''] } }, ownerLogins: [] }, []]) {
+  for (const map of [{ agents: { stranger: { logins: [], branches: [] } }, ownerLogins: [] }, { agents: {}, ownerLogins: [], taskOwner: 'stranger' }, { agents: { art: { logins: [], branches: [''] } }, ownerLogins: [] }, []]) {
     writeFileSync(f.attribution, JSON.stringify(map));
     expect(await migrateChanges(f.args, f.io)).toBe(1);
     const app = createFoundation({ home: f.home });
@@ -57,4 +58,39 @@ it('rejects missing household, unknown agents and malformed attribution without 
   }
   expect(await migrateChanges(['--from', f.source], f.io)).toBe(2);
   expect(await migrateChanges([...f.args, '--unknown'], f.io)).toBe(2);
+});
+it('never echoes accidental credentials or malformed source contents in refusals', async () => {
+  const f = fixture(); f.seed();
+  const secret = 'ghp_PRIVATE_ACCIDENTAL_ARGUMENT';
+  for (const args of [[...f.args, secret], [...f.args, `--${secret}`]]) {
+    expect(await migrateChanges(args, f.io)).toBe(2);
+  }
+  writeFileSync(f.source, secret);
+  expect(await migrateChanges(f.args, f.io)).toBe(1);
+  expect(f.io.stderr.mock.calls.flat().join('')).not.toContain(secret);
+  expect(f.io.stdout).not.toHaveBeenCalled();
+});
+it('holds ownership through database close and releases it after validation or import failures', async () => {
+  const f = fixture(); f.seed();
+  const actual = foundation.createFoundation;
+  const closes = vi.fn();
+  vi.spyOn(foundation, 'createFoundation').mockImplementation(options => {
+    const app = actual(options);
+    return { ...app, close() {
+      expect(app.db.open).toBe(true);
+      expect(() => acquireHttpLock(f.home)).toThrow('already running');
+      app.close(); closes();
+    } };
+  });
+  expect(await migrateChanges(f.args, f.io)).toBe(0);
+  expect(closes).toHaveBeenCalledOnce();
+  let release = acquireHttpLock(f.home); release();
+  writeFileSync(f.attribution, 'invalid');
+  expect(await migrateChanges(f.args, f.io)).toBe(1);
+  release = acquireHttpLock(f.home); release();
+  writeFileSync(f.attribution, JSON.stringify({ agents: {}, ownerLogins: [] }));
+  writeFileSync(f.source, 'invalid');
+  expect(await migrateChanges(f.args, f.io)).toBe(1);
+  expect(closes).toHaveBeenCalledTimes(2);
+  release = acquireHttpLock(f.home); release();
 });

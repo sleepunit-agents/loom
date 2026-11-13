@@ -70,6 +70,10 @@ The attribution document has `agents` (agent id → `{logins: [], branches: []}`
 `ownerLogins` (array), and optional `taskOwner` (known agent or member). Source
 project labels never override the destination household. Import refusals are
 generic and never echo source contents. This command does not import credentials.
+Argument parsing also uses fixed errors, so accidental positional credentials
+and unknown option text cannot be reflected. Importer tests cover malformed
+versions/identities, duplicates, ambiguous destination mappings, nonempty homes,
+forged source caches and lock ownership through database close and failure.
 
 Cutover requires the next-mode composition root, a centrally authorized job
 viewer, the real Approvals adapter, and an injected Secrets role (fake secrets
