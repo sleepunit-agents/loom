@@ -6,7 +6,7 @@ const message: Message = { id:'1', channel:'G123', user:'U111', text:'hello', me
 const human = (id: string) => ({id, team_id:'T123', deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false});
 function fixture(options: {gate?: boolean; fail?: string} = {}) {
   let pages = 0;
-  const read = vi.fn(async (name: string, use: (token: string) => Promise<unknown>) => { expect(name).toBe('slack-bot'); return use('SECRET'); });
+  const read = vi.fn(async <T>(name: string, use: (token: string) => Promise<T>) => { expect(name).toBe('slack-bot'); return use('SECRET'); });
   const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     expect(String(url)).toMatch(/^https:\/\/slack.com\/api\//);
     expect(init?.redirect).toBe('error');
@@ -21,7 +21,7 @@ function fixture(options: {gate?: boolean; fail?: string} = {}) {
     else data = {ok:true,user:human(fields.get('user')!)};
     return Response.json(data);
   });
-  const api = slackApi({withValue:read as any}, () => options.gate !== false, request as typeof fetch);
+  const api = slackApi({withValue:read}, () => options.gate !== false, request as typeof fetch);
   return {api,read,request};
 }
 describe('Slack service API inspection', () => {
@@ -172,7 +172,7 @@ it('enforces the fifteen-second timeout for an abort-aware hung request', async 
     const request = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve,reject) => {
       init?.signal?.addEventListener('abort',()=>reject(Error('SECRET')), {once:true});
     }));
-    const result=slackApi({withValue:f.read as any},()=>true,request as typeof fetch).inspect(venue,message).then(value=>{settled=true;return value;});
+    const result=slackApi({withValue:f.read},()=>true,request as typeof fetch).inspect(venue,message).then(value=>{settled=true;return value;});
     await vi.advanceTimersByTimeAsync(14_999); expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1); expect(await result).toBe('wait');
     expect(timeout).toHaveBeenCalledWith(15_000);
@@ -181,7 +181,7 @@ it('enforces the fifteen-second timeout for an abort-aware hung request', async 
 it('rechecks staging between calls before obtaining another credential', async () => {
   const f=fixture(); let open=true;
   f.request.mockImplementationOnce(async()=>{open=false;return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});});
-  expect(await slackApi({withValue:f.read as any},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
+  expect(await slackApi({withValue:f.read},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
   expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).toHaveBeenCalledTimes(1);
 });
 it.each([{}, {ok:null}, {ok:'false'}])('waits rather than permanently dropping malformed denial envelope %j', async envelope => {
@@ -248,7 +248,7 @@ describe('authenticated Slack application binding', () => {
   it('staging and revoked secrets are rechecked between identity requests', async () => {
     const f=fixture(); let open=true;
     f.request.mockImplementationOnce(async()=>{open=false;return Response.json(auth);});
-    expect(await slackApi({withValue:f.read as any},()=>open,f.request as typeof fetch).authenticate(venue)).toBe('wait');
+    expect(await slackApi({withValue:f.read},()=>open,f.request as typeof fetch).authenticate(venue)).toBe('wait');
     expect(f.read).toHaveBeenCalledTimes(1);
     const revoked=fixture(); revoked.request.mockResolvedValueOnce(Response.json(auth));
     revoked.read.mockImplementationOnce(async (_name,use)=>use('SECRET'));
