@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateIdentity} from 'age-encryption';
 import {openHolderStore} from './holder-store.js';
-import {randomUUID} from 'node:crypto';
+import {createHash,createHmac,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {startLoom} from '../../foundation.js';
 import {fixture,fixtureSharing} from '../../fixture.js';
@@ -18,11 +18,11 @@ function fake(){
   const receipts=new Set<string>();
   return {receipts,set:vi.fn(async(who:{writeId:string})=>{receipts.add(who.writeId);}),remove:vi.fn(async(who:{writeId:string})=>{receipts.add(who.writeId);}),hasReceipt:vi.fn(async(who:{writeId:string})=>receipts.has(who.writeId))};
 }
-async function setup(holder:AsyncSecretMutations=fake(),home?:string,clock=new FakeClock()){
+async function setup(holder:AsyncSecretMutations=fake(),home?:string,clock=new FakeClock(),retryKey:Uint8Array=key){
   if(!home){home=mkdtempSync(join(tmpdir(),'secrets-intents-'));homes.push(home);fixture(home);}
   const app=await startLoom({home,next:true,staging:true,clock,stdout:()=>{}});closes.push(app.close);
   let sharing=fixtureSharing();
-  installAsyncSecretValues(app.db,app.operations,()=>sharing,holder,key);
+  installAsyncSecretValues(app.db,app.operations,()=>sharing,holder,retryKey);
   app.operations.register({name:'test.other',write:true,input:z.object({}).strict(),output:z.null(),may:()=>true,run:()=>null});
   const call=(name:string,input:unknown,id:string,v=owner,valid=()=>true)=>app.operations.callAsync('http',v,name,input,id,false,valid);
   const input={name:'API',mode:'add' as const,value:sentinel,writeId:randomUUID()};
@@ -90,12 +90,13 @@ it('serializes simultaneous identical calls and retains the durable name lock af
   expect(s.app.db.prepare('SELECT record FROM secrets_names').get()).toEqual({record:JSON.stringify({id:'API',description:'',by:'jonathan',changedAt:s.rows()[0].committed_at})});
 });
 it('removes metadata and grants after a real acknowledged write, then admits a later add without obsolete replay',async()=>{
-  const holder=fake(),s=await setup(holder);
+  const holder=fake();let s=await setup(holder);
   expect(await s.call('secrets.set',s.input,'add')).toMatchObject({ok:true});
   expect(s.app.operations.call('direct',owner,'secrets.grant',{agent:'art',kind:'secret',target:'API'},'grant')).toMatchObject({ok:true});
   const removal={name:'API',writeId:randomUUID()};expect(await s.call('secrets.remove',removal,'remove')).toEqual({ok:true,value:{removed:true}});
   expect(s.app.db.prepare('SELECT * FROM secrets_names').all()).toEqual([]);expect(s.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
   expect(await s.call('secrets.set',{...s.input,writeId:randomUUID()},'new')).toMatchObject({ok:true});
+  const {home,clock}=s;await s.app.close();clock.advance(31*86400_000);s=await setup(holder,home,clock);
   expect(await s.call('secrets.remove',removal,'remove')).toMatchObject({ok:true});
   expect(s.app.db.prepare('SELECT id FROM secrets_names').all()).toEqual([{id:'API'}]);expect(holder.remove).toHaveBeenCalledTimes(1);
 });
@@ -170,4 +171,23 @@ it.each(['throw','async','change'] as const)('rolls admission back and never pre
     },prepare,run:()=>null});
   expect(await s.call('test.admission',{},'admission')).toMatchObject({code:'unavailable'});
   expect(prepare).not.toHaveBeenCalled();expect(s.app.db.prepare("SELECT * FROM secrets_meta WHERE key='admission-test'").all()).toEqual([]);
+});
+it('persists the independently calculated keyed full-input identity and separates different daemon keys',async()=>{
+  const first=await setup(),input=first.input;
+  expect(await first.call('secrets.set',input,'keyed')).toMatchObject({ok:true});
+  const canonical=JSON.stringify({mode:input.mode,name:input.name,value:input.value,writeId:input.writeId});
+  const expected=createHmac('sha256',key).update('loom-secrets-operation-v1\0').update(canonical).digest('hex');
+  const hash=(s:typeof first)=>(s.app.db.prepare('SELECT input_hash FROM secrets_write_intents').get() as {input_hash:string}).input_hash;
+  expect(hash(first)).toBe(expected);expect(hash(first)).not.toBe(createHash('sha256').update(canonical).digest('hex'));
+  const second=await setup(fake(),undefined,new FakeClock(),Buffer.alloc(32,8));
+  expect(await second.call('secrets.set',input,'keyed')).toMatchObject({ok:true});expect(hash(second)).not.toBe(hash(first));
+});
+it.each(['set','remove'] as const)('rechecks current owner permission before cached core %s receipt replay',async action=>{
+  const holder=fake(),s=await setup(holder);
+  expect(await s.call('secrets.set',s.input,'saved')).toMatchObject({ok:true});
+  const input=action==='set' ? s.input : {name:'API',writeId:randomUUID()},id=action==='set' ? 'saved' : 'removed';
+  if(action==='remove')expect(await s.call('secrets.remove',input,id)).toMatchObject({ok:true});
+  expect(s.app.db.prepare('SELECT id FROM core_operations WHERE id=?').get(id)).toEqual({id});
+  s.deny();expect(await s.call(`secrets.${action}`,input,id)).toMatchObject({code:'denied'});
+  expect(holder.set).toHaveBeenCalledTimes(1);expect(holder.remove).toHaveBeenCalledTimes(action==='remove'?1:0);
 });
