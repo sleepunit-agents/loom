@@ -88,7 +88,9 @@ export class Signin {
     // Cookie socket upgrades always need an Origin, unlike nonbrowser bearer callers.
     if (req.headers.upgrade && (!req.headers.origin || !sameOrigin(req))) return;
     if (!['GET','HEAD','OPTIONS'].includes(req.method ?? 'GET') && !this.checkCsrf(req,String(req.headers['x-loom-csrf'] ?? ''))) return;
-    return {viewer:s.viewer,expiresAt:s.expiresAt,valid:()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;}};
+    // Only this validated page-session branch confers the socket window capability.
+    // Bearer callers never gain it, including when they also send a cookie.
+    return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid:()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;}};
   }
   createSession(secret: string, meta: { label?: string; signedInAt?: number; agent?: true; via?: 'link'|'passkey'; device?: string } = {}) {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');
