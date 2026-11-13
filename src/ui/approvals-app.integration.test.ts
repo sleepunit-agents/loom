@@ -52,13 +52,13 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Approvals confirms ope
       await b.setViewportSize({width,height:900});
       await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await b.screenshot({path:join(shots,`approvals-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       // Check the reader itself as well as the page: overflow can be hidden by a pane.
       await expect.poll(()=>b.evaluate(()=>{
         const reader=document.querySelector('.loom-split__reader')!;
         return { page:document.documentElement.scrollWidth<=innerWidth,
           reader:reader.scrollWidth<=reader.clientWidth };
       })).toEqual({page:true,reader:true});
-      await b.screenshot({path:join(shots,`approvals-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await a.getByRole('button',{name:'Deny',exact:true}).click();
     await expect.poll(()=>b.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
