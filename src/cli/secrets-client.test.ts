@@ -57,7 +57,7 @@ it('keeps legacy sorted names, compact JSON, separate startup may output and exi
 });
 it('matches captured outputs and exit codes from the frozen old executable on the same metadata fixture', async () => {
   const app = await setup();
-  app.call('describe', { name: 'API', description: '' }); app.call('describe', { name: 'ZED', description: '' });
+  app.call('describe', { name: 'ZED', description: '' }); app.call('describe', { name: 'API', description: '' });
   const { v: _version, ...policy } = oracle.policy;
   expect(app.call('policy', policy)).toMatchObject({ ok: true });
   for (const expected of oracle.cases) {

@@ -5,6 +5,10 @@
 `loom-secrets-client` requires explicit `LOOM_URL` and `LOOM_TOKEN_FILE`. It
 interprets shared `secretCommands` metadata and calls registry operations; it
 never opens loom.db, an old Secrets directory, a key, or a piece executable.
+The small legacy syntax/acknowledgement transformations stay in the transport
+boundary; command metadata owns binding names and flags, and the daemon owns
+policy and state rendering. This keeps the existing typed mutation operations
+unchanged instead of adding a second daemon write API solely for CLI rendering.
 This separate executable leaves existing `loom secrets` dispatch unchanged until
 the final move. Tokens supply actual household membership; environment variables
 cannot assert an owner, service or house. These owner commands require a current
