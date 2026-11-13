@@ -20,6 +20,16 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     return { job: id, state };
   }
   operations.register(operation({
+    name:'runtime.jobControl',doors:['http','direct'],input,output:z.object({stop:z.boolean(),history:z.enum(['retain','discard','unknown'])}),
+    may:(viewer,{job})=>assigned(viewer,job),
+    run(_ctx,{job:id}){
+      const job=store.read('job',id)!;
+      if(job.writtenOff||job.principalReset)return {stop:true,history:'discard' as const};
+      if(job.state==='uncertain'||job.state==='lost')return {stop:false,history:'unknown' as const};
+      return {stop:['done','failed','stopped'].includes(job.state),history:'retain' as const};
+    },
+  }));
+  operations.register(operation({
     name: 'runtime.claimJob', write: true, input, output,
     may: (viewer, { job }) => assigned(viewer, job),
     run(ctx, { job: id }) {

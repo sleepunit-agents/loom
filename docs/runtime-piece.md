@@ -259,9 +259,9 @@ An after-commit `core.access` change invalidates existing authentication handles
 An installer without central credentials fails unavailable before changing data.
 
 Completion now also accepts the bounded exit/log fields described below. Native
-history collection, cooperative stop, written-off jobs and service restarts
+history collection, cooperative stop and service restarts
 remain to be implemented with their owning lifecycle operations. `stopped` and
-`lost` are not accepted here: there is no stop-intent or write-off protocol yet.
+`lost` are not accepted here: write-off is an owning owner-answer operation rather than a runner report.
 Input delivery and execution still require the outside-effect staging gate;
 this endpoint releases no work and performs no outside effect, even in staging.
 Earlier text describing terminal reports as future work now refers to those
@@ -835,3 +835,49 @@ replies to the original agent/venue before invoking the trusted Bridges role;
 never expose the role directly as a viewer-free operation. Its absence is already
 part of this piece's remaining delivery work. The old gate's only denied pair
 therefore gains no authority from this retirement.
+
+
+## Owner recovery applications
+
+Next mode composes Runtime's synchronous ApprovalApplication on the same database
+as Approvals. A body cannot invoke the application operation or supply a card.
+Every request saves the exact original card and its owning snapshot. Allow
+rechecks the original card and current state before any change; Deny changes
+no runtime state. Answer, application, credential revocation, registry receipt
+and committed notifications succeed together or roll back together.
+
+| Old operation | New operation / state |
+| --- | --- |
+| askOwnerReset / reset-approved | runtime.askPrincipalReset / Approvals owner Allow |
+| noteSender / resetActsFor | private runtime_provenance and immutable source-key metadata |
+| writeOffAsk / writeOffBox | runtime.askWriteOff / Approvals owner Allow |
+| hostHeard | authenticated runtime.bodyHeartbeat, private body operations and runner report timestamps |
+
+Reset applies only to nonprivate household-owned conversations with no named
+nonowner history. Private Comms membership remains unchanged. The card lists at
+most twelve eligible source descriptions within 650 characters. Only those
+original keys can be adopted; late arrivals are recounted. Person sources and
+explicitly named wakes are never adopted. The owner attestation retains its
+approval, person and time. Every job holding the previous conversation is
+centrally revoked; live jobs stop and the binding drops its job and harness home.
+No prior body or harness session can be resumed through that binding.
+
+Provenance ingestion derives private Comms senders from its authenticated owning
+source. There is no public sender-history operation. General venue delivery and
+trusted Clock provenance ingestion remain later delivery work on t-2209; these
+applications do not make runtime.deliver usable. The private source store records
+source keys independently of its pending queue, so consumption and restart do
+not let a source retry rewrite sender history. Queue consumption keeps history.
+
+Write-off requires a remote active non-report-only box silent for ten minutes,
+and snapshots only live, nonprivate, nonservice jobs for the requested agent.
+The card binds the exact box heartbeat epoch and covered body heartbeat times.
+A renewed box or covered body report prevents Allow. Administrative job writes
+never count as heartbeat. Later jobs, private jobs, services, runner credentials,
+box configuration and preferences are untouched. Covered body credentials are
+revoked and jobs become lost/ended with a durable writtenOff marker naming the
+approval, person and time. runtime.jobControl returns stop:true and history:discard for this marker when
+the assigned runner reconnects; an ordinary lost/uncertain job does not mean written off.
+Uncertain or ordinary lost work returns history:unknown, never a write-off.
+The external runner's stop/history reconciliation remains lifecycle work on
+t-2209. Late reports cannot turn a written-off terminal job back into live work.

@@ -14,7 +14,7 @@ const sender = z.discriminatedUnion('kind', [
 ]);
 const queued = z.object({ key: z.string().min(1).max(1000), sender, at: z.number().int().safe() }).strict();
 export type QueuedProvenance = z.infer<typeof queued>;
-const state = z.object({ agent: name, history, queue: z.array(queued) }).strict();
+const state = z.object({ agent: name, history, queue: z.array(queued), reset: z.object({by:name,at:z.number().int().safe(),approval:z.string().min(1)}).strict().optional() }).strict();
 export type ConversationProvenance = z.infer<typeof state>;
 export function provenanceStore(db: Db) {
   function read(conversation: string): ConversationProvenance | undefined {
@@ -41,7 +41,7 @@ export function provenanceStore(db: Db) {
       // not yet authoritatively consumed. Both update in the same transaction.
       if (!db.inTransaction) throw new Error('Provenance writes require the caller transaction');
       db.prepare('INSERT INTO runtime_provenance_sources VALUES (?,?,?)').run(conversation, row.key, JSON.stringify(row));
-      put(conversation, { agent, history: noteProvenance(value.history, row.sender, owners), queue: [...value.queue, row] });
+      put(conversation, { ...value, agent, history: noteProvenance(value.history, row.sender, owners), queue: [...value.queue, row] });
     },
     consumed(conversation: string, keys: readonly ProvenanceRow['key'][]) {
       const before = read(conversation); if (!before) return;
