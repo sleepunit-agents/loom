@@ -45,16 +45,16 @@ export function installSecretServices(db: Db, operations: Operations, sharing: (
  */
 export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => Sharing, viewer: Viewer, now: () => number): SecretUse {
   const caller = {...viewer};
+  const allowed = (name: string) => caller.kind === 'service' && Object.hasOwn(sharing().services, caller.id)
+    && grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
+    && !!db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name);
   return { async withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T> {
-    if (!secretName.safeParse(name).success || caller.kind !== 'service' || !Object.hasOwn(sharing().services, caller.id)
-      || !grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
-      || !db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name)) throw new OperationError('denied', 'Secret use denied');
+    if (!secretName.safeParse(name).success || !allowed(name)) throw new OperationError('denied', 'Secret use denied');
     let bytes: Uint8Array | undefined;
     try {
       bytes = await source.read(name);
       // Permission may have changed while the local transport was awaiting its reply.
-      if (!Object.hasOwn(sharing().services, caller.id) || !grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
-        || !db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name)) throw new Error('Access ended');
+      if (!allowed(name)) throw new Error('Access ended');
       if (!bytes.byteLength || bytes.byteLength > 64 * 1024) throw new Error('Invalid value');
       return await use(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8'));
     } catch { throw new OperationError('unavailable', 'Secret use failed'); }

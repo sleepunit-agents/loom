@@ -87,3 +87,20 @@ it('rechecks access after holder transport waits and refuses malformed, missing 
   delete (config.services as Record<string,unknown>).changes;
   await expect(role().withValue('github',use)).rejects.toMatchObject({code:'denied'});
 });
+
+it.each(['registration', 'expiry', 'never', 'name'] as const)('rechecks %s after holder acquisition and erases bytes without invoking callback', async change => {
+  const {app, call, clock, source, role, buffers, config} = await setup();
+  expect(call('grantService',{service:'changes',name:'github',expiresAt:clock.now()+1000}).ok).toBe(true);
+  const use=vi.fn(async()=>true), ordinaryRead=source.read.getMockImplementation()!;
+  source.read.mockImplementationOnce(async()=>{
+    const b=await ordinaryRead();
+    if(change==='registration') delete (config.services as Record<string,unknown>).changes;
+    if(change==='expiry') clock.advance(1000);
+    if(change==='never') expect(call('policy',{secrets:{github:{grant:'never'}}}).ok).toBe(true);
+    if(change==='name') app.db.prepare('DELETE FROM secrets_names WHERE id=?').run('github');
+    return b;
+  });
+  await expect(role().withValue('github',use)).rejects.toMatchObject({code:'unavailable',message:'Secret use failed'});
+  expect(source.read).toHaveBeenCalledTimes(1); expect(use).not.toHaveBeenCalled();
+  expect(buffers).toHaveLength(1); expect(buffers[0].every(v=>v===0)).toBe(true);
+});
