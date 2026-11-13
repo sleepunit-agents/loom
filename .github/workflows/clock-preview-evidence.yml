@@ -1,0 +1,40 @@
+name: Clock preview evidence
+on:
+  pull_request:
+    paths:
+      - 'src/pieces/clock/**'
+      - 'web/src/pieces/clock/**'
+      - 'src/ui/clock-app.integration.test.ts'
+      - '.github/workflows/clock-preview-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: clock-preview-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Install and build
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Prove the Clock preview
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_TEST_SHOTS="$PWD/artifacts/clock-app"
+          nice -n 19 npx vitest run src/ui/clock-app.integration.test.ts --maxWorkers=1
+          test "$(find artifacts/clock-app -name '*.png' | wc -l)" -eq 6
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: clock-preview-${{ github.event.pull_request.head.sha }}
+          path: artifacts/clock-app/
+          if-no-files-found: error

@@ -361,7 +361,16 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   })();
   for (const type of ['wake', 'schedule'] as const) live.register({ name: type,
     ids: () => (type === 'wake' ? wakes(db) : schedules(db)).map(w => w.id),
-    read(id, v) { const w = type === 'wake' ? wake(db, id) : schedule(db, id); return w && see(v, w, type) ? { ...w } : undefined; },
+    read(id, v) {
+      const w = type === 'wake' ? wake(db, id) : schedule(db, id);
+      if (!w || !see(v, w, type)) return undefined;
+      // A display hint only: vouch rechecks the current owner, scope and work.
+      let canVouch = false;
+      if (type === 'wake' && vouchable(w as Wake) && mayAct(v, {}, sharing(), 'household') && create(v, w)) {
+        try { newWork(w); canVouch = true; } catch (e) { if (!(e instanceof OperationError) || e.code !== 'invalid') throw e; }
+      }
+      return { ...w, ...(type === 'wake' ? { canVouch } : {}) };
+    },
     inScope: (r, agent, now) => (!agent || r.agent === agent) && (type === 'schedule' || active(r as unknown as Wake) || Number(r.changedAt) + day > now),
     expires: r => type === 'wake' && !active(r as unknown as Wake) ? Number(r.changedAt) + day : undefined,
   });

@@ -252,7 +252,7 @@ it('preserves importer-visible file aliases as regular bytes without duplicate d
   expect(manifest.followed).toContainEqual({path:'household.json',realPath:'private/household-data'});
   expect(prepareMigrationPlan(root).plan.importers.attention.paths).toEqual(['home/agents/art/memories.db']);
   expect((await runMigrationAll(root,join(f.dir,'alias-new'))).status).toBe('complete');
-  expect(verifyMigration(root,join(f.dir,'alias-new')).status).toBe('verified');
+  expect((await verifyMigration(root,join(f.dir,'alias-new'))).status).toBe('verified');
   expect(readFileSync(join(f.dir,'alias-new/ui-cookie.key'))).toEqual(Buffer.alloc(32,17));
 });
 
@@ -277,7 +277,7 @@ it('keeps the database and daemon gate until an asynchronous importer settles, t
   } finally { resume(); await pending; }
   expect(await pending).toMatchObject({status:'complete'});
   expect(order).toEqual(['household','tasks','attention','clock','approvals','changes']);
-  expect(verifyMigration(f.root,f.home).status).toBe('verified');
+  expect((await verifyMigration(f.root,f.home)).status).toBe('verified');
 });
 
 it('does not mark an asynchronously rejected importer complete and releases its gate for retry', async () => {

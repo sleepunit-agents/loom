@@ -1,20 +1,25 @@
 /** One browser proof: real operations/live feed, two windows, six looks/widths. */
 import { it, expect } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, installFixture, fixtureSharing } from '../fixture.js';
+import { importClock } from '../pieces/clock/importer.js';
+import { wake } from '../pieces/clock/store.js';
 import { installClock } from '../pieces/clock/index.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes across two windows, holds dispatch, and covers phone and desktop looks', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-clock-browser-')); fixture(home);
+  const source = join(home,'old'); mkdirSync(join(source,'art'),{recursive:true});
+  writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const loom = await startLoom({home,clock,install(app) {
     installFixture(app);
+    importClock(app.db,source,clock.now());
     const jobs = installClock(app.db,app.operations,app.live,fixtureSharing, {approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
   },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},valid:()=>true})});
   let seq=0;
@@ -69,12 +74,27 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await b.getByRole('button',{name:'Confirm reassignment',exact:true}).click();
     await expect.poll(()=>a.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
+    // Only eligible owner adoption is offered; preserve saved words and time.
+    await b.getByRole('button',{name:/^Wakes/}).click(); await row(b,'Unknown imported review').click();
+    await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(1);
+    expect(await b.getByRole('button',{name:'Run now',exact:true}).count()).toBe(0);
+    const original = wake(loom.db,'w-aaaaaa')!;
+    await b.getByRole('button',{name:'Count as my work',exact:true}).click();
+    await expect.poll(()=>b.getByText('Count this imported wake as your work?',{exact:false}).count()).toBe(1);
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/clock-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
       await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Count as my work',exact:true}).click();
+    await expect.poll(()=>b.getByText('Counted 1 as your work; 0 unchanged',{exact:true}).count()).toBe(1);
+    await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(0);
+    expect(wake(loom.db,'w-aaaaaa')).toMatchObject({prompt:original.prompt,due:original.due,by:{kind:'member',id:'jonathan'},state:'pending'});
+    await a.getByRole('button',{name:/^Wakes/}).click(); await row(a,'Unknown imported review').click();
+    await expect.poll(()=>a.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(0);
+    await b.getByRole('button',{name:'Keep unchanged',exact:true}).count().then(n=>expect(n).toBe(0));
+    await b.getByRole('button',{name:/Household lanes/}).click(); await row(b,'morning').click();
     // Confirmations remain usable while the phone reader covers its list.
     await b.setViewportSize({width:390,height:900});await b.getByRole('button',{name:'Run once',exact:true}).click();
     await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Run once',exact:true}).click();
