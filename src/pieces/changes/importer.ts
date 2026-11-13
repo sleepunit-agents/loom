@@ -10,7 +10,8 @@ export function projectFor(repo: string, projects: Project[]) {
  if(found.length>1) throw new Error('Repository belongs to more than one household project');
  return found[0]?.slug;
 }
-export function importChanges(db: Db, from: string, options: { projects: Project[]; attribution: Attribution; interrupt?: () => void }) {
+type ImportOptions = { projects: Project[]; attribution: Attribution; interrupt?: () => void };
+export function importChanges(db: Db, from: string, settings: ImportOptions | (() => ImportOptions)) {
  const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
  if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
  const checksum=createHash('sha256').update(bytes).digest('hex');
@@ -18,6 +19,7 @@ export function importChanges(db: Db, from: string, options: { projects: Project
   migrate(db,'changes',schema);
   const old=db.prepare("SELECT value FROM changes_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
   if(old) {if(old.value!==checksum) throw new Error('A different Changes source was already imported');return {ok:true,imported:false,checksum,changes:source.changes.length};}
+ const options=typeof settings==='function'?settings():settings;
  // Preserve the source's normalized fields exactly; never trust its project attribution or task cache.
  const expected:Change[]=source.changes.map(raw=>{
   const c=changeSchema.parse(raw), repo=repoId(c.repo);

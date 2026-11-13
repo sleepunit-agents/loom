@@ -82,15 +82,37 @@ it('holds ownership through database close and releases it after validation or i
       app.close(); closes();
     } };
   });
+  writeFileSync(f.attribution, 'invalid');
+  expect(await migrateChanges(f.args, f.io)).toBe(1);
+  const validationRelease = acquireHttpLock(f.home); validationRelease();
+  writeFileSync(f.attribution, JSON.stringify({ agents: {}, ownerLogins: [] }));
   expect(await migrateChanges(f.args, f.io)).toBe(0);
-  expect(closes).toHaveBeenCalledOnce();
+  expect(closes).toHaveBeenCalledTimes(2);
   let release = acquireHttpLock(f.home); release();
+  writeFileSync(f.source, JSON.stringify({v:1,changes:[change({title:'Different source'})]}));
   writeFileSync(f.attribution, 'invalid');
   expect(await migrateChanges(f.args, f.io)).toBe(1);
   release = acquireHttpLock(f.home); release();
   writeFileSync(f.attribution, JSON.stringify({ agents: {}, ownerLogins: [] }));
   writeFileSync(f.source, 'invalid');
   expect(await migrateChanges(f.args, f.io)).toBe(1);
-  expect(closes).toHaveBeenCalledTimes(2);
+  expect(closes).toHaveBeenCalledTimes(4);
   release = acquireHttpLock(f.home); release();
+});
+it('repeats identical source without revalidating changed household or attribution, while refusing changed bytes', async () => {
+  const f=fixture();f.seed();
+  expect(await migrateChanges(f.args,f.io)).toBe(0);
+  const app=createFoundation({home:f.home});
+  try {app.db.transaction(()=>new HouseholdDatabase(app.db).replace(f.home,{v:1,agents:['replacement'],owner:'Jonathan'}))();}
+  finally {app.close();}
+  for(const map of [{agents:{stranger:{logins:[],branches:[]}},ownerLogins:[]},'invalid JSON']) {
+    writeFileSync(f.attribution,typeof map==='string'?map:JSON.stringify(map));
+    expect(await migrateChanges(f.args,f.io)).toBe(0);
+    expect(JSON.parse(f.io.stdout.mock.calls.at(-1)![0])).toMatchObject({imported:false,changes:1});
+  }
+  const check=createFoundation({home:f.home});
+  try {expect(loadChanges(check.db)).toMatchObject([{project:'pond',agent:'art'}]);}
+  finally {check.close();}
+  writeFileSync(f.source,JSON.stringify({v:1,changes:[change({title:'Different bytes'})]}));
+  expect(await migrateChanges(f.args,f.io)).toBe(1);
 });
