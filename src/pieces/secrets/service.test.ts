@@ -17,7 +17,7 @@ async function setup() {
   const app = await startLoom({home, next:true, staging:true, clock, sharing, install: a => {
     installSecrets(a.db, a.operations, a.live, sharing);
     installSecretServices(a.db, a.operations, sharing);
-    installSecretValues(a.db, a.operations, sharing, {names:()=>[], set(){}, remove(){}, rotate(){}, handTo(){}});
+    installSecretValues(a.db, a.operations, sharing, {names:()=>[], set(){}, remove(){}, rotate(){}, handTo(){}}, Buffer.alloc(32, 1));
   }}); closes.push(app.close);
   let seq=0;
   const call = (name: string, input: unknown, viewer: Viewer = {kind:'member', id:'jonathan'}, id=`use-${++seq}`) => app.operations.call('direct', viewer, `secrets.${name}`, input, id);

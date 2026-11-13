@@ -26,7 +26,7 @@ async function setup() {
   const clock = new FakeClock();
   const app = await startLoom({home, next: true, staging: true, clock, sharing: fixtureSharing, install: a => {
     installSecrets(a.db, a.operations, a.live, fixtureSharing);
-    installSecretValues(a.db, a.operations, fixtureSharing, holder);
+    installSecretValues(a.db, a.operations, fixtureSharing, holder, Buffer.alloc(32, 1));
   }}); closes.push(app.close);
   let sequence = 0;
   const call = (name: string, input: unknown, id = `ack-${++sequence}`) => app.operations.call('direct', owner, `secrets.${name}`, input, id);

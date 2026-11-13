@@ -27,7 +27,7 @@ async function setup(existingHome?: string, connected = true) {
     const attention = connected ? secretGrantAttention(sources, a.operations) : undefined;
     connector = attention;
     installSecrets(a.db, a.operations, a.live, sharing, attention);
-    installSecretValues(a.db, a.operations, sharing, { names: () => [], set() {}, remove() {}, rotate() {}, handTo() {} }, attention);
+    installSecretValues(a.db, a.operations, sharing, { names: () => [], set() {}, remove() {}, rotate() {}, handTo() {} }, Buffer.alloc(32, 1), attention);
   } }); closes.push(app.close);
   let seq = 0; const session = randomUUID();
   const call = (name: string, input: unknown, viewer = owner, id = `op-${session}-${++seq}`) => app.operations.call('direct', viewer, name, input, id);

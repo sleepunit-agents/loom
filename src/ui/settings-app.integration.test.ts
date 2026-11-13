@@ -17,7 +17,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
  let writes=0;const modes:string[]=[];const values=new Map<string,Buffer>();
  const app=await startLoom({home,next:true,staging:true,clock,sharing:fixtureSharing,install:a=>{
   installSecrets(a.db,a.operations,a.live,fixtureSharing,{raise:()=>({raised:true})});
-  installSecretValues(a.db,a.operations,fixtureSharing,{names:()=>[...values.keys()],set(name,value,mode){modes.push(mode);values.set(name,Buffer.from(value));writes++;},remove(name){values.delete(name);},handTo(){},rotate(){}});
+  installSecretValues(a.db,a.operations,fixtureSharing,{names:()=>[...values.keys()],set(name,value,mode){modes.push(mode);values.set(name,Buffer.from(value));writes++;},remove(name){values.delete(name);},handTo(){},rotate(){}},Buffer.alloc(32,1));
  },authenticate:req=>({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock')?'pollock':'jonathan'},valid:()=>true})});
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
