@@ -8,6 +8,7 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { migrateHouseholdTables } from '../core/household/schema.js';
+import { deskHome } from './agent-desk.fixture.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const enabled = process.env.LOOM_DESK_EVIDENCE === '1';
 const chrome = process.env.LOOM_TEST_CHROME;
@@ -22,10 +23,20 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
       new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
     })();
   }});
+  const old = await deskHome({art:'art'},[{person:'owner',agents:'*'}]);
+  old.ask('art','OK to run the backup now?');
+  const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
+  expect(raised.ok).toBe(true);
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context = await browser.newContext({viewport:{width:1280,height:900}});
     const a = await context.newPage(), b = await context.newPage();
+    const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
+    const oldContext=await browser.newContext({viewport:{width:1280,height:900},reducedMotion:'reduce',serviceWorkers:'block'});
+    await oldContext.addInitScript(()=>{sessionStorage.setItem('loom-arrived','1');sessionStorage.setItem('loom-booted','1');});
+    await oldContext.request.post(old.base+'/login',{form:{token:old.tok.owner},maxRedirects:0});
+    const reference=await oldContext.newPage();
+    const board=await browser.newPage();
     const link = app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
     if (!link.ok) throw Error('Fixture sign-in failed');
     await a.goto(app.url+(link.value as {path:string}).path);
@@ -57,9 +68,47 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await page.setViewportSize({width,height:900}); await page.reload();
         await expect.poll(() => page.locator('.next-shell').count()).toBe(1);
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
-        await expect.poll(() => page.getByText('All clear.',{exact:true}).count()).toBe(1);
-        await page.screenshot({path:join(shots,`new-${look}-${width}.png`),animations:'disabled'});
+        await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+        await reference.setViewportSize({width,height:900});
+        await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
+        for (const surface of ['home','work','launcher']) {
+          if(surface==='home') { if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0); }
+          if(surface==='work') {
+            await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
+            await expect.poll(()=>page.locator('[data-tile=inbox]').count()).toBe(1);
+            await expect.poll(()=>page.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBe(1);
+            await reference.goto(old.base+(width<1024?'/inbox':'/inbox?t=*inbox'));
+            if(width>=1024) {
+              await expect.poll(()=>page.locator('.desk-rail-card').count()).toBe(1);
+              await expect.poll(()=>reference.locator('.loom-arail').count()).toBe(1);
+              const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
+              expect(Math.round(rail!.width)).toBe(width>=1440?320:296);expect(tile!.x+tile!.width).toBeLessThanOrEqual(rail!.x-9);
+              expect(await page.locator('.next-rail button').allTextContents()).toContain('Asks youOK to run the backup now? ›');
+            }
+          }
+          if(surface==='launcher') {
+            await page.getByRole('button',{name:'All apps',exact:true}).first().click();
+            await expect.poll(()=>page.getByRole('textbox',{name:'Find an app',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+            await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
+            expect(await page.locator('.loom-lapp').count()).toBe(1);
+            await page.keyboard.press('Escape');
+            await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
+            await page.getByRole('button',{name:'All apps',exact:true}).first().click();
+            if(width<1024) { await reference.goto(old.base+'/setup'); await expect.poll(()=>reference.getByText('More',{exact:true}).count()).toBeGreaterThan(0); }
+            else { await reference.keyboard.press('Control+Shift+Space'); await expect.poll(()=>reference.getByRole('textbox',{name:'Find an app',exact:true}).count()).toBe(1); }
+          }
+          await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
+          const before=await reference.screenshot({path:join(shots,`old-${surface}-${look}-${width}.png`),animations:'disabled'});
+          const after=await page.screenshot({path:join(shots,`new-${surface}-${look}-${width}.png`),animations:'disabled'});
+          await board.setViewportSize({width:width*2,height:932});
+          await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${before.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${after.toString('base64')}"></section></div></body>`);
+          await board.locator('img').evaluateAll(imgs=>Promise.all(imgs.map(i=>(i as HTMLImageElement).decode())));
+          await board.screenshot({path:join(shots,`compare-${surface}-${look}-${width}.png`)});
+        }
+        await page.keyboard.press('Escape');await page.goto(app.url);
+
       }
     }
-  } finally { await browser.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
-},60000);
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await old.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
+},180000);

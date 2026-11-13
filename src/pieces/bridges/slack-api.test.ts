@@ -6,7 +6,7 @@ const message: Message = { id:'1', channel:'G123', user:'U111', text:'hello', me
 const human = (id: string) => ({id, team_id:'T123', deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false});
 function fixture(options: {gate?: boolean; fail?: string} = {}) {
   let pages = 0;
-  const read = vi.fn(async (name: string, use: (token: string) => Promise<unknown>) => { expect(name).toBe('slack-bot'); return use('SECRET'); });
+  const read = vi.fn(async <T>(name: string, use: (token: string) => Promise<T>) => { expect(name).toBe('slack-bot'); return use('SECRET'); });
   const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     expect(String(url)).toMatch(/^https:\/\/slack.com\/api\//);
     expect(init?.redirect).toBe('error');
@@ -21,7 +21,7 @@ function fixture(options: {gate?: boolean; fail?: string} = {}) {
     else data = {ok:true,user:human(fields.get('user')!)};
     return Response.json(data);
   });
-  const api = slackApi({withValue:read as any}, () => options.gate !== false, request as typeof fetch);
+  const api = slackApi({withValue:read}, () => options.gate !== false, request as typeof fetch);
   return {api,read,request};
 }
 describe('Slack service API inspection', () => {
@@ -172,7 +172,7 @@ it('enforces the fifteen-second timeout for an abort-aware hung request', async 
     const request = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve,reject) => {
       init?.signal?.addEventListener('abort',()=>reject(Error('SECRET')), {once:true});
     }));
-    const result=slackApi({withValue:f.read as any},()=>true,request as typeof fetch).inspect(venue,message).then(value=>{settled=true;return value;});
+    const result=slackApi({withValue:f.read},()=>true,request as typeof fetch).inspect(venue,message).then(value=>{settled=true;return value;});
     await vi.advanceTimersByTimeAsync(14_999); expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1); expect(await result).toBe('wait');
     expect(timeout).toHaveBeenCalledWith(15_000);
@@ -181,7 +181,7 @@ it('enforces the fifteen-second timeout for an abort-aware hung request', async 
 it('rechecks staging between calls before obtaining another credential', async () => {
   const f=fixture(); let open=true;
   f.request.mockImplementationOnce(async()=>{open=false;return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});});
-  expect(await slackApi({withValue:f.read as any},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
+  expect(await slackApi({withValue:f.read},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
   expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).toHaveBeenCalledTimes(1);
 });
 it.each([{}, {ok:null}, {ok:'false'}])('waits rather than permanently dropping malformed denial envelope %j', async envelope => {
@@ -209,4 +209,60 @@ it.each(['membership','eligibility'])('refreshes %s even when channel remains an
   expect(await f.api.inspect(venue,message)).toEqual(change==='membership'?{kind:'allow',members:['U999','U111','U333']}:'drop');
   expect(f.request).toHaveBeenCalledTimes(9);
   expect((f.request.mock.calls[8][1]?.body as URLSearchParams).get('user')).toBe(last);
+});
+
+describe('authenticated Slack application binding', () => {
+  const auth = {ok:true,team_id:'T123',user_id:'U999',bot_id:'B999'};
+  const bot = {id:'B999',user_id:'U999',app_id:'A123',deleted:false};
+  function binding() {
+    const f=fixture();
+    f.request.mockResolvedValueOnce(Response.json(auth));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,bot}));
+    return f;
+  }
+  it('derives the app from authenticated bot metadata, never an incoming event', async () => {
+    const f=binding();
+    expect(await f.api.authenticate(venue)).toEqual({workspace:'T123',bot:'U999',app:'A123'});
+    expect(f.request.mock.calls.map(c=>String(c[0]))).toEqual(['https://slack.com/api/auth.test','https://slack.com/api/bots.info']);
+    expect(Object.fromEntries(f.request.mock.calls[1][1]?.body as URLSearchParams)).toEqual({bot:'B999',team_id:'T123'});
+    expect(f.read).toHaveBeenCalledTimes(2);
+  });
+  it.each([{team_id:'T999'},{user_id:'U111'},{bot_id:undefined},{bot_id:'U999'},{bot_id:''}])('waits on unbound bot-token identity %j', async patch => {
+    const f=fixture(); f.request.mockResolvedValueOnce(Response.json({...auth,...patch}));
+    expect(await f.api.authenticate(venue)).toBe('wait'); expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it.each([{id:'B111'},{user_id:'U111'},{deleted:true},{deleted:undefined},{app_id:undefined},{app_id:'T123'},{app_id:''}])('waits on unsafe app evidence %j', async patch => {
+    const f=fixture(); f.request.mockResolvedValueOnce(Response.json(auth));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,bot:{...bot,...patch}}));
+    expect(await f.api.authenticate(venue)).toBe('wait');
+  });
+  it('does not cache authenticated identity', async () => {
+    const f=binding(); expect(await f.api.authenticate(venue)).toEqual({workspace:'T123',bot:'U999',app:'A123'});
+    f.request.mockResolvedValueOnce(Response.json({...auth,user_id:'U111'}));
+    expect(await f.api.authenticate(venue)).toBe('wait'); expect(f.request).toHaveBeenCalledTimes(3);
+  });
+  it('staging blocks authentication before secret acquisition', async () => {
+    const f=fixture({gate:false}); expect(await f.api.authenticate(venue)).toBe('wait');
+    expect(f.read).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('staging and revoked secrets are rechecked between identity requests', async () => {
+    const f=fixture(); let open=true;
+    f.request.mockImplementationOnce(async()=>{open=false;return Response.json(auth);});
+    expect(await slackApi({withValue:f.read},()=>open,f.request as typeof fetch).authenticate(venue)).toBe('wait');
+    expect(f.read).toHaveBeenCalledTimes(1);
+    const revoked=fixture(); revoked.request.mockResolvedValueOnce(Response.json(auth));
+    revoked.read.mockImplementationOnce(async (_name,use)=>use('SECRET'));
+    revoked.read.mockRejectedValueOnce(Error('SECRET'));
+    expect(await revoked.api.authenticate(venue)).toBe('wait');
+    expect(revoked.read).toHaveBeenCalledTimes(2); expect(revoked.request).toHaveBeenCalledTimes(1);
+  });
+  it.each([{enabled:false},{platform:'discord' as const},{workspace:''},{bot:''}])('does not read credentials for invalid setup %j', async patch => {
+    const f=fixture(); expect(await f.api.authenticate({...venue,...patch})).toBe('wait');
+    expect(f.read).not.toHaveBeenCalled();
+  });
+  it.each(['auth','bot'])('sanitizes %s failure and never returns response words', async step => {
+    const f=fixture(); if(step==='bot') f.request.mockResolvedValueOnce(Response.json(auth));
+    f.request.mockResolvedValueOnce(Response.json({ok:false,error:'SECRET'}));
+    expect(await f.api.authenticate(venue)).toBe('wait');
+  });
 });

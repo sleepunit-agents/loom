@@ -387,11 +387,16 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const w = type === 'wake' ? wake(db, id) : schedule(db, id);
       if (!w || !see(v, w, type)) return undefined;
       // A display hint only: vouch rechecks the current owner, scope and work.
-      let canVouch = false;
+      let canVouch = false, canAskVouch = false;
       if (type === 'wake' && vouchable(w as Wake) && mayAct(v, {}, sharing(), 'household') && create(v, w)) {
         try { newWork(w); canVouch = true; } catch (e) { if (!(e instanceof OperationError) || e.code !== 'invalid') throw e; }
       }
-      return { ...w, ...(type === 'wake' ? { canVouch } : {}) };
+      if (type === 'wake' && options.vouchFiling && askable(w as Wake)
+        && ((v.kind === 'agent' && v.id === w.agent) || (v.kind !== 'agent' && mayAct(v, {}, sharing(), 'household')))
+        && create(v, w)) {
+        try { newWork(w); canAskVouch = true; } catch (e) { if (!(e instanceof OperationError) || e.code !== 'invalid') throw e; }
+      }
+      return { ...w, ...(type === 'wake' ? { canVouch, canAskVouch } : {}) };
     },
     inScope: (r, agent, now) => (!agent || r.agent === agent) && (type === 'schedule' || active(r as unknown as Wake) || Number(r.changedAt) + day > now),
     expires: r => type === 'wake' && !active(r as unknown as Wake) ? Number(r.changedAt) + day : undefined,
