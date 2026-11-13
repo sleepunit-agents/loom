@@ -8,7 +8,7 @@ export function runtimeImportTables(source: ReturnType<typeof readRuntimeImport>
   // Historical signatures and owner attestations cannot be reissued by an importer.
   // Until source provenance is reconciled, old conversations fail closed.
   tables.runtime_provenance = source.expected.binding.map(binding=>({conversation:binding.id,record:JSON.stringify({agent:binding.agent,history:{owners:[],people:[],owner:false,unknown:true},queue:[]})}));
-  tables.runtime_import_meta = [{key:'source-checksum',value:source.checksum},{key:'source-options',value:source.options}];
+  tables.runtime_import_meta = [{key:'source-checksum',value:source.checksum},{key:'source-options',value:source.options},{key:'source-at',value:String(now)}];
   tables.runtime_import_sources = Object.entries(source.files).map(([path,content])=>({path,content}));
   tables.runtime_import_documents = source.documents.map(row=>({collection:row.collection,key:row.key,record:JSON.stringify(row)}));
   tables.runtime_import_revisions = source.revisions.map(row=>({id:row.id,record:JSON.stringify(row)}));

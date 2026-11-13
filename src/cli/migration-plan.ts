@@ -193,8 +193,9 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const runtimePaths = [
     ...['home/commons/stores/runtime.db'].filter(p=>files.has(p)),
     ...(['runtime','runtime-data'] as const).filter(root=>manifest.runtimeRoots?.includes(root)||[...files].some(p=>p.startsWith(root+'/'))),
+    ...commsPaths.filter(p=>basename(p)==='household.db'),
   ];
-  if(runtimePaths.length) {
+  if(runtimePaths.some(p=>basename(p)!=='household.db')) {
     if(!manifest.runtimeRoots?.includes('runtime')||!manifest.runtimeRoots.includes('runtime-data'))throw Error('Runtime snapshot requires explicit --runtime and --runtime-data roots');
     const inventory=readRuntimeInventory(runtimeMigrationSources(runtimePaths.map(path)),openSnapshotSqlite);
     const state=inventory.state??{};

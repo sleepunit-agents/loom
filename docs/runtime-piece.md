@@ -894,7 +894,7 @@ t-2209. Late reports cannot turn a written-off terminal job back into live work.
 
 `loom migrate runtime --home <stopped-new-home> --from <completed-snapshot>
 --mapping <runtime-mapping.json>` imports Runtime after Household. It uses the
-same registered importer as `loom migrate all`; `loom migrate verify` independently
+same registered importer as `loom migrate all`; for a standalone import, use `loom migrate verify --snapshot <snapshot> --home <home> --runtime-mapping <runtime-mapping.json>`. All-imported homes use the usual saved plan. Verification independently
 projects source rows and compares every destination column, count and id, including
 the private archive. Verification never executes the importer or trusts its no-op
 receipt. Generic import does not discover live paths or run old piece programs.
@@ -914,7 +914,7 @@ maps. Every source id must appear exactly once, with no extra keys. Initial null
 are unresolved and prevent import. Each box maps to an existing household member;
 an explicit old owner must match. Each job/conversation maps to `{member?,project?}`;
 `{}` is a deliberate agent-and-owner audience, while a member makes it private.
-Old Comms (`loom`) conversations require a member. Unknown agents/members/projects
+Old Comms (`loom`) conversations require their exact member/agent/place from the owning copied `household.db`; an arbitrary household member is refused. Unknown agents/members/projects
 refuse. The fresh all-imported Household has no projects; project scopes require
 an explicitly configured destination project and are unavailable in fresh-all
 verification. Do not widen a private audience merely to make an import pass.
@@ -927,7 +927,7 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 | `gates/<agent>`, `gate-proposals/*`, `policy/<agent>` | Complete private archive; later gate/policy/proposal operations must adopt their exact records before external delivery can be called usable |
 | `grants/household` | Complete private archive; legacy per-piece path grants are retired, never reissued as central authority |
 | `LOOM_BOX_HOME/state.json` boxes | `runtime_boxes`: explicit owner, names, hosting/lending, facts/labels, watch/report-only, original timestamps/revocation |
-| `primaries`, `agents` house settings | Ordered box preferences and house/grant references in `runtime_settings`; complete old settings remain archived |
+| `primaries`, `agents` house settings | Ordered box preferences in `runtime_settings`; complete old house configuration and grants remain archived together until explicit reconciliation |
 | `houses` | Same ids and explicit audiences in `runtime_jobs`; terminal states preserved, active/wanted/stopping work becomes uncertain |
 | `services`, `serviceState`, `remotes`, `builds`, `logins` workflow metadata | Exact state archive; lifecycle/enrollment operations must reconcile these before execution |
 | `models`, `modelChoices`, `quotaHolds`, `accountSalt`, box account/usage reports | Exact state archive; account/model operations and migration into their eventual records remain part of the full rebuild |

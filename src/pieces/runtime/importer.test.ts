@@ -8,6 +8,8 @@ import { openSnapshotSqlite } from '../../cli/migration-sqlite.js';
 import { readRuntimeImport, readRuntimeInventory } from './import-source.js';
 import { compareRuntimeImport, importRuntime } from './importer.js';
 import { runtimeImportTables } from './import-projection.js';
+import { migrate } from '../../core/index.js';
+import { schema } from './schema/001.js';
 
 const cleanups: (()=>void)[] = [];
 afterEach(()=>{for(const close of cleanups.splice(0).reverse())close();});
@@ -15,10 +17,10 @@ const at = '2026-11-13T00:00:00.000Z', cv = 'cv-123456abcdef';
 const identities = {agents:['art'],members:['jonathan','guest'],projects:['pond']};
 function fixture() {
   const root = mkdtempSync(join(tmpdir(),'runtime-import-')); cleanups.push(()=>rmSync(root,{recursive:true,force:true}));
-  const sources = {store:join(root,'runtime.db'),state:join(root,'state'),data:join(root,'data')};
+  const sources = {store:join(root,'runtime.db'),state:join(root,'state'),data:join(root,'data'),household:join(root,'household.db')};
   mkdirSync(sources.state); mkdirSync(join(sources.data,'delivery','conversations'),{recursive:true});
   mkdirSync(join(sources.data,'delivery','slots'));
-  const state = {v:1,boxes:{local:{local:true,created:at},r1:{name:'Remote',owner:'jonathan',mayHost:['art'],lentTo:['guest'],facts:['os:linux'],labels:['gpu:yes'],created:at,lastSeen:at,alwaysOn:true}},
+  const state = {v:1,boxes:{local:{local:true,created:at},r1:{name:'Remote',owner:'jonathan',mayHost:['art'],lentTo:['art'],facts:['os:linux'],labels:['gpu:yes'],created:at,lastSeen:at,alwaysOn:true}},
     primaries:{art:['r1','local']},agents:{art:{repo:'https://example.com/art',houseFile:'house/house.json',nested:true,secrets:{KEY:'stored-key'},scopes:{KEY:'owner'},scopeStores:{KEY:'stored-key'}}},
     houses:{'h-1':{id:'h-1',agent:'art',box:'r1',state:'running',created:at,task:'PRIVATE INPUT',tokenLabel:'OLD-CREDENTIAL'},'h-2':{id:'h-2',agent:'art',box:'r1',state:'done',created:at,exit:0,log:'PRIVATE OUTPUT'}},
     services:{'art/bridge':{want:'up'}},quotaHolds:{account:{until:2}},seq:12,accountSalt:'original-salt',futureField:{preserve:true}};
@@ -26,6 +28,8 @@ function fixture() {
   writeFileSync(join(sources.data,'delivery','conversations',`${cv}.json`),JSON.stringify({conversation:cv,agent:'art',venue:'loom',place:'thread',run:'old-run',key:'OLD-RUN-KEY',actsFor:{owner:true},msgs:[{text:'PRIVATE WORDS'}]}));
   writeFileSync(join(sources.data,'delivery','slots',`${cv}.age`),Buffer.from([0,255,1,2]));
   writeFileSync(join(sources.data,'future.bin'),Buffer.from([3,0,255]));
+  const comms=new Database(sources.household);comms.exec('CREATE TABLE comms_threads(id TEXT,conversation TEXT,agent TEXT,member TEXT,project TEXT)');
+  comms.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('thread',cv,'art','jonathan',null);comms.close();
   const old = new Database(sources.store);
   old.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT,PRIMARY KEY(collection,key)); CREATE TABLE revisions(id INTEGER PRIMARY KEY,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
   for (const collection of ['gates','gate-proposals','grants','policy','future-collection']) {
@@ -55,6 +59,7 @@ it('imports exact source bytes, every document and revision, scoped metadata and
   expect(f.run()).toMatchObject({ok:true,imported:false});
   expect(readFileSync(f.sources.store).equals(before)).toBe(true);
   expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_inputs').get()).toEqual({n:0});
+  expect(f.app.db.prepare('SELECT record FROM runtime_settings').get()).toEqual({record:JSON.stringify({id:'art',agent:'art',boxes:['r1','local']})});
 });
 it('rolls back schema, archive, metadata and receipt together after an interruption, then resumes once',()=>{
   const f=fixture();expect(()=>f.run({interrupt:()=>{throw Error('power loss');}})).toThrow('power loss');
@@ -74,6 +79,7 @@ it('refuses missing/extra/null mappings, unknown identities and private conversa
   (f.options.jobs as Record<string,unknown>)['h-2']=null;expect(f.read).toThrow('audience mapping required');
   f.options.jobs['h-2']={}; f.options.conversations[cv]={} as typeof f.options.conversations[typeof cv];expect(f.read).toThrow('requires a member');
   f.options.conversations[cv]={member:'stranger'};expect(f.read).toThrow('Unknown runtime audience member');
+  f.options.conversations[cv]={member:'guest'};expect(f.read).toThrow('owning Comms source');
   f.options.conversations[cv]={member:'jonathan'}; f.options.boxes.r1='guest';expect(f.read).toThrow('owner differs from source');
 });
 it('refuses links, unknown database tables and mutation between the two source reads',()=>{
@@ -81,4 +87,22 @@ it('refuses links, unknown database tables and mutation between the two source r
   expect(()=>readRuntimeImport(f.sources,f.options,identities,openSnapshotSqlite,{afterSnapshot:()=>{f.state.seq++;f.save();}})).toThrow('changed during import');
   symlinkSync('future.bin',join(f.sources.data,'link'));expect(()=>readRuntimeInventory(f.sources,openSnapshotSqlite)).toThrow('symlink');rmSync(join(f.sources.data,'link'));
   const old=new Database(f.sources.store);old.exec('CREATE TABLE new_records(id TEXT)');old.close();expect(f.read).toThrow('Unknown runtime store tables');
+});
+it('ports an old written-off source without manufacturing a new approval and refuses direct login files',()=>{
+  const f=fixture();(f.state.houses['h-1'] as unknown as Record<string,unknown>).writtenOff={at,box:'r1'};
+  f.state.houses['h-1'].state='lost';f.save();f.run();
+  expect(JSON.parse((f.app.db.prepare("SELECT record FROM runtime_jobs WHERE id='h-1'").get() as {record:string}).record)).toMatchObject({state:'lost',imported:{history:'discard'}});
+  mkdirSync(join(f.sources.data,'logins'));writeFileSync(join(f.sources.data,'logins','auth.json'),'FIXTURE');expect(f.read).toThrow('login values');
+});
+it('refuses unowned occupied Runtime storage without changing existing rows or leaving an import receipt',()=>{
+  const f=fixture();migrate(f.app.db,'runtime',schema);
+  f.app.db.prepare('INSERT INTO runtime_import_sources VALUES (?,?)').run('occupied','private');
+  expect(()=>f.run()).toThrow('destination must be empty');
+  expect(f.app.db.prepare('SELECT * FROM runtime_import_sources').all()).toEqual([{path:'occupied',content:'private'}]);
+  expect(f.app.db.prepare('SELECT * FROM runtime_import_meta').all()).toEqual([]);
+});
+it('refuses unknown host/loan agents and duplicate preferences',()=>{
+  const f=fixture();f.state.boxes.r1.mayHost=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
+  f.state.boxes.r1.mayHost=['art'];f.state.boxes.r1.lentTo=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
+  f.state.boxes.r1.lentTo=['art'];f.state.primaries.art=['r1','r1'];f.save();expect(f.read).toThrow('Duplicate runtime preference');
 });

@@ -15,7 +15,7 @@ export const runtimeImportOptions = z.object({
   conversations: z.record(identity, audience.nullable()),
 }).strict();
 export type RuntimeImportOptions = z.infer<typeof runtimeImportOptions>;
-export interface RuntimeImportSources { store?: string; state?: string; data?: string }
+export interface RuntimeImportSources { store?: string; state?: string; data?: string; household?: string }
 export interface RuntimeImportIdentities { agents: readonly string[]; members: readonly string[]; projects: readonly string[] }
 type Row = Record<string, unknown>;
 const object = (value: unknown): Row => {
@@ -58,6 +58,10 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
   }
   if (sources.state) walk(sources.state,'state',true);
   if (sources.data) walk(sources.data,'data',true);
+  if(sources.household) {
+    if(!lstatSync(sources.household).isFile())throw Error('Runtime Comms source must be a regular file');
+    walk(sources.household,'comms-household.db',false);
+  }
   const json = (key: string): unknown => JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(files[key],'base64')));
   const state = files['state/state.json'] === undefined ? undefined : object(json('state/state.json'));
   if (sources.state && !state) throw Error('Runtime state.json required');
@@ -68,6 +72,12 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
     return value;
   });
   let documents: Row[] = [], revisions: Row[] = [];
+  let privateThreads:Row[]=[];
+  if(sources.household) {
+    const db=open(sources.household);
+    try{privateThreads=db.prepare('SELECT id,conversation,agent,member,project FROM comms_threads ORDER BY id').all() as Row[];}
+    finally{db.close();}
+  }
   if (sources.store) {
     const db = open(sources.store);
     try {
@@ -82,8 +92,8 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
       }
     } finally { db.close(); }
   }
-  const source = canonicalRuntimeSource({roots:Object.keys(sources).filter(key=>sources[key as keyof RuntimeImportSources]!==undefined).sort(),files,documents,revisions});
-  return {files,state,conversations,documents,revisions,source,checksum:createHash('sha256').update(source).digest('hex')};
+  const source = canonicalRuntimeSource({roots:Object.keys(sources).filter(key=>sources[key as keyof RuntimeImportSources]!==undefined).sort(),files,documents,revisions,privateThreads});
+  return {files,state,conversations,documents,revisions,privateThreads,source,checksum:createHash('sha256').update(source).digest('hex')};
 }
 
 /** Explicit mappings prevent guessing a job's audience from prose or old bearer keys. */
@@ -109,19 +119,22 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     if (!owner || !identities.members.includes(owner)) throw Error('Runtime box owner mapping required');
     // Existing ownership may not be silently rewritten by the migration map.
     if (b.owner !== undefined && b.owner !== owner) throw Error('Runtime box owner differs from source');
+    if(b.mayHost!==undefined&&b.mayHost!=='*')for(const agent of z.array(identity).parse(b.mayHost))knownAgent(agent);
+    for(const agent of z.array(identity).parse(b.lentTo??[]))knownAgent(agent);
     if(b.local&&b.reportOnly)throw Error('Local runtime box cannot be report-only');
     expected.box.push(records.box.parse({id,name:b.name??id,owner,local:b.local??false,mayHost:b.mayHost??'*',lentTo:b.lentTo??[],facts:b.facts??[],labels:b.labels??[],alwaysOn:b.local?true:b.alwaysOn??false,reportOnly:b.reportOnly??false,createdAt:stamp(b.created),...(b.lastSeen ? {lastSeen:stamp(b.lastSeen)}:{}),...(b.revoked ? {revokedAt:stamp(b.revoked)}:{})}));
   }
   if (expected.box.filter(b=>b.local).length > 1) throw Error('Multiple runtime local boxes');
   const settingsAgents = [...new Set([...Object.keys(agents),...Object.keys(primaries)])].sort();
   for (const id of settingsAgents) {
-    knownAgent(id); const a = map(agents[id]);
+    knownAgent(id);
     const preferences = primaries[id] === undefined ? [] : Array.isArray(primaries[id]) ? primaries[id] : [primaries[id]];
     if ((preferences as unknown[]).some(box=>typeof box !== 'string' || !Object.hasOwn(boxes,box))) throw Error('Unknown runtime preference box');
     const prefs = preferences as string[];
-    const house = a.repo === undefined ? {} : {house:{repo:a.repo,houseFile:a.houseFile??'house/house.json',...(a.branch ? {branch:a.branch}:{})},
-      grants:{nested:a.nested??false,gpu:a.gpu??false,...(a.repoSecret?{repoSecret:a.repoSecret}:{}),secrets:a.secrets??{},ports:a.ports??[],tailnets:a.tailnets??[],...(a.logins!==undefined?{logins:a.logins}:{}),scopes:a.scopes??{},steers:a.steers??{},scopeStores:a.scopeStores??{}}};
-    expected.settings.push(records.settings.parse({id,agent:id,boxes:prefs,...house}));
+    if(new Set(prefs).size!==prefs.length)throw Error('Duplicate runtime preference box');
+    // House configuration and its capabilities remain archived together: dropping
+    // restrictions while enabling a house would widen the old login/secret policy.
+    expected.settings.push(records.settings.parse({id,agent:id,boxes:prefs}));
   }
   const terminal = new Set(['done','failed','stopped','lost']);
   for (const [id,raw] of Object.entries(houses)) {
@@ -134,6 +147,11 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
   for (const c of inventory.conversations) {
     const id = text(c.conversation), audience = scope(options.conversations[id]);
     if (c.venue === 'loom' && !audience.member) throw Error('Private Comms conversation requires a member');
+    if(c.venue==='loom') {
+      const threads=inventory.privateThreads.filter(t=>t.conversation===id);
+      if(threads.length!==1 || threads[0].id!==c.place || threads[0].agent!==c.agent || threads[0].member!==audience.member
+        || (audience.project!==undefined&&threads[0].project!==audience.project))throw Error('Runtime private audience must match the owning Comms source');
+    }
     // Old run/body/home pointers and signed attestations are retained only in the archive.
     expected.binding.push(records.binding.parse({id,agent:knownAgent(c.agent),...audience,venue:c.venue,place:c.place}));
   }

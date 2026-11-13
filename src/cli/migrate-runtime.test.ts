@@ -7,7 +7,8 @@ import { afterEach, expect, it } from 'vitest';
 import { createSnapshot, inventorySnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
-import { verifyMigration } from './migration-verify.js';
+import { verifyMigration, verifyRuntimeMigration } from './migration-verify.js';
+import { SharingDatabase } from '../core/household/sharing.js';
 import { run } from './migrate.js';
 import { createFoundation } from '../core/app.js';
 import { importHousehold } from './household-importer.js';
@@ -72,7 +73,21 @@ it('refuses omission of a discovered root and supports the standalone CLI with p
   const args=['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping];
   expect(await run(args,io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({ok:true,imported:true});expect(stdout).not.toMatch(/PRIVATE|private|jonathan/);expect(stderr).toBe('');
   stdout='';expect(await run(args,io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({imported:false});
+  const before=bytes(f.home);expect(await verifyRuntimeMigration(f.snapshot,f.home,f.options)).toMatchObject({status:'verified'});expect(bytes(f.home)).toEqual(before);
+  stdout='';expect(await run(['verify','--snapshot',f.snapshot,'--home',f.home,'--runtime-mapping',mapping],io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({status:'verified',pieces:['runtime']});
+  const db=new Database(join(f.home,'loom.db'));db.prepare("UPDATE runtime_import_documents SET record=json_set(record,'$.by','changed')").run();db.close();
+  expect(await verifyRuntimeMigration(f.snapshot,f.home,f.options)).toMatchObject({status:'different',differences:[{piece:'runtime',table:'runtime_import_documents'}]});
   expect(await run(['runtime'],io)).toBe(2);
+});
+it('standalone import and independent verification accept an explicitly configured destination project',async()=>{
+  const f=await fixture();
+  const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);
+  app.db.transaction(()=>new SharingDatabase(app.db,f.home).create({slug:'pond',name:'Pond',repositories:[],members:['jonathan'],agents:['art']}))();app.close();
+  const options={...f.options,jobs:{'h-1':{member:'jonathan',project:'pond'}}};
+  const mapping=join(f.root,'project-map.json');writeFileSync(mapping,JSON.stringify(options));
+  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
+  expect(await run(['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
+  expect(await verifyRuntimeMigration(f.snapshot,f.home,options)).toMatchObject({status:'verified'});
 });
 it('never probes omitted runtime defaults and refuses supplied empty roots',async()=>{
   const f=await fixture(),target=join(f.root,'inventory-only');

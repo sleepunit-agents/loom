@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createFoundation } from '../core/app.js';
 import { HouseholdDatabase } from '../core/household/document.js';
+import { SharingDatabase } from '../core/household/sharing.js';
 import { parseHouseholdDocument } from '../household.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { readRuntimeImport } from '../pieces/runtime/import-source.js';
 import { canonicalPlanValue, prepareMigrationPlan } from './migration-plan.js';
 import { separateDestination } from './migration-all.js';
 import { createMigrationRegistry, snapshotPath } from './migration-registry.js';
-import { runtimeMigrationSources } from './migration-runtime.js';
+import { runtimeMigrationSources, assertRuntimeCheckpointed } from './migration-runtime.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import type { IOStreams } from './io.js';
 const usage='usage: loom migrate runtime --home <stopped-new-home> --from <completed-snapshot> --mapping <runtime-mapping.json>\n';
@@ -27,10 +28,16 @@ export async function migrateRuntime(argv:string[],io:IOStreams):Promise<number>
     const context={snapshot:{root:prepared.root,manifest:prepared.manifest}};
     const sourceHome=snapshotPath(context,'home');
     const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
-    const identities={agents:h.agents,members:h.members.map(m=>m.person),projects:[]};
-    readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>snapshotPath(context,p))),input.options,identities,openSnapshotSqlite);
     separateDestination(prepared.root,args.values.home,prepared.plan);
     release=acquireHttpLock(args.values.home);
+    const path=join(args.values.home,'loom.db');assertRuntimeCheckpointed(path);
+    const destination=openSnapshotSqlite(path);
+    try {
+      const current=new HouseholdDatabase(destination).household(args.values.home);
+      if(!current||canonicalPlanValue({agents:current.agents,members:current.members})!==canonicalPlanValue({agents:h.agents,members:h.members}))throw Error('Destination household differs from snapshot');
+      const identities={agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(destination,args.values.home).projectIds()};
+      readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>snapshotPath(context,p))),input.options,identities,openSnapshotSqlite);
+    } finally {destination.close();}
     const app=createFoundation({home:args.values.home});
     try {
       const current=new HouseholdDatabase(app.db).household(args.values.home);
