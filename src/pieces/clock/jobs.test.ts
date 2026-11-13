@@ -32,6 +32,36 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 // Drain the known dispatch promise chain, without wall-clock sleeps.
 const settled = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('durable daemon clock', () => {
+  it('creates an owner wake now without a lane, preserving attribution and bypassing pause', async () => {
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'now-body' } as const));
+    const app = await loom({ runtime: { startBody } });
+    app.value('pause', { agent: 'art' });
+    const future = app.set();
+    const w = app.value('now', { agent: 'art' });
+    expect(w).toMatchObject({ agent: 'art', by: owner, due: app.clock.now(), state: 'pending', bypassPause: true, note: 'woken now from loom' });
+    expect(w.prompt).toBe("Woken now: jonathan asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.");
+    expect(w.file).toBeUndefined(); expect(w.schedule).toBeUndefined();
+    expect(wake(app.db, future.id)?.due).toBe(app.clock.now() + 60_000);
+    app.clock.advance(0); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'fired', outcome: 'now-body' });
+    expect(startBody).toHaveBeenCalledTimes(1);
+    expect(startBody.mock.calls[0]).toEqual([{ wake: expect.objectContaining({ id: w.id, by: owner }), viewer: owner, intent: expect.any(String) }]);
+    expect(app.value('now', { agent: 'art', note: 'look into the queue' }).note).toBe('look into the queue');
+  });
+  it('refuses unauthorized or ambiguous fresh wake-now calls without creating work', async () => {
+    const access = structuredClone(sharing);
+    access.members.helper = { owner: false, agents: ['art'] };
+    access.members.otherOwner = { owner: true, agents: [] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    for (const viewer of [{ kind: 'agent', id: 'art' }, { kind: 'member', id: 'helper' }, { kind: 'member', id: 'otherOwner' },
+      { kind: 'member', id: 'unknown' }, { kind: 'runner', id: 'art' }, { kind: 'service', id: 'art' }] as Viewer[])
+      expect(app.call('now', { agent: 'art' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.call('now', { agent: 'unknown' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.call('now', { id: 'w-missing', agent: 'art' }).ok).toBe(false);
+    expect(wakes(app.db)).toEqual([]);
+    const w = app.value('now', { agent: 'art' }); app.clock.advance(0); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: 'staging' });
+  });
   it('fires an overdue wake once after downtime and records intent before runtime', async () => {
     const dir = home(), clock = new FakeClock(), started = vi.fn(async ({ wake: w }: { wake: Wake }) => {
       expect(wake(second.db, w.id)?.state).toBe('firing');

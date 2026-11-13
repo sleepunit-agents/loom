@@ -75,7 +75,12 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
   });
-  register('now', idInput, true, (v, i) => !!wake(db, i.id) && act(v, get(i.id), true), (ctx, i) => {
+  const nowInput = z.union([idInput.strict(), z.object({ agent: text, note: z.string().max(100_000).optional() }).strict()]);
+  register('now', nowInput, true, (v, i) => 'id' in i
+    ? !!wake(db, i.id) && act(v, get(i.id), true)
+    : act(v, { agent: i.agent, note: '' }, true) && create(v, { agent: i.agent, note: '' }), (ctx, i) => {
+    if (!('id' in i)) return make(ctx, { agent: i.agent, note: i.note || 'woken now from loom',
+      prompt: `Woken now: ${ctx.viewer.id} asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.` }, ctx.now, { bypassPause: true });
     const w = get(i.id); if (w.state === 'firing' || w.state === 'fired' || w.state === 'cancelled') invalid('Wake already dispatched or cancelled');
     if (w.hold === 'uncertain') invalid('Uncertain dispatch needs reconciliation before another body can start');
     w.state = 'pending'; w.due = ctx.now; w.bypassPause = true; delete w.hold; saveWake(ctx, w); return w;

@@ -56,7 +56,7 @@ already available. The final PR must replace this sentence with its parity evide
 | `wake list` | `clock.list`; same records as live `wake` |
 | `wake log --since --grep` | `clock.log`; clock event rows |
 | `wake cancel` | `clock.cancel`; skip one schedule occurrence and arm its next |
-| `wake now` | `clock.now`; owner fire-now, including while paused |
+| `wake now` | `clock.now {agent,note?}` creates a fresh owner wake; `{id}` fires an existing wake, including while paused |
 | `wake fire` (internal) | daemon due-job dispatch; durable intent before `runtime.startBody` |
 | `wake rearm` | `clock.rearm`; rebuild in-process deadlines from rows |
 | `wake run`, `keep_armed` (service) | daemon clock lifecycle; no child service or systemd |
@@ -188,3 +188,21 @@ assignee agent itself. Member-created work and parked approvals remain intact;
 this deliberately narrows the legacy local clock's broad same-file replacement,
 because a matching path alone does not establish that a member's work was a
 self-chain. Members can explicitly cancel that work through the normal operation.
+
+## Wake now without an existing wake
+
+`clock.now {agent,note?}` preserves the old page/command's fresh one-off behavior:
+it uses the legacy no-lane prompt, names the authenticated caller, defaults the
+note to `woken now from loom`, is due immediately and bypasses pause. Household
+authority and target create/give-work policy are both required. Attribution is
+the caller's Viewer; user-supplied identity or prompt fields are refused. The
+runtime still applies its staging hold and owns model selection when omitted.
+This owner action retains the old exemption from the ordinary one-off quota.
+
+`clock.now {id}` remains the existing-wake action, including its refusal to repeat
+uncertain work. Mixed `{id,agent}` inputs are refused. Job fixtures cover fresh
+creation, exact prompt/default and custom notes, original future work remaining
+intact, paused dispatch, runtime attribution, staging, denied actors and targets,
+and ambiguous input leaving no rows. The permission addition joins the outstanding
+core operations cold review before merge; the completed importer and lane reviews
+do not cover it.
