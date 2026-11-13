@@ -23,6 +23,30 @@ function work(r: Row, agent: string): Work {
  * A stable byte snapshot is checked twice; the legacy writer must be stopped too.
  */
 export function importClock(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSnapshot?: () => void } = {}) {
+  const { expectedWakes, expectedSchedules, pauses, source, checksum } = readClockImport(from, now, options);
+  return db.transaction(() => {
+    migrate(db, 'clock', schema);
+    const old = db.prepare("SELECT value FROM clock_meta WHERE key='source-checksum'").get() as { value: string } | undefined;
+    if (old) { if (old.value !== checksum) throw new Error('A different clock source was already imported'); return { ok: true, imported: false, checksum, wakes: expectedWakes.length, schedules: expectedSchedules.length }; }
+    for (const table of ['clock_wakes','clock_schedules','clock_pauses','clock_events','clock_meta']) if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) throw new Error('Clock destination must be empty before import');
+    for (const w of expectedWakes) db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(w.id, JSON.stringify(w), now);
+    for (const s of expectedSchedules) db.prepare('INSERT INTO clock_schedules VALUES (?,?,?)').run(s.id, JSON.stringify(s), now);
+    for (const p of pauses) db.prepare('INSERT INTO clock_pauses VALUES (?,?)').run(p.agent, p.since);
+    // Base64-encoded source bytes retain logs, lanes, filed approvals and opaque runtime data.
+    // They are archival data only, never dispatch credentials or executable inputs.
+    db.prepare("INSERT INTO clock_meta VALUES ('legacy-snapshot',?)").run(source);
+    options.interrupt?.();
+    const wakeIds = (db.prepare('SELECT id FROM clock_wakes ORDER BY id').all() as { id: string }[]).map(r => r.id);
+    const scheduleIds = (db.prepare('SELECT id FROM clock_schedules ORDER BY id').all() as { id: string }[]).map(r => r.id);
+    const actualPauses = db.prepare('SELECT agent,since FROM clock_pauses ORDER BY agent').all();
+    if (canonical(wakeIds) !== canonical(expectedWakes.map(w => w.id)) || canonical(scheduleIds) !== canonical(expectedSchedules.map(s => s.id)) || canonical(wakes(db)) !== canonical(expectedWakes) || canonical(schedules(db)) !== canonical(expectedSchedules) || canonical(actualPauses) !== canonical(pauses)) throw new Error('Clock import comparison failed: ids, counts or content differ');
+    db.prepare("INSERT INTO clock_meta VALUES ('source-checksum',?)").run(checksum);
+    return { ok: true, imported: true, checksum, wakes: expectedWakes.length, schedules: expectedSchedules.length };
+  })();
+}
+
+/** Pure source projection; never opens or writes the destination. */
+export function readClockImport(from: string, now: number, options: { afterSnapshot?: () => void } = {}) {
   const snapshot = () => {
     if (!lstatSync(from).isDirectory() || lstatSync(from).isSymbolicLink()) throw new Error('Clock source must be a directory');
     const files: Record<string, string> = {};
@@ -71,23 +95,5 @@ export function importClock(db: Db, from: string, now: number, options: { interr
   expectedWakes.sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0); expectedSchedules.sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   if (canonical(snapshot()) !== canonical(files)) throw new Error('Clock source changed during snapshot; stop its writer');
   const source = canonical(files), checksum = createHash('sha256').update(source).digest('hex');
-  return db.transaction(() => {
-    migrate(db, 'clock', schema);
-    const old = db.prepare("SELECT value FROM clock_meta WHERE key='source-checksum'").get() as { value: string } | undefined;
-    if (old) { if (old.value !== checksum) throw new Error('A different clock source was already imported'); return { ok: true, imported: false, checksum, wakes: expectedWakes.length, schedules: expectedSchedules.length }; }
-    for (const table of ['clock_wakes','clock_schedules','clock_pauses','clock_events','clock_meta']) if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) throw new Error('Clock destination must be empty before import');
-    for (const w of expectedWakes) db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(w.id, JSON.stringify(w), now);
-    for (const s of expectedSchedules) db.prepare('INSERT INTO clock_schedules VALUES (?,?,?)').run(s.id, JSON.stringify(s), now);
-    for (const p of pauses) db.prepare('INSERT INTO clock_pauses VALUES (?,?)').run(p.agent, p.since);
-    // Base64-encoded source bytes retain logs, lanes, filed approvals and opaque runtime data.
-    // They are archival data only, never dispatch credentials or executable inputs.
-    db.prepare("INSERT INTO clock_meta VALUES ('legacy-snapshot',?)").run(source);
-    options.interrupt?.();
-    const wakeIds = (db.prepare('SELECT id FROM clock_wakes ORDER BY id').all() as { id: string }[]).map(r => r.id);
-    const scheduleIds = (db.prepare('SELECT id FROM clock_schedules ORDER BY id').all() as { id: string }[]).map(r => r.id);
-    const actualPauses = db.prepare('SELECT agent,since FROM clock_pauses ORDER BY agent').all();
-    if (canonical(wakeIds) !== canonical(expectedWakes.map(w => w.id)) || canonical(scheduleIds) !== canonical(expectedSchedules.map(s => s.id)) || canonical(wakes(db)) !== canonical(expectedWakes) || canonical(schedules(db)) !== canonical(expectedSchedules) || canonical(actualPauses) !== canonical(pauses)) throw new Error('Clock import comparison failed: ids, counts or content differ');
-    db.prepare("INSERT INTO clock_meta VALUES ('source-checksum',?)").run(checksum);
-    return { ok: true, imported: true, checksum, wakes: expectedWakes.length, schedules: expectedSchedules.length };
-  })();
+  return { expectedWakes, expectedSchedules, pauses, source, checksum };
 }

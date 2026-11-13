@@ -30,7 +30,7 @@ function ancestors(path: string): string[] {
   }
 }
 /** Refuse inode aliases as well as canonical ancestry before even the lock DB opens. */
-function separateDestination(root: string, home: string, plan: MigrationPlan): string[] {
+export function separateDestination(root: string, home: string, plan: MigrationPlan): string[] {
   // Check lexical components too: realpath alone hides non-overlapping symlink aliases.
   for (const component of ancestors(resolve(home))) if (lstatSync(component).isSymbolicLink()) throw Error('Symlink destination');
   const source = canonical(root), target = canonical(home);
@@ -58,7 +58,7 @@ function separateDestination(root: string, home: string, plan: MigrationPlan): s
   if (linked.length !== 2 || !linked.includes(key) || !temp || inode(temp) !== inode(key) || lstatSync(key).nlink !== 2 || !readFileSync(key).equals(readFileSync(join(source,'home/ui-cookie.key'))) || !readReceipt(target,plan)) throw Error('Hard-linked destination');
   return [temp];
 }
-function readReceipt(home: string, plan: MigrationPlan): Receipt | undefined {
+export function readReceipt(home: string, plan: MigrationPlan): Receipt | undefined {
   const path = join(home, receiptName);
   if (!existsSync(path)) {
     // A killed lock acquisition or first receipt publication can leave only these files.
