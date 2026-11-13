@@ -27,8 +27,9 @@ async function setup(installed = true) {
     if (fail) throw new Error('central revocation failed');
   });
   const credentials: RuntimeCredentials = { revokeBox: revoke };
-  const app = await startLoom({ home, clock, next: true, sharing: fixtureSharing, install(app) {
-    installRuntime(app.db, app.operations, app.live, fixtureSharing, { credentials: installed ? credentials : undefined });
+  const sharing = () => ({ ...fixtureSharing(), services: { keyholder: { types: ['runtime.box'], operations: ['runtime.revokeBox'] } } });
+  const app = await startLoom({ home, clock, next: true, sharing, install(app) {
+    installRuntime(app.db, app.operations, app.live, sharing, { credentials: installed ? credentials : undefined });
     app.db.exec('CREATE TABLE fake_credentials (id TEXT PRIMARY KEY, target TEXT, revoked INTEGER)');
   } });
   cleanups.push(app.close);
@@ -121,4 +122,17 @@ it('replays the same acknowledgement without revoking again or notifying, and re
   expect(call()).toMatchObject({ ok: false, code: 'not-found' });
   expect(revoke).toHaveBeenCalledOnce();
   expect(changed).not.toHaveBeenCalled();
+});
+
+it('accepts absent and previously revoked credentials and still commits the remaining revocation', async () => {
+  const { app, store, call, tokens } = await setup();
+  app.db.prepare('DELETE FROM fake_credentials WHERE target=?').run('queued');
+  app.db.prepare('UPDATE fake_credentials SET revoked=2 WHERE target=?').run('running');
+  app.db.prepare('DELETE FROM fake_credentials WHERE id=?').run('token-0');
+  expect(call()).toEqual({ ok: true, value: { box: 'r1', revoked: true } });
+  expect(store.read('box', 'r1')?.revokedAt).toBeDefined();
+  expect(store.read('job', 'queued')?.state).toBe('lost');
+  expect(store.read('job', 'running')?.state).toBe('lost');
+  expect(store.read('settings', 'art')?.boxes).toEqual(['r2', 'local']);
+  for (const token of tokens()) expect(token.revoked === null).toBe(['r2', 'other'].includes(token.target));
 });
