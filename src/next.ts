@@ -14,6 +14,7 @@ import type { Authentication } from './core/live/index.js';
 import { maySee } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
+import { clockVouchApplication } from './pieces/clock/role.js';
 import { installClock } from './pieces/clock/index.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
@@ -85,6 +86,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
+    applications: { clock: clockVouchApplication(app.operations) },
     projects: () => {
       try {
         const store = new SharingDatabase(app.db, options.home);

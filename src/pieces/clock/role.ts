@@ -11,3 +11,15 @@ export function clockRole(operations: Pick<Operations, 'call'>): Clock {
     jobs: (viewer, input) => operations.call('direct', viewer, 'clock.jobs', input),
   };
 }
+
+/** Trusted composition role, called only by Approvals during its owner-answer
+ * transaction on this same foundation. Approvals owns validation and spending
+ * the receipt; Clock rechecks current owner and target policy and adopts rows.
+ */
+export function clockVouchApplication(operations: Pick<Operations, 'call'>): import('../approvals/role.js').ApprovalApplication {
+  return { apply(approval, by) {
+    if (approval.kind !== 'vouch-wake' || approval.state !== 'allowed' || approval.by !== by)
+      return { ok: false, code: 'invalid', message: 'Expected the current owner Allow for wake vouching' };
+    return operations.call('direct', { kind: 'member', id: by }, 'clock.vouch', { target: approval.target }, `clock-vouch:${approval.id}`);
+  } };
+}
