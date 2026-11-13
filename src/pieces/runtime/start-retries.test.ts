@@ -7,6 +7,8 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock,type Viewer } from '../../core/index.js';
 import { fixture,fixtureSharing } from '../../fixture.js';
 import { signin,hash } from '../../core/signin/index.js';
+import { canHost } from './boxes.js';
+import { placeBody } from './placement.js';
 import { runtimeStore } from './store.js';
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();vi.restoreAllMocks();});
@@ -82,7 +84,8 @@ it('rolls finish scheduling and replacement creation back with later transaction
  expect(await f.post('finishJob',{job:root,state:'failed',startFailure:'not-started'},'failed-finish')).toMatchObject({ok:true});
  f.app.db.exec("CREATE TRIGGER fail_attempt BEFORE UPDATE ON runtime_start_attempts BEGIN SELECT RAISE(ABORT,'abort'); END");
  f.clock.advance(60_000);expect(f.store.ids('job')).toEqual([root]);expect(f.progress(root).state).toBe('due');f.app.db.exec('DROP TRIGGER fail_attempt');
- f.clock.advance(5000);expect(f.store.ids('job')).toHaveLength(2);expect(f.progress(root).state).toBe('active');
+ f.app.live.changed([{type:'runtime.job',id:'unrelated'}]);f.clock.advance(4999);expect(f.store.ids('job')).toEqual([root]);
+ f.clock.advance(1);expect(f.store.ids('job')).toHaveLength(2);expect(f.progress(root).state).toBe('active');
 });
 it('applies staging independently to each replacement and filters progress through central scope',async()=>{
  const f=await setup(true),root=f.start();await f.fail(root);f.clock.advance(60_000);const job=f.progress(root).current;
@@ -90,4 +93,26 @@ it('applies staging independently to each replacement and filters progress throu
  expect(f.call('startProgress',{job:root},{kind:'agent',id:'mark'})).toMatchObject({ok:false,code:'denied'});
  expect(f.call('startProgress',{job:root},{kind:'service',id:'runtime'})).toMatchObject({ok:false,code:'denied'});
  expect(f.call('startProgress',{job:root},{kind:'agent',id:'art'})).toMatchObject({ok:true});
+});
+
+it.each(['project','give-work'] as const)('rechecks %s independently while placement stays eligible',async(kind)=>{
+ const f=await setup();
+ const r=f.call('startBody',{...f.input,...(kind==='project'?{project:'pond'}:{})},kind==='project'?{kind:'agent',id:'art'}:undefined) as {ok:true;value:{job:string}};
+ expect(r.ok).toBe(true);const root=r.value.job;await f.fail(root);
+ if(kind==='project')f.sharing.projects.pond.agents=[];
+ else f.sharing.members.jonathan.agents=[]; // Still owner; only give-work is lost.
+ expect(canHost(f.store.read('box','a')!,'art',f.sharing)).toBe(true);
+ expect(placeBody(f.store,f.sharing,'art',{},f.clock.now())).toBe('a');
+ f.clock.advance(60_000);expect(f.store.ids('job')).toEqual([root]);
+ expect(JSON.parse((f.app.db.prepare('SELECT record FROM runtime_start_attempts WHERE root=?').get(root) as {record:string}).record).state).toBe('held');
+});
+it('retains explicit placement, project and title after restart and changed preferences',async()=>{
+ const f=await setup();const root=f.start({box:'a',project:'pond',title:'Original title'});await f.fail(root);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...a}=f.store.read('box','a')!;f.store.put('box',{...a,id:'b',name:'B'},f.clock.now());
+  const {changedAt:_s,...settings}=f.store.read('settings','art')!;f.store.put('settings',{...settings,boxes:['b']},f.clock.now());
+ })();await f.restart();f.clock.advance(60_000);const job=f.progress(root).current;
+ expect(job).not.toBe(root);expect(f.store.read('job',job)).toMatchObject({title:'Original title',project:'pond',box:'a',model:'test-model',startRequest:{box:'a'}});
+ expect(await f.post('claimJob',{job})).toMatchObject({ok:true});
+ expect(await f.post('takeInput',{job})).toMatchObject({ok:true,value:{brief:'PRIVATE retry words',model:'test-model'}});
 });

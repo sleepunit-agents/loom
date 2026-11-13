@@ -45,6 +45,7 @@ export function finishStartAttempt(ctx:Context,job:string,notStarted:boolean) {
 /** A restart schedules durable deadlines. No timeout is interpreted as a fence. */
 export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
   const {db,operations,live}=app,store=runtimeStore(db),clock=operations.clock;
+  let backoffUntil=0;
   let closed=false,cancel:(()=>void)|undefined;
   operations.register(operation({name:'runtime.startProgress',input:z.object({job:z.string().min(1).max(200)}).strict(),
     output:z.object({job:z.string(),current:z.string(),attempt:z.number(),state:z.string(),due:z.number().optional()}),
@@ -54,7 +55,6 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
   function tick() {
     if(closed)return;
     const changes:Array<{type:string;id:string}>=[];
-    let failed=false;
     try { db.transaction(()=>{
       for(const {root} of db.prepare('SELECT root FROM runtime_start_attempts').all() as {root:string}[]) {
         const row=read(db,root)!;if(row.state!=='due'||row.due===undefined||row.due>clock.now())continue;
@@ -81,15 +81,15 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
         }
         put(db,root,{...row,current:job,count:row.count+1,state:'active',due:undefined});changes.push({type:'runtime.job',id:root});
       }
-    })();live.changed(changes); }
-    catch { failed=true; /* No partial attempt survives. Back off local storage failures. */ }
-    schedule(failed?clock.now()+5000:undefined);
+    })();backoffUntil=0;live.changed(changes); }
+    catch { backoffUntil=clock.now()+5000; /* No partial attempt survives. Back off local storage failures. */ }
+    schedule();
   }
-  function schedule(after?:number) {
+  function schedule() {
     cancel?.();cancel=undefined;if(closed)return;
     let due:number|undefined;
     for(const {root} of db.prepare('SELECT root FROM runtime_start_attempts').all() as {root:string}[]) {
-      const row=read(db,root)!;if(row.state==='due'&&row.due!==undefined)due=Math.min(due??Infinity,Math.max(after??clock.now()+1,row.due));
+      const row=read(db,root)!;if(row.state==='due'&&row.due!==undefined)due=Math.min(due??Infinity,Math.max(backoffUntil,clock.now()+1,row.due));
     }
     if(due!==undefined)cancel=clock.at(due,()=>{cancel=undefined;tick();});
   }
