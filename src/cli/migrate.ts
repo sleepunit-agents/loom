@@ -39,6 +39,10 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const { migrateTasks } = await import('./migrate-tasks.js');
     return migrateTasks(argv.slice(1), io);
   }
+  if (argv[0] === 'clock') {
+    const { migrateClock } = await import('./migrate-clock.js');
+    return migrateClock(argv.slice(1), io);
+  }
   const { flags: global, rest } = extractGlobalFlags(argv);
   let parsed;
   try {
