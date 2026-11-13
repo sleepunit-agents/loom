@@ -124,3 +124,11 @@ it('includes an independent moved conversation and opens its no-digest reader',a
  const a=source(),r=run('cv-111111111111',{kind:'conversation',summary:undefined,turns:3,replies:1,asked:[],decided:[],tasks:[]}),app=await fixture(a.path,undefined,role([r]));
  expect(list(app).entries).toMatchObject([{id:'c~art~cv-111111111111',title:'Build the household',line:'3 turns, 1 reply, no summary yet'}]);expect(read(app,'c~art~cv-111111111111')).toMatchObject({value:{id:'c~art~cv-111111111111',asked:[],decided:[],tasks:[],more:[]}});
 });
+
+it('uses the current member for the legacy owner filter, with household owner fallback for agent viewers',async()=>{
+ const a=source();a.add('m-partial',{created:'2026-11-13T12:00:00Z',metadata:'{"where":"slack:dm:partial"}'});
+ const rows=[run('dg-household',{conversation:conv(undefined,{people:['owner']})}),run('dg-partial',{conversation:conv('cv-222222222222',{people:['partial'],venue:'discord'})})],app=await fixture(a.path,undefined,role(rows));
+ expect(list(app,partial).entries.find(e=>e.id==='d~art~dg-partial')?.owner).toBe(true);expect(list(app,partial).entries.find(e=>e.id==='d~art~dg-household')?.owner).toBeUndefined();expect(list(app,partial).entries.find(e=>e.id==='e~art~m-partial')?.owner).toBe(true);
+ expect(list(app,{kind:'agent',id:'art'}).entries.find(e=>e.id==='d~art~dg-household')?.owner).toBe(true);
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live?partial');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'activity.access'}));expect(JSON.parse((await initial)[0].toString()).records[0].owner).toBe('Partial');
+});

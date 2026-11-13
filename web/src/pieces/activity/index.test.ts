@@ -36,7 +36,7 @@ it('uses address filters and handler navigation, preserves Earlier subscriptions
 });
 it('renders the full reader and original internal destinations; hides reader data when offline',async()=>{
  f.window=feed();f.detail={records:[{...entry(),asked:['Build it'],decided:['Use live records'],story:'The complete story',tasks:[{label:'t-12',href:'/p/tasks-preview/task/t-12'}],prs:[{label:'loom#941',href:'https://github.com/sleepunit-agents/loom/pull/941'}],links:[],needs:'Ship?',steps:[{label:'Read files',state:'done',tool:'Read'}],more:[{id:'d~art~dg-two',at:entry().at,title:'Earlier run'}]}],status:'live'};
- await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'}));});expect(text()).toContain('The complete story');expect(text()).toContain('Use live records');expect(text()).toContain('Read files');expect(text()).toContain('Ship?');
+ await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'}));});expect(text()).toContain('The complete story');expect(text()).toContain('with you');expect(text()).toContain('Use live records');expect(text()).toContain('Read files');expect(text()).toContain('Ship?');
  const link=tree!.root.findAllByType('a').find(a=>a.props.children==='t-12')!,preventDefault=vi.fn();await act(async()=>link.props.onClick({preventDefault}));expect(preventDefault).toHaveBeenCalledOnce();expect(props.go).toHaveBeenCalledWith('/p/tasks-preview/task/t-12');
  f.detail={records:[],status:'offline'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).not.toContain('The complete story');expect(text()).toContain('Connection lost');
 });

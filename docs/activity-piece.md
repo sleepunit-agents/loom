@@ -66,3 +66,8 @@ Validation is in-process with fake clocks plus one hosted-only two-window browse
 test behind `CI` and `LOOM_ACTIVITY_EVIDENCE=1`. Self-hosted evidence is refused
 before launch. Hosted artifacts contain six Neon Noir/Daylight shots at 390, 1280
 and 1920 wide and the actual browser JSON report; ordinary CI skips that browser.
+
+The legacy `who=owner` key means the signed-in member (old handler.ts selects
+`who.member.person`), falling back to the household owner for non-member viewers.
+The label and participation flags use that same person, never a fixed global
+household-owner identity for another signed-in member.

@@ -24,14 +24,16 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  // checked independently so even the household owner cannot read another thread.
  const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
+ const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;
+ const ownerLabel=(v:Viewer)=>{const person=ownerPerson(v);return (person===options.owner&&options.ownerLabel?options.ownerLabel:person??'Owner').split(/[\s-]+/)[0].replace(/^./,x=>x.toUpperCase());};
  const stamp=(at:string)=>({day:isoDay(Date.parse(at),tz),hour:hourOf(Date.parse(at),tz)});
- function fromRun(r:ActivityRun):ActivityEntry{
+ function fromRun(r:ActivityRun,v:Viewer):ActivityEntry{
   const c=r.conversation,title=c.label.trim().replace(/^(?:schedule|alert) [\w.-]+:\s+(?=\S)/,'').replace(/^\p{Ll}/u,x=>x.toUpperCase())||`A ${VENUES[venueKey(c.venue)]??c.venue} conversation`;
   const venue=venueKey(c.venue),where=venue==='wakes'?(/^lane:|^schedule /.test(c.place)||/^schedule /.test(c.label)?'Lane':/^alert:/.test(c.place)?'Alert':'Wake'):whereLabel(whereOfConversation(c))||VENUES[venue]||c.venue;
-  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turn${r.turns===1?'':'s'}${r.replies?`, ${r.replies} repl${r.replies===1?'y':'ies'}`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(options.owner&&c.people.includes(options.owner))?{owner:true as const}:{})};
+  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turn${r.turns===1?'':'s'}${r.replies?`, ${r.replies} repl${r.replies===1?'y':'ies'}`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(ownerPerson(v)&&c.people.includes(ownerPerson(v)!))?{owner:true as const}:{})};
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
-  const entry=fromRun(r),refs=refsIn([r.summary??'',...r.decided].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
+  const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.decided].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
   return {...entry,asked:r.asked,decided:r.decided,...(r.summary?{story:r.summary}:{}),tasks:[...new Set([...r.tasks,...refs.tasks])].map(id=>({label:id,href:`/p/tasks-preview/task/${encodeURIComponent(id)}`})),prs:refs.prs,
    links:[...r.links,...(theirs&&r.needsHref?[{label:'What it needs you for',href:r.needsHref}]:[])],...(theirs&&r.needs?{needs:r.needs}:{}),
    ...(entry.venue==='comms'&&r.steps?{steps:r.steps.filter(s=>s.tool!=='text')}:{}) ,more:r.more.slice(0,8)};
@@ -50,7 +52,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   if(p.conversation&&!related)return;
   const parts=fallbackParts(e.content),refs=refsIn(`${p.title}\n${e.content}`,options.github);
   return {id:`e~${agent}~${e.ref}`,...(p.conversation?{conversationId:p.conversation}:{}),agent,at:e.created,...stamp(e.created),...splitTitle(p.title),venue,where:whereLabel(p.where)||VENUES[venue]||venue,what:whatOf({place:p.where,title:p.title}),
-   ...(options.owner&&p.where.includes(options.owner)?{owner:true as const}:{}),...(e.expires_at||related?.expires!==undefined?{expires:Math.min(e.expires_at?Date.parse(e.expires_at):Infinity,related?.expires??Infinity)}:{}),
+   ...(ownerPerson(v)&&p.where.includes(ownerPerson(v)!)?{owner:true as const}:{}),...(e.expires_at||related?.expires!==undefined?{expires:Math.min(e.expires_at?Date.parse(e.expires_at):Infinity,related?.expires??Infinity)}:{}),
    asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${id}`})),prs:refs.prs,links:[{label:'The memory',href:`/p/activity-preview/memory/${encodeURIComponent(`${agent}:${e.ref}`)}`}],more:[]};
  }
  function window(scope:string,v:Viewer):ActivityWindow|undefined{
@@ -67,7 +69,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
     if(!answer.available){if(conversations!=='error')conversations='unavailable';}else{
      const rows=answer.rows.filter(r=>seesConversation(v,r.conversation,agent)&&(r.expires===undefined||r.expires>now)&&Date.parse(r.at)>=from&&Date.parse(r.at)<until);
      const digested=new Set(rows.filter(r=>r.kind==='digest').map(r=>r.conversation.id));
-     for(const r of rows){if(r.kind==='conversation'&&digested.has(r.conversation.id))continue;const e=fromRun(r);entries.push(e);if(e.expires)deadlines.push(e.expires);covered.add(`${agent}:${r.conversation.id}`);if(r.kind==='digest')runs.push({agent,venue:e.venue,at:Date.parse(e.at)});}
+     for(const r of rows){if(r.kind==='conversation'&&digested.has(r.conversation.id))continue;const e=fromRun(r,v);entries.push(e);if(e.expires)deadlines.push(e.expires);covered.add(`${agent}:${r.conversation.id}`);if(r.kind==='digest')runs.push({agent,venue:e.venue,at:Date.parse(e.at)});}
      if(answer.expires&&answer.expires>now)deadlines.push(answer.expires);
     }
    }catch{conversations='error';}
@@ -116,6 +118,6 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  operations.register(operation({name:'mind.activityRead',input:z.object({id:z.string().max(350)}).strict(),output:z.unknown(),may:v=>agents(v).length>0,run:(ctx,i)=>read(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Activity entry not found'}}));
  live.register({name:'activity.window',ids:s=>s?[s]:[],read:window,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>(r as ActivityWindow).expires});
  live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),tz),-1),tz))});
- live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>{const today=isoDay(operations.clock.now(),tz);return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:options.ownerLabel??options.owner??'Owner',timezone:tz,today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz)};},inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
+ live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>{const today=isoDay(operations.clock.now(),tz);return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz,today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz)};},inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
  return {close(){for(const db of sources.values())db.close();}};
 }

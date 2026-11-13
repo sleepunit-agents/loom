@@ -87,3 +87,8 @@ Only CHANGELOG conflicted; kept both entries and placed Activity beside Projects
 to avoid the shared top insertion point. No app/role implementation changed. Root
 TypeScript, all93 affected tests and full web build pass after rebase. No fourth
 review; this composition is author-tested, not attributed to the frozen review head.
+
+Post-freeze parity audit: old handler.ts passes the current member as ownerPerson,
+with the household owner fallback. Restored that per-viewer selection for owner
+labels/participation, including other members and agent-viewer fallback; source/socket
+regression added. This is author-tested, no fourth cold review.

@@ -31,7 +31,7 @@ function Steps({steps}:{steps:NonNullable<ActivityOpen['steps']>}){
  return <section><h2>Steps · {rows.length}</h2>{plan&&<p>{plan.text}</p>}{folded(rows).map(g=>'few' in g?<ol key={g.few[0].seq}>{g.few.map(line)}</ol>:<details key={g.many[0].seq}><summary>{groupLabel(g.many)} · {g.many.at(-1)!.text}</summary><ol>{g.many.map(line)}</ol></details>)}</section>;
 }
 function Reader({entry:e,go,pick,tz}:{entry:ActivityOpen;go?:(p:string)=>void;pick:(id:string)=>void;tz:string}){
- return <article className="grid gap-5 p-5"><header><p>{e.agent}{e.owner?' · with the owner':''} · {e.where} · <time dateTime={e.at}>{new Date(e.at).toLocaleString([],{timeZone:tz})}</time></p><h1 className="text-2xl font-semibold">{e.title}</h1></header>
+ return <article className="grid gap-5 p-5"><header><p>{e.agent}{e.owner?' · with you':''} · {e.where} · <time dateTime={e.at}>{new Date(e.at).toLocaleString([],{timeZone:tz})}</time></p><h1 className="text-2xl font-semibold">{e.title}</h1></header>
  {e.needs&&<p role="status">Needs you: {e.needs}</p>}
  {!!e.asked.length&&<section><h2>What was asked</h2><ul>{e.asked.map((s,i)=><li key={i}>{s}</li>)}</ul></section>}
  {e.story&&<section><h2>What happened</h2><Suspense fallback={<Loading label="Opening words…"/>}><Markdown text={e.story} onLink={href=>{const safe=safeHref(href);if(!safe)return true;if(go&&safe.startsWith('/')){go(safe);return true;}return false;}}/></Suspense></section>}
