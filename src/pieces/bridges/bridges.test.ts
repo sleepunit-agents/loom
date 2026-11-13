@@ -33,7 +33,8 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   const app=await startLoom({home,clock,install(app) { const register=app.live.register.bind(app.live); app.live.register=type=>{types.set(type.name,type); register(type);}; installBridges(app,()=>sharing); effects=installEffects(app,()=>sharing,staging); }});
   const adapter=new FakeVenue(platform), deliveries=new Map<string,Incoming>(), stops: unknown[]=[];
   let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
-  const runtime: BridgeRuntime={async admit(){return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');},async stop(i){stops.push(i);}};
+  const admitted: string[]=[];
+  const runtime: BridgeRuntime={async admit(input){admitted.push(input.person);return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');},async stop(i){stops.push(i);}};
   const secrets: BridgeSecrets={async may(){return secretAllowed;},async get(_agent,name){secretGets.push(name);return 'token-value-do-not-store';}};
   const engine=new Bridges(app,clock,runtime,secrets,[adapter],effects);
   const close=async()=>{await engine.close();await app.close();}; closes.push(close);
@@ -45,7 +46,7 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
     expect(op('putRoutes',{id:'channel',platform,workspace:'house',channel:'300',primary:'art'}).ok).toBe(true);
   }
   const message=(overrides: Partial<Message>={}): Message=>({id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
-  return {types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
+  return {admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
   it.each(['discord','slack'] as const)('%s receives, routes, delivers and replies once',async platform=>{
@@ -194,6 +195,18 @@ describe('in-process bridge delivery',()=>{
     }
     for(const table of ['bridges_venues','bridges_routes','bridges_links','bridges_status','bridges_inbox','bridges_outbox','core_operations','core_effects'])
       expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('token-value-do-not-store');
+  });
+
+  it('rechecks the person link after asynchronous admission and admits the replacement afresh',async()=>{
+    const f=await fixture(); let replaced=false;
+    f.adapter.inspect=async()=>{if(!replaced){replaced=true;f.op('putLinks',{id:'person',platform:'discord',workspace:'house',user:'200',person:'pollock'});}return 'allow';};
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    f.clock.advance(5000); await f.engine.flush();
+    expect(f.admitted).toEqual(['jonathan','pollock']); expect([...f.deliveries.values()][0].person).toBe('pollock');
+  });
+  it('drops a known sender denied by runtime and erases the message words',async()=>{
+    const f=await fixture(); f.setGate('drop'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0); expect(f.app.db.prepare('SELECT message,reason FROM bridges_inbox').get()).toEqual({message:'{}',reason:'not admitted'});
   });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();

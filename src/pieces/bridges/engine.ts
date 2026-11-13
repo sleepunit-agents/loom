@@ -8,8 +8,8 @@ import { addressed, isStop } from './routing.js';
 import { all, venueById, routeFor, personFor } from './store.js';
 import type { BridgeRuntime, BridgeSecrets, BridgesRole, VenueAdapter, VenueConnection } from './role.js';
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
-interface Inbox { id: string; venue: string; identity: string; message: string; state: string }
-interface Outbox { id: string; venue: string; identity: string; address: string; text: string; state: string }
+interface Inbox { id: string; venue: string; identity: string; message: string; state: 'pending'|'held'|'dropped'|'delivered' }
+interface Outbox { id: string; venue: string; identity: string; address: string; text: string; state: 'pending'|'held'|'sending'|'sent'|'uncertain'|'dismissed' }
 const identity = (v: Venue) => JSON.stringify([v.platform,v.workspace,v.agent,v.bot]);
 interface ConnectionState { signature: string; connection?: VenueConnection; cancel?: () => void; failures: number; generation: number }
 /** Daemon-owned connections and durable IO queues. No body or subprocess runs here. */
@@ -132,7 +132,8 @@ export class Bridges implements BridgesRole {
             if (admitted === 'allow') {
               if (this.closed) return;
               const current = venueById(db,row.venue);
-              if (!current?.enabled || identity(current)!==row.identity) { this.retry(); continue; }
+              if (!current?.enabled || identity(current)!==row.identity || personFor(db,current,message.user)!==person
+                || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
               if (!message.bot && isStop(message.text)) await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
               else await this.runtime.deliver({id:row.id,key,person,text:message.text,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
               db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
