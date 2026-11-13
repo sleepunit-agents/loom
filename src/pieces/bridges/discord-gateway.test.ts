@@ -141,6 +141,12 @@ describe('Discord gateway session transport',()=>{
     await settled(); expect(s.terminate).toHaveBeenCalledOnce(); expect(f.commit).not.toHaveBeenCalled();
     const g=fixture(),t=await connected(g); t.frame({...message(),d:{content:'x'.repeat(1024*1024)}}); await settled(); expect(g.commit).toHaveBeenCalledOnce(); expect(t.terminate).toHaveBeenCalledOnce();
   });
+  it('recovers the full 64-dispatch capacity after overflowing a retired connection',async()=>{
+    const f=fixture(),a=await identified(f); a.frame(ready()); for(let n=2;n<=65;n++) a.frame(message(n));
+    await settled(); expect(a.terminate).toHaveBeenCalledOnce(); expect(f.commit).not.toHaveBeenCalled();
+    const b=await retry(f,5000); b.hello(); await settled(); b.frame(ready()); for(let n=2;n<=64;n++) b.frame(message(n));
+    await settled(); expect(b.terminate).not.toHaveBeenCalled(); expect(f.commit).toHaveBeenCalledTimes(64); expect(f.saved()?.seq).toBe(64);
+  });
   it('times out silent gateway and missing READY; write errors reconnect',async()=>{
     const f=fixture(); await settled(); f.clock.advance(15_000); await settled(); expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
     const g=fixture(),s=await identified(g); g.clock.advance(15_000); await settled(); expect(s.terminate).toHaveBeenCalledOnce();

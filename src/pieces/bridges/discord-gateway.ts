@@ -168,7 +168,8 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
             next = {...seed,seq:f.s};
           }
           if (f.t === 'READY') readySeed = next;
-          if (++pending > 64) throw Error();
+          if (pending >= 64) throw Error();
+          pending++;
           const event: DiscordDispatch = {type:f.t,data:f.d,seq:f.s};
           queue = track(queue.then(async () => {
             if (!alive(epoch)) return;
