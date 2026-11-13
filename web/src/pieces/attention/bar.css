@@ -12,3 +12,13 @@
 [data-shell=phone] .next-status-line .next-preferences summary{font-size:0;list-style:none;width:28px;height:32px;display:grid;place-items:center}
 [data-shell=phone] .next-status-line .next-preferences summary::after{content:'⚙';font-size:16px}
 [data-shell=phone] .next-status-line .next-preferences-panel{top:calc(env(safe-area-inset-top) + 40px)}
+
+.next-status-start{display:flex;align-items:center;gap:12px;min-width:0}
+.next-system-clock{flex:none}
+:root[data-look] [data-shell=phone] .next-system-clock,:root[data-look] [data-shell=phone] .next-system-icons{display:none}
+[data-shell=phone] .next-status-start{max-width:28%}
+:root[data-look] [data-shell=phone] .next-status-start .loom-pbar__name{max-width:100%}
+html.loom-ios-app:root[data-look] .next-status-line :is(.next-system-clock,.next-system-icons){display:none}
+
+.next-system-separator{color:var(--v-text-3);flex:none}
+:root[data-look] [data-shell=phone] .next-system-separator,html.loom-ios-app:root[data-look] .next-system-separator{display:none}

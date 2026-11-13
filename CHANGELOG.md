@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
 
+- Next desk: show loom's server minute/timezone and live connection/working-agent status glyphs on desktop; retain compact phone chrome.
+
 - Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
