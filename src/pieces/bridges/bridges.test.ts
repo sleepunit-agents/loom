@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,10 @@ import { installEffects } from '../../core/effects.js';
 import { installBridges } from './index.js';
 import { Bridges } from './engine.js';
 import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming } from './role.js';
-import { venueSchema, type Message, type Venue } from './model.js';
+import { z } from 'zod';
+import type { RecordType } from '../../core/live/index.js';
+import { OperationError } from '../../core/index.js';
+import { venueSchema, routeSchema, type Message, type Venue } from './model.js';
 import { addressed } from './routing.js';
 const sharing: Sharing = {members:{jonathan:{owner:true,agents:['art','mark']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['pond-bot']}},services:{}};
 const owner = {kind:'member',id:'jonathan'} as const;
@@ -25,8 +28,9 @@ class FakeVenue implements VenueAdapter {
 async function fixture(platform: Venue['platform']='discord', staging=false, existingHome?: string) {
   const home=existingHome ?? mkdtempSync(join(tmpdir(),'bridges-')); if (!existingHome) roots.push(home);
   const clock=new FakeClock();
+  const types = new Map<string,RecordType>();
   let effects!: ReturnType<typeof installEffects>;
-  const app=await startLoom({home,clock,install(app) { installBridges(app,()=>sharing); effects=installEffects(app,()=>sharing,staging); }});
+  const app=await startLoom({home,clock,install(app) { const register=app.live.register.bind(app.live); app.live.register=type=>{types.set(type.name,type); register(type);}; installBridges(app,()=>sharing); effects=installEffects(app,()=>sharing,staging); }});
   const adapter=new FakeVenue(platform), deliveries=new Map<string,Incoming>(), stops: unknown[]=[];
   let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
   const runtime: BridgeRuntime={async admit(){return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');},async stop(i){stops.push(i);}};
@@ -41,7 +45,7 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
     expect(op('putRoutes',{id:'channel',platform,workspace:'house',channel:'300',primary:'art'}).ok).toBe(true);
   }
   const message=(overrides: Partial<Message>={}): Message=>({id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
-  return {secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
+  return {types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
   it.each(['discord','slack'] as const)('%s receives, routes, delivers and replies once',async platform=>{
@@ -57,8 +61,9 @@ describe('in-process bridge delivery',()=>{
   });
   it('uses explicit resolved mentions, inherits thread routes and keeps DMs separate', async()=>{
     const f=await fixture(); const mark=venueSchema.parse({...f.venue,id:'mark-discord',agent:'mark',bot:'101'});
-    expect(addressed(f.venue,f.message({mentions:['101']}),{primary:'art'} as any,[f.venue,mark])).toBe(false);
-    expect(addressed(mark,f.message({mentions:['101']}),{primary:'art'} as any,[f.venue,mark])).toBe(true);
+    expect(addressed(f.venue,f.message({mentions:['101']}),routeSchema.parse({id:'r',platform:'discord',workspace:'house',channel:'300',primary:'art'}),[f.venue,mark])).toBe(false);
+    expect(addressed(f.venue,f.message(),undefined,[f.venue,mark])).toBe(false);
+    expect(addressed(mark,f.message({mentions:['101']}),routeSchema.parse({id:'r',platform:'discord',workspace:'house',channel:'300',primary:'art'}),[f.venue,mark])).toBe(true);
     await f.engine.receive(f.venue.id,f.message({channel:'400',parent:'300',thread:'400'}));
     await f.engine.receive(f.venue.id,f.message({id:'m2',channel:'D200',dm:true})); await f.engine.flush();
     const messages=[...f.deliveries.values()]; expect(messages).toHaveLength(2);
@@ -141,6 +146,54 @@ describe('in-process bridge delivery',()=>{
     await f.engine.receive(f.venue.id,both); await f.engine.receive('mark-connection',both); await f.engine.flush();
     expect([...f.deliveries.values()].filter(d=>d.text==='hi')).toHaveLength(3);
     expect(new Set([...f.deliveries.values()].map(d=>d.key.agent))).toEqual(new Set(['art','mark']));
+  });
+
+  it('publishes replies only after their runtime operation commits and suppresses rollback',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const changed=vi.spyOn(f.app.live,'changed'); const incomingId=[...f.deliveries.keys()][0];
+    f.app.operations.register({name:'test.reply',write:true,input:z.boolean(),output:z.null(),may:()=>true,run(ctx,fail){
+      f.engine.reply({id:fail?'rolled-back':'committed',incomingId,text:'hello'},ctx);
+      expect(changed).not.toHaveBeenCalled(); if(fail)throw new OperationError('conflict','rollback'); return null;
+    }});
+    expect(f.app.operations.call('direct',owner,'test.reply',true,'fail').ok).toBe(false);
+    expect(changed).not.toHaveBeenCalled(); expect(f.app.db.prepare('SELECT * FROM bridges_outbox').all()).toEqual([]);
+    expect(f.app.operations.call('direct',owner,'test.reply',false,'ok').ok).toBe(true);
+    expect(changed).toHaveBeenCalledWith([{type:'bridges.send',id:'committed'}]);
+  });
+  it('rechecks setup after asynchronous credential retrieval before sending',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'});
+    // flush yields on the grant check; remove the venue before it can send.
+    const flushing=f.engine.flush(); f.op('removeVenues',{id:f.venue.id}); await flushing;
+    expect(f.adapter.posts).toHaveLength(0);
+  });
+  it('rechecks grants before sending an already queued reply',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const gets=f.secretGets.length; f.denySecret();
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
+    expect(f.secretGets).toHaveLength(gets); expect(f.adapter.posts).toHaveLength(0);
+  });
+  it('announces held sends on venue removal and removes sent records from live scope',async()=>{
+    const f=await fixture('discord',true); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.engine.reply({id:'held',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
+    const changed=vi.spyOn(f.app.live,'changed'); f.op('removeVenues',{id:f.venue.id});
+    expect(changed).toHaveBeenCalledWith(expect.arrayContaining([{type:'bridges.send',id:'held'}]));
+    const type=f.types.get('bridges.send')!; expect(type.read('held',owner)?.state).toBe('held');
+    expect(type.inScope({...type.read('held',owner)!,state:'sent'},undefined,0)).toBe(false);
+    expect(type.inScope({...type.read('held',owner)!,state:'uncertain'},undefined,0)).toBe(true);
+  });
+  it('filters every setup and traffic projection, and never stores credential values',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); f.adapter.uncertain=true; await f.engine.flush();
+    for (const name of ['bridges.venue','bridges.route','bridges.link','bridges.send']) {
+      const type=f.types.get(name)!; const ids=type.ids(undefined); expect(ids.length).toBeGreaterThan(0);
+      expect(ids.map(id=>type.read(id,owner)).every(Boolean)).toBe(true);
+      expect(ids.map(id=>type.read(id,{kind:'member',id:'pollock'})).every(r=>r===undefined)).toBe(true);
+      expect(ids.map(id=>type.read(id,{kind:'agent',id:'art'})).every(r=>r===undefined)).toBe(true);
+      expect(JSON.stringify(ids.map(id=>type.read(id,owner)))).not.toContain('token-value-do-not-store');
+    }
+    for(const table of ['bridges_venues','bridges_routes','bridges_links','bridges_status','bridges_inbox','bridges_outbox','core_operations','core_effects'])
+      expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('token-value-do-not-store');
   });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();

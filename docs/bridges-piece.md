@@ -12,8 +12,8 @@ This first slice is an injectable engine, not yet a production adapter installat
 `installBridges` registers setup operations and live records. `Bridges.sync` reconciles
 connections, `receive` durably accepts a venue message, and `reply` queues one reply
 under runtime's operation id. The daemon composition root must call sync after a
-committed setup change, flush after a staging release, and close the engine before
-closing its database. Production Discord/Slack transports, importer, generated commands,
+committed setup change, await engine.close before closing its database. Core staging releases notify
+the engine after commit through the effects role; no new venue traffic is needed. Production Discord/Slack transports, importer, generated commands,
 app and composition are subsequent work on t-2210; the old side is untouched.
 
 | Old behavior | New owner / replacement |
@@ -36,6 +36,8 @@ Unknown and denied users are left on read; their stored message words are erased
 
 Reply text is kept in the outbox, never exposed as traffic metadata. A send exception
 is treated as uncertain, even if a venue might have rejected it before posting.
+Inbox and outbox records retain their receiving bot identity; changing a venue
+holds that identity’s pending work rather than moving it to another agent or workspace.
 An interrupted send is uncertain after restart and is never automatically repeated.
 Staging sends call core's beforeOutside gate; their effect id is bridges:<reply id>.
 The setup and traffic projections contain secret references, never token values or

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
-import type { Clock } from '../../core/index.js';
+import type { Clock, Context } from '../../core/index.js';
 import type { Address, Message, Venue } from './model.js';
 import { keyFor } from './model.js';
 import { addressed, isStop } from './routing.js';
@@ -68,15 +68,15 @@ export class Bridges implements BridgesRole {
       const adapter = this.adapters.find(a => a.platform === v.platform);
       if (!adapter) throw new Error('Adapter unavailable');
       const connection = await adapter.connect(v,await this.credentials(v),{
-        message: async message => { if (!this.closed && this.connections.get(v.id) === c && c.generation === generation) await this.receive(v.id,message); }, dropped,
+        message: async message => { if (!this.closed && this.connections.get(v.id) === c && c.generation === generation) await this.receive(v.id,message,v); }, dropped,
       });
       if (this.closed || this.connections.get(v.id) !== c || generation !== c.generation) { connection.close(); return; }
       c.connection = connection; c.failures=0; this.status(v.id,'connected');
     } catch { dropped(); } // Never persist/log an upstream exception: it may contain a credential.
   }
-  async receive(venueId: string, message: Message): Promise<void> {
+  async receive(venueId: string, message: Message, receivedAs?: Venue): Promise<void> {
     if (this.closed) throw new Error('Bridges closed');
-    const v = venueById(this.app.db,venueId);
+    const v = receivedAs ?? venueById(this.app.db,venueId);
     if (!v) throw new Error('Unknown venue');
     const id = hash([v.platform,v.workspace,message.channel,message.id,v.agent]);
     this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
@@ -84,8 +84,9 @@ export class Bridges implements BridgesRole {
     // Receipt is durable before the gateway ACK. Delivery can fail independently.
     void this.flush();
   }
-  reply(input: {id: string; incomingId: string; text: string}) {
+  reply(input: {id: string; incomingId: string; text: string}, context?: Pick<Context,'changed'>) {
     const db = this.app.db;
+    if (db.inTransaction && !context) throw new Error('Transactional replies require the operation context');
     if (!input.id || input.id.length > 200 || !input.text.trim()) throw new Error('Invalid reply');
     const old = db.prepare('SELECT incoming,text FROM bridges_outbox WHERE id=?').get(input.id) as {incoming:string;text:string} | undefined;
     if (old) { if (old.incoming !== input.incomingId || old.text !== input.text) throw new Error('Reply id reused'); return; }
@@ -94,7 +95,7 @@ export class Bridges implements BridgesRole {
     const m = JSON.parse(incoming.message) as Message;
     const address: Address = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group};
     db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,incoming.identity,JSON.stringify(address),input.text,this.clock.now());
-    this.changed('bridges.send',input.id);
+    if (context) context.changed('bridges.send',input.id); else this.changed('bridges.send',input.id);
     // If invoked within runtime's transaction, defer IO until that transaction has committed.
     this.clock.at(this.clock.now(), () => { if (!this.closed) void this.flush(); });
   }
@@ -129,6 +130,9 @@ export class Bridges implements BridgesRole {
             const admitted = inspected === 'allow' ? await this.runtime.admit({agent:v.agent,person,venue:key.venue,channel:message.parent ?? message.channel,dm:message.dm,group:message.group,readers:route?.readers ?? [],peer:!!message.bot}) : inspected;
             if (admitted === 'wait') { this.retry(); continue; }
             if (admitted === 'allow') {
+              if (this.closed) return;
+              const current = venueById(db,row.venue);
+              if (!current?.enabled || identity(current)!==row.identity) { this.retry(); continue; }
               if (!message.bot && isStop(message.text)) await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
               else await this.runtime.deliver({id:row.id,key,person,text:message.text,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
               db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
@@ -150,6 +154,9 @@ export class Bridges implements BridgesRole {
       if (!adapter) { this.retry(); continue; }
       let token: string;
       try { token=(await this.credentials(v)).token; } catch { this.retry(); continue; }
+      if (this.closed) return;
+      const current = venueById(db,row.venue);
+      if (!current?.enabled || JSON.stringify(current)!==JSON.stringify(v)) { this.retry(); continue; }
       // The effect id is permanent; releasing a staging item allows exactly one attempt.
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);

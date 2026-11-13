@@ -22,6 +22,8 @@ export function installBridges(app: Foundation, sharing: () => Sharing) {
       run(ctx, { id }) {
         if (table === 'venues') {
           db.prepare("UPDATE bridges_inbox SET state='held',reason='venue removed' WHERE venue=? AND state='pending'").run(id);
+          const sends = db.prepare("SELECT id FROM bridges_outbox WHERE venue=? AND state='pending'").all(id) as {id:string}[];
+          for (const send of sends) ctx.changed('bridges.send',send.id);
           db.prepare("UPDATE bridges_outbox SET state='held' WHERE venue=? AND state='pending'").run(id);
         }
         db.prepare(`DELETE FROM bridges_${table} WHERE id=?`).run(id); ctx.changed(type,id); return { id };
@@ -40,6 +42,6 @@ export function installBridges(app: Foundation, sharing: () => Sharing) {
   live.register({ name: 'bridges.send', ids: () => (db.prepare("SELECT id FROM bridges_outbox WHERE state NOT IN ('sent','dismissed')").all() as {id:string}[]).map(r => r.id),
     read(id,v) { if (!maySee(v,{type:'bridges.send'},sharing())) return;
       return db.prepare('SELECT id,venue,incoming,state,remote_id AS remoteId,created FROM bridges_outbox WHERE id=?').get(id) as {id:string} | undefined;
-    }, inScope: () => true,
+    }, inScope: r => r.state !== 'sent' && r.state !== 'dismissed',
   });
 }

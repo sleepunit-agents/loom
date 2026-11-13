@@ -1,4 +1,5 @@
 /** Bridges own venue IO only. The runtime owns gates, turns, bodies and continuity. */
+import type { Context } from '../../core/index.js';
 import type { Address, ConversationKey, Message, Route, Venue } from './model.js';
 export interface Incoming {
   /** Stable across a retry, restart and receipt by several bot connections. */
@@ -29,6 +30,7 @@ export interface VenueAdapter {
   send(venue: Venue, token: string, address: Address, text: string, operationId: string): Promise<{ id: string }>;
 }
 export interface BridgesRole {
-  /** Stable id from runtime's reply operation. Replay returns the original state. */
-  reply(input: { id: string; incomingId: string; text: string }): void;
+  /** Stable id from runtime's reply operation. Replay returns the original state.
+   * Inside an operation transaction pass its context, so changes publish only on commit. */
+  reply(input: { id: string; incomingId: string; text: string }, context?: Pick<Context, 'changed'>): void;
 }
