@@ -47,6 +47,13 @@ async function fixture(full = true) {
   await createSnapshot(old, root, full ? tasks : undefined);
   return { dir, root, old, ids, plan: prepareMigrationPlan(root).plan };
 }
+function rehash(root: string, relative: string): void {
+  const manifest = JSON.parse(readFileSync(join(root,'manifest.json'), 'utf8'));
+  const file = manifest.files.find((r: { path: string }) => r.path === relative);
+  const bytes = readFileSync(join(root, relative));
+  file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
+  writeFileSync(join(root,'manifest.json'), JSON.stringify(manifest));
+}
 function snapshotBytes(root: string): unknown {
   const walk = (path: string): unknown => Object.fromEntries(readdirSync(path).sort().map(name => {
     const target = join(path,name);
@@ -135,10 +142,7 @@ it('refuses duplicate conversations and partial attention schemas rather than dr
   const f = await fixture();
   const update = (edit: (db: Database.Database) => void) => {
     const db = new Database(join(f.root,'home/agents/mark/memories.db')); edit(db); db.close();
-    const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'),'utf8'));
-    const file = manifest.files.find((r: {path:string}) => r.path === 'home/agents/mark/memories.db');
-    const bytes = readFileSync(join(f.root,file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
-    writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+    rehash(f.root, 'home/agents/mark/memories.db');
   };
   update(db => db.prepare('UPDATE conversations SET id=?').run(f.ids[0]));
   expect(() => prepareMigrationPlan(f.root)).toThrow('Duplicate conversation');
@@ -176,10 +180,7 @@ it('rejects a manifest-listed live socket before the hash reader tries to consum
 it.each(['conversations','conversation_turns','conversation_days','conversation_digests'])('refuses an attention database missing %s', async table => {
   const f = await fixture();
   const db = new Database(join(f.root,'home/agents/art/memories.db')); db.exec(`DROP TABLE ${table}`); db.close();
-  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
-  const file = manifest.files.find((r: {path:string}) => r.path === 'home/agents/art/memories.db');
-  const bytes = readFileSync(join(f.root, file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
-  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  rehash(f.root, 'home/agents/art/memories.db');
   expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention');
 });
 
@@ -215,9 +216,27 @@ it.each(['conversations','conversation_turns','conversation_days','conversation_
   const f = await fixture();
   const db = new Database(join(f.root,'home/agents/art/memories.db'));
   db.exec(`DROP TABLE IF EXISTS ${table}; CREATE TABLE ${table}(id TEXT)`); db.close();
-  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
-  const file = manifest.files.find((r: {path:string}) => r.path === 'home/agents/art/memories.db');
-  const bytes = readFileSync(join(f.root, file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
-  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  rehash(f.root, 'home/agents/art/memories.db');
   expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention source columns');
+});
+
+it('accepts older Attention schemas without optional turn/digest columns or optional tables', async () => {
+  const f = await fixture();
+  const db = new Database(join(f.root,'home/agents/art/memories.db'));
+  for (const column of ['run','model','harness','outcome']) db.exec(`ALTER TABLE conversation_turns DROP COLUMN ${column}`);
+  for (const column of ['needs_owner_json','needs_owner_href']) db.exec(`ALTER TABLE conversation_digests DROP COLUMN ${column}`);
+  db.close(); rehash(f.root, 'home/agents/art/memories.db');
+  expect(prepareMigrationPlan(f.root).plan.importers.attention).toEqual(f.plan.importers.attention);
+});
+it.each(['paths','audiences','projects','unknown','snapshot','array-order'])('includes %s in the full plan checksum', async kind => {
+  const f = await fixture();
+  f.plan.importers.comms = { paths: ['home'], options: { nested: [1, true] } };
+  const before = migrationPlanChecksum(f.plan);
+  if (kind === 'paths') f.plan.importers.comms.paths = ['home/household.json'];
+  if (kind === 'audiences') f.plan.importers.attention.options = { [f.ids[0]]: { member: 'jonathan' }, [f.ids[1]]: {} };
+  if (kind === 'projects') f.plan.importers.tasks.options = { projects: {}, agent: 'art' };
+  if (kind === 'unknown') f.plan.importers.comms.options = { nested: [2, true] };
+  if (kind === 'snapshot') f.plan.snapshot = '0'.repeat(64);
+  if (kind === 'array-order') f.plan.importers.attention.paths.reverse();
+  expect(migrationPlanChecksum(f.plan)).not.toBe(before);
 });
