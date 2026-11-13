@@ -748,3 +748,30 @@ spend roll back. Approvals refuses reuse of a pending/allowed exact target whose
 scope differs. No archived scope authenticates a principal; private work remains
 held for a separate recovery flow. Local-wake filing/recovery still needs the
 runtime's authenticated caller provenance and is not implemented by this unit.
+
+
+### Trusted local-wake filing
+
+`clockLocalFiling(operations).request(caller, prompt, note)` is a trusted,
+in-process role. It calls direct-only `clock.localRequest` as the Clock service;
+HTTP, MCP, members, runners and agent tokens cannot supply its Caller. The runtime
+must obtain that Caller from authenticated body provenance before composing this
+role. Next mode does not yet connect a public command or runtime body to it.
+
+For owner-principal work without private people, Clock files `local-wake` through
+the owning Approvals service. The card shows all executable words (at most 270
+Unicode characters after removing the explicit local marker), rejects NFKC changes
+and control/invisible characters, and labels a normalized note excerpt capped at
+160 characters. Clock retains the complete original prompt, note, full SHA-256,
+short-hash target and original Caller privately in `clock_meta`. No legacy files
+are read, no wake is created, and no approval is spent. Projects remain attached
+to both Caller and card; another scope cannot reuse the same card. Existing cards
+must match the full digest and displayed details, and an existing filing's exact
+prompt and note cannot be replaced. Card creation and filing commit together.
+
+This ports the filing/`remember_filed` portion of legacy `cmd_add` and
+`local_wake_card`/`shown_as_run`. Exact scheduling recovery with `--approval`,
+current receipt/principal checks before spend, capacity-before-spend, standing
+single-target and fire-time rechecks, app/client recovery and authenticated
+runtime composition remain unfinished. Private and steered principals fail closed;
+this filing role does not infer owner provenance from an agent token or marker.
