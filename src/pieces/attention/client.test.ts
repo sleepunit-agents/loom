@@ -1,8 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { fixture, fixtureSharing } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
 import { installAttention } from './index.js';
@@ -13,9 +14,10 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'attention-client-'));
-  const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] } }, projects: {}, services: {} });
-  const app = await startLoom({ home, clock: new FakeClock(), sharing,
-    authenticate: req => req.headers.authorization === 'Bearer fixture-token' ? { viewer: { kind: 'member', id: 'alice' }, valid: () => true } : req.headers.authorization === 'Bearer bob-token' ? { viewer: { kind: 'member', id: 'bob' }, valid: () => true } : undefined,
+  fixture(home);
+  const sharing = fixtureSharing;
+  const app = await startLoom({ home, next: true, host: '127.0.0.1', port: 0, clock: new FakeClock(), sharing,
+    authenticate: req => req.headers.authorization === 'Bearer fixture-token' ? { viewer: { kind: 'member', id: 'jonathan' }, valid: () => true } : req.headers.authorization === 'Bearer pollock-token' ? { viewer: { kind: 'member', id: 'pollock' }, valid: () => true } : undefined,
     install: app => installAttention(app.db, app.operations, app.live, sharing) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const tokenFile = join(home, 'token'); writeFileSync(tokenFile, 'fixture-token');
@@ -28,7 +30,7 @@ async function setup() {
   };
   return { ...app, run, tokenFile };
 }
-const ask = { id: 'a1', agent: 'art', member: 'alice', ask: 'Continue?', source: { kind: 'piece', id: 'fixture' } };
+const ask = { id: 'a1', agent: 'art', member: 'jonathan', ask: 'Continue?', source: { kind: 'piece', id: 'fixture' } };
 it('offers exactly the registry commands with matching write metadata and generated help', async () => {
   const app = await setup();
   const offered = app.operations.offered('http').filter(o => o.name.startsWith('attention.'));
@@ -43,9 +45,9 @@ it('prints the daemon value unchanged, preserves first answer, and enforces auth
   const record = JSON.parse(raised.stdout); expect(record).toMatchObject({ ...ask, state: 'open' });
   expect(await app.run(['get', '{"id":"a1"}'])).toMatchObject({ code: 0, stdout: JSON.stringify(record, null, 2) + '\n' });
   const answered = await app.run(['answer', '{"id":"a1","answer":{"kind":"yes"}}']);
-  expect(JSON.parse(answered.stdout)).toMatchObject({ state: 'answered', answer: { kind: 'yes', by: { id: 'alice' } } });
+  expect(JSON.parse(answered.stdout)).toMatchObject({ state: 'answered', answer: { kind: 'yes', by: { id: 'jonathan' } } });
   expect(await app.run(['answer', '{"id":"a1","answer":{"kind":"no"}}'])).toMatchObject({ code: 1, stdout: '' });
-  writeFileSync(app.tokenFile, 'bob-token');
+  writeFileSync(app.tokenFile, 'pollock-token');
   expect(await app.run(['get', '{"id":"a1"}'])).toMatchObject({ code: 1, stdout: '' });
   expect(await app.run(['answer', '{"id":"a1","answer":{"kind":"done"}}'])).toMatchObject({ code: 1, stdout: '' });
 });
@@ -121,4 +123,27 @@ it('preserves overflowing JSON numbers for daemon rejection instead of convertin
   expect(app.db.prepare('SELECT count(*) AS n FROM attention_findings').get()).toEqual({ n: 0 });
   const accepted = await app.run(['writeFinding', raw.replace('1e400', 'null')]);
   expect(accepted.code).toBe(0); expect(JSON.parse(accepted.stdout)).toMatchObject({ score: null });
+});
+
+it('cancels stalled requests on the timeout signal and stops after four attempts', async () => {
+  const app = await setup();
+  const signals: AbortSignal[] = [];
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => controller.abort());
+    return controller.signal;
+  });
+  try {
+    const result = await app.run(['conversations'], async (_url, init) => {
+      if (!init?.signal) throw Error('missing cancellation');
+      signals.push(init.signal);
+      init.signal.throwIfAborted();
+      return new Promise<Response>((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true }));
+    });
+    expect(result).toMatchObject({ code: 1, stdout: '', stderr: 'loom-attention: loom daemon is unavailable\n' });
+    expect(timeout).toHaveBeenCalledTimes(4);
+    expect(timeout.mock.calls).toEqual([[1500], [1500], [1500], [1500]]);
+    expect(signals).toHaveLength(4);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+  } finally { timeout.mockRestore(); }
 });

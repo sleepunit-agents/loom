@@ -19,3 +19,12 @@ Author validation also caught the initial client location violating the piece im
 Frozen 493ffa16975dab10bc6e241a147ae33f2c6795aa, own ledger excluded from archive and patch; TREE sha256:6bcb63f293325dfbc431c6d784e8a7eef1ed659814d4d8e662c0bbb1c7c2f197. Reply: /home/art/scratch/attention-client-review/round-2/reply.md. Verdict BLOCKING.
 
 - CRITICAL, actionable: JSON.parse/stringify changed overflowing JSON numbers into null before schema validation. Client now validates object shape but embeds the original JSON text in the envelope. Added a real HTTP own-turn/finding fixture: score 1e400 refuses without a row; explicit null succeeds. The fixture also asserts raw transmitted overflow. This preserves daemon-owned validation and fixes an actual changed-write bug.
+
+## Round 3 — complete at bound
+
+Frozen 7495bc9831c8e79edc72d2468aa6c630bfdd8115, own ledger excluded; TREE sha256:63d4b924da982a36233f6a8e7fc58d5d17054a96307ee748984f8e78a27c8215. Reply: /home/art/scratch/attention-client-review/round-3/reply.md. Verdict BLOCKING (two missing-test MAJORs).
+
+- MAJOR, actionable: integration setup did not use next-mode fixture composition. Changed setup to seed the shared fixture home, use fixtureSharing and startLoom(next:true); private scope now uses fixture members Jonathan/Pollock.
+- MAJOR, actionable: timeout cancellation untested. Added a controlled AbortSignal.timeout scheduler, asserting 1500ms on each of four attempts; the transport waits for cancellation, and the client terminates with generic unavailable. No real sleeps or child processes.
+
+All actionable findings folded. No fourth review. Round 3 had no CRITICAL, both MAJORs folded, no repeated claimed fix. Bounded final BLOCKING verdict is reported in PR/task; implementer judgment is to ship on green, with no known client defect. Final implementation change was the raw JSON correction in round 2; round 3 changes tests only.
