@@ -80,3 +80,14 @@ it('does not treat option values mentioning a file flag as instructions to open 
   expect(await a.run(['lane','set','care','--note','--prompt-file=missing','-p','Words'])).toBe(0);
   expect(JSON.parse(String(a.request.mock.calls[0][1]?.body)).input.laneFile).toBeUndefined();
 });
+
+it.each(['-f','-f='])('loads attached short lane file forms (%s)',async form=>{
+  const a=setup(), file=join(dirs.at(-1)!,'lane.md');writeFileSync(file,'Words');
+  a.request.mockResolvedValue(new Response(JSON.stringify({ok:true,value:{stdout:'ok',stderr:'',exit:0}})));
+  expect(await a.run(['lane',`${form}${file}`,'--at','08:31','set','care'])).toBe(0);
+  expect(JSON.parse(String(a.request.mock.calls[0][1]?.body)).input.laneFile).toEqual({path:file,text:'Words'});
+});
+it('redacts a bearer echoed in successful stdout',async()=>{
+  const a=setup();a.request.mockResolvedValue(new Response(JSON.stringify({ok:true,value:{stdout:'fixture test-bearer\n',stderr:'',exit:0}})));
+  expect(await a.run()).toBe(0);expect(a.output()).toEqual({stdout:'fixture [redacted]\n',stderr:''});
+});

@@ -18,6 +18,17 @@ export const clockOperationCommands: Record<string,string> = {
   laneSet:'lane set', laneAssign:'lane assign', laneRemove:'lane rm', lanes:'lane list', laneText:'lane text',
 };
 export const clockHelp = `usage: wake [--agent AGENT] <${[...new Set(clockCommands.map(c => c.name.split(' ')[0]))].join('|')}> ...\n`;
+/** One tokenizer covers separated, equal and argparse attached short options. */
+export function clockOption(arg: string): { flag: string; attached?: string } | undefined {
+  if (arg.startsWith('--') && arg !== '--') {
+    const eq=arg.indexOf('=');
+    return eq<0 ? {flag:arg.slice(2)} : {flag:arg.slice(2,eq),attached:arg.slice(eq+1)};
+  }
+  if (arg.startsWith('-p') || arg.startsWith('-f')) {
+    const flag=arg[1]==='p' ? 'prompt' : 'prompt-file', tail=arg.slice(2);
+    return tail ? {flag,attached:tail.startsWith('=') ? tail.slice(1) : tail} : {flag};
+  }
+}
 /** argparse accepts nested options before or after the action. Preserve their order. */
 export function commandHead(argv: readonly string[]): { name: string | undefined; args: string[] } {
   const args = [...argv], group = args.shift();
@@ -26,7 +37,8 @@ export function commandHead(argv: readonly string[]): { name: string | undefined
     const arg=args[n];
     if (!arg.startsWith('-')) { const action=args.splice(n,1)[0]; return {name:`${group} ${action}`,args}; }
     if (arg === '--') break;
-    if (!arg.includes('=') && !['--local','--no-local'].includes(arg)) n++;
+    const option=clockOption(arg);
+    if (option?.attached === undefined && !['--local','--no-local'].includes(arg)) n++;
   }
   return {name:group,args};
 }

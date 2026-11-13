@@ -1,7 +1,7 @@
 /** The legacy command grammar and human text are a daemon binding to scoped operations. */
 import { randomUUID } from 'node:crypto';
 import type { Operations, Viewer } from '../../core/index.js';
-import { clockCommands, clockOperationCommands, clockHelp, commandHead } from './commands.js';
+import { clockCommands, clockOperationCommands, clockHelp, commandHead, clockOption } from './commands.js';
 import { parseIn, timeZone } from './time.js';
 import { active, type Wake, type Schedule } from './store.js';
 export interface ClockCommandInput { argv: string[]; agent?: string; laneFile?: { path: string; text: string } }
@@ -30,16 +30,15 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   const operation = Object.keys(clockOperationCommands).find(key => clockOperationCommands[key] === name);
   if (!operation) return fail(`${name} is not available on the new clock; ${['vouch','ask-vouch'].includes(name!) ? 'provenance adoption is not implemented yet' : 'use the daemon, runtime, registered Clock app or core migration instead'}`);
   const flags: Record<string,string | boolean> = Object.create(null), positional: string[] = [];
-  const aliases: Record<string,string> = { '-p':'prompt', '-f':'prompt-file' };
   for (let n=0; n<argv.length; n++) {
     const arg = argv[n];
     if (arg === '--') { positional.push(...argv.slice(n+1)); break; }
     if (!arg.startsWith('-')) { positional.push(arg); continue; }
-    const eq = arg.indexOf('='), flag = aliases[eq < 0 ? arg : arg.slice(0,eq)] ?? (arg.startsWith('--') ? arg.slice(2,eq < 0 ? undefined : eq) : '');
+    const option=clockOption(arg), flag=option?.flag;
     if (!flag || !Object.hasOwn(spec.flags ?? {}, flag)) return fail(`unrecognized arguments: ${arg}`,2);
-    if (flag === 'local' || flag === 'no-local') { if (eq >= 0) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
-    const value = eq >= 0 ? arg.slice(eq+1) : argv[++n];
-    if (value === undefined || eq < 0 && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
+    if (flag === 'local' || flag === 'no-local') { if (option!.attached !== undefined) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
+    const value = option!.attached ?? argv[++n];
+    if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
     flags[flag] = value;
   }
   const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in';
@@ -57,7 +56,12 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'park' && !flags.on) return fail('park needs --on',2);
   if (['pause','resume','now'].includes(name!)) input.agent = agent;
   if (name === 'list') input.agent = agent;
-  if (name === 'cancel') input.id = positional[0];
+  if (name === 'cancel') {
+    const list=ops.call('direct',viewer,'clock.list',{agent});
+    if (!list.ok) return fail(list.message);
+    if (!(list.value as Wake[]).some(w => w.id===positional[0] && w.agent===agent && active(w))) return fail(`no spool entry ${positional[0]}`);
+    input.id = positional[0];
+  }
   if (name?.startsWith('schedule ') && name !== 'schedule list') {
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(positional[0])) return fail("a schedule's name is lowercase letters, digits and dashes, like nightly");
     const found = ops.call('direct',viewer,'clock.schedules',{});
@@ -107,7 +111,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'log') return success((value as Array<{at:number;kind:string;note:string;outcome?:string;agent:string}>).filter(r => r.agent === agent).map(r => `${clockTime(r.at)} ${r.kind} ${r.outcome ?? r.note}`).filter(line => !flags.grep || line.includes(String(flags.grep))).slice(-2000).join('\n'));
   if (name === 'schedule rm') return success(`removed schedule ${positional[0]}`);
   if (name === 'schedule run') return success(`${(value as Wake).id}: ${positional[0]} runs within a minute`);
-  if (name === 'lane rm') return success(`removed loom lane ${positional[0]}`);
+  if (name === 'lane rm') return success(`removed schedule ${positional[0]}\nremoved loom lane ${positional[0]}`);
   if (name === 'lane text') return success((value as {text:string}).text);
   if (name === 'lane list') { const rows = value as Schedule[]; return success(rows.length ? rows.sort((a,b)=>a.id.localeCompare(b.id)).map(s => `${s.lane!.padEnd(22)} ${s.agent.padEnd(8)} ${when(s).padEnd(18)} ${[...s.laneDetails!.text].length} chars${s.laneDetails!.local ? ' local' : ''}${s.note ? `  — ${s.note}` : ''}`).join('\n') : 'no loom lanes'); }
   if (name === 'schedule list') {

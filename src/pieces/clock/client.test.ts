@@ -47,7 +47,7 @@ it('ports schedule create, list, run, remove and lane text input without daemon 
   expect(a.run(['lane','set','upkeep','--agent','art','--at','08:31','-f','routines/upkeep.md'],owner,randomUUID(),{path:'routines/upkeep.md',text:'Whole lane\n'}).exit).toBe(0);
   expect(a.run(['lane','text','upkeep']).stdout).toBe('Whole lane\n');
   expect(a.run(['lane','assign','upkeep','--agent','other']).stdout).toMatch(/\nloom lane upkeep: Other's, 8:31 AM daily\n$/);
-  expect(a.run(['lane','rm','upkeep']).stdout).toBe('removed loom lane upkeep\n');
+  expect(a.run(['lane','rm','upkeep']).stdout).toBe('removed schedule upkeep\nremoved loom lane upkeep\n');
 });
 it('preserves park, fresh now and pause/resume output, including repeated actions',async()=>{
   const a=await setup();
@@ -125,4 +125,31 @@ it('prints actual firing and held states without inspecting transient units',asy
   for(let n=0;n<10 && wakes(a.db).find(e=>e.id===w.id)?.state==='firing';n++) await Promise.resolve();
   expect(wakes(a.db).find(e=>e.id===w.id)?.state).toBe('held');
   expect(a.run(['list']).stdout).toContain('[held]');
+});
+
+it('accepts attached short options and prevents cancelling another selected clock',async()=>{
+  const a=await setup();
+  expect(a.run(['in','1h','-pWords']).exit).toBe(0);
+  const w=wakes(a.db)[0];
+  expect(a.run(['--agent','other','cancel',w.id])).toEqual({exit:1,stdout:'',stderr:`wake: no spool entry ${w.id}\n`});
+  expect(wakes(a.db)[0].state).toBe('pending');
+  expect(a.run(['lane','--at','08:31','--agent','art','-froutines/care.md','set','care'],owner,randomUUID(),{path:'routines/care.md',text:'Words'}).exit).toBe(0);
+});
+it('renders lane list, rearm and duration-filtered bounded logs',async()=>{
+  const a=await setup();
+  expect(a.run(['lane','list']).stdout).toBe('no loom lanes\n');
+  a.run(['lane','set','care','--agent','art','--at','08:31','-pWords','--local']);
+  expect(a.run(['lane','list']).stdout).toBe(`${'care'.padEnd(22)} ${'art'.padEnd(8)} ${'8:31 AM daily'.padEnd(18)} 5 chars local\n`);
+  expect(a.run(['rearm'])).toEqual({exit:0,stdout:'clock deadlines rearmed\n',stderr:''});
+  const w=wakes(a.db)[0];a.db.prepare('DELETE FROM clock_events').run();
+  const insert=a.db.prepare('INSERT INTO clock_events(wake,record) VALUES (?,?)');
+  a.db.transaction(()=>{
+    insert.run(w.id,JSON.stringify({at:a.clock.now()-7200000,kind:'set',note:'old',agent:'art'}));
+    for(let n=0;n<2003;n++)insert.run(w.id,JSON.stringify({at:a.clock.now()-10000+n,kind:'set',note:`event-${n}`,agent:'art'}));
+  })();
+  const log=a.run(['log','--since','1h']);expect(log.exit).toBe(0);
+  const lines=log.stdout.trimEnd().split('\n');expect(lines).toHaveLength(2000);
+  expect(lines[0]).toContain('event-3');expect(lines.at(-1)).toContain('event-2002');expect(log.stdout).not.toContain(' old');
+  expect(a.run(['log','--since','1s']).stdout).toBe('\n');
+  expect(a.run(['log','--since','broken']).exit).toBe(1);
 });

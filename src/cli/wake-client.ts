@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
-import { clockHelp, commandHead } from '../pieces/clock/commands.js';
+import { clockHelp, commandHead, clockOption } from '../pieces/clock/commands.js';
 const answerSchema = z.object({
   ok: z.literal(true),
   value: z.object({ stdout: z.string(), stderr: z.string(), exit: z.number().int().min(0).max(255) }),
@@ -40,12 +40,13 @@ export async function runWakeClient(argv: string[], io: IOStreams, runtime: Clie
     for (let n=0;n<args.length;n++) {
       const arg = args[n];
       if (arg === '--') break;
-      if (arg === '-f' || arg === '--prompt-file' || arg.startsWith('--prompt-file=')) {
-        const path = arg.startsWith('--prompt-file=') ? arg.slice(14) : args[++n];
+      const option=clockOption(arg);
+      if (option?.flag === 'prompt-file') {
+        const path = option.attached ?? args[++n];
         if (!path) return fail('lane --prompt-file needs a path');
         try { input.laneFile = { path, text: await readFile(path, 'utf8') }; }
         catch { return fail('Cannot read lane file'); }
-      } else if (arg.startsWith('--') && !arg.includes('=') && !['--local','--no-local'].includes(arg) || arg === '-p') n++;
+      } else if (option && option.attached === undefined && !['local','no-local'].includes(option.flag)) n++;
     }
   }
   const body = JSON.stringify({ id: randomUUID(), input });
