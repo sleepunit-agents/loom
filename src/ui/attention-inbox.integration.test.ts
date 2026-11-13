@@ -8,14 +8,13 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
 import { TokenDatabase } from '../core/household/tokens.js';
-import { installAttention } from '../pieces/attention/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, answers once across windows, respects private scope and captures both looks',async()=>{
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
-  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();installAttention(app.db,app.operations,app.live,fixtureSharing);}});
+  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
@@ -66,6 +65,17 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>p.locator('[data-split-row]').filter({hasText:'Review the shared Pond plan?'}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you').count()).toBe(0);
     expect(await p.getByText('Continue the Attention rebuild?').count()).toBe(0);
+    // Arriving live waits reconcile through the signed-in member, in both windows.
+    expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T06:00:00Z'},'inbox-close-wait-task').ok).toBe(true);
+    raise({id:'closed-task',ask:'Check the completed work?',waits_on:{task:'t-1'}});
+    await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:'closed-task'})).toMatchObject({ok:true,value:{state:'resolved',resolution:'t-1 is closed'}});
+    for(const page of [a,b]) {
+      await page.goto(`${loom.url}/p/inbox-preview/ask/closed-task`);
+      await expect.poll(()=>page.getByText('t-1 is closed',{exact:true}).count()).toBe(1);
+      expect(await yes(page).count()).toBe(0);
+    }
+    const fact=loom.operations.call('direct',owner,'attention.get',{id:'closed-task'});
+    if(!fact.ok)throw Error('Missing wait');expect(fact.value).not.toHaveProperty('answer');
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

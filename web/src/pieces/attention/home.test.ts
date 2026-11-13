@@ -175,3 +175,14 @@ it.each(['loading','offline','denied'] as const)('clears stale Clock words and t
   await publish('clock',live([]));expect(text()).toContain('Work private');
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Work private');expect(text()).not.toContain('Art clock');
 });
+
+it('checks the real member wait operation from Home without synthesizing a local resolution or answer',async()=>{
+  const pending=request<Ask>();f.call.mockReturnValue(pending.call);
+  const record=ask('wait',{waits_on:{task:'t-1'}});f.snapshots['attention.ask']=live([record]);
+  await draw();expect(f.call).toHaveBeenCalledExactlyOnceWith('attention.checkWait',{id:'wait'});
+  await pending.finish({ok:true,value:{...record,state:'resolved',resolution:'t-1 is closed'}});
+  expect(text()).toContain('Question wait');
+  await publish('attention.ask',live([{...record,state:'resolved'}]));
+  expect(text()).not.toContain('Question wait');expect(text()).toContain('All clear.');
+  expect(f.call.mock.calls.some(([name])=>name==='attention.answer')).toBe(false);
+});

@@ -53,3 +53,19 @@ selected only by `--tasks`, not a home glob. Add a source rule whenever an impor
 starts reading another file, and test snapshot → plan → all on that layout.
 Program/run pruning and key inclusion are central rules; an importer must never
 read installed program trees.
+
+Comms key prerequisite: `publishMigrationCommsKey(snapshotKey, home)` is an
+internal offline helper, not a registered importer. Its caller must manifest-verify
+the snapshot, resolve its input with `snapshotPath`, and hold the destination's
+stopped-daemon gate, and run migration-all's receipt-bound publication-pair
+recovery before calling the helper on a resumed destination. The helper itself
+refuses every hard-linked key; it does not authorize standalone crash-pair
+recovery without a matching migration receipt. It preserves the snapshot key bytes, accepts an identical
+existing private regular key and refuses a different one; it never generates one.
+It fsyncs a private exclusive temporary file before linking the final name and
+fsyncing the directory. Retry also fsyncs the directory when the final file exists.
+The all coordinator recovers only root `comms.key` / UUID publication-temp pairs
+that have exactly two links, source-identical bytes and the matching plan receipt,
+just as for `ui-cookie.key`. External aliases and unrelated pairs remain refused.
+This prerequisite does not add Comms discovery, registration or independent
+verification; all three remain required before Comms is covered by migrate-all.

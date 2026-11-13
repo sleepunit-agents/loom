@@ -394,3 +394,39 @@ properties before allowing a native rejection handler to attach. Production
 adapters must not return such objects or independently log credential material.
 The persistent production adapter and its regression tests must satisfy this
 constraint when that adapter is composed.
+
+## Async holder mutation transport (not registered)
+
+`holder-mutations.ts` adds a separate mutual-TLS Unix socket with bounded binary
+POSTs for add, replace and remove, and empty 204 acknowledgements only after the
+holder store completes. The client snapshots input before awaiting, owns and
+erases its copy, uses a five-second absolute deadline and never exposes response
+bodies or provider errors. The server bounds input at 64 KiB, erases owned bytes
+after store settlement, and has no read endpoint. The five-second server bound
+starts at connection acceptance, before TLS or HTTP headers complete; clients
+use one fresh connection per request and keep-alive cannot extend the bound. It shares only TLS/private-path
+helpers with the existing read listener; the read channel and executable stay as
+before. No automatic retries or stale-socket cleanup are introduced.
+
+Every listener requires a trusted authority callback. The callback receives the
+TLS certificate fingerprint and the daemon's member assertion; it must pin the
+permitted daemon, resolve the authenticated actual member, and check current
+household write permission. The assertion alone and the daemon's TLS certificate
+are not end-member authentication. A pass-through callback is invalid production
+composition. Authorization runs before consuming input and again before each
+store call, including receipt retries. Changed/denied member resolution fails
+closed. The store receives the resolved member, never the asserted member.
+
+A timeout/disconnect can occur after a durable write starts or commits. Callers
+must retry with the identical member, writeId and complete input; they must not
+infer rollback from transport failure. Storage already started is not cancelled;
+its input remains owned until it settles, then is erased. Authorization applies
+at admission and immediately before starting storage; it does not cancel an
+already started storage mutation.
+
+This module is not wired to the holder executable, normal startup or registry.
+Before activation, t-2208 still requires real trusted authority composition,
+async registry dispatch with current authenticated member/permission checks,
+metadata reconciliation after holder success/loom transaction rollback, rotation,
+runtime sinks and the remaining importer/client/Settings/move verification.
+It cannot be injected into the synchronous `KeyHolder` seam.

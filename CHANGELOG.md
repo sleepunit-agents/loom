@@ -13,10 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
+- Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
+- Add next-mode member-private Appearance and Accessibility preference operations and Live records, preserving imported choices across owner changes.
 
 - Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
 
@@ -166,6 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ends an agent's own sessions when it's done.
 
 ### Added
+- Home and Inbox automatically reconcile visible approval/task waits as the signed-in member on arrival and every minute, keeping their counts current without a service grant.
 
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any

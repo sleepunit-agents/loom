@@ -4,6 +4,7 @@ import { OperationError } from '../operations/index.js';
 import { firstOwner, type Member } from '../../household.js';
 import { HouseholdDatabase } from './document.js';
 import { TokenDatabase } from './tokens.js';
+import { HouseholdRows } from './rows.js';
 
 export const memberPerson = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 export const memberAgents = z.union([z.literal('*'), z.array(z.string())]);
@@ -30,6 +31,19 @@ export function changeHouseholdMember(db: Db, home: string, person: string, agen
   if (!first) throw new OperationError('invalid', 'A household owner must remain');
   const was = firstOwner(h).person;
   if (first.person !== was) {
+    // Imported first-owner preferences live in the session envelope. Rotate only
+    // that field with ownership, so no new owner inherits another person's choices.
+    const settings = new HouseholdRows<Record<string, unknown>>(db, 'settings');
+    const readers = new HouseholdRows<Record<string, unknown>>(db, 'readers');
+    const envelope = settings.get('session-envelope') ?? {};
+    const previousReader = readers.get(was) ?? {};
+    const nextReader = readers.get(first.person) ?? {};
+    const previous = { ...previousReader }, next = { ...envelope };
+    delete previous.prefs; delete next.prefs;
+    if (Object.hasOwn(envelope, 'prefs')) previous.prefs = envelope.prefs;
+    if (Object.hasOwn(nextReader, 'prefs')) next.prefs = nextReader.prefs;
+    readers.put(was, previous);
+    settings.put('session-envelope', next);
     // Pin *all* unbound owner credentials, including revoked ones: no credential
     // may ever acquire a different person through a later first-owner fallback.
     new TokenDatabase(db).change(tokens => {

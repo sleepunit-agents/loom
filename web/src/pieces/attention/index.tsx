@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { call, useRecords, type Call, type CallState, type Snapshot } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
 import { decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
+import { useWaitChecks } from './wait-checks';
 const idle: CallState<unknown> = { pending:false, status:'done' };
 const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
@@ -90,6 +91,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/')+5)) : undefined; } catch { /* Malformed paths select nothing. */ }
   const snapshot = useRecords<Ask>('attention.ask'), {records,status} = snapshot;
+  useWaitChecks(snapshot);
   const [folder,setFolder] = useState('needs'), [query,setQuery] = useState('');
   const [opening,setOpening] = useState<{id:string;confirmation:Confirmation}>();
   const [busy,setBusy] = useState(false);
