@@ -991,3 +991,20 @@ subscription is disconnected or a thread action is pending. The existing single
 browser proof covers working/done updates and Watching/join.
 This corrects control presentation only; broader interrupt/resume/model parity
 and the runtime integration obligations above remain unfinished.
+
+
+## Thread row actions
+
+Each list row now has a separate Actions button using the shared menu components.
+Pin/Unpin and Archive/Unarchive call the existing Comms operations without
+opening the thread. Right-click and the context-menu key (or Shift+F10) open
+the same menu; the trigger also supports standard menu keyboard navigation and
+Escape focus return. Pending actions disable row menus, and failures remain
+visible above the list even if a row leaves its folder. The existing server
+pin cap, archive lifecycle and access checks remain authoritative.
+
+The single browser proof exercises pointer and keyboard entry, focus return,
+pin/unpin and archive/unarchive across folders, and captures the closed list
+and open menu in both looks at all three widths. Swipe, long press and archive
+Undo remain unfinished, alongside the broader inventory above. This is a
+presentation unit with no backend, session, policy or runtime changes.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRecords, call, type Call } from '../../data';
-import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
+import { Split, List, Empty, Error, Loading, Button, Input } from '../../kit';
 import { Composer, Answer, useRequest } from './composer';
 import { replyHtml } from './render';
 import { latestHarness, messageView, type Message } from './message';
@@ -11,6 +11,7 @@ import { useReplyFollow } from './use-follow';
 import { bindThreadRead } from './read';
 import { folderThreads, watchingJob } from './threads';
 import { Work } from './work';
+import { ThreadRow } from './thread-row';
 import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};job?:false|{joined:boolean};[key:string]:unknown}
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
@@ -64,6 +65,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
 }
 export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){
  const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);const path=shellPath??localPath;const selected=path.split('/thread/')[1]?`th:${path.split('/thread/')[1]}`:undefined;const base='/p/comms-preview';
+ const [rowRequest,setRowRequest]=useState<Call>();const rowState=useRequest(rowRequest);
  const [folder,setFolder]=useState('live');const [creating,setCreating]=useState(false);const [agent,setAgent]=useState('');
  const {records,status}=useRecords<Thread>('thread','all');
  const [who,setWho]=useState<Call<{member:string;agents:string[]}>>();const identity=useRequest(who);
@@ -76,8 +78,8 @@ export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:str
  if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
  const listed=folderThreads(records,folder);const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
  return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'background',label:'Background work'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle={folder==='background'?'Background work':folder==='archived'?'Archived':'Threads'} listMeta={listed.length}
-  listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button></div>}
-  list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{listed.map(t=><Row key={t.id} icon={<span className="comms-agent-letter" aria-hidden="true">{Array.from(t.agent)[0]?.toUpperCase()??'?'}</span>} title={t.title??`New thread with ${t.agent}`} meta={<span className="flex flex-wrap gap-x-2"><span>{t.agent}</span><time aria-label="Thread activity time" dateTime={new Date(t.last).toISOString()}>{new Date(t.last).toLocaleString('en-US',{timeZone:'America/Chicago',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} CT</time>{t.working&&<span aria-label="Thread working">working…</span>}</span>} unread={t.unread} selected={selected===t.id} onClick={()=>navigate(t.id)}/>)}</List>}
+  listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button><Answer request={rowRequest}/></div>}
+  list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{listed.map(t=><ThreadRow key={t.id} thread={t} selected={selected===t.id} disabled={status!=='live'||rowState.pending} onOpen={()=>navigate(t.id)} onAction={action=>setRowRequest(call('comms.change',{thread:t.id,action}))}/>)}</List>}
   reader={creating&&mine?<div className="grid gap-3 p-4"><h1>New thread</h1><label>Agent<select value={ownedAgent} onChange={e=>setAgent(e.target.value)}>{mine.agents.map(id=><option key={id}>{id}</option>)}</select></label>{ownedAgent?<Composer key={ownedAgent} member={mine.member} agent={ownedAgent} onOpened={navigate} enabled={status==='live'}/>:<Empty title="No agents available"/>}</div>:current?<ThreadReader key={current.id} thread={current} onDeleted={()=>navigate()}/>:selected?<Empty title="This thread is no longer in view"/>:null}
   open={!!selected||creating} onBack={()=>navigate()} backLabel="Threads" blank={<Empty title="Open a thread" text="Choose a thread or start one with your agent."/>}/>
 }

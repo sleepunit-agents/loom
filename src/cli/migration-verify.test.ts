@@ -34,7 +34,7 @@ const bytes = (path: string): unknown => Object.fromEntries(readdirSync(path).so
   const p = join(path, name); try { return [name, readFileSync(p).toString('base64')]; }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EISDIR') throw e; return [name, bytes(p)]; }
 }));
-async function fixture(full = false, matchingChange = false) {
+async function fixture(full = false, matchingChange = false, legacyGrant = false) {
   const dir = mkdtempSync(join(tmpdir(), 'migration-all-')); dirs.push(dir);
   const old = join(dir, 'old'), root = join(dir, 'snapshot'), home = join(dir, 'new'); mkdirSync(old);
   const put = (p: string, v: unknown) => { mkdirSync(join(old,p,'..'), { recursive: true }); writeFileSync(join(old,p), JSON.stringify(v)); };
@@ -72,7 +72,7 @@ async function fixture(full = false, matchingChange = false) {
     writeFileSync(join(old,'clock/art/spool.jsonl'),JSON.stringify({id:'w-fixture',at:'2026-11-12 00:00:00',created:'2026-11-12 00:00:00',prompt:'Fixture',note:'keep',fails:2})+'\n');
     put('clock/art/paused',{since:'2026-11-12 00:00:00'});
     const who={agent:'art',where:'h-fixture'}, approval={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark',why:'Fixture',who,for:'?',people:['jonathan'],minutes:60,at,state:'used',decided:at,expires:'2026-11-12T01:00:00Z',used:at,by:'jonathan'};
-    put('approvals/approvals.json',{v:1,approvals:{[approval.id]:approval},notices:[{at,agent:'art',kind:'merge',target:'github:acme/app',what:'Merged',for:'owner'}]});
+    put('approvals/approvals.json',{v:1,approvals:{[approval.id]:approval,...(legacyGrant?{'a-89abcdef':{id:'a-89abcdef',kind:'grant',target:'tasks:mark:read/*',what:'Access Tasks.',why:'Old request.',who,for:'owner',minutes:60,at,state:'pending'}}:{})},notices:[{at,agent:'art',kind:'merge',target:'github:acme/app',what:'Merged',for:'owner'}]});
     put('approvals/rules.json',{v:1,rules:[{kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at}],grants:[],standing:['s-01234567','s-01234568'].map(id=>({id,kind:'local-wake',agent:'art',target:`art:${'a'.repeat(16)}`,digest:'a'.repeat(64),who,for:'owner',from:approval.id,what:'Run fixture',at,by:'jonathan',uses:2,used:at}))});
     writeFileSync(join(old,'approvals/audit.jsonl'),JSON.stringify({at,event:'use',id:approval.id,kind:approval.kind,target:approval.target,who})+'\n');
   }
@@ -80,7 +80,13 @@ async function fixture(full = false, matchingChange = false) {
   return {dir,old,root,home,plan:prepareMigrationPlan(root).plan};
 }
 it('independently verifies all six pieces on every invocation without any importer or filesystem writes',async()=>{
-  const f=await fixture(true,true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
+  const f=await fixture(true,true,true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
+  const inspected=new Database(join(f.home,'loom.db'),{readonly:true});
+  try {
+    const row=inspected.prepare("SELECT record FROM approvals_approvals WHERE id='a-89abcdef'").get() as {record:string};
+    expect(JSON.parse(row.record)).toMatchObject({state:'withdrawn',withdrawn:'2026-11-12T00:00:00Z'});
+    expect(inspected.prepare("SELECT record FROM approvals_audit ORDER BY id DESC LIMIT 1").get()).toEqual({record:expect.stringContaining('retire-agent-grant')});
+  } finally {inspected.close();}
   const before=bytes(f.home),source=bytes(f.root);
   for(const [module,name] of [[taskImporter,'importTasks'],[attentionImporter,'importAttention'],[clockImporter,'importClock'],[approvalsImporter,'importApprovals'],[changesImporter,'importChanges'],[householdImporter,'importHousehold']] as const) vi.spyOn(module,name as never).mockImplementation(()=>{throw Error('writer called');});
   for(const _ of [1,2]) expect((await verifyMigration(f.root,f.home))).toMatchObject({status:'verified',missing:[],differences:[],pieces:['household','tasks','attention','clock','approvals','changes']});

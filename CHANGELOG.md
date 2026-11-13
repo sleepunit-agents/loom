@@ -13,9 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
+- Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
+- Next mode retires per-agent piece/path grant approvals in favour of record scope and withdraws pending legacy grant imports.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Show each Comms thread’s agent letter beside its title in the list.
@@ -36,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
+
+- Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 

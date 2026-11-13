@@ -1,0 +1,14 @@
+.next-status-bar{flex:none;min-width:0;z-index:30;padding:env(safe-area-inset-top) 24px 0;background:color-mix(in srgb,var(--v-canvas) 85%,transparent);border-bottom:1px solid var(--v-edge)}
+:root[data-look] .next-status-line{height:34px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,min(44vw,980px)) minmax(0,1fr);gap:14px}
+:root[data-look] .next-status-line .loom-pbar__name{max-width:100%}
+.next-status-end{display:flex;justify-content:flex-end;align-items:center;gap:12px;min-width:0}
+.next-status-line .next-preferences{font-size:11px}
+.next-status-line .loom-tick[data-fits] .loom-tick__line{text-align:center}
+[data-shell=phone] .next-status-bar{padding-inline:12px}
+:root[data-look] [data-shell=phone] .next-status-line{height:32px;display:flex;gap:8px}
+:root[data-look] [data-shell=phone] .next-status-line .loom-pbar__name{max-width:28%}
+[data-shell=phone] .next-status-end{gap:6px}
+/* Keep appearance reachable without a second line of phone chrome. */
+[data-shell=phone] .next-status-line .next-preferences summary{font-size:0;list-style:none;width:28px;height:32px;display:grid;place-items:center}
+[data-shell=phone] .next-status-line .next-preferences summary::after{content:'⚙';font-size:16px}
+[data-shell=phone] .next-status-line .next-preferences-panel{top:calc(env(safe-area-inset-top) + 40px)}

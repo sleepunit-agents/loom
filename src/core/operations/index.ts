@@ -9,6 +9,7 @@ export type Door = 'http' | 'socket' | 'mcp' | 'direct';
 export type Code = 'denied' | 'not-found' | 'invalid' | 'conflict' | 'unavailable';
 export type Failure = { ok: false; code: Code; message: string };
 export type Result = { ok: true; value: unknown } | Failure;
+const preparationNeeded = Symbol('preparation needed');
 export const failure = (code: Code, message: string): Failure => ({ ok: false, code, message });
 export class OperationError extends Error { constructor(readonly code: Code, message: string) { super(message); } }
 export interface Change { type: string; id: string }
@@ -28,7 +29,11 @@ export interface Operation<I = unknown> {
   may(viewer: Viewer, input: I, db: Db): boolean;
   /** Private pieces key retry fingerprints so exported receipts cannot test guessed words. */
   inputHash?(canonicalInput: string): string;
-  /** Async crypto is prepared outside the synchronous transaction, never persisted by core. */
+  /** Async work is prepared outside the synchronous transaction, never persisted by core.
+   * Write receipts and recovery are checked first and checked again after await.
+   * This is NOT an external-effect commit protocol: concurrent preparations may
+   * run and a later transaction/authentication check may still fail. A writer to
+   * another store needs its own durable reconciliation and idempotency protocol. */
   prepare?(input: I, context: { readonly viewer: Viewer }): Promise<unknown>;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
@@ -87,8 +92,11 @@ export class Operations {
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
-    if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
     try {
+      if (op.write) {
+        const prior = this.execute(door, viewer, name, input, id, undefined, window, true);
+        if (prior !== preparationNeeded) return prior;
+      } else if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
       const prepared = await op.prepare?.(parsed.data, {viewer});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
@@ -98,7 +106,9 @@ export class Operations {
     if (this.ops.get(name)?.prepare) return failure('unavailable', 'Operation requires asynchronous dispatch');
     return this.execute(door, viewer, name, input, id);
   }
-  private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window = false): Result {
+  private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window?: boolean): Result;
+  private execute(door: Door, viewer: Viewer, name: string, input: unknown, id: string | undefined, prepared: unknown, window: boolean, preflight: true): Result | typeof preparationNeeded;
+  private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window = false, preflight = false): Result | typeof preparationNeeded {
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
@@ -106,11 +116,11 @@ export class Operations {
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
-    let result: Result;
+    let result: Result | typeof preparationNeeded;
     if (this.db.inTransaction && !this.frames.length) return failure('unavailable', 'Operations must own the outer transaction');
     this.frames.push(changes);
     try {
-      result = this.db.transaction((): Result => {
+      result = this.db.transaction((): Result | typeof preparationNeeded => {
         const now = this.clock.now();
         if ((op.windowOnly || op.recheckPolicy) && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data)) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
@@ -126,6 +136,7 @@ export class Operations {
           if (recovered) break;
         }
         if (!recovered && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+        if (preflight && !recovered) return preparationNeeded;
         const outcome = recovered ?? op.run(ctx, parsed.data, prepared);
         const replay = outcome instanceof RecoveredWrite ? outcome : undefined;
         if (replay && (!op.write || !Number.isFinite(replay.expires) || replay.expires <= now || replay.expires > ctx.receipt!.expires)) throw new Error('Invalid recovered receipt expiry');
@@ -141,6 +152,7 @@ export class Operations {
       })();
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
     finally { this.frames.pop(); }
+    if (result === preparationNeeded) return result;
     if (!result.ok && op.rejected) {
       try { this.db.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()))(); }
       catch { /* An audit failure cannot turn a refused action into success. */ }

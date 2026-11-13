@@ -523,6 +523,8 @@ No new screens are added to the old side, and it gets bug fixes only.
 
 ## What this replaces
 
+Old per-agent piece path grants are retired in favour of record scope.
+
 - [collections.md](collections.md) and its two inventories: the record types and the viewer model carry over;
   providers, pulls, the log, cursors and leases are withdrawn.
 - [extensions.md](../extensions.md), [pieces-install.md](pieces-install.md) and
