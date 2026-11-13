@@ -135,7 +135,10 @@ it('drops stale removed member and agent references and preserves legacy scoped 
   app.db.transaction(() => store.create(pond))();
   const doc = raw(); doc.members[1].role = 'owner';
   app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, doc))();
-  expect(store.sharing().members.pollock.owner).toBe(false);
+  expect(store.sharing().members.pollock).toEqual({ owner: false, agents: ['pond-bot'] });
+  expect(mayAct(pollock, { agent: 'pond-bot' }, store.sharing(), 'give-work')).toBe(true);
+  expect(mayAct(pollock, { agent: 'art', project: 'pond' }, store.sharing(), 'give-work')).toBe(false);
+  expect(mayAct(pollock, {}, store.sharing(), 'household')).toBe(false);
   doc.members = doc.members.filter(m => m.person !== 'pollock'); doc.agents = ['art', 'mark'];
   app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, doc))();
   expect(store.sharing().projects.pond).toEqual({ members: [], agents: ['art'] });
