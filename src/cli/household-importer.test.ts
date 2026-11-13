@@ -3,7 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../foundation.js';
+import { createFoundation, startLoom } from '../foundation.js';
+import type { Db } from '../core/db/index.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { HouseholdRows } from '../core/household/rows.js';
 import { TokenDatabase } from '../core/household/tokens.js';
@@ -14,6 +15,16 @@ import { importHousehold } from './household-importer.js';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); });
+// startLoom also installs sharing, so household tables can already exist.
+// Rollback must preserve both the schema and every existing household row.
+function householdState(db: Db) {
+  const schema = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name LIKE 'household_%' ORDER BY name").all() as { name: string; sql: string }[];
+  return {
+    schema,
+    rows: schema.map(({ name }) => ({ name, rows: db.prepare(`SELECT * FROM ${name} ORDER BY id`).all() })),
+    migrations: db.prepare("SELECT * FROM core_migrations WHERE piece = 'household' ORDER BY number").all(),
+  };
+}
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'household-import-'));
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
@@ -31,7 +42,7 @@ async function fixture() {
     const path = join(from,name); mkdirSync(join(path,'..'), { recursive: true }); files[name] = Buffer.from(JSON.stringify(value)); writeFileSync(path, files[name]);
   }
   files['ui-cookie.key'] = randomBytes(32); writeFileSync(join(from,'ui-cookie.key'),files['ui-cookie.key']);
-  return { app, home, from, files, household, tokens, sessions };
+  return { app, home, from, files, household, tokens, sessions, before: householdState(app.db) };
 }
 it('compares every concern, leaves source bytes untouched, and repeats without overwriting later changes', async () => {
   const f = await fixture();
@@ -60,13 +71,13 @@ it('compares every concern, leaves source bytes untouched, and repeats without o
 it('rolls back an interrupted import and succeeds on retry', async () => {
   const f = await fixture();
   expect(() => importHousehold(f.app.db,f.home,f.from,1000,{interrupt:()=>{throw new Error('power lost');}})).toThrow('power lost');
-  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+  expect(householdState(f.app.db)).toEqual(f.before);
   expect(importHousehold(f.app.db,f.home,f.from,1000).imported).toBe(true);
 });
 it('refuses source mutation during import and mismatched cookie keys', async () => {
   const f = await fixture();
   expect(() => importHousehold(f.app.db,f.home,f.from,1000,{interrupt:()=>writeFileSync(join(f.from,'tokens.used.json'),'{}')})).toThrow('Source changed during');
-  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+  expect(householdState(f.app.db)).toEqual(f.before);
   writeFileSync(join(f.home,'ui-cookie.key'), randomBytes(32));
   expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('cookie key differs');
 });
@@ -95,7 +106,7 @@ it('compares piece ids independent of locale or SQLite ordering', async () => {
 it('refuses a reconstructed content discrepancy and rolls every concern back', async () => {
   const f = await fixture();
   expect(() => importHousehold(f.app.db,f.home,f.from,1000,{interrupt:()=>new HouseholdRows(f.app.db,'members').put('pollock',{person:'pollock',role:'member',agents:[]})})).toThrow('content comparison failed');
-  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+  expect(householdState(f.app.db)).toEqual(f.before);
 });
 it('retries after interruption between durable key publication and committing the receipt', async () => {
   const f = await fixture();
@@ -119,7 +130,7 @@ it.each(['extra-id','extra-record'])('refuses hidden token rows: %s', async kind
     if (kind === 'extra-id') rows.put(hash('hidden'),[{...f.tokens.tokens[0],sha256:hash('hidden')}]);
     else rows.put(hash('token'),[...rows.get(hash('token'))!,{...f.tokens.tokens[0],label:'hidden duplicate'}]);
   }})).toThrow('content comparison failed');
-  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+  expect(householdState(f.app.db)).toEqual(f.before);
 });
 it.each(['null-session','bad-secret','bad-passkey','bad-link','bad-challenge'])('refuses malformed credential records: %s', async kind => {
   const f = await fixture();
@@ -131,5 +142,17 @@ it.each(['null-session','bad-secret','bad-passkey','bad-link','bad-challenge'])(
   if (kind === 'bad-challenge') value.challenges = { [hash('challenge')]: {expires:2000,purpose:'invented'} };
   writeFileSync(join(f.from,'ui-sessions.json'),JSON.stringify(value));
   expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('Invalid session credentials');
-  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+  expect(householdState(f.app.db)).toEqual(f.before);
+});
+
+it('rolls back newly created household schema when a fresh database import is interrupted', async () => {
+  const f = await fixture();
+  const home = f.home + '-raw';
+  const app = createFoundation({ home });
+  cleanup.push(() => app.close());
+  const before = householdState(app.db);
+  expect(before.schema).toEqual([]);
+  expect(() => importHousehold(app.db,home,f.from,1000,{interrupt:()=>{throw new Error('power lost');}})).toThrow('power lost');
+  expect(householdState(app.db)).toEqual(before);
+  expect(importHousehold(app.db,home,f.from,1000).imported).toBe(true);
 });
