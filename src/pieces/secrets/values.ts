@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { operation, mayAct, OperationError, type Db, type Live, type Operations, type Sharing } from '../../core/index.js';
 import { type GrantAttention, grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
-import type { KeyHolder } from './keyholder.js';
+import { synchronousHolderAcknowledgement, type KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
 import { beginSecretUsage } from './usage.js';
 import { recordSecretChange } from './history.js';
@@ -23,11 +23,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
       }
       if (!db.prepare('SELECT id FROM secrets_names WHERE id=?').get(input.name)) throw new OperationError('not-found', 'Secret name not found');
       try {
-        const acknowledgement: unknown = holder.remove(input.name, receipt);
-        if (acknowledgement instanceof Promise) {
-          void acknowledgement.catch(() => {});
-          throw new Error('Removal must acknowledge synchronously');
-        }
+        synchronousHolderAcknowledgement(holder.remove(input.name, receipt));
       }
       catch { throw new OperationError('unavailable', 'Key holder could not remove the secret'); }
       recordSecretChange(ctx, receipt, input.name, 'removed');
@@ -46,7 +42,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
         // The holder binds this stable write id to the full input and authenticated member.
         // It must survive daemon retries when a holder write succeeded before DB commit.
         // Values are deliberately absent from all metadata below.
-        holder.set(input.name, bytes, input.mode, `set:${ctx.viewer.id}:${input.writeId}`);
+        synchronousHolderAcknowledgement(holder.set(input.name, bytes, input.mode, `set:${ctx.viewer.id}:${input.writeId}`));
       } catch { throw new OperationError('unavailable', 'Key holder could not save the secret'); }
       finally { bytes.fill(0); }
       const record = { id: input.name, description: '', by: ctx.viewer.id, changedAt: ctx.now };
@@ -67,7 +63,7 @@ export function handSecret(db: Db, live: Live, holder: KeyHolder, agent: string,
   let handed = false;
   try {
     attempt = beginSecretUsage(db, live, name, action, {kind: 'agent', id: agent}, now, context);
-    holder.handTo(name, sink); handed = true; attempt.finish('released'); return true;
+    synchronousHolderAcknowledgement(holder.handTo(name, sink)); handed = true; attempt.finish('released'); return true;
   } catch {
     if (!handed) { try { attempt?.finish('failed'); } catch { /* Keep the durable started attempt. */ } }
     return false;

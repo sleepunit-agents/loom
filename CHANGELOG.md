@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Resolve Attention digest filing through visible private Comms thread metadata without reading message words.
+- Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
 
 - Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
 - Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
+- Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
 - Add opt-in fixed 24-hour Clock safety wakes under explicitly configured agent authority, retaining restart deadlines and staging holds.
 - Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
@@ -52,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 - Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
 - Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
+- Resolve Attention digest filing through visible private Comms thread metadata without reading message words.
 - Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 - Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
@@ -1004,6 +1006,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
 
 - Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
+
+- Add owner-only next-mode `household.show` and generated `loom-household show` JSON summary.
 
 ## [0.16.1] - 2026-10-25
 

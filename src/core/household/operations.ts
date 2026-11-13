@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { HouseholdDatabase } from './document.js';
 import { changeHouseholdMember, memberAgents, memberPerson } from './members.js';
 import { AGENT_NAME } from '../../household.js';
 import { addHouseholdAgent } from './agents.js';
@@ -13,6 +14,16 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 export function installHouseholdProjects(app: Foundation, home: string): void {
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
+  app.operations.register(operation({
+    name: 'household.show',
+    input: z.object({}).strict(),
+    may: owner,
+    run() {
+      const h = new HouseholdDatabase(app.db).household(home);
+      if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+      return { home: h.home, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) };
+    },
+  }));
   app.operations.register(operation({
     name: 'household.setMember', write: true,
     input: z.object({ person: memberPerson, agents: memberAgents }).strict(),

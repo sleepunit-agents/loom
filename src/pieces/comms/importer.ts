@@ -14,15 +14,16 @@ function read(db:Db,name:string):Row[] {
  if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))return [];
  return db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all() as Row[];
 }
-export async function importComms(db:Db,from:string,newHome:string,options:{interrupt?:()=>void}={}) {
+export async function importComms(db:Db,from:string,newHome:string,options:{interrupt?:()=>void}={},openSource:(path:string)=>Db=path=>new Database(path,{readonly:true,fileMustExist:true})) {
  const sourceHome=basename(from)==='comms.db'?dirname(from):from;
  if(realpathSync(sourceHome)===realpathSync(newHome))throw new Error('Comms source and destination must differ');
  const oldKey=readKey(join(sourceHome,'comms.key')),newKey=readKey(join(newHome,'comms.key'));
- const source=new Database(join(sourceHome,'comms.db'),{readonly:true,fileMustExist:true});
+ // Snapshot callers supply a buffer reader; live-source CLI calls retain SQLite's WAL-aware reader.
+ const source=openSource(join(sourceHome,'comms.db'));
  let household:Db|undefined;let threads:Row[],messages:Row[],asks:Row[],deleted:Row[],steps:Row[];
  try {
   // THREADS live in household.db on the old side, not comms.db.
-  household=new Database(join(sourceHome,'household.db'),{readonly:true,fileMustExist:true});
+  household=openSource(join(sourceHome,'household.db'));
   [threads,deleted]=household.transaction(()=>[read(household!,'comms_threads'),read(household!,'comms_deleted')])();
   [messages,asks,steps]=source.transaction(()=>[read(source,'comms_messages'),read(source,'comms_asks'),read(source,'conversation_steps')])();
  }finally {source.close();household?.close();}

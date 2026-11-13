@@ -121,6 +121,16 @@ restricted to the opener and selected agent. Existing imported destinations
 are not repaired by a checksum-only repeat; migration verification and any
 repair procedure remain separate unfinished obligations.
 
+The importer accepts an internal `openSource(path)` dependency for both
+`comms.db` and `household.db`. Its default remains a read-only, WAL-aware SQLite
+connection for the individual CLI. A snapshot coordinator must first verify a
+completed backup's manifest and then supply `openSnapshotSqlite`; its private
+buffer normalization never changes snapshot bytes or creates sidecars. Both
+handles close on success and read/open failures; a supplied reader never falls
+back to a file connection. This seam alone does not register Comms in `all`:
+source collection/discovery, strict plan options and independent verification
+remain required before that integration can claim coverage.
+
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
 

@@ -6,6 +6,7 @@ import { agentAccountsSchema } from './accounts.js';
 import { projectSchema, projectSlug } from './sharing.js';
 
 export const householdResponses = {
+  show: z.object({ home: z.string(), agents: z.array(z.string()), default: z.string(), owner: z.string().optional() }).strict(),
   setMember: z.array(memberSchema),
   removeMember: z.array(memberSchema),
   addAgent: z.array(z.string()),
@@ -17,10 +18,10 @@ export const householdResponses = {
   setProjectAgents: projectSchema,
 };
 export const householdCommands: readonly CliCommand[] = Object.keys(householdResponses)
-  .map(name => ({ name, write: true, positional: ['json'] }));
+  .map(name => ({ name, write: name !== 'show', positional: ['json'] }));
 export function householdOperation<I>(op: Omit<Operation<I>, 'output' | 'cli'>): Operation<I> {
   const name = op.name.slice('household.'.length) as keyof typeof householdResponses;
   const cli = householdCommands.find(command => `household.${command.name}` === op.name);
-  if (!cli || !op.write) throw new Error('Household CLI metadata does not match operation');
+  if (!cli || !!op.write !== !!cli.write) throw new Error('Household CLI metadata does not match operation');
   return defineOperation({ ...op, cli, output: householdResponses[name] });
 }

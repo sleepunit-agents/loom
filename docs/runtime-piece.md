@@ -548,3 +548,30 @@ open no transcript, login or file and change no state. Authenticated account/job
 report binding, account grouping, usage report validation and transactional
 hold persistence still belong to the future account layer. Parsing a supplied
 harness event grants no authority and is not trusted body or account proof.
+
+
+## Repository snapshot build inspection
+
+`inspectBuild` in `build-inspection.ts` ports old `box.mjs`'s `buildTagAt`
+and the build-reading portion of `buildNow` behind an asynchronous snapshot
+reader. It reads the house file and resolves the context, Containerfile and
+watched paths at one immutable commit supplied by the caller. With no watches,
+tags retain the old context-id prefix plus Containerfile-id prefix; with watches,
+they retain the old SHA-256 of the ids and sorted, deduplicated path/id pairs.
+Unrelated commits therefore preserve an image name. Watch renames or content
+changes rotate it. SHA-1 and SHA-256 Git object ids are accepted.
+
+The helper validates only the build declaration: relative paths without dot,
+parent or empty segments, a tree context, a blob Containerfile, up to 64 watch
+paths, and a house file of at most 4 MiB. Other house fields are deliberately
+not interpreted. Full executable house validation remains required before a
+runner builds or launches anything. Missing paths, malformed JSON or object
+ids, unknown build keys and reader failures reject the inspection.
+
+This is an internal, uncalled helper, not an operation or a concrete Git reader.
+It starts no process, fetches no repository, reads no old store or credential,
+changes no record and announces no current build. The separate runner must
+supply the immutable snapshot after fetching. Fetch scheduling, repository
+credential access, trusted body-host build-check/report, daemon staging gates,
+current grant revalidation and actual build/launch still remain. A computed tag
+alone proves neither image availability nor execution authority.

@@ -32,3 +32,7 @@ export function approvalAnswers(db: Db, sharing: () => Sharing, now: () => numbe
     },
   };
 }
+
+/** Owning target grammar and synchronous application contract for consumers. */
+export { vouchOf } from './targets.js';
+export type { ApprovalApplication } from './apply.js';
