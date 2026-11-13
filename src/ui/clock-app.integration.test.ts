@@ -5,19 +5,16 @@ import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { signin, hash } from '../core/signin/index.js';
-import { clockLocalFiling } from '../pieces/clock/role.js';
+import { runtimeStore } from '../pieces/runtime/store.js';
+import type { Result } from '../core/index.js';
 import { wakes } from '../pieces/clock/store.js';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
-import { fixture, installFixture, fixtureSharing } from '../fixture.js';
+import { fixture } from '../fixture.js';
 import { importClock } from '../pieces/clock/importer.js';
 import { wake } from '../pieces/clock/store.js';
-import { installApprovals } from '../pieces/approvals/index.js';
 import { load } from '../pieces/approvals/store.js';
-import { clockVouchFiling } from '../pieces/clock/dependencies/filing.js';
-import { clockVouchApplication } from '../pieces/clock/role.js';
-import { installClock } from '../pieces/clock/index.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes across two windows, holds dispatch, and covers phone and desktop looks', async () => {
@@ -25,18 +22,10 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const source = join(home,'old'); mkdirSync(join(source,'art'),{recursive:true});
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const access = fixtureSharing();
-  access.services.clock = {types:['clock','approval'],operations:['clock.localRequest','clock.localSchedule','clock.localStandingSchedule','approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']};
-  access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
-  const sharing = () => access;
-  let auth: ReturnType<typeof signin> | undefined;
-  const loom = await startLoom({home,clock,install(app) {
-    installApprovals(app.db,app.operations,app.live,sharing,{localAgent:'art',applications:{clock:clockVouchApplication(app.operations)}});
-    installFixture(app,sharing);
+  const loom = await startLoom({home,clock,next:true,stdout:()=>{},install(app) {
     importClock(app.db,source,clock.now());
-    const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
-  },authenticate: req => auth?.resolve(req)});
-  auth = signin(loom);
+  }});
+  const auth = signin(loom);
   loom.db.transaction(()=>auth!.tokens.replace({v:1,tokens:[]},{}))();
   function session(member: string) {
     const bearer = randomBytes(32).toString('hex');
@@ -44,10 +33,17 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     return auth!.createSession(hash(bearer));
   }
   const ownerSession = session('jonathan'), guestSession = session('pollock');
-  const localCards = ['Allow once','Deny this job','Standing job'].map(note => {
-    const result=clockLocalFiling(loom.operations).request({who:{agent:'art',where:'house (queue)'},for:'owner',member:'jonathan',people:['jonathan'],conversation:'cv-123456789abc'},`<!-- house: local -->\nReport host disk usage: ${note}.`,note);
-    expect(result).toMatchObject({ok:true});return (result as {ok:true;value:{id:string}}).value.id;
-  });
+  const localCards:string[]=[];
+  const privateThreads:string[]=[];
+  const token=(role:string)=>{const bearer=randomBytes(32).toString('hex');auth.tokens.change(tokens=>tokens.push({role,label:'browser body fixture',sha256:hash(bearer),created:new Date(clock.now()).toISOString()}));return bearer;};
+  const runner=token('runner:clock-fixture'),unbound=token('agent:art');
+  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'clock-fixture',active:true},'fixture-enable-runner')).toMatchObject({ok:true});
+  loom.db.transaction(()=>{const store=runtimeStore(loom.db);store.put('settings',{id:'art',agent:'art',boxes:['clock-fixture'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'clock-fixture',name:'Fixture',owner:'jonathan',local:true,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
+  let apiSeq=0;
+  const post=async<T>(secret:string,name:string,input:object):Promise<T>=>{
+    const [piece,op]=name.split('.');const response=await fetch(`${loom.url}/api/${piece}/${op}`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input,id:`clock-browser-body:${++apiSeq}`})});
+    const result=await response.json() as Result<T>;expect(result.ok).toBe(true);if(!result.ok)throw new Error(result.message);return result.value;
+  };
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
   call('in',{agent:'art',prompt:'Review today’s work',note:'Morning review',when:'2h'});
@@ -92,6 +88,44 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
         ws.send(message);
       });
     });
+    // These are real private threads and runner-issued body credentials. The
+    // harness stands in for the model tool call, not the authority resolver.
+    for(const note of ['Allow once','Deny this job','Standing job']) {
+      const prompt=`<!-- house: local -->\nReport host disk usage: ${note}.`;
+      const message=`Please file these exact words for my local-work decision, without scheduling yet:\n${prompt}\nNote: ${note}`;
+      await a.goto(`${loom.url}/p/clock-preview`);
+      await a.getByRole('button',{name:/Local requests/}).click();
+      await a.getByRole('link',{name:'Ask an agent for local work',exact:true}).click();
+      await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/comms-preview/new');
+      await expect.poll(()=>a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
+      await a.getByRole('textbox',{name:'Message',exact:true}).fill(message);
+      await a.getByRole('button',{name:'Send',exact:true}).click();
+      await expect.poll(()=>new URL(a.url()).pathname.includes('/thread/')).toBe(true);
+      const thread=`th:${new URL(a.url()).pathname.split('/thread/')[1]}`;privateThreads.push(thread);
+      expect(load(loom.db).approvals.filter(card=>card.kind==='local-wake')).toHaveLength(localCards.length);
+      let job='';
+      await expect.poll(async()=>{const result=await post<{jobs:string[]}>(runner,'runtime.claimableJobs',{});job=result.jobs[0]??'';return !!job;}).toBe(true);
+      await post(runner,'runtime.claimJob',{job});
+      const input=await post<{credential:string}>(runner,'runtime.takeInput',{job});
+      expect(JSON.stringify(input)).not.toContain(message);
+      await post(runner,'runtime.reportJob',{job,state:'running'});
+      const read=await post<{messages:{text:string}[]}>(input.credential,'runtime.readConversation',{});
+      expect(read.messages.map(m=>m.text)).toContain(message);
+      for(const secret of [runner,unbound]) {
+        const denied=await fetch(`${loom.url}/api/clock/requestLocal`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt,note},id:`not-body:${++apiSeq}`})});
+        expect(await denied.json()).toMatchObject({ok:false});
+      }
+      const card=await post<{id:string;state:string}>(input.credential,'clock.requestLocal',{agent:'art',prompt,note});
+      expect(Object.keys(card).sort()).toEqual(['id','state']);localCards.push(card.id);
+      const saved=load(loom.db).approvals.find(c=>c.id===card.id)!;
+      expect(saved).toMatchObject({member:'jonathan',people:['jonathan'],conversation:runtimeStore(loom.db).read('job',job)!.conversation,state:'pending'});
+      expect(saved.details).toContain(prompt);expect(saved.details).toContain(note);
+      expect(wakes(loom.db).filter(w=>w.approval===card.id)).toHaveLength(0);
+      await post(input.credential,'runtime.reply',{id:`filing-reply:${card.id}`,text:`Filed for your decision; nothing scheduled. [Review local request](/p/clock-preview/item/${card.id})`});
+      await a.getByRole('link',{name:'Review local request',exact:true}).click();
+      await expect.poll(()=>a.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+      await expect.poll(()=>a.getByText(prompt,{exact:false}).count()).toBeGreaterThan(0);
+    }
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
     const row=(p:typeof a,text:string)=>p.locator('[data-split-row]').filter({hasText:text});
     console.info('Clock browser: initial windows');
@@ -325,6 +359,9 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>p.getByText('This work is no longer in view',{exact:true}).count()).toBe(1);
     expect(await p.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(0);
     expect(await p.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
+    await p.goto(`${loom.url}/p/comms-preview/thread/${privateThreads[0].replace(/^th:/,'')}`);
+    await expect.poll(()=>p.getByText('This thread is no longer in view',{exact:true}).count()).toBe(1);
+    expect(await p.getByText('Please file these exact words',{exact:false}).count()).toBe(0);
     await guest.close();
   }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
