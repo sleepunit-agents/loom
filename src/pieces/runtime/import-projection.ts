@@ -4,7 +4,7 @@ export function runtimeImportTables(source: ReturnType<typeof readRuntimeImport>
   const tables: Record<string, Record<string,unknown>[]> = {};
   const names = {box:'boxes',job:'jobs',settings:'settings',binding:'bindings'} as const;
   for (const kind of Object.keys(names) as (keyof typeof names)[]) tables[`runtime_${names[kind]}`] = source.expected[kind].map(record=>({id:record.id,record:JSON.stringify(record),changed_at:'createdAt' in record?record.createdAt:0}));
-  for (const name of ['start_attempts','inputs','results','deliveries','provenance_sources','owner_requests','job_heartbeats']) tables[`runtime_${name}`] = [];
+  for (const name of ['body_policy','start_attempts','inputs','results','deliveries','provenance_sources','owner_requests','job_heartbeats']) tables[`runtime_${name}`] = [];
   // Historical signatures and owner attestations cannot be reissued by an importer.
   // Until source provenance is reconciled, old conversations fail closed.
   tables.runtime_provenance = source.expected.binding.map(binding=>({conversation:binding.id,record:JSON.stringify({agent:binding.agent,history:{owners:[],people:[],owner:false,unknown:true},queue:[]})}));

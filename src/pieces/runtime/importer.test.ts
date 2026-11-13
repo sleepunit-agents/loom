@@ -155,3 +155,10 @@ it('never imports or verifies automatic start authority from old source archives
  f.app.db.prepare('INSERT INTO runtime_start_attempts VALUES (?,?)').run('h-1','{}');
  expect(compareRuntimeImport(f.app.db,runtimeImportTables(f.read()))).toBe(false);
 });
+it('keeps owner permission adoption empty and verifies against source rather than activating archived gates',()=>{
+ const f=fixture();const expected=runtimeImportTables(f.read());f.run();
+ expect(f.app.db.prepare('SELECT * FROM runtime_body_policy').all()).toEqual([]);
+ expect(compareRuntimeImport(f.app.db,expected)).toBe(true);
+ f.app.db.prepare('INSERT INTO runtime_body_policy VALUES (?,?)').run('art','{}');
+ expect(compareRuntimeImport(f.app.db,expected)).toBe(false);
+});

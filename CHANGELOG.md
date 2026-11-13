@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
+- Persist Runtime owner gates and policy with revision-bound edits and exact archived proposal adoption, refusing unreconciled source restrictions.
+
 - Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
 
 - Prepare Runtime body policy rules for trusted external delivery, with complete guest rosters, standing restrictions and effective session keys.

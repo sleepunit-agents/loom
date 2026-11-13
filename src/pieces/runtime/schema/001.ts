@@ -41,4 +41,7 @@ CREATE TABLE runtime_import_chunks (path TEXT NOT NULL REFERENCES runtime_import
 CREATE TABLE runtime_bridge_turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, direction TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)));
 CREATE INDEX runtime_bridge_conversation ON runtime_bridge_turns(conversation,seq);
 CREATE TABLE runtime_bridge_stops (id TEXT PRIMARY KEY);
+` }, { number: 10, sql: `
+-- Private owner permission documents and exact pending proposal source rows.
+CREATE TABLE runtime_body_policy (agent TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
 ` }];
