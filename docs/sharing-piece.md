@@ -3,8 +3,10 @@
 `installSharing(app, home)` registers the database-backed household project
 operations for the next side. It migrates only the already-defined household
 tables and reads only `loom.db`; an empty home needs no import receipt to install.
-The next composition calls it before installing tasks and supplies its returned
-sharing reader to pieces. Old startup never calls it.
+The default `startLoom` composition calls it before installing tasks and reads
+sharing from the database. A composition that supplies its own listener installs
+pieces explicitly and can use the returned sharing reader. The `--next` CLI and
+listener are the separate frame task in t-2190; old startup never calls this hook.
 
 | Existing foundation operation | Screen action |
 | --- | --- |

@@ -6,7 +6,6 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/clock.js';
 import { fixture, installFixture } from '../../fixture.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
-import { installSharing } from './index.js';
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 function home() { const h = mkdtempSync(join(tmpdir(), 'sharing-piece-')); homes.push(h); return h; }
@@ -25,7 +24,15 @@ it('registers project operations on the fixture and shares tasks through their s
   expect(app.operations.call('direct', member, 'tasks.list', {})).toMatchObject({ ok: true, value: { result: { entries: expect.arrayContaining([expect.objectContaining({ title: 'Garden work' })]) } } });
 });
 it('installs on an empty next home without opening legacy files or requiring an import marker', async () => {
-  const h = home(), app = await startLoom({ home: h, clock: new FakeClock(), install: app => { installSharing(app, h); } }); closes.push(app.close);
+  const h = home(), app = await startLoom({ home: h, clock: new FakeClock(),  }); closes.push(app.close);
   expect(app.operations.has('household.createProject')).toBe(true);
   expect(app.operations.call('direct', owner, 'household.createProject', { slug: 'garden', name: 'Garden', repositories: [], members: [], agents: [] }, 'create')).toMatchObject({ code: 'denied' });
+});
+
+it('installs database sharing by default without fixture installation or an import gate', async () => {
+  const h = home(); fixture(h);
+  const app = await startLoom({ home: h, clock: new FakeClock() }); closes.push(app.close);
+  expect(app.operations.call('direct', owner, 'household.createProject', { slug: 'garden', name: 'Garden', repositories: [], members: ['pollock'], agents: ['mark'] }, 'create')).toMatchObject({ ok: true });
+  expect(app.operations.call('direct', owner, 'tasks.create', { title: 'Garden work', project: 'garden', cli: true }, 'task')).toMatchObject({ ok: true });
+  expect(app.operations.call('direct', member, 'tasks.list', {})).toMatchObject({ ok: true, value: { result: { entries: expect.arrayContaining([expect.objectContaining({ title: 'Garden work' })]) } } });
 });
