@@ -18,3 +18,12 @@ Initial invocation: NONE, runtime usage reporting failed with no verdict. One re
 - NIT duplicated five-line record reader: valid trade-off, retained as local helpers in the two independent modules. Both interpolate only closed table names supplied by the module; extracting a shared abstraction adds API surface for a trivial SQL/JSON idiom. This is a maintenance choice, no behavior gap.
 
 Also added an injected later nested-fold refusal proving earlier fold deletions, day inserts, receipts and notifications all roll back with the sweep.
+
+## Round 2
+
+Source e9541dee319bbe16a938198ba08dd1863bdf6d5a; TREE sha256:79d9270155ace2598c36fd5fe371d243c79d4210513d7b48fa9206e664c18d46. Frozen `/home/art/scratch/attention-retention-review/round-2/tree`; reply `reply.md`. BLOCKING, one MAJOR and one NIT.
+
+- MAJOR mixed-audience sweep coverage: actionable, folded. One sweep fixture now contains an authorized conversation, a member-private conversation and another agent's conversation; asserts only authorized turns fold. It then asserts a service with retain but no fold grant touches nothing, and a fully granted service folds the remaining non-private conversation while private turns remain held.
+- NIT duplicated reader: same valid maintenance trade-off recorded in round 1; no new abstraction.
+
+No implementation defect was reported; this round adds the discriminating authorization fixture without changing central rules or production composition.

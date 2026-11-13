@@ -214,3 +214,20 @@ it('rolls the whole sweep back when a later nested fold fails', async () => {
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   expect(changed).not.toHaveBeenCalled();
 });
+it('sweeps authorized conversations while leaving private and other-agent turns held', async () => {
+  const { call, write, app, types } = await setup();
+  write(base);
+  write({ ...base, place: 'private' }, { member: 'alice' });
+  write({ ...base, place: 'other' }, { agent: 'other' });
+  const privateId = conversationId('art', 'relay', 'private'), otherId = conversationId('other', 'relay', 'other');
+  expect(call('retain', {}, art)).toEqual({ ok: true, value: { days: 1, turns: 1 } });
+  expect(call('turns', { conversation: id })).toEqual({ ok: true, value: [] });
+  expect(call('turns', { conversation: privateId })).toMatchObject({ value: [{ seq: 1 }] });
+  expect(call('turns', { conversation: otherId })).toMatchObject({ value: [{ seq: 1 }] });
+  expect(app.db.prepare('SELECT conversation FROM attention_days').all()).toEqual([{ conversation: id }]);
+  expect(types.get('attention.day')!.read(`${privateId}:2026-07-01`, art)).toBeUndefined();
+  expect(call('retain', {}, { kind: 'service', id: 'dayOnly' })).toEqual({ ok: true, value: { days: 0, turns: 0 } });
+  expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(2);
+  expect(call('retain', {}, { kind: 'service', id: 'worker' })).toEqual({ ok: true, value: { days: 1, turns: 1 } });
+  expect(call('turns', { conversation: privateId })).toMatchObject({ value: [{ seq: 1 }] });
+});
