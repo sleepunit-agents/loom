@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { installFixture, fixtureSharing } from '../fixture.js';
+import { TokenDatabase } from '../core/household/tokens.js';
 import { Bridges } from '../pieces/bridges/engine.js';
 import { venueSchema } from '../pieces/bridges/model.js';
 import type { Incoming, VenueAdapter } from '../pieces/bridges/role.js';
@@ -15,7 +16,10 @@ const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bi
 it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status and staging release between windows without replaying an uncertain send', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-bridges-browser-'));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const loom = await startLoom({ home, clock, next: true, staging: true, webRoot: root, sharing: fixtureSharing, install: installFixture });
+  const loom = await startLoom({ home, clock, next: true, staging: true, webRoot: root, sharing: fixtureSharing, install: app => {
+    installFixture(app);
+    app.db.transaction(() => new TokenDatabase(app.db).replace({ v: 1, tokens: [] }, {}))();
+  } });
   const owner = { kind: 'member', id: 'jonathan' } as const;
   const venue = venueSchema.parse({ id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'house', bot: '100', tokenSecret: 'fixture-reference' });
   const write = (name: string, input: unknown) => { expect(loom.operations.call('direct', owner, name, input, crypto.randomUUID()).ok).toBe(true); };
@@ -41,7 +45,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
     await context.grantPermissions(['local-network-access'], { origin: loom.url });
     const a = await context.newPage(), b = await context.newPage();
     const link = loom.operations.call('direct', owner, 'signin.link', { member: 'jonathan' });
-    if (!link.ok) throw new Error('Fixture sign-in link failed');
+    if (!link.ok) throw new Error(`Fixture sign-in link failed: ${link.code}`);
     await a.goto(loom.url + (link.value as { path: string }).path);
     const signingIn = a.waitForResponse(r => r.request().method() === 'POST');
     await a.getByRole('button', { name: 'Sign in', exact: true }).click();
