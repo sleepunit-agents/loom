@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { parseLegacyMetadataJson } from './source-json.js';
 import { migrate, type Db } from '../../core/index.js';
 import { secretAgent, secretName } from './input.js';
 import { secretPolicy, type SecretPolicy } from './policy.js';
@@ -30,7 +31,7 @@ const canonical = (value: unknown): string => {
  * contain an accidental value. Unknown fields are refused, never copied to DB. */
 export function parseLegacySecretPolicy(bytes: Buffer): SecretPolicy {
   try {
-    const parsed = sourcePolicy.parse(JSON.parse(bytes.toString('utf8')));
+    const parsed = sourcePolicy.parse(parseLegacyMetadataJson(bytes));
     return secretPolicy.parse({ default: parsed.default, secrets: parsed.secrets });
   } catch { throw new Error('Invalid legacy secret policy'); }
 }

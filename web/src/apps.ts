@@ -1,4 +1,5 @@
 import { homeApp, HomeSurface } from './pieces/attention/home-registration';
+import { projectsApp } from './pieces/projects/registration';
 import { knowledgeApp } from './pieces/knowledge/registration';
 import { sharingApp } from './pieces/sharing/registration';
 import { clockApp } from './pieces/clock/registration';
@@ -17,3 +18,5 @@ export const shellSurfaces: import('./shell').ShellSurfaces = { Home: HomeSurfac
 apps.push(homeApp);
 
 apps.push(peopleApp);
+
+apps.push(projectsApp);

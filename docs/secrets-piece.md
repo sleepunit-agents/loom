@@ -147,3 +147,13 @@ The source model retains any string agent identity, matching legacy `houseOf`;
 the final importer must map it to a registered principal without normalizing it
 or granting agent-wide access. Unsupported new-side identities must refuse at
 that composition boundary. Parsing alone never makes a principal authoritative.
+
+
+## Strict offline JSON metadata
+
+Policy and request inputs share a fatal UTF-8 decoder and a JSON token walk
+that rejects duplicate decoded object keys at every depth, including escaped
+aliases. A duplicated `default`, secret rule or `grant` cannot silently discard
+an earlier Never rule. Unknown fields cannot be hidden behind a duplicate key.
+Both public parsers keep their fixed redacted error messages. This is input
+validation only; it adds no command, daemon registration or real import.

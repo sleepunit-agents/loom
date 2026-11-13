@@ -91,13 +91,23 @@ account metadata (owner-only `household.setAgentAccounts`), never cached/importe
 labels. Assignment, clearing and household edits reproject existing records and
 invalidate live Changes rows. Owner logins and branch guesses remain empty; public
 agent account assignments grant no project membership or service authority.
-Confirmation/answers remain closed until the real Approvals role is composed. Refresh records a durable request but
-does not start a forge read in this read-only composition.
+The next root composes the real Approvals role: owner rule lookup uses `for=agent`,
+and answers retain the authenticated member Viewer for grant and project-rule operations.
+No Caller is supplied or invented by Changes. Yes and Not yet apply only to the
+current head and selected principal, retaining Approvals’ existing denial semantics:
+a newer denial revokes earlier unspent allowances across principals and denies
+pending sibling requests without a conversation. Conversation asks keep their
+existing handling. Always sets `project:<slug>` to `do` and grants
+that head in the same outer operation transaction. Refresh records a durable request
+but does not start a forge read in this composition.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
-current project membership/revocation, and closed approval controls.
+current project membership/revocation and approval controls.
+`src/changes-approvals.test.ts` covers real grants, denial then allowance in the
+same clock tick, stale heads, project rules, person-specific requests, and loss
+of ownership. Equal-timestamp approval receipts resolve to the newest inserted
+receipt, so a later Yes supersedes Not yet even within one second.
 
-Cutover still requires daemon startup in the next root, the real Approvals
-adapter, and authenticated Secrets composition. The daemon installer now owns
+Cutover still requires daemon startup in the next root and authenticated Secrets composition. The daemon installer now owns
 its service viewer and registers shutdown with the foundation. Those integrations remain open. No production import,
 deployment, old-service shutdown or live-home modification is part of this branch.
 

@@ -1,3 +1,5 @@
+import { clockCommands, clockOperationCommands } from './commands.js';
+import { command } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -12,7 +14,7 @@ import type { Approvals } from './dependencies/approvals.js';
 const day = 86400_000;
 const scope = (w: Work, type = 'wake') => ({ type, agent: w.agent, project: w.project, member: w.member });
 const text = z.string().min(1).max(100_000);
-const workInput = z.object({ agent: text, project: text.optional(), member: text.optional(), prompt: text.optional(), file: text.optional(), note: text,
+const workInput = z.object({ agent: text, project: text.optional(), member: text.optional(), prompt: text.optional(), file: text.optional(), note: z.string().max(100_000),
   model: text.optional(), continuation: text.optional(), slot: text.optional(), approval: text.optional(), place: text.optional() });
 const idInput = z.object({ id: text });
 const startResult = z.discriminatedUnion('state', [
@@ -51,7 +53,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const queue = () => { if (!closed) { cancelTimer?.(); cancelTimer = clock.at(clock.now(), pump); } };
   const output = z.unknown();
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
-    operations.register(operation({ name: `clock.${name}`, input, output, write, ...(internal ? { doors: ['direct' as const] } : {}), may,
+    operations.register(operation({ name: `clock.${name}`, input, output, write, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) { if (closed) throw new OperationError('unavailable', 'Clock stopped'); const result = run(ctx, i); if (write) queue(); return result; } }));
   }
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
@@ -149,10 +151,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
   });
-  register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
+  register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
     oneOffRoom(s.agent);
-    return make(ctx, s, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
+    return make(ctx, i.note === undefined ? s : { ...s, note: `${s.lane ?? s.id.split('/').pop()} run now${i.note ? `: ${i.note}` : ''}` }, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
   });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const laneId = (name: string) => `lane/${name}`;
@@ -200,6 +202,12 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
+  operations.register(operation({ name: 'clock.command', write: true,
+    input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
+    output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
+    may: viewer => viewer.kind === 'member' || viewer.kind === 'agent',
+    run: (ctx,input) => command(operations,ctx.viewer,input),
+  }));
   // Intent and outcome use the registry too: all state and live changes commit together.
   register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
