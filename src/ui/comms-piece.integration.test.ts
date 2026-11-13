@@ -113,6 +113,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    await expect.poll(()=>messages.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeGreaterThan(80);
    expect(await messages.evaluate(el=>el.clientHeight)).toBeGreaterThan(0);
    await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).evaluate(el=>el.closest('form')!.getBoundingClientRect().bottom)).toBeLessThanOrEqual(900);
+   await expect.poll(gap).toBeLessThanOrEqual(80);
   }
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});

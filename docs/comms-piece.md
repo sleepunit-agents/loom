@@ -490,3 +490,11 @@ gap after scrolling back. This is a product layout correction; the failed
 assertion and the existing jump/follow/earlier-page checks remain in place.
 Mobile visual-keyboard behavior and the wider parity/integration obligations
 above remain unfinished. Browser validation must pass on this new head.
+
+That layout correction exposed a second browser failure after resizing: all
+viewport/range/composer checks passed, but the end gap became 512–621 pixels.
+Reply following now keeps both prior content and viewport heights. Scroll events
+caused by reflow preserve the decision made before the resize; the resize
+observer follows only when that decision was already to follow. A viewport
+change during a React render uses the same saved decision. The browser requires
+an end gap of at most 80 pixels after each width, not just after all resizes.
