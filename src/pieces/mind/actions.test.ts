@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
+import { z } from 'zod';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
@@ -49,7 +50,7 @@ it('confirms and requests a recheck with original notes, attribution and clock; 
   expect(stale).toMatchObject({ ok: true, value: { stamped: false, noted: true } });
   expect(await backend!.getPage('fact')).toMatchObject({ verified_at: '2026-11-12T00:00:00.000Z', updated: '2026-11-13T00:00:00.000Z', body: "Original\n\n## Verification — 2026-11-12\n\nconfirmed from loom's page\n\n## Verification — 2026-11-13\n\nasked to be checked again from loom's page" });
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
-  expect(await backend!.getVerifications('fact')).toEqual(expect.arrayContaining([expect.objectContaining({ verifier: 'owner', outcome: 'stale' })]));
+  expect(await backend!.getVerifications('fact')).toEqual(expect.arrayContaining([expect.objectContaining({ verifier: 'owner', outcome: 'stale' }), expect.objectContaining({ verifier: 'owner', outcome: 'confirmed' })]));
   expect(app.operations.call('direct', owner, 'mind.knowledgeRead', { slug: 'fact' })).toMatchObject({ value: { fresh: 'due' } });
 });
 it('denies partial members, agents, runners and read-only services without recording a receipt', async () => {
@@ -187,4 +188,27 @@ it('versions source retry schema, refuses changed/newer history, and rolls faile
     expect(conflict.prepare("SELECT name FROM sqlite_master WHERE name = 'mind_source_migrations'").get()).toBeUndefined();
     expect(conflict.prepare('PRAGMA table_info(mind_operation_receipts)').all()).toMatchObject([{ name: 'sentinel' }]);
   } finally { conflict.close(); }
+});
+it('reserves a source-committed id against unrelated writes across restart, then recovers the original result', async () => {
+  const { app, start, backend } = await fixture();
+  app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+  expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'global')).toMatchObject({ code: 'unavailable' });
+  app.db.exec('DROP TRIGGER fail_receipt'); await app.close();
+  const restarted = await start();
+  restarted.db.exec('CREATE TABLE unrelated_effects (id TEXT)');
+  restarted.operations.register({ name: 'other.write', write: true, input: z.object({}), output: z.null(), may: () => true,
+    run(ctx) { ctx.db.prepare('INSERT INTO unrelated_effects VALUES (?)').run('bad'); return null; },
+  });
+  expect(restarted.operations.call('direct', owner, 'other.write', {}, 'global')).toMatchObject({ code: 'conflict' });
+  expect(restarted.db.prepare('SELECT * FROM unrelated_effects').all()).toEqual([]);
+  expect(restarted.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'global')).toMatchObject({ ok: true });
+  expect(await backend!.getVerifications('fact')).toHaveLength(1);
+  expect(restarted.operations.call('direct', owner, 'other.write', {}, 'fresh')).toMatchObject({ ok: true });
+  expect(restarted.db.prepare('SELECT * FROM unrelated_effects').all()).toEqual([{ id: 'bad' }]);
+});
+it('attributes a confirmed check to a differently named authenticated owner', async () => {
+  const { app, access, backend } = await fixture();
+  access.members['another-owner'] = { owner: true, agents: [] };
+  expect(app.operations.call('direct', { kind: 'member', id: 'another-owner' }, 'mind.knowledgeVerify', { slug: 'fact' }, 'attribution')).toMatchObject({ ok: true });
+  expect(await backend!.getVerifications('fact')).toEqual([expect.objectContaining({ verifier: 'another-owner', outcome: 'confirmed' })]);
 });

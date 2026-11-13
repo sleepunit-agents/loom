@@ -24,10 +24,12 @@ export interface Operation<I = unknown> {
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   run(ctx: Context, input: I): unknown;
-  /** Read an already-committed external receipt before may, just like core's
-   * own retry lookup. Must not apply an effect. May announce recovered changes.
+  /** Read an already-committed external receipt by the shared viewer/id key.
+   * Registered hooks run before may for EVERY write, not only this operation.
+   * A mismatched name/hash must conflict. Must not apply an effect; may announce
+   * recovered changes. Shared hook functions are registered only once.
    */
-  recover?(ctx: Context, input: I): RecoveredWrite | undefined;
+  recover?(ctx: Context): RecoveredWrite | undefined;
   /** Audit a rejected attempt after its effects have rolled back. This hook may
    * append audit rows only; it must never apply or retry the rejected action.
    * Audit failures do not change the caller's rejection.
@@ -43,6 +45,7 @@ function canonical(value: unknown): string {
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
+  private recoveries = new Set<NonNullable<Operation['recover']>>();
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void) {
@@ -59,6 +62,7 @@ export class Operations {
   register<I>(op: Operation<I>) {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
     this.ops.set(op.name, op);
+    if (op.write && op.recover) this.recoveries.add(op.recover);
   }
   has(name: string) { return this.ops.has(name); }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
@@ -87,7 +91,11 @@ export class Operations {
           if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
         }
         const ctx: Context = { db: this.db, viewer, now, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
-        const recovered = op.write ? op.recover?.(ctx, parsed.data) : undefined;
+        let recovered: RecoveredWrite | undefined;
+        if (op.write) for (const recover of this.recoveries) {
+          recovered = recover(ctx);
+          if (recovered) break;
+        }
         if (!recovered && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const outcome = recovered ?? op.run(ctx, parsed.data);
         const replay = outcome instanceof RecoveredWrite ? outcome : undefined;

@@ -176,8 +176,11 @@ If content commits but the core receipt fails, the caller gets unavailable;
 that must never be interpreted as an unchanged content store. Retrying the same
 id, including after restart, finds the source receipt, returns the original
 result and republishes the changed slug without another audit, note or stamp.
-The registry's optional `recover` hook runs before `may`, like its own receipt
-lookup: replay acknowledges an already-committed effect even after permission
+The registry's optional `recover` hooks run before `may` for every registered
+write, deduplicated by function identity. Each source checks the shared viewer/id
+namespace, so an unrelated operation cannot reuse an id whose source committed
+but whose core receipt failed. Like the core receipt lookup, replay acknowledges
+an already-committed effect even after permission
 loss. Fresh effects still require authorization. A `RecoveredWrite` carries the
 original expiry into the core receipt, so delayed recovery never renews the
 thirty-day window. Source lookup is checked again under its immediate write lock
@@ -191,3 +194,9 @@ so recovery also repairs publication missed by a failed core receipt.
 This does not close the remaining daemon source/socket lifecycle work, enable
 next mode, or finish any of the four apps. The composition root must install and
 close both connections and bind outside-write notifications before rollout.
+
+External receipt readers participate in the registry's global write-id lookup.
+If an installed source receipt reader fails, new writes fail closed: the source
+may already reserve that viewer/id. Cached core retries remain available. This
+couples new-write availability to the installed source's metadata reader; silently
+skipping an unreadable source would sacrifice the global conflict guarantee.

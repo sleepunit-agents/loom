@@ -31,4 +31,16 @@ Raw BLOCKING: two CRITICAL, two MAJOR. All folded:
   a comment explaining its purpose and structural assertions. New action fixtures
   also run startLoom in next mode.
 
-Round 2 pending on the revised frozen artifact.
+Round 2: commit 36b8508268cc7c24704fca63e87e0e3f9294ba59,
+TREE sha256:87bfa8b44b9885c8cfb96fbe5627da7be1e89d05263aeb38a23e78b612fc6c1f.
+Raw BLOCKING: one CRITICAL, one NIT. Both folded:
+
+- CRITICAL, actionable: source recovery was looked up only for the requested
+  operation, allowing an unrelated write to reuse a source-committed id whose
+  core receipt failed. All registered write recovery hooks now check the shared
+  namespace before any write. A restart regression registers an unrelated write,
+  verifies conflict and zero SQL effects, then recovers the original result.
+- NIT, actionable: confirm outcome and a second successful viewer were missing.
+  Tests assert both audit outcomes and attribution to another named owner.
+
+Round 3 pending on the revised frozen artifact.
