@@ -961,6 +961,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
 
+- Add the owner-only `household.setMemberProjects` operation to replace one member's project assignments atomically and refresh open windows.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

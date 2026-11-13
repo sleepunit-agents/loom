@@ -60,6 +60,25 @@ export class SharingDatabase {
   setMembers(slug: string, members: string[]): HouseholdProject { return this.change(slug, { members }); }
   setAgents(slug: string, agents: string[]): HouseholdProject { return this.change(slug, { agents }); }
 
+  /** Replace one member's project list; project rows remain the authority for sharing. */
+  setMemberProjects(person: string, projects: string[]): { projects: string[]; changed: string[] } {
+    this.requireTransaction();
+    const h = new HouseholdDatabase(this.db).household(this.home);
+    if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+    if (!h.members.some(m => m.person === person)) throw new OperationError('not-found', 'Member does not exist');
+    const selected = new Set(projects);
+    const all = this.projectIds().map(id => this.project(id)!);
+    if (projects.some(id => !all.some(p => p.slug === id))) throw new OperationError('invalid', 'Unknown household project');
+    // Validate every resulting row before writing any of them. The enclosing operation
+    // also rolls back the whole list if a row or its retry receipt cannot be stored.
+    const updates = all.filter(p => p.members.includes(person) !== selected.has(p.slug)).map(p => this.validate({
+      ...p, members: selected.has(p.slug) ? [...p.members, person] : p.members.filter(id => id !== person),
+    }));
+    const rows = new HouseholdRows(this.db, 'projects');
+    for (const p of updates) rows.put(p.slug, p);
+    return { projects: [...selected], changed: updates.map(p => p.slug) };
+  }
+
   /** Change a member's scoped ownership without changing household-owner authority. */
   setOwnedAgents(person: string, agents: string[]): string[] {
     this.requireTransaction();

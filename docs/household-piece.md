@@ -236,3 +236,24 @@ and project memberships survive. The write and its retry result commit together;
 This operation does not create members or promote/demote household owners; those
 operations remain separate. Keeping wildcard ownership unchanged also keeps the
 first household owner and existing credential bindings unchanged.
+
+### A member's project list
+
+`household.setMemberProjects({person, projects})` replaces one existing member's
+explicit project assignments in one transaction. Only a household owner may call
+it. Every project must exist; duplicates collapse and an empty list clears all
+assignments. Each affected project keeps its other members, agents, repositories
+and unknown fields. Household membership and agent ownership stay as they were.
+The operation emits each changed `household.project` and `core.access` after the
+write and retry receipt commit, refreshing open windows immediately.
+
+| Existing action | New operation |
+| --- | --- |
+| Set a project's member list | Existing `household.setProjectMembers` |
+| Edit all project assignments for one member | `household.setMemberProjects` (new member-oriented form of the same project lists) |
+
+There is no old command or route for member project lists: projects are the new
+sharing boundary in web-foundation.md. This operation uses the existing project
+rows, with no second list stored on the household member. It neither creates
+members nor changes owner authority or credentials. Setup and the generated
+household client remain tracked by t-2203.
