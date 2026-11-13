@@ -74,7 +74,8 @@ export class Operations {
   registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
   }
-  async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false): Promise<Result> {
+  async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+    if (!valid()) return failure('denied', 'Authentication ended');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
@@ -85,6 +86,7 @@ export class Operations {
     if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
     try {
       const prepared = await op.prepare?.(parsed.data);
+      if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
     } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
   }

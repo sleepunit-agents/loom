@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
+import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
 const fail = (code: 'denied'|'conflict'|'invalid'|'unavailable', message: string): never => { throw new OperationError(code,message); };
@@ -22,11 +23,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  migrate(db,'comms',schema); db.pragma('secure_delete = ON');
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
- const touched = (t: Thread, seq?: number) => { live.changed([{type:'thread',id:t.id}, ...(seq === undefined ? [] : [{type:'message',id:messageId(t.id,seq)}])]); };
+ const touched = (t: Thread, seq?: number) => { armSweep(); live.changed([{type:'thread',id:t.id}, ...(seq === undefined ? [] : [{type:'message',id:messageId(t.id,seq)}])]); };
  const requireAgent = (agent: string, place: string) => { const t = thread(db,place); if (!t || t.agent !== agent) return fail('denied','Thread unavailable'); return t; };
  const decode = async (r: MessageRow): Promise<LiveRecord> => {
   const {encoding,stepCipher,legacyHash,...metadata}=JSON.parse(r.record);
-  const plain=r.words ? await key.open(r.words) : null;
+  const decrypted=r.words ? await key.open(r.words) : null;
+  const plain=r.at + days*day <= clock.now() ? null : decrypted;
   const words=plain===null?{text:null}:encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
   return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...words,...(r.words && stepCipher?{step:JSON.parse(await key.open(Buffer.from(stepCipher,'base64')))}:{})};
  };
@@ -48,8 +50,10 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   inScope:(r,scope)=>r.thread===scope,
  });
  const output=z.unknown();
+ const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional()});
+ const hashText=(text:string)=>{const salt=db.prepare("SELECT value FROM comms_meta WHERE key='legacy-salt'").get() as {value:string}|undefined;return salt?createHmac('sha256',Buffer.from(salt.value,'base64')).update(`words\0${text}`).digest('hex'):key.hash(text);};
  operations.register(operation({name:'comms.agents',doors:['socket'],windowOnly:true,input:z.object({}),output,
-  may:v=>v.kind==='member',run:ctx=>o.sharing().members[ctx.viewer.id]?.agents ?? [],
+  may:v=>v.kind==='member',run:ctx=>({member:ctx.viewer.id,agents:o.sharing().members[ctx.viewer.id]?.agents ?? []}),
  }));
  let closed=false;
  const pending = new Map<string,Promise<void>>();
@@ -62,7 +66,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   try {
    let t=requireAgent(agent,place);
    let row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
-   if (!row || !row.words || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return;
+   if (!row || !row.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return;
    if (JSON.parse(row.record).delivery==='delivered') return;
    const plain=await key.open(row.words);const words=JSON.parse(row.record).encoding==='text'?{text:plain}:JSON.parse(plain) as {text:string};
    // Recheck after crypto and again inside the staging hold before crossing the process boundary.
@@ -70,11 +74,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     if(closed)return;
     t=requireAgent(agent,place);
     row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow|undefined;
-    if (!row?.words || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return fail('denied','Thread unavailable');
+    if (!row?.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return fail('denied','Thread unavailable');
     await o.runtime.deliver({thread:place,agent,member:t.member,conversation:t.conversation,seq,text:words.text,...(t.project?{project:t.project}:{})});
-   });
+   },{id:`comms-deliver:${place}:${seq}`,kind:'body-start',title:'Deliver a Comms message'});
    settle(place,seq,'delivered');
-  } catch { settle(place,seq,'failed'); }
+  } catch(error) { settle(place,seq,error instanceof HeldEffect?'held':'failed'); }
 
  }
  function settle(place:string,seq:number,delivery:string) {
@@ -87,27 +91,31 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }
  function sendAfter(input:unknown,answer: {ok:true;value:unknown}|{ok:false}) {
   if(!answer.ok)return;
+  armSweep();
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,
-  input:z.object({agent:id,id,text,project:id.optional()}),output,
+  input:z.object({agent:id,id,text,project:id.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
-  prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:key.hash(i.text)}),
+  prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
   run(ctx,i,raw) {
    const p=raw as {words:Buffer;hash:string};
    const existing=(db.prepare('SELECT record FROM comms_threads WHERE member=?').all(ctx.viewer.id) as {record:string}[]).map(r=>JSON.parse(r.record) as Thread).find(t=>t.firstId===i.id);
    if(existing) { if(existing.agent!==i.agent || existing.firstHash!==p.hash) return fail('conflict','Message id already used'); return {thread:existing.id,seq:1}; }
-   const place=`th:${randomUUID()}`;
-   const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${randomUUID()}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false};
+   const bytes=Buffer.from(hashText(`${ctx.viewer.id}\0${i.agent}\0${i.id}`),'hex');
+   let bits=0,value=0,encoded='';for(const b of bytes){value=(value<<8)|b;bits+=8;while(bits>=5){encoded+='abcdefghijklmnopqrstuvwxyz234567'[(value>>>(bits-5))&31];bits-=5;}}
+   const place=`th:${encoded.slice(0,10)}`;
+   if(db.prepare('SELECT 1 FROM comms_deleted WHERE id=?').get(place))return fail('conflict','This thread was deleted');
+   const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${createHash('sha256').update(`${i.agent}\0loom\0${place}`).digest('hex').slice(0,12)}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false};
    saveThread(db,t);
    const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending'})});
    ctx.changed('thread',place);ctx.changed('message',messageId(place,seq));return {thread:place,seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
  operations.register(operation({name:'comms.send',doors:['socket'],windowOnly:true,write:true,
-  input:target.extend({id,text}),output,may:(v,i)=>writable(v,i),
-  prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:key.hash(i.text)}),
+  input:target.extend({id,text}),output:ack,may:(v,i)=>writable(v,i),
+  prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
   run(ctx,i,raw) {
    const t=thread(db,i.thread)!; if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    const p=raw as {words:Buffer;hash:string};let value;
@@ -121,7 +129,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   run(ctx,i,raw) { const p=raw as {rows:MessageRow[];records:LiveRecord[]}; if(JSON.stringify(messageRows(db,i.thread,i.before))!==JSON.stringify(p.rows))return fail('conflict','Thread changed; load this page again');return p.records; },
  }));
  const changeInput=target.extend({action:z.enum(['title','project','pin','unpin','archive','unarchive','read','stop','delete']),title:title.optional(),project:id.nullable().optional(),seq:z.number().int().nonnegative().optional()});
- operations.register(operation({name:'comms.change',doors:['socket'],windowOnly:true,write:true,input:changeInput,output,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.change',doors:['socket'],windowOnly:true,write:true,input:changeInput,output:ack,may:(v,i)=>writable(v,i),
   run(ctx,i) {
    const t=thread(db,i.thread)!;
    switch(i.action) {
@@ -146,42 +154,55 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    }
    saveThread(db,t);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation};
   },
-  after(i,result) {if((i.action==='archive'||i.action==='delete')&&result.ok) void o.hold(()=>o.runtime.end((result.value as {conversation:string}).conversation)).catch(()=>{});},
+  after(i,result) {if((i.action==='archive'||i.action==='delete')&&result.ok) void o.hold(()=>o.runtime.end((result.value as {conversation:string}).conversation),{id:`comms-end:${i.thread}:${key.hash(JSON.stringify(i))}`,kind:'body-start',title:'End a Comms body'}).catch(()=>{});},
  }));
- operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,input:target.extend({seq:z.number().int().positive()}),output,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,input:target.extend({seq:z.number().int().positive()}),output:ack,may:(v,i)=>writable(v,i),
   run(ctx,i) {const t=thread(db,i.thread)!;const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(t.id,i.seq) as MessageRow|undefined;
    if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    if(!row?.words)return fail('conflict','Message words are no longer kept');
    return {thread:t.id,seq:i.seq};},after:(i,r)=>sendAfter(i,r),
  }));
- operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output,may:(v,i)=>writable(v,i),
-  // The attention role owns the answer transaction and idempotency. This is a durable encrypted delivery job.
+ operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async i=>key.seal(JSON.stringify({text:i.words ?? '',ref:i.ref,verdict:i.verdict})),
-  run(ctx,i,raw) {const t=thread(db,i.thread)!;const ask=db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='ask' AND id=?").get(t.id,i.ref);if(!ask)return fail('denied','Ask unavailable');
-   const result=append(db,t,{id:`answer:${i.ref}`,kind:'answer',at:ctx.now,sender:t.member,words:raw as Buffer,hash:key.hash(JSON.stringify(i)),record:'{}'});ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};},
-  after(i,result) {if(result.ok)void o.hold(()=>o.attention.answer(thread(db,i.thread)!.member,i.ref,i.verdict,i.words)).catch(()=>{});},
+  run(ctx,i,raw) {
+   const t=thread(db,i.thread)!;
+   const ask=db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL").get(t.id,i.ref,i.ref);
+   if(!ask)return fail('denied','Ask unavailable');
+   if(i.words)return fail('unavailable','Private word answers need the private attention role');
+   // Attention is an in-process role, so its policy and answer participate in this transaction.
+   const answered=o.attention.answer(ctx.viewer,{id:i.ref,answer:i.words?{kind:'words',text:i.words}:{kind:i.verdict}},`comms-answer:${key.hash(JSON.stringify(i))}`);
+   if(!answered.ok)return fail(answered.code==='denied'?'denied':'conflict',answered.message);
+   const result=append(db,t,{id:`answer:${i.ref}`,kind:'answer',at:ctx.now,sender:t.member,words:raw as Buffer,hash:key.hash(JSON.stringify(i)),record:'{}'});
+   ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};
+  },
  }));
  async function post(agent:string,place:string,raw:AgentPost) {
   const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
-  requireAgent(agent,place); const words=await key.seal(JSON.stringify({text:m.text,...(m.step?{step:m.step}:{})}));
-  return db.transaction(()=> {
+  requireAgent(agent,place); const words=await key.seal(JSON.stringify({text:m.text,run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
+  const result=db.transaction(()=> {
    const t=requireAgent(agent,place);if(t.archived!==null)return fail('conflict','Thread archived');
-   const meta={run:m.run,tool:m.tool,state:m.state,ref:m.ref};
+   const meta=m.kind==='ask'?{ref:m.ref??m.id}:{};
    const old=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND kind=? AND id=?').get(place,m.kind,m.id) as MessageRow|undefined;
    if(old && m.kind==='card') {
     if(!old.words)return {seq:old.seq}; // A swept step cannot resurrect its words.
-    db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(words,JSON.stringify(meta),place,old.seq);touched(t,old.seq);return {seq:old.seq};
+    db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(words,JSON.stringify(meta),place,old.seq);return {seq:old.seq};
    }
    let result;try{result=append(db,t,{id:m.id,kind:m.kind,at:clock.now(),sender:agent,words,hash:key.hash(JSON.stringify(m)),record:JSON.stringify(meta)});}catch{return fail('conflict','Reply id already used');}
-   touched(t,result.seq);return {seq:result.seq};
+   return {seq:result.seq};
   })();
+  touched(requireAgent(agent,place),result.seq);return result;
  }
  let cancel:()=>void=()=>{};
  function sweep() {
   const rows=db.prepare('SELECT thread,seq FROM comms_messages WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {thread:string;seq:number}[];
   db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher') WHERE at <= ?").run(clock.now()-days*day);
   live.changed(rows.map(r=>({type:'message',id:messageId(r.thread,r.seq)})));
-  cancel=clock.at(clock.now()+3600_000,sweep);
+  armSweep();
+ }
+ function armSweep() {
+  cancel();
+  const next=db.prepare('SELECT min(at) AS at FROM comms_messages WHERE words IS NOT NULL').get() as {at:number|null};
+  cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day),sweep);
  }
  sweep();
  return {post,deliver,

@@ -9,7 +9,7 @@ export interface WordsKey {
  hash(words: string): string;
 }
 export function readKey(path: string): string {
- const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+ const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
  try {
   const stat = fstatSync(fd);
   if (!stat.isFile() || (stat.mode & 0o077)) throw new Error('Comms key must be a private regular file');
@@ -28,14 +28,19 @@ export function wordsKey(identity: string): WordsKey {
 export async function loadKey(home: string): Promise<WordsKey> {
  mkdirSync(home, { recursive: true, mode: 0o700 });
  const path = join(home, 'comms.key');
- try { return wordsKey(readKey(path)); }
+ const fromDisk = (): WordsKey => ({
+  seal: words => wordsKey(readKey(path)).seal(words),
+  open: blob => wordsKey(readKey(path)).open(blob),
+  hash: words => wordsKey(readKey(path)).hash(words),
+ });
+ try { readKey(path); return fromDisk(); }
  catch (error) {
   if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   const identity = await generateX25519Identity();
   let fd: number;
   try { fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return wordsKey(readKey(path)); throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return fromDisk(); throw error; }
   try { writeFileSync(fd, identity + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
-  return wordsKey(identity);
+  return fromDisk();
  }
 }

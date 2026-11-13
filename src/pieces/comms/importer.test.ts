@@ -24,7 +24,8 @@ it('copies ciphertext byte-for-byte with the same key, preserves ids and read ma
  const s=await source(),to=home();copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));const app=createFoundation({home:to});cleanup.push(()=>app.close());
  const result=await importComms(app.db,s.from,to);expect(result).toMatchObject({imported:true,rekeyed:false,threads:1,messages:2,asks:1});
  const row=app.db.prepare('SELECT * FROM comms_messages WHERE seq=1').get() as {words:Buffer};expect(row.words).toEqual(s.words);
- const t=JSON.parse((app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record);expect(t).toMatchObject({id:'th:old',readSeq:2,nextSeq:4});
+ const t=JSON.parse((app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record);expect(t).toMatchObject({id:'th:old',readSeq:2,nextSeq:4,firstHash:'old-hash'});
+ const imported=app.db.prepare('SELECT hash,record FROM comms_messages ORDER BY seq').all() as {hash:string;record:string}[];expect(imported[0].hash).toBe('old-hash');expect(JSON.parse(imported[2].record).seen).toBe('2026-11-12T01:02:00Z');
  expect(await importComms(app.db,s.from,to)).toMatchObject({imported:false});
  s.db.prepare('UPDATE comms_messages SET sender=? WHERE seq=1').run('changed');await expect(importComms(app.db,s.from,to)).rejects.toThrow('different');
 });
@@ -40,7 +41,18 @@ it('rekeys messages, asks and work details in memory when the key differs and ne
 it('rolls an interrupted or corrupt import back and can retry the untouched source',async()=>{
  const s=await source(),to=home();await loadKey(to);const app=createFoundation({home:to});cleanup.push(()=>app.close());
  await expect(importComms(app.db,s.from,to,{interrupt:()=>{throw new Error('power loss');}})).rejects.toThrow('power loss');
- expect(app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);expect(app.db.prepare('SELECT * FROM comms_messages').all()).toEqual([]);
+ expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
  await expect(importComms(app.db,s.from,to,{interrupt:()=>{app.db.prepare('UPDATE comms_threads SET record=?').run('{}');}})).rejects.toThrow('comparison');
  expect(await importComms(app.db,s.from,to)).toMatchObject({imported:true});
+});
+it('refuses a nonempty destination without changing it',async()=>{
+ const s=await source(),to=home();await loadKey(to);const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ await importComms(app.db,s.from,to);app.db.prepare("DELETE FROM comms_meta WHERE key='source-checksum'").run();
+ const before=app.db.prepare('SELECT * FROM comms_messages').all();await expect(importComms(app.db,s.from,to)).rejects.toThrow('empty');expect(app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+});
+it('the real CLI refuses a held daemon lock before creating a key and its results never contain compared words',async()=>{
+ const {migrateComms}=await import('../../cli/migrate-comms.js');const {acquireHttpLock}=await import('../../transport/http-lock.js');const {Readable}=await import('node:stream');const {existsSync}=await import('node:fs');
+ const s=await source(),to=home(),release=acquireHttpLock(to);let output='',error='';const io={stdout:(v:string)=>{output+=v;},stderr:(v:string)=>{error+=v;},stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+ expect(await migrateComms(['--home',to,'--from',s.from],io)).toBe(1);expect(existsSync(join(to,'comms.key'))).toBe(false);release();
+ expect(await migrateComms(['--home',to,'--from',s.from],io)).toBe(0);expect(output).toContain('checksum');expect(output+error).not.toContain('older private words');expect(output+error).not.toContain('private output');
 });

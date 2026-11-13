@@ -8,16 +8,17 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { installComms } from './index.js';
 import { loadKey, type WordsKey } from './crypto.js';
-import type { Comms, Delivery } from './role.js';
+import { stagingHold } from './role.js';
+import type { Attention, Hold, Comms, Delivery } from './role.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean}={}) {
+async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
- const app=await startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:()=>true}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{deliver:async d=>{deliveries.push(d);},end:async cv=>{ends.push(cv);}},hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:{answer:async()=>{}}});},
+ const app=await startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{deliver:async d=>{deliveries.push(d);},end:async cv=>{ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
  });cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
@@ -55,7 +56,7 @@ it('rechecks ownership after asynchronous encryption, before storing anything',a
  let resume:()=>void=()=>{};let started:()=>void=()=>{};
  const beginning=new Promise<void>(r=>{started=r;});const paused=new Promise<void>(r=>{resume=r;});
  const s=await setup({key:key=>({...key,seal:async text=>{started();await paused;return key.seal(text);}})});
- const send=s.call('open',{agent:'art',id:'first',text:'lost access'});await beginning;
+ const send=s.call('open',{agent:'art',id:'first',text:'lost access'});await beginning;expect(s.app.db.inTransaction).toBe(false);
  const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);resume();
  expect(await send).toMatchObject({code:'denied'});expect(s.app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);
 });
@@ -98,4 +99,68 @@ it('sends encrypted records as plaintext only to its member signed-in socket; be
   else if(!window)expect(received).toMatchObject({code:'denied'});
   else expect(received.records).toEqual([]);
  }
+});
+it('expires off-hour messages exactly at their deadline and omits every Comms table from export/backup',async()=>{
+ const s=await setup();s.clock.advance(12345);const place=await s.open();await s.comms.deliver('art',place,1);
+ s.clock.advance(14*86400_000-1);expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain('secret member words');
+ s.clock.advance(1);expect(JSON.stringify(await s.call('messages',{thread:place}))).not.toContain('secret member words');
+ const {exportDatabase}=await import('../../core/index.js');const snapshot=exportDatabase(s.app.db);
+ expect(snapshot.some(t=>t.name.startsWith('comms_'))).toBe(false);
+ expect(JSON.stringify(snapshot)).not.toContain('CREATE TABLE comms_');
+});
+it('never stores runtime work details or asks as plaintext and passes only the member identity to attention',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'a-private',kind:'ask',text:'private question',ref:'a-private',tool:'secret tool name',step:{body:'secret output'}});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).not.toContain('secret tool name');
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain('secret tool name');
+ expect((await s.call('answer',{thread:place,ref:'a-private',verdict:'yes'})).ok).toBe(true);
+ expect(await s.call('answer',{thread:place,ref:'a-private',verdict:'no'},{kind:'member',id:'other'})).toMatchObject({code:'denied'});
+});
+it('rechecks live-record ownership after decryption and drops suspended snapshots when access is revoked',async()=>{
+ let paused=false,resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:key=>({...key,open:async blob=>{if(paused){started();await wait;}return key.open(blob);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);paused=true;
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ const received:string[]=[];ws.on('message',raw=>received.push(raw.toString()));ws.send(JSON.stringify({kind:'subscribe',type:'message',scope:place}));await begin;
+ const answer=once(ws,'message');const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);
+ const [raw]=await answer;expect(JSON.parse(raw.toString()).records).toEqual([]);resume();
+ // A later authorized operation gives the socket a deterministic turn boundary after the suspended read.
+ const boundary=once(ws,'message');ws.send(JSON.stringify({kind:'call',request:'boundary',name:'comms.agents',input:{}}));await boundary;
+ expect(received.join('')).not.toContain('secret member words');
+});
+it('a page session invalidated while encryption awaits never commits or delivers its send',async()=>{
+ let valid=true,resume:()=>void=()=>{},started:()=>void=()=>{};const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const s=await setup({valid:()=>valid,key:key=>({...key,seal:async words=>{started();await wait;return key.seal(words);}})});
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ ws.send(JSON.stringify({kind:'call',request:'open',name:'comms.open',input:{agent:'art',id:'first',text:'never stored'},id:'first'}));await begin;
+ valid=false;const closed=once(ws,'close');resume();await closed;
+ expect(s.app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);expect(s.deliveries).toEqual([]);
+});
+it('the ninth pin is refused and unpinning releases capacity',async()=>{
+ const s=await setup();const places:string[]=[];
+ for(let n=0;n<9;n++){const place=await s.open();places.push(place);const r=await s.call('change',{thread:place,action:'pin'});if(n===8)expect(r).toMatchObject({code:'conflict'});else expect(r.ok).toBe(true);}
+ await s.call('change',{thread:places[0],action:'unpin'});expect((await s.call('change',{thread:places[8],action:'pin'})).ok).toBe(true);
+});
+it('configurable retention is bounded and a one-day window expires exactly',async()=>{
+ const s=await setup({days:1});const place=await s.open();await s.comms.deliver('art',place,1);s.clock.advance(86400_000);
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).not.toContain('secret member words');
+ for(const days of [0,15,1.5])await expect(setup({days})).rejects.toThrow('1–14');
+});
+it('answers a distinct encrypted ask reference as the original member, and attention owns first-answer-wins',async()=>{
+ const calls:{viewer:Viewer;id:string;kind:string}[]=[];let answered=false;
+ const s=await setup({attention:{answer:(viewer,input)=>{calls.push({viewer,id:input.id,kind:input.answer.kind});if(answered)return {ok:false,code:'conflict',message:'Already answered'};answered=true;return {ok:true,value:{id:input.id}};}}});
+ const place=await s.open();await s.comms.post('art',place,{id:'message-one',kind:'ask',ref:'attention-one',text:'A private question'});
+ expect((await s.call('answer',{thread:place,ref:'attention-one',verdict:'yes'})).ok).toBe(true);
+ expect(calls[0]).toEqual({viewer:member,id:'attention-one',kind:'yes'});
+ expect(await s.call('answer',{thread:place,ref:'attention-one',verdict:'no'})).toMatchObject({code:'conflict'});
+ expect(await s.call('answer',{thread:place,ref:'attention-one',verdict:'yes',words:'never plaintext'})).toMatchObject({code:'unavailable'});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM core_operations').all())).not.toContain('A private question');
+});
+it('staging holds delivery and end; releasing a stable effect permits one runtime call',async()=>{
+ let released=false;const finished:string[]=[];
+ const hold=stagingHold({beforeOutside:()=>released,finish:id=>{finished.push(id);}});const s=await setup({hold});const place=await s.open();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([]);expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE seq=1').get() as {record:string}).record).delivery).toBe('held');
+ await s.call('change',{thread:place,action:'archive'});expect(s.ends).toEqual([]);
+ await s.call('change',{thread:place,action:'unarchive'});released=true;await s.comms.deliver('art',place,1);expect(s.deliveries).toHaveLength(1);await s.comms.deliver('art',place,1);expect(s.deliveries).toHaveLength(1);expect(finished).toContain(`comms-deliver:${place}:1`);
 });

@@ -127,6 +127,14 @@ export class Live {
         ws.on('message', async raw => {
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
           let data: unknown; try { data = JSON.parse(raw.toString()); } catch { c.send({ ok: false, code: 'invalid', message: 'Invalid JSON' }); return; }
+          if (data && typeof data === 'object' && 'kind' in data && data.kind === 'unsubscribe') {
+            const unsub = subscribe.extend({kind:z.literal('unsubscribe')}).safeParse(data);
+            if (!unsub.success) return;
+            const key = JSON.stringify([unsub.data.type, unsub.data.scope]);
+            const sub = c.types.get(key); sub?.cancel.forEach(cancel=>cancel());
+            if(sub)this.revisions.set(sub,(this.revisions.get(sub)??0)+1);
+            c.types.delete(key); return;
+          }
           const s = subscribe.safeParse(data);
           if (s.success) {
             const type = this.types.get(s.data.type);
@@ -137,7 +145,7 @@ export class Live {
           const op = call.safeParse(data);
           if (!op.success) { c.send({ ok: false, code: 'invalid', message: 'Invalid socket message' }); return; }
           c.send({ kind: 'pending', request: op.data.request });
-          const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true);
+          const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
           c.send({ kind: 'result', request: op.data.request, result });
         });
