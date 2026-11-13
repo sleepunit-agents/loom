@@ -10,7 +10,7 @@ boundary; command metadata owns binding names and flags, and the daemon owns
 policy and state rendering. This keeps the existing typed mutation operations
 unchanged instead of adding a second daemon write API solely for CLI rendering.
 This separate executable leaves existing `loom secrets` dispatch unchanged until
-the final move. Tokens supply actual household membership; environment variables
+the final move. Tokens supply the actual authenticated principal; environment variables
 cannot assert an owner, service or house. The owner commands below require a current
 household owner, including metadata reads. A host's old same-user access is not
 remote authentication.

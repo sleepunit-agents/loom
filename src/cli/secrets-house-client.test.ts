@@ -86,6 +86,7 @@ it('cannot assert house authority through environment, job flags or an unbound t
 it('rejects malformed metadata flags and retired plaintext commands before transport',async()=>{
  const f=await setup();
  for(const argv of [
+  ['list','--constructor','value'],['list','--__proto__','value'],['list','--toString','value'],
   ['request','API','--why','fixture'],['request','API','--job',f.job],['request','API','--job','h-1','--why','fixture'],
   [...f.argv,'--job',f.job],[...f.argv,'--agent','art'],[...f.argv,'--scope','other'],[...f.argv,'extra'],
   ...['0','-1','1.5','NaN','Infinity','9007199254740993','--why'].map(n=>['request','API','--job',f.job,'--why','fixture','--minutes',n]),
@@ -98,6 +99,8 @@ it('validates exact metadata acknowledgements and never prints arbitrary respons
   {id:'q-01234567',state:'granted'},{id:'bad',state:'pending'},{id:'q-01234567',state:'pending',value:'PRIVATE'},
   {id:'q-01234567',state:'pending',scope:{house:f.job}},
  ])expect(await f.run(f.argv,async()=>new Response(JSON.stringify({ok:true,value:response})))).toMatchObject({code:1,stdout:''});
+ for(const state of ['pending','allowed','denied','cancelled','revoked'])
+  expect(await f.run(f.argv,async()=>new Response(JSON.stringify({ok:true,value:{id:'q-01234567',state}})))).toMatchObject({code:state==='denied'?1:0,stdout:JSON.stringify({id:'q-01234567',state})+'\n'});
  for(const state of ['cancelled','revoked','expired','granted','pending','denied'])
   expect(await f.run(['status','q-ffffffff'],async()=>new Response(JSON.stringify({ok:true,value:{state}})))).toMatchObject({code:0,stdout:JSON.stringify({state})+'\n'});
  expect(await f.run(f.argv,async()=>new Response(JSON.stringify({ok:true,value:{id:'q-01234567',state:'pending'},message:f.token})))).toMatchObject({code:1,stdout:''});

@@ -7,6 +7,7 @@ import { secretName, requestReason } from '../pieces/secrets/input.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
+const requestId = z.string().regex(/^q-(?:[0-9a-f]{8}|[0-9a-f-]{36})$/);
 const metadata = z.object({ stdout: z.string(), stderr: z.string(), code: z.number().int().min(0).max(4) }).strict();
 const help = `Usage: loom-secrets-client <${secretCommands.map(command => command.name).join('|')}> [args]\nValues for add/replace come from stdin only. Use Settings for interactive entry.\n`;
 export async function runSecretsClient(argv: string[], io: IOStreams, runtime: ClientRuntime = defaults): Promise<number> {
@@ -18,7 +19,7 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith('--')) {
-      const flag = arg.slice(2), key = spec.flags?.[flag];
+      const flag = arg.slice(2), key = spec.flags && Object.hasOwn(spec.flags, flag) ? spec.flags[flag] : undefined;
       if (!key || Object.hasOwn(input, key)) return invalid();
       if (spec.booleanFlags?.includes(flag)) input[key] = true;
       else {
@@ -37,7 +38,7 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
   }
   if (spec.requiredFlags?.some(flag => input[spec.flags![flag]] === undefined)) return invalid();
   if (spec.name === 'request' && !z.object({ job: z.uuid(), name: secretName, why: requestReason, minutes: z.number().int().positive().optional() }).strict().safeParse(input).success) return invalid();
-  if (spec.name === 'status' && !z.string().regex(/^q-(?:[0-9a-f]{8}|[0-9a-f-]{36})$/).safeParse(input.id).success) return invalid();
+  if (spec.name === 'status' && !requestId.safeParse(input.id).success) return invalid();
   if (position !== (spec.positional?.length ?? 0)) return invalid();
   if (input.name !== undefined && (typeof input.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(input.name))) return invalid();
   if (spec.name === 'policy') {
@@ -100,7 +101,7 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
       }
       if (spec.name === 'request' || spec.name === 'status') {
         const schema = spec.name === 'request'
-          ? z.object({ id: z.string().regex(/^q-(?:[0-9a-f]{8}|[0-9a-f-]{36})$/), state: z.enum(['pending', 'allowed', 'denied', 'cancelled', 'revoked']) }).strict()
+          ? z.object({ id: requestId, state: z.enum(['pending', 'allowed', 'denied', 'cancelled', 'revoked']) }).strict()
           : z.object({ state: z.enum(['pending', 'granted', 'expired', 'denied', 'cancelled', 'revoked']) }).strict();
         const result = schema.safeParse(envelope.data.value);
         if (!result.success) return fail('Invalid daemon response');
