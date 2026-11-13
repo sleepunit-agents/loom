@@ -27,8 +27,9 @@ agent's owner nor lent to it. Ownership and lending govern placement eligibility
 caller authorization always uses `src/policy.ts`. A specifically named agent
 owner takes precedence over household owners for this eligibility check.
 
-A local runner cannot be report-only and is always on. Report-only runners count
-as always on. Setting a single local preference or an empty list stores an empty
+A local runner cannot be report-only and is always on. `alwaysOn` stores the
+configured watch flag; `boxAlwaysOn` also counts report-only runners as always on
+without making that flag sticky when report-only is later disabled. Setting a single local preference or an empty list stores an empty
 list, meaning default placement. No local box is fabricated: local registration
 must eventually receive explicit runner metadata from the composition root.
 Existing model settings survive a preference change. The structured API accepts

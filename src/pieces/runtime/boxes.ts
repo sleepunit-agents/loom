@@ -19,6 +19,8 @@ function withoutTimestamp<T extends { changedAt: number }>(record: T): Omit<T, '
   const { changedAt: _timestamp, ...value } = record;
   return value;
 }
+/** Report-only implies watching without overwriting the owner's explicit always-on setting. */
+export const boxAlwaysOn = (box: Box): boolean => box.local || box.reportOnly || box.alwaysOn;
 /** Placement eligibility is domain state, not caller authorization (which stays in policy.ts). */
 export function canHost(box: Box, agent: string, sharing: Sharing): boolean {
   const named = Object.entries(sharing.members).filter(([, m]) => m.agents.includes(agent));
@@ -40,9 +42,9 @@ export function installBoxOperations(db: Db, operations: Operations, sharing: ()
       const before = resolveBox(store, input.box);
       if (input.set.owner !== undefined && !Object.hasOwn(sharing().members, input.set.owner)) throw new OperationError('invalid', 'Box owner must be a household member');
       const after = { ...before, ...input.set };
-      // A local runner always hosts; report-only runners count as always on.
+      // Preserve the configured watch flag; report-only implies watching via boxAlwaysOn.
       after.reportOnly = !after.local && after.reportOnly;
-      after.alwaysOn = after.local || after.reportOnly || after.alwaysOn;
+      after.alwaysOn = after.local || after.alwaysOn;
       if (store.put('box', after, ctx.now)) ctx.changed('runtime.box', after.id);
       return { box: after.id };
     },

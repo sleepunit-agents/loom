@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { boxAlwaysOn } from './boxes.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
@@ -55,7 +56,13 @@ it('keeps local runners hosting and counts report-only runners as always on', as
   expect(call('configureBox', { box: 'local', set: { reportOnly: true, alwaysOn: false } }).ok).toBe(true);
   expect(store.read('box', 'local')).toMatchObject({ reportOnly: false, alwaysOn: true });
   expect(call('configureBox', { box: 'one', set: { reportOnly: true, alwaysOn: false } }).ok).toBe(true);
-  expect(store.read('box', 'r1')).toMatchObject({ reportOnly: true, alwaysOn: true });
+  expect(store.read('box', 'r1')).toMatchObject({ reportOnly: true, alwaysOn: false });
+  expect(boxAlwaysOn(store.read('box', 'r1')!)).toBe(true);
+  expect(call('configureBox', { box: 'one', set: { reportOnly: false } }).ok).toBe(true);
+  expect(boxAlwaysOn(store.read('box', 'r1')!)).toBe(false);
+  expect(call('configureBox', { box: 'one', set: { alwaysOn: true, reportOnly: true } }).ok).toBe(true);
+  expect(call('configureBox', { box: 'one', set: { reportOnly: false } }).ok).toBe(true);
+  expect(boxAlwaysOn(store.read('box', 'r1')!)).toBe(true);
 });
 it('stores ordered preferences, canonicalizes references and preserves unrelated settings', async () => {
   const { app, call, store } = await setup();
@@ -100,4 +107,18 @@ it('deduplicates retries, rejects changed retry input and preserves timestamps o
   expect(call('configureBox', input).ok).toBe(true);
   expect(store.read('box', 'r1')?.changedAt).toBe(at);
   expect(call('configureBox', { box: 'one', set: { labels: [] } }, owner, 'stable')).toMatchObject({ ok: false, code: 'conflict' });
+});
+
+it('publishes committed metadata changes and stays silent for no-ops and rejected writes', async () => {
+  const { app, call } = await setup();
+  const changed = vi.spyOn(app.live, 'changed');
+  expect(call('configureBox', { box: 'one', set: { labels: ['gpu'] } }).ok).toBe(true);
+  expect(changed).toHaveBeenLastCalledWith([{ type: 'runtime.box', id: 'r1' }]);
+  expect(call('setBoxes', { agent: 'art', boxes: ['one'] }).ok).toBe(true);
+  expect(changed).toHaveBeenLastCalledWith([{ type: 'runtime.settings', id: 'art' }]);
+  changed.mockClear();
+  expect(call('configureBox', { box: 'one', set: { labels: ['gpu'] } }).ok).toBe(true);
+  expect(call('setBoxes', { agent: 'art', boxes: ['one'] }).ok).toBe(true);
+  expect(call('setBoxes', { agent: 'art', boxes: ['missing'] }).ok).toBe(false);
+  expect(changed).not.toHaveBeenCalled();
 });
