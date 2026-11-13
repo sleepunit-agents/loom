@@ -1216,8 +1216,9 @@ the executable and environment; no credentials are read from the daemon or old
 stores. Other harnesses are not supported by this execution unit.
 
 One controller owns the ORIGINAL agent, conversation, venue and place. It generates
-its own UUID and retains resume authority only after a successful, bounded harness
-result naming that UUID. A changed binding permanently closes the controller.
+its own UUID and retains resume authority only after a successful result naming
+that UUID. Combined stdout and stderr cannot exceed 1MiB. A changed binding
+permanently closes the controller.
 Changed policy/file bytes, deny list or checkout starts a fresh UUID. No receipt
 from a body, adapter, imported record or a previous worker process authorizes
 history reuse. Concurrent turns refuse; close kills the active foreground child.

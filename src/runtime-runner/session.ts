@@ -87,7 +87,11 @@ export class ClaudeWorkerSession {
           chunks.push(Buffer.from(data));
         });
         // Drain diagnostics without retaining potentially sensitive words.
-        child.stderr.on('data',()=>{});
+        child.stderr.on('data',(data:Buffer)=>{
+          if(settled)return;
+          bytes+=data.length;
+          if(bytes>MAX_OUTPUT)fail('Claude output exceeded its limit');
+        });
         child.on('close',(code:number|null)=>{
           if(settled)return;settled=true;
           if(code!==0){reject(new WorkerSessionError('Claude turn failed'));return;}

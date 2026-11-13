@@ -92,4 +92,19 @@ describe('worker-owned Claude session',()=>{
     await expect(f.session.turn(f.turn)).rejects.toThrow('closed');
   });
 
+  it.each(['diagnostics','combined'])('bounds all harness output (%s)',async kind=>{
+    const f=fixture(),p=f.session.turn(f.turn),child=f.calls[0].child;
+    if(kind==='combined')child.stdout.write(Buffer.alloc(524288));
+    child.stderr.write(Buffer.alloc(kind==='combined'?524289:1048577));
+    await expect(p).rejects.toThrow('limit');expect(child.killed).toBe(true);
+    await expect(f.session.turn(f.turn)).rejects.toThrow('closed');
+  });
+  it('never reflects sensitive diagnostics or child error messages',async()=>{
+    const f=fixture(),p=f.session.turn(f.turn),child=f.calls[0].child;
+    child.stderr.write('PRIVATE DIAGNOSTIC');child.stdout.write('PRIVATE OUTPUT');
+    child.emit('error',new Error('PRIVATE ERROR'));
+    const error=await p.catch(e=>e as Error);
+    expect(error.message).toBe('Claude launch failed');expect(error.stack).not.toContain('PRIVATE');
+  });
+
 });
