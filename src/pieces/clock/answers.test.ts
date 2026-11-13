@@ -180,3 +180,18 @@ it('Clock close disposes its composed observer before the foundation closes', ()
     app.live.changed([{type:'approval',id:'a-test'}]); expect(notified).toHaveBeenCalledTimes(1);
   } finally {app.close();rmSync(home,{recursive:true,force:true});}
 });
+
+it('uses current secret revocation before a queued Allow can resume work', async () => {
+  const s = await setup(true);
+  s.value('secrets.describe',{name:'api-key',description:''});
+  const request = s.value<{id:string}>('secrets.requestHouse',{agent:'art',target:'api-key',scope:{house:'h-1'},why:'work'},agent);
+  const parked = s.park(request.id); await s.flush();
+  s.value('attention.answer',{id:request.id,answer:{kind:'yes'}});
+  s.value('secrets.revoke',{agent:'art',kind:'secret',target:'api-key',scope:{house:'h-1'}});
+  await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'cancelled'}});
+  expect(wake(s.app.db,parked.id)?.prompt).toContain('answer to '+request.id+': cancelled');
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('request it again');
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
+  expect(s.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+});

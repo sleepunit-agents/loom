@@ -236,7 +236,7 @@ the command inventory above, the source has these domain obligations:
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
 | `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | Current continuation field is opaque data only; validation and runtime capability inspection remain unfinished. It must not convey authority by its presence. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
-| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note is implemented below; question-role composition remains unfinished. |
+| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
@@ -416,8 +416,7 @@ imported provenance. Those workflows remain part of later server slices.
 
 Next mode owns Clock's lifecycle and stops its timer before database shutdown.
 Until runtime dispatch composition exists, every start remains held by Clock's
-default runtime even outside staging; nothing calls the old program. Next-mode
-approval parking composition still remains.
+default runtime even outside staging; nothing calls the old program. Next mode composes scoped approval and secret answers as described below.
 
 One in-process browser test exercises two windows, live creation/cancellation,
 pause, lane text edits/reassignment, direct-link reload, phone confirmations,
