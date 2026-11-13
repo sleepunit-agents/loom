@@ -86,6 +86,34 @@ it('sweeps all encrypted message and step words at fourteen days; deletes rows a
  expect(s.app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);
  expect(s.app.db.prepare('SELECT * FROM comms_deleted').all()).toHaveLength(1);
 });
+for(const expired of [false,true])it(`settles an ineligible held send as failed instead of leaving it held (expired=${expired})`,async()=>{
+ const s=await setup({hold:stagingHold({beforeOutside:()=>false,finish:()=>{}}),days:1});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const delivery=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery;
+ expect(delivery()).toBe('held');
+ if(expired)s.clock.advance(86400_000);else await s.call('change',{thread:place,action:'archive'});
+ await s.comms.deliver('art',place,1);
+ expect(delivery()).toBe('failed');expect(s.deliveries).toEqual([]);
+});
+it('keeps a completed delivery receipt after archiving and retention expiry',async()=>{
+ const s=await setup({days:1});const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'archive'});s.clock.advance(86400_000);await s.comms.deliver('art',place,1);
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery).toBe('delivered');
+ expect(s.deliveries).toHaveLength(1);
+});
+it('does not acknowledge a send archived while waiting at the staging gate, and can retry after reopening',async()=>{
+ let resume:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{resume=r;}),began=new Promise<void>(r=>{started=r;});
+ let first=true;
+ const s=await setup({hold:async(run,facts)=>{if(first&&facts?.title==='Deliver a Comms message'){first=false;started();await waiting;}return run();}});
+ const place=await s.open();await began;
+ await s.call('change',{thread:place,action:'archive'});resume();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([]);
+ const delivery=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery;
+ expect(delivery()).toBe('failed');
+ await s.call('change',{thread:place,action:'unarchive'});await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toHaveLength(1);expect(delivery()).toBe('delivered');
+});
 it('staging holds runtime delivery and never leaks words to another effect',async()=>{
  const s=await setup({hold:true});const place=await s.open();await s.comms.deliver('art',place,1);expect(s.deliveries).toEqual([]);
 });

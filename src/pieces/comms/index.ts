@@ -100,8 +100,9 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   try {
    let t=requireAgent(agent,place);
    let row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
-   if (!row || !row.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return;
+   if (!row) return;
    if (JSON.parse(row.record).delivery==='delivered') return;
+   if (!row.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return fail('denied','Thread unavailable');
    const plain=await key.open(row.words);const words=JSON.parse(row.record).encoding==='text'?{text:plain}:JSON.parse(plain) as {text:string};
    // Recheck after crypto and again inside the staging hold before crossing the process boundary.
    await o.hold(async()=> {
