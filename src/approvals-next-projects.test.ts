@@ -23,7 +23,7 @@ it.each([false, true])('next approvals resolve row-backed project rules (injecte
   };
   const target = `github:acme/app#12@${'a'.repeat(40)}`;
   const rule = () => call('rule', { kind: 'merge', targets: [target], for: 'art' });
-  const project = { slug: 'pond', name: 'Pond', repositories: [' Acme/App '], members: [], agents: [] };
+  const project = { slug: 'pond', name: 'Pond', repositories: [' Acme/App ', 'gitlab:Acme/App'], members: [], agents: [] };
   try {
     loom.db.transaction(() => new HouseholdDatabase(loom.db).replace(home, { v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }))();
     expect(await call('rules', {})).toMatchObject({ ok: true, value: { rules: [] } });
@@ -31,6 +31,9 @@ it.each([false, true])('next approvals resolve row-backed project rules (injecte
     expect(await call('set-rule', { kind: 'merge', scope: 'project:pond', tier: 'ask' })).toMatchObject({ ok: true });
     new HouseholdRows(loom.db, 'projects').put('pond', project);
     expect(await rule()).toMatchObject({ ok: true, value: { [target]: { tier: 'ask', scope: 'project:pond' } } });
+    const otherForge = target.replace('github:', 'gitlab:');
+    expect(await call('rule', { kind: 'merge', targets: [otherForge], for: 'art' }))
+      .toMatchObject({ ok: true, value: { [otherForge]: { tier: 'ask', scope: 'project:pond' } } });
     // Metadata is read per operation; removing a repo changes the next lookup.
     new HouseholdRows(loom.db, 'projects').put('pond', { ...project, repositories: [] });
     expect(await rule()).toMatchObject({ ok: true, value: { [target]: { tier: 'do', scope: 'github:acme/*' } } });
