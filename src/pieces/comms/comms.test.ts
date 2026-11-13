@@ -13,6 +13,23 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('refreshes foreground presence on unchanged reads without moving activity or publishing Live changes',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const saved=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const original=saved();
+ await s.call('change',{thread:place,action:'read',seq:1});
+ expect(saved().inFront).toBe(s.clock.now());
+ const changed=vi.spyOn(s.app.live,'changed');changed.mockClear();
+ s.clock.advance(30000);
+ await s.call('change',{thread:place,action:'read',seq:0});
+ expect(saved()).toMatchObject({inFront:s.clock.now(),readSeq:1,last:original.last});
+ expect(changed).not.toHaveBeenCalled();
+ await s.restart();expect(saved().inFront).toBe(s.clock.now());
+ const before=saved();
+ expect((await s.call('change',{thread:place,action:'read',seq:1},{kind:'member',id:'other'})).ok).toBe(false);
+ expect((await s.call('change',{thread:place,action:'read',seq:1},member,false)).ok).toBe(false);
+ expect(saved()).toEqual(before);
+});
 async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};

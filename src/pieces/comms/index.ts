@@ -69,7 +69,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   ? {at:t.aliveAt,...(typeof t.aliveTokens==='number'?{tokens:t.aliveTokens}:{})} : undefined;
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
-  const {firstHash, firstId, aliveAt, aliveTokens, ...record} = t;
+  const {firstHash, firstId, aliveAt, aliveTokens, inFront, ...record} = t;
   return {...record,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),unread:(reply.seq ?? 0)>t.readSeq};
  };
  live.register({name:'thread',windowOnly:true,
@@ -290,7 +290,13 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     case 'unpin':t.pinned=false;break;
     case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;t.working=false;t.workingSince=null;t.workingBeat=null;queueEnd(t,'archive',t.endGeneration);}break;
     case 'unarchive':t.archived=null;db.prepare('DELETE FROM comms_meta WHERE key=?').run(endKey(t.id));break;
-    case 'read': if(i.seq===undefined)return fail('invalid','A message number is required'); t.readSeq=Math.max(t.readSeq,Math.min(i.seq,t.nextSeq-1));break;
+    case 'read': {
+     if(i.seq===undefined)return fail('invalid','A message number is required');
+     const previous=t.readSeq;t.readSeq=Math.max(previous,Math.min(i.seq,t.nextSeq-1));t.inFront=ctx.now;
+     // Presence renewals neither reorder threads nor create a Live/ack feedback loop.
+     if(t.readSeq===previous){saveThread(db,t);return {thread:t.id};}
+     break;
+    }
     case 'stop':t.stop=true;break;
     case 'delete':
      queueEnd(t,'delete',(t.endGeneration??0)+1);

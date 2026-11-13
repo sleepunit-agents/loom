@@ -39,7 +39,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  const [pages]=useState(()=>new EarlierPages());const [older,setOlder]=useState<Message[]>([]);const current=useRef<readonly Message[]|undefined>(undefined);current.current=status==='live'?records:undefined;const pageOwner=useRef(current.current);const [title,setTitle]=useState(thread.title??'');const [project,setProject]=useState(thread.project??'');const [deleting,setDeleting]=useState(false);
  const [pagePending,setPagePending]=useState(false),[pageError,setPageError]=useState<string>();
  const latestSeq=records.at(-1)?.seq??0;
- useEffect(()=>{if(status!=='live'||latestSeq<=thread.readSeq)return;return bindThreadRead(latestSeq,async seq=>{const r=call('comms.change',{thread:thread.id,action:'read',seq});return (await r.result).ok;});},[latestSeq,status,thread.id,thread.readSeq]);
+ useEffect(()=>{if(status!=='live')return;return bindThreadRead(latestSeq,async seq=>{const r=call('comms.change',{thread:thread.id,action:'read',seq});return (await r.result).ok;});},[latestSeq,status,thread.id]);
  // Fence cached words immediately at render, then clear them and pending reads.
  useEffect(()=>{pageOwner.current=current.current;pages.clear();setOlder([]);setPagePending(false);setPageError(undefined);},[records,status,pages]);
  useEffect(()=>()=>{current.current=undefined;pages.clear();},[pages]);

@@ -54,6 +54,10 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(readSeq()).toBeLessThan(hiddenReply.seq);
   await b.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});Object.defineProperty(document,'hasFocus',{configurable:true,value:()=>true});window.dispatchEvent(new Event('focus'));});
   await expect.poll(readSeq).toBeGreaterThanOrEqual(hiddenReply.seq);
+  // An already-read thread must keep renewing foreground presence without new records.
+  const inFront=()=>JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).inFront as number;
+  clock.advance(30000);await b.clock.fastForward(30000);
+  await expect.poll(inFront).toBe(clock.now());expect(readSeq()).toBe(hiddenReply.seq);
   for(const page of [a,b])await page.evaluate(()=>{Reflect.deleteProperty(document,'visibilityState');Reflect.deleteProperty(document,'hasFocus');document.dispatchEvent(new Event('visibilitychange'));});
   // Body activity comes from the thread subscription; it must disappear when the turn ends.
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});

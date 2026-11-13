@@ -74,7 +74,7 @@ data does not remove the behavior it delivered.
 | `/project`, `setProject`, filed threads | `comms.change` | Partial: project gate works; project integration and lookup missing. |
 | Pin/unpin | `comms.change` | Present: eight-pin cap, idempotent pin, unpin releases capacity. |
 | Archive/unarchive/delete | `comms.change` and staged runtime end | Partial: archive and cascade/tombstone work; end effects now have per-archive lifecycle identity and recheck the generation inside the hold, so reopening cancels a delayed old end; archive/delete now journal metadata-only end jobs in the same transaction and retry them on startup. Reopening cancels the old archive job, completion removes only its own generation, and failed/held ends remain retryable through `reconcileEnds`. Runtime end must tolerate replay after an uncertain crash. Automatic staging-release binding remains missing. |
-| `/read`, `markRead`, in-front suppression | `comms.change` | Partial: read sequence is monotonic; foreground presence and notification suppression missing. |
+| `/read`, `markRead`, in-front suppression | `comms.change` | Partial: read sequence is monotonic; unchanged reads renew server-timed per-thread foreground presence without moving activity or emitting Live updates. The visible reader renews every 30 seconds. Production notification suppression/push binding remains missing. |
 | `/stop`, `/resume`, `/model` | Runtime control seam | Partial: one-shot stop flag only; actual interrupt/resume/model selection and state missing. |
 | Adapter `describe` | `Comms.describe` | Partial: original-member readers, private/tool-use/source guidance, inline-ask guidance and conditional project/title guidance. Denies wrong agents, revoked ownership, archived/deleted threads and closed instances; refuses nonprintable or over-300-character brief lines without truncating routing identities. Trusted in-process capability only; actual runtime binding and private inline-ask synchronization remain missing. |
 | Adapter `post` | `Comms.post` | Partial: encrypted replies, cards, ask refs, agent isolation and id dedupe; bounded switched-harness labels are encrypted as reply cards and shown from the latest retained reply, with the next unmarked reply clearing the label. Production harness binding, spawn report refs and continuation receipt semantics still need parity. |
@@ -591,8 +591,8 @@ or 30-second tick. Successful marks stop retrying. Disconnect, navigation and
 unmount remove listeners/timers and fence callbacks that have not started.
 The helper retains a sequence number only. The deterministic regression covers
 hidden/unfocused arrival, returning focus, coalescing, failure/retry, success and
-cleanup. This fixes read marks; persisted foreground presence, notification
-suppression and production push binding remain unfinished.
+cleanup. Persisted foreground presence is added below; notification suppression
+and production push binding remain unfinished.
 
 The switched-harness browser extension passed on `24e1a806ea9a89abe9df5e4ccef587e6bc9a55f5`:
 [Comms evidence](https://github.com/sleepunit-agents/loom/actions/runs/43390267757),
@@ -614,3 +614,20 @@ helper tests, root TypeScript and the web build pass. The single browser fixture
 now checks thinking after an accepted queued send and clearing on final failure;
 current-head CI must validate it. No local browser ran. Review budgets remain
 backend/security 2/3 and importer 1/3.
+
+Visible-thread reads now persist server-timed `inFront` presence on the owned
+thread, including when its read sequence is unchanged. Presence-only renewals
+do not move activity or emit Live changes; the timestamp is omitted from the
+window thread record. The reader keeps renewing every 30 seconds while visible
+and focused, including after success and when all current messages are read.
+Hidden/unfocused pages, disconnect, navigation and unmount stop renewals.
+The effect does not depend on the acknowledged read sequence, avoiding an
+acknowledgement loop. Pending calls still coalesce and failed marks retry.
+
+The backend regression first failed with an absent timestamp. It now covers
+unchanged/older reads, restart persistence, stable activity, no Live publication
+and denied other-member/token calls. The helper regression covers success
+renewal and hidden-page suppression. The existing single browser proof now
+requires a new server timestamp after a 30-second browser tick with no new
+message. Production notification suppression and push integration remain
+unfinished; this timestamp alone does not claim them.

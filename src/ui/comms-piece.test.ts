@@ -185,9 +185,11 @@ it('marks replies read when a hidden thread returns, coalesces events, retries f
  doc.visibilityState='visible';doc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();expect(calls).toEqual([]);
  focused=true;win.dispatchEvent(new Event('focus'));doc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();expect(calls).toEqual([8]);
  finish(false);await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8]);
- finish(true);await vi.advanceTimersByTimeAsync(60000);win.dispatchEvent(new Event('focus'));expect(calls).toEqual([8,8]);
- stop();win.dispatchEvent(new Event('focus'));doc.dispatchEvent(new Event('visibilitychange'));await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8]);
- const stale=bindThreadRead(9,async seq=>{calls.push(seq);return true;});stale();await Promise.resolve();expect(calls).toEqual([8,8]);
+ finish(true);await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8,8]);
+ finish(true);await vi.advanceTimersByTimeAsync(0);doc.visibilityState='hidden';await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8,8]);
+ doc.visibilityState='visible';win.dispatchEvent(new Event('focus'));await Promise.resolve();expect(calls).toEqual([8,8,8,8]);
+ finish(true);await vi.advanceTimersByTimeAsync(0);stop();win.dispatchEvent(new Event('focus'));doc.dispatchEvent(new Event('visibilitychange'));await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8,8,8]);
+ const stale=bindThreadRead(9,async seq=>{calls.push(seq);return true;});stale();await Promise.resolve();expect(calls).toEqual([8,8,8,8]);
  vi.useRealTimers();
 });
 

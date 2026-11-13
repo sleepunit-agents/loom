@@ -6,6 +6,8 @@ export interface Thread {
  firstId: string; firstHash: string; working: boolean; workingSince?: number | null; workingBeat?: number | null; endGeneration?: number; aliveAt?: number | null; aliveTokens?: number | null;
  /** Highest member-message sequence whose start is over, even after heartbeat expiry. */
  startedThrough?: number;
+ /** Server time of the member's latest visible-thread read, including unchanged reads. */
+ inFront?: number;
  [key: string]: unknown;
 }
 export interface MessageRow {
