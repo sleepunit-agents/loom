@@ -574,3 +574,28 @@ it('refuses invalid, foreign, revoked and closed heartbeat writes and cannot sta
  expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record).working).toBe(false);
  await s.comms.close();const closed=snapshot();expect(()=>s.comms.status('art',place,'working')).toThrow();expect(snapshot()).toBe(closed);
 });
+it('expires working heartbeats at 90 seconds, extends on a beat, and preserves activity and words',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const messages=()=>JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ const last=row().last,before=messages();s.comms.status('art',place,'working');
+ s.clock.advance(89_999);expect(row().working).toBe(true);
+ s.comms.status('art',place,'working');const since=row().workingSince;
+ s.clock.advance(89_999);expect(row()).toMatchObject({working:true,workingSince:since});
+ s.clock.advance(1);expect(row()).toMatchObject({working:false,workingSince:null,workingBeat:null,last});
+ expect(messages()).toBe(before);
+ s.comms.status('art',place,'working');expect(row().workingSince).toBe(s.clock.now());
+ await s.comms.close();s.clock.advance(90_000);expect(row().working).toBe(true);
+ await s.restart();expect(row()).toMatchObject({working:false,workingSince:null,workingBeat:null,last});
+});
+it('settles persisted working state without a beat using its start or last activity',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);await s.comms.close();
+ const row=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ row.working=true;row.workingSince=s.clock.now();delete row.workingBeat;
+ s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(row),place);
+ s.clock.advance(89_999);await s.restart();expect(s.comms.trace('art',place).working).toBe(true);
+ s.clock.advance(1);expect(s.comms.trace('art',place).working).toBe(false);
+ await s.comms.close();delete row.workingSince;row.working=true;
+ s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(row),place);
+ await s.restart();expect(s.comms.trace('art',place).working).toBe(false);
+});

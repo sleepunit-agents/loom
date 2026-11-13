@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
+const workingStale = 90_000;
 const fail = (code: 'denied'|'conflict'|'invalid'|'unavailable', message: string): never => { throw new OperationError(code,message); };
 const text = z.string().min(1).max(40_000).refine(s => !!s.trim());
 const title = z.string().min(1).max(60).refine(s => !!s.trim() && !/[\r\n]/.test(s));
@@ -302,7 +303,15 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   touched(requireAgent(agent,place),result.seq);return result;
  }
  let cancel:()=>void=()=>{};
+ function workingThreads(): Thread[] {
+  return (db.prepare("SELECT record FROM comms_threads WHERE json_extract(record,'$.working')=1").all() as {record:string}[]).map(r=>JSON.parse(r.record) as Thread);
+ }
+ const workingDeadline=(t:Thread)=>(t.workingBeat??t.workingSince??t.last)+workingStale;
  function sweep() {
+  if(closed)return;
+  const stale=workingThreads().filter(t=>workingDeadline(t)<=clock.now());
+  db.transaction(()=>{for(const t of stale){t.working=false;t.workingSince=null;t.workingBeat=null;saveThread(db,t);}})();
+  live.changed(stale.map(t=>({type:'thread',id:t.id})));
   const rows=db.prepare('SELECT thread,seq FROM comms_messages WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {thread:string;seq:number}[];
   db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher','$.privateCipher') WHERE at <= ?").run(clock.now()-days*day);
   live.changed(rows.map(r=>({type:'message',id:messageId(r.thread,r.seq)})));
@@ -311,7 +320,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  function armSweep() {
   cancel();
   const next=db.prepare('SELECT min(at) AS at FROM comms_messages WHERE words IS NOT NULL').get() as {at:number|null};
-  cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day),sweep);
+  cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day,workingThreads().reduce((at,t)=>Math.min(at,workingDeadline(t)),Infinity)),sweep);
  }
  sweep();
  void reconcileEnds();
