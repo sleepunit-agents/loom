@@ -3,6 +3,8 @@ import { migrate, operation, failure, maySee, mayAct, mayCreate, type Db, type O
 import type { Ask, AgentStatus } from './role.js';
 import { schema } from './schema/001.js';
 import { conversationSchema } from './schema/002.js';
+import { retentionSchema } from './schema/004.js';
+import { installRetention } from './retention.js';
 import { digestSchema } from './schema/003.js';
 import { installDigests } from './digests.js';
 import { installConversations } from './conversations.js';
@@ -23,9 +25,10 @@ const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
-  migrate(db, 'attention', [...schema, conversationSchema, digestSchema]);
+  migrate(db, 'attention', [...schema, conversationSchema, digestSchema, retentionSchema]);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing);
+  installRetention(db, operations, live, sharing);
   const readAsk = (key: string): Ask | undefined => {
     const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(key) as { record: string } | undefined;
     return row && JSON.parse(row.record) as Ask;
