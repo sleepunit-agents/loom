@@ -219,6 +219,7 @@ it('files an exact owning request, deduplicates retries and overlapping sets, an
   expect(s.call('clock.askVouch',{target:`art:${ids.slice(1).join(',')}`},agent).ok).toBe(false);
   await s.restart();
   expect(s.call('clock.askVouch',input,agent)).toEqual(first);
+  expect(s.call('clock.askVouch',{target:`art:${ids.slice(1).join(',')}`},agent).ok).toBe(false);
   expect(s.call('approvals.answer',{id:card.id,action:'allow'}).ok).toBe(true);
   for (const id of ids.slice(0,2)) expect(wake(s.app.db,id)).toMatchObject({by:owner,state:'pending'});
   expect(wake(s.app.db,ids[2])).toEqual(before[2]);
