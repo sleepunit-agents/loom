@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h, useSyncExternalStore } from '../../web/node_modules/react/index.js';
-import { act, create, type ReactTestInstance } from '../../web/node_modules/react-test-renderer/index.js';
-import type { Snapshot, LiveRecord, CallState, Result } from '../../web/src/data';
+import { createElement as h, useSyncExternalStore } from '../../../node_modules/react/index.js';
+import { act, create, type ReactTestInstance } from '../../../node_modules/react-test-renderer/index.js';
+import type { Snapshot, LiveRecord, CallState, Result } from '../../data';
 const f = vi.hoisted(() => ({ snapshots: {} as Record<string, Snapshot>, listeners: new Set<() => void>(), call: vi.fn() }));
-vi.mock('../../web/src/data', () => ({ useRecords: (type: string) => useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshots[type]), call: f.call }));
-vi.mock('../../web/src/lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
-import BridgesApp from '../../web/src/pieces/bridges';
+vi.mock('../../data', () => ({ useRecords: (type: string) => useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshots[type]), call: f.call }));
+vi.mock('../../lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
+import BridgesApp from './index';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let tree: ReturnType<typeof create> | undefined;
 const words = (node: ReactTestInstance | string): string => typeof node === 'string' ? node : node.children.map(words).join('');
@@ -18,7 +18,7 @@ beforeEach(() => {
   f.call.mockReset(); f.listeners.clear();
   f.snapshots = {
     'bridges.venue': { status: 'live', records: [{ id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'house', bot: '100', enabled: true, connection: 'connected', received: 3, delivered: 2, held: 1 }] },
-    'bridges.route': { status: 'live', records: [{ id: 'route', platform: 'discord', workspace: 'house', channel: '300', primary: 'art', peer: true, guest: false, readers: ['mark'], notes: ['house/rules'], changedAt: 123, connection: 'metadata-only' }] },
+    'bridges.route': { status: 'live', records: [{ id: 'route', platform: 'discord', workspace: 'house', channel: '300', primary: 'art', parent: 'parent-id', pair: 'pair-id', peer: true, guest: false, readers: ['mark'], notes: ['house/rules'], changedAt: 123, connection: 'metadata-only' }] },
     'bridges.send': { status: 'live', records: [{ id: 'reply', venue: 'art-discord', incoming: 'receipt', state: 'pending', created: 0 }] },
     'core.effect': { status: 'live', records: [{ id: 'bridges:reply', kind: 'bridge-send', title: 'Bridge reply via art-discord', state: 'due' }, { id: 'wake', kind: 'wake', title: 'Hidden wake', state: 'due' }] },
   };
@@ -154,7 +154,18 @@ it('New route generates distinct identities and keeps one identity for retries',
 it('whitelists operation fields when reopening a newly saved route with live metadata', async () => {
   pendingWrite(); await draw('/p/bridges-preview/item/new-route/route'); await submit();
   expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putRoutes', {
-    id: 'route', platform: 'discord', workspace: 'house', channel: '300', parent: undefined, primary: 'art', pair: undefined,
+    id: 'route', platform: 'discord', workspace: 'house', channel: '300', parent: 'parent-id', primary: 'art', pair: 'pair-id',
     peer: true, guest: false, readers: ['mark'], notes: ['house/rules'],
+  });
+});
+
+it('preserves untouched route strings and lists exactly on an unrelated edit', async () => {
+  pendingWrite(); const route = { ...f.snapshots['bridges.route'].records[0], workspace: ' house ', channel: ' 300 ',
+    parent: ' parent ', pair: ' pair ', readers: [' mark ', 'embedded\nreader'], notes: [' note ', 'embedded\nnote'] };
+  await publish('bridges.route', [route]); await draw('/p/bridges-preview/item/routes/route');
+  await change('Primary agent', 'new-primary'); await submit();
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putRoutes', {
+    id: route.id, platform: route.platform, workspace: route.workspace, channel: route.channel, parent: route.parent, pair: route.pair,
+    primary: 'new-primary', peer: route.peer, guest: route.guest, readers: route.readers, notes: route.notes,
   });
 });

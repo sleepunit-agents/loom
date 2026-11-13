@@ -187,9 +187,10 @@ The Routes folder creates, edits and removes routes using the existing
 `bridges.putRoutes` and `bridges.removeRoutes` operations. Fields cover platform,
 workspace/channel, parent, primary agent, paired webhook, peers, guests, reader agents
 and note references. Reader and note lists use one reference per line; blank lines
-are omitted. New routes receive a stable random id. Removal requires confirmation.
-A pending write stays locked across in-app navigation, and refusal stays inline.
-If the live route changes while a draft is open, saving and removal stop until the
+are omitted when editing a list; untouched strings and lists retain their exact values. New routes receive a stable random id. Removal requires confirmation.
+A pending route write blocks other route writes across in-app navigation, and refusal stays inline.
+If the window observes a live route change while a draft is open, saving and removal
+stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
 the existing put operation remains last-write-wins, without an atomic revision check.
 The daemon continues to enforce the existing household-owner policy for every write.

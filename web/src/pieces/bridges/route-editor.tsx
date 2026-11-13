@@ -7,7 +7,7 @@ export interface RouteWrite { kind: 'save' | 'remove'; call: Call<{ id: string }
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
 const signature = (route: RouteInput) => JSON.stringify(route);
-const lines = (text: string) => text.split('\n').map(s => s.trim()).filter(Boolean);
+const lines = (text: string) => text.split('\n').filter(s => s.length > 0);
 
 /** Writes stay owned by the app, so navigation cannot release the pending lock. */
 export function RouteEditor({ route, fresh, request, busy, write }: {
@@ -31,10 +31,11 @@ export function RouteEditor({ route, fresh, request, busy, write }: {
       disabled={pending} onChange={e => { setDraft({ ...draft, [key]: e.target.value }); setConfirm(false); }} /></label>;
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (disabled || !draft.workspace.trim() || !draft.channel.trim()) return;
-    write('save', { ...draft, workspace: draft.workspace.trim(), channel: draft.channel.trim(),
-      parent: draft.parent?.trim() || undefined, primary: draft.primary?.trim() || undefined,
-      pair: draft.pair?.trim() || undefined, readers: lines(readers), notes: lines(notes) });
+    if (disabled || !draft.workspace || !draft.channel) return;
+    write('save', { ...draft, workspace: draft.workspace, channel: draft.channel,
+      parent: draft.parent || undefined, primary: draft.primary || undefined,
+      pair: draft.pair || undefined, readers: readers === draft.readers.join('\n') ? draft.readers : lines(readers),
+      notes: notes === draft.notes.join('\n') ? draft.notes : lines(notes) });
     setConfirm(false);
   };
   return <form className="grid min-w-0 gap-4" onSubmit={submit}>
@@ -55,7 +56,7 @@ export function RouteEditor({ route, fresh, request, busy, write }: {
     {changed && <Error title="This route changed" text="Reload the current route before saving your changes." retry={() => {
       setDraft(route); setObserved({ signature: current, stale: false }); setReaders(route.readers.join('\n')); setNotes(route.notes.join('\n')); setConfirm(false);
     }} />}
-    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={disabled || !draft.workspace.trim() || !draft.channel.trim()}>Save route</Button>
+    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={disabled || !draft.workspace || !draft.channel}>Save route</Button>
       {!fresh && <Button type="button" variant="outline" disabled={disabled} onClick={() => { if (!disabled) setConfirm(true); }}>Remove route</Button>}</div>
     {confirm && !changed && <section className="grid gap-2"><p>Remove this route? Messages will use the remaining routes.</p>
       <Button type="button" disabled={disabled} onClick={() => { if (!disabled) { write('remove', { id: route.id }); setConfirm(false); } }}>Confirm removal</Button>
