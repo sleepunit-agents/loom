@@ -61,6 +61,7 @@ describe('send disposition',()=>{
   }
   it('dismisses an uncertain attempt without changing its receipt or permitting replay, including after restart',async()=>{
     const f=await reply(); f.adapter.uncertain=true; await f.engine.flush();
+    f.app.db.prepare('UPDATE bridges_outbox SET remote_id=?').run('partial-platform-receipt');
     const before=f.app.db.prepare('SELECT * FROM bridges_outbox').get() as {state:string};
     expect(before.state).toBe('uncertain'); expect(f.adapter.posts).toHaveLength(1);
     const changes: unknown[]=[];
@@ -82,7 +83,7 @@ describe('send disposition',()=>{
     await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
     await f.close(); closes.pop();
     const restarted=await fixture('discord',false,f.home); await restarted.engine.sync();
-    expect(restarted.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'dismissed'});
+    expect(restarted.app.db.prepare('SELECT * FROM bridges_outbox').get()).toEqual({...before,state:'dismissed'});
     expect(restarted.adapter.posts).toEqual([]);
   });
   it('never sends a dismissed row retained in a drain snapshot behind an in-flight send',async()=>{
