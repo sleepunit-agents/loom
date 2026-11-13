@@ -1,3 +1,4 @@
+import type { Caller } from '../approvals/model.js';
 import { attentionRole } from '../attention/role.js';
 import { controlScope, currentExecution } from './control.js';
 /** Private words remain in Comms. Runtime persists routing and acceptance only. */
@@ -17,7 +18,7 @@ const deliveryRoute=(id:string)=>{
  return {agent,member,thread,conversation,seq,generation};
 };
 const active=new Set(['queued','starting','running','waiting','uncertain','lost']);
-interface Proof {agent:string;job:string;valid():boolean}
+interface Proof {agent:string;job:string;service?:string;valid():boolean}
 export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(viewer:Viewer)=>Proof|undefined) {
  const {db,operations,live}=app,store=runtimeStore(db);
  let comms:Comms|undefined,closed=false,accepting=false;
@@ -41,7 +42,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   const p=proof(viewer);if(!p||!p.valid()||p.agent!==viewer.id)return;
   const job=store.read('job',p.job),binding=job?.conversation?store.read('binding',job.conversation):undefined;
   const box=job?store.read('box',job.box):undefined;
-  if(!job||!binding||!job.member||binding.job!==job.id||binding.member!==job.member||binding.agent!==p.agent
+  if(!job||!binding||!job.member||binding.job!==job.id||binding.member!==job.member||binding.agent!==p.agent||binding.project!==job.project
    ||!['running','waiting'].includes(job.state)||!box||box.revokedAt!==undefined||!currentExecution(store,job,sharing())
    ||!available({thread:binding.place,agent:p.agent,member:job.member,conversation:binding.id,project:binding.project,seq:1}))return;
   return {job,binding,proof:p};
@@ -165,7 +166,23 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    reconciling=true;void Promise.resolve().then(()=>Promise.all([comms?.reconcileDeliveries(),comms?.reconcileEnds()])).finally(()=>{reconciling=false;});
   }
  });
- return {delivery,privateStart,refile,connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
+ const approvalCaller=(viewer:Viewer,_proof?:string):Caller|undefined=>{
+  // The exact Viewer object must come from central Signin. A principal string,
+  // copied viewer, shared agent token or conversation id supplies no proof.
+  if(viewer.kind!=='agent')return;
+  const p=proof(viewer);if(!p||!p.valid()||p.agent!==viewer.id)return;
+  const job=store.read('job',p.job),box=job?store.read('box',job.box):undefined;
+  if(!job||job.agent!==viewer.id||!['running','waiting'].includes(job.state)||!box||box.revokedAt!==undefined||!currentExecution(store,job,sharing()))return;
+  const who={agent:viewer.id,where:`${job.id}${p.service?` (${p.service})`:''}`};
+  // An authenticated job is not evidence of who requested it. Only a current
+  // private binding and Comms membership establish a person here.
+  const b=bound(viewer);
+  if(!b)return {who,for:'?'};
+  const member=b.job.member!,access=sharing().members[member];
+  if(!access)return {who,for:'?'};
+  return {who,for:access.owner?'owner':member,people:[member],conversation:b.binding.id,...(b.binding.project?{project:b.binding.project}:{})};
+ };
+ return {delivery,privateStart,refile,approvalCaller,connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   async close(){closed=true;unobserve();await notices;},
  };

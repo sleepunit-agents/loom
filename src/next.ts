@@ -105,7 +105,9 @@ export async function installNext(app: Foundation, options: NextOptions) {
     attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
+  const conversations=conversationRuntime(app,sharing,v=>signin(app).body(v));
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
+    caller: conversations.approvalCaller,
     applications: { clock: clockVouchApplication(app.operations) },
     projects: () => {
       try {
@@ -122,7 +124,6 @@ export async function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  const conversations=conversationRuntime(app,sharing,v=>signin(app).body(v));
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:conversations.privateStart });
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);
