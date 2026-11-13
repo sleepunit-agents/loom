@@ -11,6 +11,7 @@
  * interfaces in types.ts and swap the concrete classes here. There is
  * deliberately no env-driven backend selector anymore: opinionated.
  */
+import type { KnowledgeSelection } from '../config.js';
 import {
   resolveSqliteDbPath,
   resolveKnowledgeDbPath,
@@ -86,9 +87,9 @@ export function closeAllBackends(): void {
   backendCache.clear();
 }
 
-export function createKnowledgeBackend(contextDir: string): KnowledgeBackend {
-  assertKnowledgePathsNotCoLocated(contextDir);
+export function createKnowledgeBackend(contextDir: string, selection?: KnowledgeSelection): KnowledgeBackend {
+  assertKnowledgePathsNotCoLocated(contextDir, selection);
   return new SqliteKnowledgeBackend({
-    dbPath: resolveKnowledgeDbPath(contextDir),
+    dbPath: resolveKnowledgeDbPath(contextDir, selection),
   });
 }

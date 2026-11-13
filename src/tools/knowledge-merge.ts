@@ -8,6 +8,7 @@
  * Distinct from knowledge_supersede (1:1 pointer, no citation consolidation):
  * use merge when there is real data to consolidate from multiple pages.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeMergeToolInput {
@@ -21,12 +22,13 @@ export interface KnowledgeMergeToolInput {
 export async function knowledgeMerge(
   contextDir: string,
   input: KnowledgeMergeToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   if (!input.source_slugs || input.source_slugs.length === 0) {
     return 'Error: source_slugs must not be empty.';
   }
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.mergePages(input);
 

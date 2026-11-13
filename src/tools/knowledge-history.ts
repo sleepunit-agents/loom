@@ -6,6 +6,7 @@
  * snapshots, read one, or restore one. A restore snapshots the body it
  * displaces — restoring is never itself a destructive overwrite.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeHistoryToolInput {
@@ -22,6 +23,7 @@ export async function knowledgeHistory(
    * restore: true snapshots the displaced body.
    */
   identity: string = 'art',
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   if (!input.slug) {
     return 'Error: slug is required.';
@@ -30,7 +32,7 @@ export async function knowledgeHistory(
     return 'Error: restore requires a revision_id — list revisions first to pick one.';
   }
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     // ── Restore mode ──
     if (input.restore && input.revision_id !== undefined) {

@@ -3,6 +3,7 @@
  * bodies: what a verification sweep picks from. A listing, not a read: it
  * doesn't count as an access (no hit_count).
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface PageFreshness {
@@ -15,8 +16,8 @@ export interface PageFreshness {
   sla_class: string;
 }
 
-export async function knowledgeFreshness(contextDir: string, domain?: string): Promise<PageFreshness[]> {
-  const backend = createKnowledgeBackend(contextDir);
+export async function knowledgeFreshness(contextDir: string, domain?: string, selection?: KnowledgeSelection): Promise<PageFreshness[]> {
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     return (await backend.listPages({ domain, limit: 1_000_000 }))
       .filter((p) => p.status === 'active')

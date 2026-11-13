@@ -35,8 +35,10 @@
  * correct aggregate signal; splitting it per-identity here would make the list
  * miss pages a *different* reader keeps alive.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 import type { KnowledgePageWithCitations } from '../backends/types.js';
+import type { PeopleSelection } from './person.js';
 import { listPeople } from './person.js';
 
 export interface KnowledgeMaintainOptions {
@@ -51,6 +53,7 @@ export interface KnowledgeMaintainOptions {
    * memory database. Default false — only the full server and CLI pass true.
    */
   personCards?: boolean;
+  peopleSelection?: PeopleSelection;
 }
 
 interface PersonMisfile {
@@ -93,10 +96,10 @@ function containsRun(hay: string[], needle: string[]): boolean {
   return false;
 }
 
-function personMisfiles(contextDir: string, pages: KnowledgePageWithCitations[]): PersonCheck {
+function personMisfiles(contextDir: string, pages: KnowledgePageWithCitations[], selection?: PeopleSelection): PersonCheck {
   let cards;
   try {
-    cards = listPeople(contextDir);
+    cards = listPeople(contextDir, false, selection);
   } catch (e) {
     return { run: true, error: (e as Error).message ?? String(e) };
   }
@@ -121,12 +124,13 @@ function isCold(page: KnowledgePageWithCitations, thresholdMs: number): boolean 
 export async function knowledgeMaintain(
   contextDir: string,
   options: KnowledgeMaintainOptions = {},
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   const hitThreshold = options.expansionHitThreshold ?? 3;
   const bodyThreshold = options.thinBodyThreshold ?? 500;
   const coldMs = (options.coldDays ?? 30) * DAY_MS;
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const pages = await backend.listPages({ limit: 1000 });
 
@@ -140,7 +144,7 @@ export async function knowledgeMaintain(
       (p) => isMisfiled(p) && p.status === 'active',
     );
 
-    const people: PersonCheck = options.personCards ? personMisfiles(contextDir, pages) : { run: false };
+    const people: PersonCheck = options.personCards ? personMisfiles(contextDir, pages, options.peopleSelection) : { run: false };
 
     const activeCount = pages.filter((p) => p.status === 'active').length;
     return formatMaintainReport(activeCount, expansionCandidates, coldPages, misfiled, people, {

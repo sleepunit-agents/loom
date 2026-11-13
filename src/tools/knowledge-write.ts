@@ -20,6 +20,7 @@
  * inner-monologue reasoning, no private-to-you deliberation. That kind of
  * content belongs in memory (`remember`), not here.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeWriteInput {
@@ -86,6 +87,7 @@ export async function knowledgeWrite(
    * caller doesn't supply one explicitly; never overrides an explicit value.
    */
   identity: string = 'art',
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   if (input.citations.length === 0) {
     return (
@@ -101,7 +103,7 @@ export async function knowledgeWrite(
   }
 
   const sourcing = determineSourcing(input.citations, input.domain);
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.writePage({
       slug,
