@@ -68,8 +68,8 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   await once(socket,'open');socket.send(JSON.stringify({kind:'subscribe',type:'change'}));
   expect(await next()).toMatchObject({kind:'set',records:[]});
   expect(assign('art',['ART-BOT'])).toMatchObject({ok:true});
-  expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
   expect(await list()).toMatchObject({ok:true,value:[{id:change().id,agent:'art'}]});
+  expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
   expect((await list()).value).toHaveLength(1); // Agent metadata cannot grant private project access.
   expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:false}});
   expect(assign('art',[])).toMatchObject({ok:true});
