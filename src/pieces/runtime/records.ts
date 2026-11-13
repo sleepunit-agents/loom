@@ -28,6 +28,7 @@ export const jobRecord = z.object({
   conversation: id.optional(), model: id.optional(), account: id.optional(),
   made: buildIdentity.optional(), claimedAt: z.number().int().optional(),
   build: z.string().regex(/^loom-house-[a-z][a-z0-9-]{0,39}:[0-9a-f]{20}$/).optional(),
+  buildAt: z.number().int().optional(),
   createdAt: z.number().int(), endedAt: z.number().int().optional(),
 }).strict();
 export const settingsRecord = z.object({
