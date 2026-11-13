@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
+
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
