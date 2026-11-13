@@ -9,6 +9,7 @@ import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, st
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { verifyMigration } from './migration-verify.js';
 import { createSnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
@@ -234,4 +235,20 @@ it('snapshots the real-home layout with 28 aliases, installed programs and a liv
     expect(report.status).toBe('complete');
     expect(report.pieces.map(p=>p.name)).toEqual(['household','tasks','attention','clock','approvals','changes']);
   } finally { await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
+});
+
+it('preserves importer-visible file aliases as regular bytes without duplicate discovery',async()=>{
+  const f=await fixture(true);mkdirSync(join(f.old,'private'));
+  fs.renameSync(join(f.old,'household.json'),join(f.old,'private/household-data'));
+  symlinkSync('private/household-data',join(f.old,'household.json'));
+  fs.renameSync(join(f.old,'ui-cookie.key'),join(f.old,'private/cookie-data'));
+  symlinkSync('private/cookie-data',join(f.old,'ui-cookie.key'));
+  fs.renameSync(join(f.old,'agents/art/memories.db'),join(f.old,'private/memories.db'));
+  symlinkSync('../../private/memories.db',join(f.old,'agents/art/memories.db'));
+  const root=join(f.dir,'alias-snapshot');const manifest=await createSnapshot(f.old,root,join(f.dir,'tasks.db'));
+  expect(manifest.followed).toContainEqual({path:'household.json',realPath:'private/household-data'});
+  expect(prepareMigrationPlan(root).plan.importers.attention.paths).toEqual(['home/agents/art/memories.db']);
+  expect(runMigrationAll(root,join(f.dir,'alias-new')).status).toBe('complete');
+  expect(verifyMigration(root,join(f.dir,'alias-new')).status).toBe('verified');
+  expect(readFileSync(join(f.dir,'alias-new/ui-cookie.key'))).toEqual(Buffer.alloc(32,17));
 });

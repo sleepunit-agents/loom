@@ -251,3 +251,15 @@ test('skips live sockets outside runtime directories by type without reading the
     expect(existsSync(join(to,'home/live.key'))).toBe(false);
   } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
+
+test('directory pruning and SQLite sidecar rules do not discard ordinary keys with similar names',async()=>{
+  const {home,to}=fixture();mkdirSync(join(home,'keys'));
+  for(const name of ['current','versions','private-journal','private-wal','private-shm'])writeFileSync(join(home,'keys',name),'keep');
+  const db=new Database(join(home,'keys/source'));db.exec('CREATE TABLE data(id)');db.close();
+  for(const suffix of ['-journal','-wal','-shm'])writeFileSync(join(home,'keys/source'+suffix),'');
+  writeFileSync(join(home,'keys/state.lock'),'lock');
+  const manifest=await createSnapshot(home,to);
+  for(const name of ['current','versions','private-journal','private-wal','private-shm'])expect(readFileSync(join(to,'home/keys',name),'utf8')).toBe('keep');
+  for(const suffix of ['-journal','-wal','-shm'])expect(manifest.skipped).toContainEqual(expect.objectContaining({path:'keys/source'+suffix,rule:'SQLite coordination file (backup API reads committed data)'}));
+  expect(manifest.skipped).toContainEqual({path:'keys/state.lock',rule:'lock file',bytes:4});
+});

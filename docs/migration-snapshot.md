@@ -25,7 +25,10 @@ coordination files, sockets, pipes, devices and undeclared files are skipped.
 files; a null size means a live handle, alias or unvisited subtree, not zero bytes.
 
 Internal aliases are resolved, deduplicated and copied at their real data paths;
-`manifest.followed` records alias and real path. Dangling and external aliases are
+`manifest.followed` records alias and real path. A file alias explicitly named by
+an importer is also materialized as regular bytes at its original name so fixed
+paths (such as `tokens.json`) continue to work; discovery counts that data once.
+Both copies use the same captured bytes, and no destination symlinks are created. Dangling and external aliases are
 skipped, with only the alias name and rule (never the target). A destination path
 containing a symlink is refused so snapshot writes cannot escape it. On Linux,
 SQLite backup writes use a pinned destination directory descriptor through

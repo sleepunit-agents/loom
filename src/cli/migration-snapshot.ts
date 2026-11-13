@@ -74,14 +74,17 @@ export function inventorySnapshot(from: string, to: string, tasks?: string): Sna
   const target = destinationPath(to);
   if (within(target, source) || within(source, target)) refusal('<destination>', 'source and destination must be separate');
   if (existsSync(target)) refusal('<destination>', 'destination already exists');
-  const patterns = createMigrationRegistry().order().importers.flatMap(entry => [...(entry.sourceReads ?? [])]);
+  const importerPatterns = createMigrationRegistry().order().importers.flatMap(entry => [...(entry.sourceReads ?? [])]);
+  const patterns = [...importerPatterns];
   // Key material stays in files even when no current importer consumes it.
   patterns.push('**/*.key', '**/review.pub', '**/keys/**');
   const inventory: SnapshotInventory = { consistency: 'per-database', copies: [], skipped: [], followed: [] };
   const seen = new Set<string>();
-  const skipRule = (path: string): string | undefined => {
-    if (path.split('/').some(p => excluded.has(p)) || path === 'pieces/bin' || path.startsWith('pieces/bin/')) return 'installed program or runtime directory';
-    if (/(?:-wal|-shm|-journal)$/.test(path)) return 'SQLite coordination file (backup API reads committed data)';
+  const skipRule = (path: string, directory: boolean, input: string): string | undefined => {
+    const parts = path.split('/');
+    if (parts.slice(0, directory ? undefined : -1).some(p => excluded.has(p)) || (path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')) return 'installed program or runtime directory';
+    const base = input.replace(/(?:-wal|-shm|-journal)$/, '');
+    if (base !== input && existsSync(base) && guarded(path, 'cannot inspect possible SQLite coordination file', () => isSqlite(base))) return 'SQLite coordination file (backup API reads committed data)';
     if (/(?:^|[/.])(?:[^/]*\.)?lock$/.test(path)) return 'lock file';
     return undefined;
   };
@@ -89,17 +92,18 @@ export function inventorySnapshot(from: string, to: string, tasks?: string): Sna
     let path = relative(source, input).split(sep).join('/') || '.';
     const declaredAlias = patterns.some(pattern => matches(logical, pattern));
     let stat = guarded(path, 'cannot inspect source entry', () => lstatSync(input));
-    const excludedRule = skipRule(logical) ?? skipRule(path);
+    const fileAlias = stat.isSymbolicLink();
+    const excludedRule = !stat.isSymbolicLink() && (skipRule(logical, stat.isDirectory(), input) ?? skipRule(path, stat.isDirectory(), input));
     if (excludedRule) { inventory.skipped.push({ path, rule: excludedRule, bytes: stat.isFile() ? stat.size : null }); return; }
     if (stat.isSymbolicLink()) {
       let real: string;
       try { real = realpathSync(input); } catch { inventory.skipped.push({ path, rule: 'dangling or unresolved symlink', bytes: null }); return; }
       if (!within(real, source)) { inventory.skipped.push({ path, rule: 'symlink outside source home', bytes: null }); return; }
       const realPath = relative(source, real).split(sep).join('/');
-      if (skipRule(realPath)) { inventory.skipped.push({ path, rule: 'symlink to installed program or runtime entry', bytes: null }); return; }
+      stat = guarded(path, 'cannot inspect resolved data', () => lstatSync(real));
+      if (skipRule(realPath, stat.isDirectory(), real) || skipRule(logical, stat.isDirectory(), real)) { inventory.skipped.push({ path, rule: 'symlink to excluded program, runtime or coordination entry', bytes: null }); return; }
       inventory.followed.push({ path, realPath });
       input = real; path = realPath;
-      stat = guarded(path, 'cannot inspect resolved data', () => lstatSync(input));
     }
     if (stat.isDirectory()) {
       if (ancestors.has(input)) { inventory.skipped.push({path: logical, rule: 'cyclic directory alias', bytes: null}); return; }
@@ -110,7 +114,10 @@ export function inventorySnapshot(from: string, to: string, tasks?: string): Sna
       for (const name of guarded(path, 'cannot list data directory', () => readdirSync(input).sort())) visit(join(input, name), logical === '.' ? name : `${logical}/${name}`, parents);
     } else if (!stat.isFile()) inventory.skipped.push({ path, rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
-      if (!inventory.copies.some(file => file.source === input)) inventory.copies.push({ path: `home/${path}`, bytes: stat.size, source: input });
+      if (!inventory.copies.some(file => file.path === `home/${path}`)) inventory.copies.push({ path: `home/${path}`, bytes: stat.size, source: input });
+      // Fixed-path importers still need the original file name. Materialize it
+      // as regular bytes, retaining canonical provenance in followed.
+      if (fileAlias && logical !== path && importerPatterns.some(pattern => matches(logical, pattern)) && !inventory.copies.some(file => file.path === `home/${logical}`)) inventory.copies.push({path:`home/${logical}`,bytes:stat.size,source:input});
       inventory.skipped = inventory.skipped.filter(entry => entry.path !== path);
     }
     else if (!inventory.copies.some(file => file.source === input)) inventory.skipped.push({ path, rule: 'not declared by a registered importer or key rule', bytes: stat.size });
@@ -142,6 +149,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     if (current.dev !== reserved.dev || current.ino !== reserved.ino) refusal('<destination>', 'reserved destination was replaced');
   };
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [], skipped: inventory.skipped, followed: inventory.followed };
+  const copied = new Map<string, Buffer>();
   try {
     destinationPath(join(target, 'home'));
     guarded('.', 'cannot create copied home', () => mkdirSync(join(target, 'home'), { mode: 0o700 }));
@@ -159,7 +167,9 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
       if (existsSync(output)) refusal(path, 'destination entry already exists');
       const sqlite = guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
-        if (sqlite) {
+        const previous = copied.get(file.source);
+        if (previous) writeFileSync(output, previous, {mode:0o600,flag:'wx'});
+        else if (sqlite) {
           const db = new Database(file.source, { readonly: true, fileMustExist: true });
           // Linux descriptor-relative path keeps the backup in our reserved inode
           // even if a path ancestor is replaced while better-sqlite3 awaits I/O.
@@ -176,6 +186,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
         } else writeFileSync(output, readFileSync(file.source), { mode: 0o600, flag: 'wx' });
         const bytes = readFileSync(output);
+        copied.set(file.source, bytes);
         manifest.files.push({ path: file.path, sha256: hash(bytes), bytes: bytes.length, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }
     }
