@@ -168,6 +168,7 @@ it('derives Changes projects from sharing and holds the daemon lock through impo
   const publication={sync:(fd:number)=>{expect(()=>acquireHttpLock(f.home)).toThrow('already running');steps.push(fs.fstatSync(fd).isDirectory()?'directory':'file');fs.fsyncSync(fd);},rename:(from:fs.PathLike,to:fs.PathLike)=>{steps.push('rename');fs.renameSync(from,to);}};
   for(const entry of createMigrationRegistry().order().importers) registry.register(entry.name==='household'?{...entry,run:(context,input)=>{
     expect(()=>acquireHttpLock(f.home)).toThrow('already running');
+    const close=context.db.close.bind(context.db);vi.spyOn(context.db,'close').mockImplementation(()=>{expect(()=>acquireHttpLock(f.home)).toThrow('already running');return close();});
     importHousehold(context.db,context.home,join(context.snapshot.root,input.paths[0]),context.now);
     context.db.transaction(()=>new SharingDatabase(context.db,context.home).create({slug:'pond',name:'Pond',repositories:['acme/app'],members:[],agents:['art']}))();
   }}:entry.name==='changes'?{...entry,run:(context,input)=>{
@@ -184,4 +185,18 @@ it('retries safely when receipt publication fails before rename or directory fsy
     expect(()=>runMigrationAll(f.root,f.home,undefined,{publication})).toThrow('power loss');
     expect(runMigrationAll(f.root,f.home).status).toBe('complete');
   }
+});
+
+it('returns exit 3 and one incomplete report for a missing CLI registration, including repeat',async()=>{
+  const f=await fixture();f.plan.importers.future={paths:['home'],options:{}};const path=join(f.dir,'plan.json');writeFileSync(path,JSON.stringify(f.plan));
+  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  for(const repeat of [false,true]) {
+    io.stdout.mockClear();expect(await run(['all','--snapshot',f.root,'--home',f.home,'--plan',path],io)).toBe(3);
+    expect(io.stdout).toHaveBeenCalledOnce();expect(JSON.parse(io.stdout.mock.calls[0][0])).toMatchObject({status:'incomplete',missing:['future'],pieces:[{name:'household',status:repeat?'completed':'imported'}]});
+  }
+  expect(io.stderr).not.toHaveBeenCalled();
+});
+it('refuses dangling symlink destinations and parents before creating their missing targets',async()=>{
+  const f=await fixture();const target=join(f.dir,'absent'),alias=join(f.dir,'alias');symlinkSync(target,alias);
+  expect(()=>runMigrationAll(f.root,alias)).toThrow('Symlink');expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow('Symlink');expect(fs.existsSync(target)).toBe(false);
 });

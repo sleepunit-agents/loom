@@ -27,11 +27,13 @@ Repeat is not independent verification of destination contents.
 Before any writable destination open, the coordinator rejects overlapping
 canonical ancestors, inode aliases, hard links, symlinks or special entries and
 nonempty homes without the matching receipt. Only leftover lock files and an
-unpublished pending receipt are tolerated in an otherwise fresh home. The sole hardlink exception is the household importer's interrupted key publication:
+unpublished pending receipt are tolerated in an otherwise fresh home. The sole
+hardlink exception is the household importer's interrupted key publication:
 exactly its final key and UUID temporary name, with matching snapshot bytes and
 migration receipt. Under the lock the coordinator removes that temporary name
 and retries the importer. Any external alias, wrong bytes or missing ownership
-receipt is refused. All snapshot hashes and inventory are revalidated on every invocation. SQLite imports
+receipt is refused. All snapshot hashes and inventory are revalidated on every
+invocation. SQLite imports
 read private deserialized backup buffers, preserving snapshot bytes and directory
 entries. Individual live-source commands retain their existing SQLite readers.
 Changes projects come from imported household sharing records, never plan JSON.

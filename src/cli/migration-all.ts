@@ -23,7 +23,11 @@ function canonical(path: string): string {
 const inode = (path: string) => { const s = lstatSync(path); return `${s.dev}:${s.ino}`; };
 function ancestors(path: string): string[] {
   const paths: string[] = [];
-  for (;;) { if (existsSync(path)) paths.push(path); const parent = dirname(path); if (parent === path) return paths; path = parent; }
+  for (;;) {
+    try { lstatSync(path); paths.push(path); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    const parent = dirname(path); if (parent === path) return paths; path = parent;
+  }
 }
 /** Refuse inode aliases as well as canonical ancestry before even the lock DB opens. */
 function separateDestination(root: string, home: string, plan: MigrationPlan): string[] {
