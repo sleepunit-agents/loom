@@ -68,6 +68,29 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await context.addCookies([{name:'loom_ui',value:ownerSession,url:loom.url}]);
     await context.route('**/*',staticFiles);
     const a=await context.newPage(),b=await context.newPage();
+    let dropLocalAck=false, lostLocalId:string|undefined, releaseLocalReplay:(()=>void)|undefined;
+    const localWires:string[]=[];
+    await b.routeWebSocket('**/live',ws=>{
+      const server=ws.connectToServer();
+      ws.onMessage(message=>{
+        const packet=JSON.parse(String(message));
+        if(packet.kind==='call' && packet.name==='clock.scheduleLocalFromWindow') {
+          if(dropLocalAck)lostLocalId=packet.id;
+          if(packet.id===lostLocalId) {
+            localWires.push(String(message));
+            if(!dropLocalAck) { releaseLocalReplay=()=>server.send(message);return; }
+          }
+        }
+        server.send(message);
+      });
+      server.onMessage(message=>{
+        const packet=JSON.parse(String(message));
+        if(dropLocalAck && packet.kind==='result' && packet.request===lostLocalId && packet.result.ok) {
+          dropLocalAck=false;ws.close();server.close();return;
+        }
+        ws.send(message);
+      });
+    });
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
     const row=(p:typeof a,text:string)=>p.locator('[data-split-row]').filter({hasText:text});
     await expect.poll(()=>row(b,'Morning review').count()).toBe(1);
@@ -249,7 +272,15 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       await confirmation.scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    dropLocalAck=true;
     await b.getByRole('button',{name:'Schedule these saved words',exact:true}).click();
+    await expect.poll(()=>!!releaseLocalReplay).toBe(true);
+    expect(wakes(loom.db).filter(w=>w.approval===localCards[0])).toHaveLength(1);
+    await b.getByRole('button',{name:/^Wakes/}).click();
+    await b.getByRole('button',{name:/Local requests/}).click();await row(b,'Allow once').click();
+    await expect.poll(()=>b.getByRole('button',{name:'Review timing',exact:true}).isEnabled()).toBe(false);
+    expect(localWires).toHaveLength(2);expect(localWires[1]).toBe(localWires[0]);
+    releaseLocalReplay!();
     await expect.poll(()=>wakes(loom.db).filter(w=>w.approval===localCards[0]).length).toBe(1);
     const localOnce=wakes(loom.db).find(w=>w.approval===localCards[0])!;
     expect(localOnce).toMatchObject({member:'jonathan',prompt:'<!-- house: local -->\nReport host disk usage: Allow once.',note:'Allow once',due:Date.parse('2026-11-13T15:31:00Z')});

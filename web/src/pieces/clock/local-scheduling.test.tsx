@@ -43,7 +43,7 @@ it.each(['pending','denied','expired','withdrawn'] as const)('offers no timing f
 });
 it('honors the shared pending lock and scopes result to this exact operation/card',async()=>{
  const snapshot={records:[approval],status:'live' as const};await render(snapshot);await review();
- f.receipt={pending:true,status:'sending',operation:'pause',input:{agent:'art'}};await render(snapshot);
+ f.receipt={pending:true,status:'pending',operation:'pause',input:{agent:'art'}};await render(snapshot);
  expect(button('Schedule these saved words').props.disabled).toBe(true);
  await act(async()=>button('Schedule these saved words').props.onClick());expect(f.send).not.toHaveBeenCalled();
  f.receipt={pending:false,status:'done',operation:'scheduleLocalFromWindow',input:{approval:'a-other'},result:{ok:true,value:{id:'w-other',due:1}}};await render(snapshot);
