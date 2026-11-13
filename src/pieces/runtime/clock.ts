@@ -1,7 +1,7 @@
 /** Clock waits for the assigned runner's confirmation, outside any transaction. */
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
-import type { Runtime, StartResult } from '../clock/dependencies/runtime.js';
+import type { Runtime, StartResult } from '../clock/role.js';
 import { runtimeRole } from './role.js';
 import { runtimeStore } from './store.js';
 import { configuredHouse } from './builds.js';
