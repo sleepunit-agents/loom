@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, failure, mayAct, maySee, type Context, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
 import { resolveGrantAttention } from './attention-resolution.js';
+import { guardSecretWriteIntent } from './write-intents.js';
 import { installSecretUsage } from './usage.js';
 import { installSecretHistory } from './history.js';
 import { schema } from './schema/001.js';
@@ -123,7 +124,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   live.register({ name: 'secret.policy', ids: () => ['policy'], inScope: () => true,
     read: (id, viewer) => id === 'policy' && owner(viewer, 'secrets.list') ? { id, ...readSecretPolicy(db) } : undefined,
   });
-  operations.register(operation({ name: 'secrets.describe', write: true, input: z.object({ name, description: z.string().max(2000) }).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'secrets.describe', write: true, recover: guardSecretWriteIntent, input: z.object({ name, description: z.string().max(2000) }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.describe'), run(ctx, input) {
       const record: SecretName = { id: input.name, description: input.description, by: ctx.viewer.id, changedAt: ctx.now };
       db.prepare('INSERT INTO secrets_names VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));

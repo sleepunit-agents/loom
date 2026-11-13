@@ -20,10 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Review local machine requests in Clock with the existing exact-word approval controls; private decisions use the owning signed-in window and start no work.
+- Next bridge credential lifetimes now follow asynchronous public holder generation, retiring both transports on rotation or holder failure without reading credential values.
 - Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
 
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
 ### Added
+
+- Add durable admission and retry reconciliation for explicitly composed async Secrets writes; normal Settings value edits remain disabled pending daemon key and reconciliation composition.
 
 - Apply next-mode Runtime owner reset and silent-work write-off cards against durable original snapshots, with atomic body/session fencing and central credential revocation.
 
