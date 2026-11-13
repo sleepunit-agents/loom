@@ -1,4 +1,4 @@
-import { invalid, grantOf, vouchOf, resetOf, hostOf } from './targets.js';
+import { invalid, grantOf, vouchOf, resetOf, hostOf, writeoffOf } from './targets.js';
 import { type Approval, forOf } from './model.js';
 export const plain = (text: string, n = 1e6) => text.normalize('NFKC').replace(/[\p{C}\p{Z}<>\[\]{}]/gu,' ').replace(/ +/g,' ').trim().slice(0,n);
 const names = (slug: string) => slug.split('-').map(w => w[0]?.toUpperCase()+w.slice(1)).join(' ');
@@ -16,10 +16,22 @@ export function ownerWords(a: Approval) {
   if (a.kind === 'grant' && g) return `Give ${names(g.agent)} access to ${names(g.piece)}${g.paths.includes('*') ? '' : `, for ${g.paths.join(', ')}`}?`;
   if (a.kind === 'vouch-wake' && v) return v.ids.length === 1 ? 'Count this scheduled job as your work?' : `Count these ${v.ids.length} scheduled jobs as your work?`;
   if (a.kind === 'principal-reset' && r) return 'Count this conversation as your work from now on?';
+  if (a.kind === 'box-write-off' && writeoffOf(a.target)) return 'Move this work off the silent box?';
   if (a.kind === 'host' && h) {
     const unit = h.arg.replace(/\.service$/,'');
     return ({ 'unit-status': `Read the status of ${unit} on loom's machine?`, journal: `Read ${unit}'s log on loom's machine?`, 'art-chain-check': "Run Art's wake-chain check on loom's machine?", read: `Read ${h.arg} from the runtime's logs on loom's machine?`, 'deploy-loom': `Deploy loom's latest build on loom's machine (${h.arg})?`, 'pieces-update': `Update loom's ${h.arg} piece on loom's machine?`, restart: `Restart ${unit} on loom's machine?` } as Record<string,string>)[h.verb];
   }
+}
+/** These promises belong to the action, never to the body asking for it. */
+export function cardWords(a: Approval) {
+  const outcomes: Record<string, [string,string]> = {
+    grant: ['I give the access shown below.', 'I leave access unchanged.'],
+    'vouch-wake': ['I count the listed scheduled jobs as your work.', 'I leave those jobs waiting.'],
+    'principal-reset': ['I count this conversation as your work from now on.', 'I leave the conversation unchanged.'],
+    'box-write-off': ['I move the covered work off this silent box.', 'I leave the work on that box.'],
+  };
+  const outcome = outcomes[a.kind];
+  return { title:headline(a), ...(outcome ? {if_yes:outcome[0],if_no:outcome[1]} : {}) };
 }
 export function headline(a: Approval) {
   const owner = ownerWords(a); if (owner) return owner;

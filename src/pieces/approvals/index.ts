@@ -3,16 +3,19 @@ import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Vie
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
 import { type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
-import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, type DomainContext } from './domain.js';
+import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, everyTimeOk, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
-import { plain, headline } from './words.js';
+import { plain, headline, cardWords } from './words.js';
 import { approvalCommands } from './commands.js';
 import { command } from './binding.js';
+import { callerSchema } from './validation.js';
+import { answerAndApply, type ApprovalApplications } from './apply.js';
 const week = 7 * 86400_000;
 const scope = (a: Approval): RecordScope => ({ type:'approval', ...(a.project ? {project:a.project}:{}), ...(a.agent ?? a.who.agent ? {agent:a.agent ?? a.who.agent}:{}), ...(a.member ? {member:a.member}:{}) });
 /** Implemented by the in-repo runtime, never by shelling out or reading the old stores. */
 export interface ApprovalOptions {
+  applications?: ApprovalApplications;
   caller?(viewer: Viewer, proof?: string): Caller | undefined;
   projects?(): Project[] | undefined;
   localAgent?: string;
@@ -22,6 +25,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   const context = (viewer: Viewer, input: Record<string,unknown>, now: number, piece = false): DomainContext => {
     const resolved = options.caller?.(viewer,typeof input.principal === 'string' ? input.principal : undefined);
     const caller: Caller = resolved ?? { who:{agent:viewer.id,where:'a body'},for:'?' };
+    if (!callerSchema.safeParse(caller).success) denied('Invalid authenticated caller context');
     // A resolver cannot authenticate another agent under this viewer.
     if (viewer.kind === 'agent' && caller.who.agent !== viewer.id) denied('Caller agent does not match viewer');
     return { caller,now,piece,localAgent:options.localAgent ?? 'agent',projects:options.projects?.() };
@@ -49,7 +53,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
       },
       run(ctx,input) {
         const s = load(db), c = config.piece ? { caller: input.caller as Caller, now: ctx.now, piece: true, localAgent: options.localAgent ?? 'agent', projects: options.projects?.() } : context(ctx.viewer,input,ctx.now);
-        if (!c.caller?.who || typeof c.caller.for !== 'string') invalid('A piece call needs its authenticated caller context');
+        if (!callerSchema.safeParse(c.caller).success) invalid('A piece call needs its authenticated caller context');
         const result = run(s,input,c,ctx.viewer); if (write) flush(s,ctx); return result;
       },
     }));
@@ -58,10 +62,10 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('check',false,(s,i,c,v)=>{ const a=find(s,String(i.id)); if (i.json) { if (!maySpend(a.who,c.caller.who)) denied(`${a.id} isn't ${c.caller.who.agent}'s to read here; check ${a.id} gives its state`); return {id:a.id,agent:a.who.agent,for:forOf(a),state:stateOf(a,c.now),kind:a.kind,target:a.target,expires:stateOf(a,c.now)==='allowed'?a.expires:null}; } return {state:stateOf(a,c.now)}; },{read:true});
   register('use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c));
   register('withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c));
-  register('answer',true,(s,i,c,v)=>answer(s,String(i.id),String(i.action),v.id,c.now),{answer:true});
-  register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer')};},{read:true});
-  register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
-  register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
+  register('answer',true,(s,i,c,v)=>answerAndApply(s,String(i.id),String(i.action),v.id,c,options.applications ?? {}),{answer:true});
+  register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer'),mayEveryTime:owner(v,'approvals.every-time')&&everyTimeOk(a,c),mayAlways:owner(v,'approvals.always')&&stateOf(a,c.now)==='pending'&&a.kind==='merge'&&forOf(a)!=='?'};},{read:true});
+  register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
+  register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing]:[],mayEdit:owner(v,'approvals.set-rule')}));
   register('rule',false,(s,i,c)=>rulesFor(s,c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now));
   register('set-rule',true,(s,i,c,v)=>setRule(s,String(i.kind),String(i.scope),String(i.tier),v.id,c.now,typeof i.person==='string'?i.person:undefined),{owner:true});
@@ -83,7 +87,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     const name=`approvals.piece-${verb}`;
     operations.register(operation({name,write:verb!=='rule',doors:['direct'],input:z.record(z.string(),z.unknown()),output:z.unknown(),may:(v)=>v.kind==='service'&&mayAct(v,{type:'approval'},sharing(),'act',name),run(ctx,input){
       const caller=input.caller as Caller;
-      if(!caller||!caller.who||typeof caller.who.agent!=='string'||typeof caller.who.where!=='string'||typeof caller.for!=='string') invalid('A piece call needs its authenticated caller context');
+      if(!callerSchema.safeParse(caller).success) invalid('A piece call needs its authenticated caller context');
       const c:DomainContext={caller,now:ctx.now,piece:true,localAgent:options.localAgent??'agent',projects:options.projects?.()},s=load(db);
       let result:unknown;
       if(verb==='request') result=request(s,input,c);
@@ -99,6 +103,6 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     const j=standingMatch(s,String(i.kind),String(i.target),String(i.digest),c);if(!j)throw new OperationError('not-found',`no standing job for ${i.kind} ${i.target}: it asks`);return j;
   },{piece:true});
   operations.register(operation({name:'approvals.command',write:true,input:z.object({argv:z.array(z.string()).max(100)}),output:z.object({exit:z.number(),stdout:z.string(),stderr:z.string()}),may:v=>v.kind==='agent'||v.kind==='member',run:(ctx,input)=>command(operations,ctx.viewer,input.argv)}));
-  live.register({name:'approval',ids:()=>load(db).approvals.map(a=>a.id),read(id,viewer){const a=readApproval(db,id);if(!a||!visible(viewer,a))return;const row=db.prepare('SELECT changed_at FROM approvals_approvals WHERE id=?').get(id) as {changed_at:number};return {...a,title:headline(a),state:stateOf(a,operations.clock.now()),changedAt:row.changed_at} as unknown as LiveRecord;},inScope:(r,parent,now)=>parent===undefined&&(r.state==='pending'||Number(r.changedAt)+week>now),expires:r=>r.state==='pending'?undefined:r.state==='allowed'&&typeof r.expires==='string'?Math.min(Date.parse(r.expires),Number(r.changedAt)+week):Number(r.changedAt)+week});
+  live.register({name:'approval',ids:()=>load(db).approvals.map(a=>a.id),read(id,viewer){const a=readApproval(db,id);if(!a||!visible(viewer,a))return;const row=db.prepare('SELECT changed_at FROM approvals_approvals WHERE id=?').get(id) as {changed_at:number};return {...a,...cardWords(a),state:stateOf(a,operations.clock.now()),changedAt:row.changed_at} as unknown as LiveRecord;},inScope:(r,parent,now)=>parent===undefined&&(r.state==='pending'||Number(r.changedAt)+week>now),expires:r=>r.state==='pending'?undefined:r.state==='allowed'&&typeof r.expires==='string'?Math.min(Date.parse(r.expires),Number(r.changedAt)+week):Number(r.changedAt)+week});
   live.register({name:'approval-rule',ids:()=>[...load(db).rules,...load(db).grants,...load(db).standing].map(ruleId),read(id,v){if(!owner(v,'approvals.rules'))return;const row=db.prepare('SELECT record FROM approvals_rules WHERE id=?').get(id) as {record:string}|undefined;return row?{...JSON.parse(row.record),id}:undefined;},inScope:()=>true});
 }

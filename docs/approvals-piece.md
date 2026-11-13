@@ -25,7 +25,7 @@ Upstream contract audited: sleepunit-agents/loom-approvals at
 | `standing --check` or match | direct-only `approvals.standing` |
 | `api run {argv}` | `approvals.command`, same registry domain operations |
 | `api state {ids}` | `approvals.state`, filtered by central policy |
-| `ui --json` manifest, `ui page` | approval and approval-rule records; Approvals app (pending) |
+| `ui --json` manifest, `ui page` | approval and approval-rule records; Approvals app at `/p/approvals-preview` |
 | `ui act allow/deny` | `approvals.open` immediately before `approvals.answer` |
 | `ui act rule/rule-add/host-rule-add` | `approvals.set-rule` |
 | `ui act grant/grant-add` (standing per-person rules) | `approvals.set-rule` with `person` |
@@ -78,13 +78,11 @@ untouched stores until the owner retires those stores.
 
 ## Remaining before merge
 
-- Finish the Approvals app on the kit, open confirmation guard, Rules and history.
-- Register in next composition/fixture and app registry with small additive edits.
+- Finish browser verification of the kit app, open confirmation guard, Rules and history.
+- Register in the new next-mode composition when that root lands (fixture, standalone startLoom and app registry are wired).
 - Complete old contract cases and independent CLI output/exit oracle fixtures.
-- Connect owner-applied grant/vouch/reset/write-off to runtime/clock role actions;
-  Allow must apply the action, never merely leave an allowed grant unspent.
-- Cover direct standing jobs, overlap denials, malformed importer records,
-  live expiry/access changes, HTTP and socket behavior and interrupted imports.
+- Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
+- Complete overlap denial and owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
 - Cold review of spend/grant paths and migration (at most three rounds).
 - One two-window app test; screenshots at 390, 1280, 1920 in Neon Noir and
   Daylight as CI artifacts; no browser suite on loom's machine.

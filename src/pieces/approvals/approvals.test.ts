@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,19 +12,21 @@ import { load } from './store.js';
 import { importApprovals } from './importer.js';
 import { approvalsRole } from './role.js';
 import { type Caller } from './model.js';
+import type { ApprovalApplications } from './apply.js';
 const owner:Viewer={kind:'member',id:'jonathan'},agent:Viewer={kind:'agent',id:'art'},pollock:Viewer={kind:'member',id:'pollock'},other:Viewer={kind:'agent',id:'pond-bot'};
 const closes:(()=>Promise<void>)[]=[],dirs:string[]=[];
 const dir=()=>{const d=mkdtempSync(join(tmpdir(),'approvals-test-'));dirs.push(d);return d;};
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
 const target=`github:acme/app#12@${'a'.repeat(40)}`;
 const ask={kind:'merge',target,ask:'Merge the fix?',why:'It fixes the broken page.',if_yes:'I merge it.',if_no:'I leave it open.'};
-async function setup(){
+async function setup(applications?: ApprovalApplications){
   const clock=new FakeClock();let identity:Caller={who:{agent:'art',where:'h-1'},for:'owner'};
-  const sharing=()=>({...fixtureSharing(),services:{runtime:{types:['approval'],operations:['approvals.piece-request','approvals.piece-use','approvals.piece-withdraw','approvals.piece-rule','approvals.piece-tell','approvals.standing']}}});
-  const app=await startLoom({home:dir(),clock,sharing,install:app=>installApprovals(app.db,app.operations,app.live,sharing,{localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined})});closes.push(app.close);let seq=0;
+  const access=fixtureSharing();
+  const sharing=()=>({...access,services:{runtime:{types:['approval'],operations:['approvals.piece-request','approvals.piece-use','approvals.piece-withdraw','approvals.piece-rule','approvals.piece-tell','approvals.standing']}}});
+  const app=await startLoom({home:dir(),clock,sharing,authenticate:req=>{const id=req.headers.authorization?.replace('Bearer ','');return id&&access.members[id]?{viewer:{kind:'member',id},valid:()=>!!access.members[id]}:undefined;},install:app=>installApprovals(app.db,app.operations,app.live,sharing,{applications,localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined})});closes.push(app.close);let seq=0;
   const call=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent,id=`op-${++seq}`)=>app.operations.call('direct',viewer,`approvals.${op}`,input,id);
   const value=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent)=>{const r=call(op,input,viewer);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
-  return {...app,clock,call,value,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
+  return {...app,clock,call,value,access,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
 }
 describe('approval receipts and central policy',()=>{
   it('allows once, exact kind and raw target, never another agent',async()=>{
@@ -59,7 +63,35 @@ describe('approval receipts and central policy',()=>{
     const a=await setup(),cv='cv-0123456789ab',card=a.value('request',{...ask,conversation:cv});expect(card).not.toHaveProperty('conversation');a.identity({conversation:cv});expect(a.value('request',{...ask,conversation:cv})).toMatchObject({id:card.id,conversation:cv});a.identity({conversation:'cv-abcdef012345'});expect(a.value('request',{...ask,conversation:'cv-abcdef012345'})).toMatchObject({conversation:cv});
   });
   it('uses project sharing for records and denies owner-only answers to agent owners',async()=>{
-    const a=await setup();a.identity({project:'pond'});const card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'grant',target:'tasks:mark'})).toMatchObject({code:'denied'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'grant',target:'tasks:mark'},'piece-grant')).toMatchObject({ok:true,value:{state:'used'}});
+    const a=await setup({runtime:{apply:()=>({ok:true,value:null})}});a.identity({project:'pond'});const card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'grant',target:'tasks:mark'})).toMatchObject({code:'denied'});expect(load(a.db).approvals.find(r=>r.id===card.id)).toMatchObject({state:'used'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'grant',target:'tasks:mark'},'piece-grant')).toMatchObject({ok:false,code:'denied'});
+  });
+
+  it('leaves owner-applied cards pending when their application role is missing',async()=>{
+    const a=await setup(),card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});
+    expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
+    expect(load(a.db).approvals[0]).toMatchObject({state:'pending'});
+    expect(load(a.db).audit.map(r=>r.event)).toEqual(['request']);
+    expect(a.value('answer',{id:card.id,action:'deny'},owner)).toMatchObject({state:'denied'});
+  });
+  it('rolls back application database writes and answer on role failure, and retries once on success',async()=>{
+    let app:Awaited<ReturnType<typeof setup>>, fail=true, calls=0;
+    app=await setup({runtime:{apply:card=>{
+      calls++;
+      app.db.prepare('INSERT INTO application_effects VALUES (?)').run(card.id);
+      return fail?{ok:false,code:'conflict',message:'Target changed'}:{ok:true,value:null};
+    }}});
+    app.db.exec('CREATE TABLE application_effects (id TEXT PRIMARY KEY)');
+    const card=app.value('request',{...ask,kind:'grant',target:'tasks:mark'}),input={id:card.id,action:'allow'};
+    expect(app.call('answer',input,owner,'apply')).toMatchObject({ok:false,code:'conflict'});
+    expect(app.db.prepare('SELECT * FROM application_effects').all()).toEqual([]);
+    expect(load(app.db).approvals[0].state).toBe('pending');
+    fail=false;
+    const first=app.call('answer',input,owner,'apply');
+    expect(first).toMatchObject({ok:true,value:{state:'used'}});
+    expect(app.call('answer',input,owner,'apply')).toEqual(first);
+    expect(calls).toBe(2);
+    expect(app.db.prepare('SELECT * FROM application_effects').all()).toEqual([{id:card.id}]);
+    expect(load(app.db).audit.map(r=>r.event)).toEqual(['request','allow','use']);
   });
   it('members answer shared asks but agents never answer asks for people',async()=>{
     const a=await setup();a.identity({project:'pond'});const card=a.value('request',ask);expect(a.call('answer',{id:card.id,action:'allow'},other)).toMatchObject({code:'denied'});expect(a.value('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({by:'pollock'});
@@ -87,11 +119,125 @@ describe('standing merge and host rules',()=>{
     const a=await setup();expect(a.value('rule',{kind:'host',targets:['restart:loom-http.service']})['restart:loom-http.service']).toMatchObject({tier:'none'});a.value('set-rule',{kind:'host',scope:'restart',tier:'ask'},owner);a.value('set-rule',{kind:'host',scope:'restart:loom-*',tier:'tell'},owner);expect(a.value('rule',{kind:'host',targets:['restart:loom-http.service']})['restart:loom-http.service']).toMatchObject({tier:'tell'});expect(a.call('set-rule',{kind:'host',scope:'restart',tier:'do',person:'loren'},owner)).toMatchObject({code:'invalid'});
   });
 });
+describe('import validation',()=>{
+  const receipt={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark.',why:'He knows.',who:{agent:'art',where:'h-1'},for:'owner',minutes:60,at:'2026-11-12T00:00:00Z',state:'pending'};
+  it.each([
+    {state:'allowed'}, {state:'used',decided:'2026-11-12T00:00:00Z',expires:'2026-11-12T01:00:00Z'},
+    {for:[]}, {people:['loren',null]}, {minutes:0}, {minutes:1e50},
+    {expires:'never'}, {at:'2026-02-30T00:00:00Z'}, {agent:'mark'}, {who:{agent:'art',where:7}},
+  ])('rejects malformed receipts without importing any rows: %j',async change=>{
+    const a=await setup(),source=dir();
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:{...receipt,...change}}}));
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('Invalid source approval');
+    expect(load(a.db).approvals).toEqual([]);
+    expect(a.db.prepare('SELECT * FROM approvals_meta').all()).toEqual([]);
+  });
+  it('requires approvals, accepts optional files absent and refuses nonempty destination',async()=>{
+    const a=await setup(),source=dir();
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('required');
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt}}));
+    a.value('request',ask);
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('destination must be empty');
+    const b=await setup();expect(importApprovals(b.db,source,b.clock.now())).toMatchObject({approvals:1,rules:0,audit:0});
+  });
+  it('rejects duplicate rules and malformed standing jobs',async()=>{
+    const a=await setup(),source=dir();
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{}}));
+    const rule={kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at:receipt.at};
+    writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[rule,rule]}));
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('Duplicate source rule');
+    writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[],standing:[{id:'s-01234567',kind:'local-wake',agent:'art',target:`art:${'a'.repeat(16)}`,digest:'a'.repeat(64),who:{agent:'art',where:'h-1'},for:'owner',uses:0}]}));
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('Invalid standing job');
+  });
+});
 describe('transactional offline importer',()=>{
   it('imports and compares all source content, rolls back interruption and refuses a different source',async()=>{
     const a=await setup(),source=dir();const receipt={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark.',why:'He knows.',who:{agent:'art',where:'h-1'},for:'owner',minutes:60,at:'2026-11-12T00:00:00Z',state:'pending'};
     writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt},notices:[]}));writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[],grants:[],standing:[]}));writeFileSync(join(source,'audit.jsonl'),JSON.stringify({at:receipt.at,event:'request',id:receipt.id})+'\n');
     expect(()=>importApprovals(a.db,source,a.clock.now(),{interrupt:()=>{throw Error('power loss');}})).toThrow('power loss');expect(load(a.db).approvals).toHaveLength(0);expect(a.db.prepare('SELECT * FROM approvals_meta').all()).toHaveLength(0);
     expect(importApprovals(a.db,source,a.clock.now())).toMatchObject({imported:true,approvals:1,audit:1});expect(load(a.db).approvals[0]).toEqual({...receipt,agent:'art'});expect(importApprovals(a.db,source,a.clock.now())).toMatchObject({imported:false});writeFileSync(join(source,'audit.jsonl'),'');expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('different approvals source');
+  });
+});
+
+describe('live receipt deadlines and access',()=>{
+  it('publishes exact expiry, drops week-old history, retains pending and refreshes access',async()=>{
+    const a=await setup();a.identity({project:'pond'});
+    const card=a.value('request',{...ask,minutes:1});
+    const pending=a.value('request',{...ask,target:target.replace('#12@','#13@')});
+    const ws=new WebSocket(a.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer pollock'}});
+    const messages:unknown[]=[],waiting:((message:unknown)=>void)[]=[];
+    ws.on('message',raw=>{const message=JSON.parse(raw.toString()),receive=waiting.shift();if(receive)receive(message);else messages.push(message);});
+    const next=()=>messages.length?Promise.resolve(messages.shift()):new Promise<unknown>(resolve=>waiting.push(resolve));
+    closes.push(async()=>{ws.terminate();});await once(ws,'open');
+    ws.send(JSON.stringify({kind:'subscribe',type:'approval'}));
+    expect(await next()).toMatchObject({kind:'set',records:[{id:card.id},{id:pending.id}]});
+    a.value('answer',{id:card.id,action:'allow'},owner);
+    expect(await next()).toMatchObject({kind:'put',record:{id:card.id,state:'allowed'}});
+    a.clock.advance(60_000);
+    expect(await next()).toMatchObject({kind:'put',record:{id:card.id,state:'expired'}});
+    a.clock.advance(7*86400_000-60_000);
+    expect(await next()).toMatchObject({kind:'del',id:card.id});
+    a.access.projects.pond.members=[];a.live.refreshAccess();
+    expect(await next()).toMatchObject({kind:'set',records:[]});
+    a.access.projects.pond.members=['pollock'];a.live.refreshAccess();
+    expect(await next()).toMatchObject({kind:'set',records:[{id:pending.id,state:'pending'}]});
+  });
+});
+
+describe('standing local jobs',()=>{
+  const digest='a'.repeat(64),localTarget=`art:${'a'.repeat(16)}`;
+  const caller:Caller={who:{agent:'art',where:'h-1'},for:'owner'};
+  const file=(a:Awaited<ReturnType<typeof setup>>,who=caller,extra:Record<string,unknown>={})=>{
+    const r=a.role.call('request',who,{...ask,kind:'local-wake',target:localTarget,digest,...extra},`file-${Math.random()}`);
+    expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as {id:string}:undefined as never;
+  };
+  it('only the clock matches standing jobs, counts each use and keeps the whole digest and caller binding',async()=>{
+    const a=await setup(),card=file(a);
+    expect(a.call('every-time',{id:card.id})).toMatchObject({code:'denied'});
+    a.value('every-time',{id:card.id},owner);
+    expect(a.value('check',{id:card.id})).toEqual({state:'allowed'});
+    const input={kind:'local-wake',target:localTarget,digest};
+    expect(a.call('standing',input)).toMatchObject({code:'denied'});
+    const first=a.role.standing(caller,input,'standing-1');
+    expect(first).toMatchObject({ok:true,value:{uses:1}});
+    expect(a.role.standing(caller,input,'standing-1')).toEqual(first);
+    expect(a.role.standing({...caller,who:{agent:'art',where:'h-99'}},input,'standing-2')).toMatchObject({ok:true,value:{uses:2}});
+    for(const [who,data] of [
+      [{...caller,for:'loren'},input],
+      [{...caller,for:'?'},input],
+      [{...caller,who:{agent:'art',where:'h-9 (chat)'}},input],
+      [caller,{...input,digest:'a'.repeat(16)+'b'.repeat(48)}],
+      [{...caller,who:{agent:'mark',where:'h-1'}},input],
+    ] as [Caller,Record<string,unknown>][])expect(a.role.standing(who,data,`miss-${Math.random()}`)).toMatchObject({ok:false,code:'not-found'});
+    expect(load(a.db).standing[0].uses).toBe(2);
+    expect(load(a.db).audit.filter(r=>r.event==='standing-use')).toHaveLength(2);
+  });
+  it('turning off a job makes the clock ask again, preserving history and preventing another agent reading its state',async()=>{
+    const a=await setup(),card=file(a),job=a.value('every-time',{id:card.id},owner);
+    expect(a.role.standing(caller,{check:job.id},'check-on')).toMatchObject({ok:true,value:{state:'on'}});
+    expect(a.role.standing({...caller,who:{agent:'mark',where:'h-1'}},{check:job.id},'check-other')).toMatchObject({ok:true,value:{state:'none'}});
+    expect(a.call('standing-off',{id:job.id},pollock)).toMatchObject({code:'denied'});
+    a.value('standing-off',{id:job.id},owner);
+    expect(a.role.standing(caller,{check:job.id},'check-off')).toMatchObject({ok:true,value:{state:'off'}});
+    expect(a.role.standing(caller,{kind:'local-wake',target:localTarget,digest},'off')).toMatchObject({ok:false,code:'not-found'});
+    expect(load(a.db).standing[0]).toMatchObject({off:{by:'jonathan'}});
+  });
+  it.each([
+    {who:{agent:'mark',where:'h-1'},for:'owner'},
+    {who:{agent:'art',where:'h-1 (chat)'},for:'?'},
+    {who:{agent:'art',where:'h-1'},for:'loren'},
+    {who:{agent:'art',where:'h-1'},for:'?',people:['eve']},
+  ] satisfies Caller[])('refuses every-time for another local agent, a service or named people: %j',async who=>{
+    const a=await setup(),card=file(a,who,{target:`${who.who.agent}:${digest.slice(0,16)}`});
+    expect(a.call('every-time',{id:card.id},owner)).toMatchObject({ok:false,code:'invalid'});
+    expect(load(a.db).standing).toEqual([]);
+  });
+  it('permits an exact unknown principal with nobody named, never widens it to owner',async()=>{
+    const a=await setup(),unknown={...caller,for:'?'},card=file(a,unknown);
+    a.value('every-time',{id:card.id},owner);
+    const input={kind:'local-wake',target:localTarget,digest};
+    expect(a.role.standing(unknown,input,'unknown')).toMatchObject({ok:true});
+    expect(a.role.standing(caller,input,'owner')).toMatchObject({ok:false});
+    expect(a.role.standing({...unknown,people:['eve']},input,'eve')).toMatchObject({ok:false});
   });
 });

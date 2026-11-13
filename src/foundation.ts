@@ -5,6 +5,7 @@ import type { Clock } from './core/clock.js';
 import type { Authentication } from './core/live/index.js';
 import type { IncomingMessage } from 'node:http';
 import { installTasks } from './pieces/tasks/index.js';
+import { installApprovals } from './pieces/approvals/index.js';
 import type { Sharing } from './core/index.js';
 export { createFoundation } from './core/app.js';
 export async function startLoom({ home, clock, install, authenticate, sharing, listen }: {
@@ -15,7 +16,14 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   listen?: (app: Foundation) => Promise<{ url: string; close(): Promise<void> }>;
 }): Promise<Foundation & { url: string; close(): Promise<void> }> {
   const app = createFoundation({ home, clock });
-  try { install?.(app); if (!listen && !app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => ({ members: {}, projects: {}, services: {} }))); } catch (e) { app.close(); throw e; }
+  try {
+    install?.(app);
+    if (!listen) {
+      const access = sharing ?? (() => ({ members: {}, projects: {}, services: {} }));
+      if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, access);
+      if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, access);
+    }
+  } catch (e) { app.close(); throw e; }
   if (listen) {
     try {
       const server = await listen(app);

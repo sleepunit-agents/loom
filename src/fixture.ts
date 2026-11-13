@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync } from 'node:fs';
 import { migrate, type Sharing } from './core/index.js';
 import { createFoundation, type Foundation } from './core/app.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { installApprovals } from './pieces/approvals/index.js';
 import { installExample } from './pieces/example/index.js';
 export const fixtureSharing = (): Sharing => ({
   members: { jonathan: { owner: true, agents: ['art', 'mark'] }, pollock: { owner: false, agents: ['pond-bot'] } },
@@ -12,6 +13,7 @@ export function installFixture(app: Foundation, sharing: () => Sharing = fixture
   migrate(app.db, 'fixture', [{ number: 1, sql: 'CREATE TABLE fixture_sharing (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)' }]);
   app.db.prepare('INSERT OR IGNORE INTO fixture_sharing VALUES (1, ?)').run(JSON.stringify(sharing()));
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing);
   installExample(app.db, app.operations, app.live, sharing);
 }
 /** A fresh, disposable staging/test home; never overwrite an existing home. */
