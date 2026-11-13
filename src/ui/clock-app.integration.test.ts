@@ -6,6 +6,7 @@ import { join, extname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { signin, hash } from '../core/signin/index.js';
 import { filedLocal } from '../pieces/clock/local-filing.js';
+import * as runtimeClock from '../pieces/runtime/clock.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import type { Result } from '../core/index.js';
 import { wakes } from '../pieces/clock/store.js';
@@ -23,6 +24,12 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const source = join(home,'old'); mkdirSync(join(source,'art'),{recursive:true});
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+  const runtimeStarts:string[]=[];
+  const runtimeFactory=runtimeClock.clockRuntime;
+  vi.spyOn(runtimeClock,'clockRuntime').mockImplementation((...args)=>{
+    const bridge=runtimeFactory(...args);
+    return {startBody(input){runtimeStarts.push(input.wake.id);return bridge.startBody(input);}};
+  });
   const loom = await startLoom({home,clock,next:true,stdout:()=>{},install(app) {
     importClock(app.db,source,clock.now());
   }});
@@ -373,12 +380,13 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     const privateDue=wakes(loom.db).filter(w=>localCards.includes(w.approval??''));
     expect(privateDue).toHaveLength(2);
     clock.advance(Math.max(...privateDue.map(w=>w.due))-clock.now()+1);
+    await expect.poll(()=>runtimeStarts.length).toBeGreaterThan(0);
     for(const scheduled of privateDue) {
       await expect.poll(()=>wake(loom.db,scheduled.id)?.state).toBe('held');
       expect(wake(loom.db,scheduled.id)).toMatchObject({hold:'permission',member:'jonathan',prompt:scheduled.prompt,note:scheduled.note});
       expect(loom.db.prepare('SELECT record FROM clock_events WHERE wake=?').all(scheduled.id).some(row=>(row as {record:string}).record.includes('"kind":"intent"'))).toBe(false);
-      expect(calls.mock.calls.filter(args=>args[2]==='clock.dispatch'&&(args[3] as {id?:string}).id===scheduled.id)).toHaveLength(0);
+      expect(runtimeStarts).not.toContain(scheduled.id);
       expect(runtimeStore(loom.db).ids('job').map(id=>runtimeStore(loom.db).read('job',id)).filter(job=>job?.source?.kind==='wake'&&job.source.id===scheduled.id)).toHaveLength(0);
     }
-  }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
+  }finally{await browser.close();await loom.close();vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
 },60_000);
