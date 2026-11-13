@@ -13,12 +13,13 @@ import { wake, wakes, type Wake } from './store.js';
 import { load } from '../approvals/store.js';
 import { installApprovals } from '../approvals/index.js';
 import { approvalsRole } from '../approvals/role.js';
+import { installClock } from './index.js';
 import { clockVouchApplication } from './role.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 const ids = ['w-aaaaaa', 'w-bbbbbb', 'w-cccccc'];
-async function setup(preinstalled = false) {
+async function setup(preinstalled = false, noFiling = false) {
   const home = mkdtempSync(join(tmpdir(), 'clock-vouch-'));
   const source = join(home, 'old'); mkdirSync(join(source, 'art'), {recursive:true});
   writeFileSync(join(source, 'art', 'spool.jsonl'), ids.map(id => JSON.stringify({ id, kind:'wake', for:'-',
@@ -30,6 +31,7 @@ async function setup(preinstalled = false) {
   let first = true;
   const options = {home, clock, next:true, authenticate: (req: import('node:http').IncomingMessage) => ({viewer:req.headers['x-fixture-agent'] ? {kind:'agent' as const,id:'art'} : owner, valid:()=>true}), sharing:()=>access, stdout:()=>{}, install(app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
     if (first) { importClock(app.db, source, clock.now()); first = false; }
+    if (noFiling) { const jobs = installClock(app.db, app.operations, app.live, ()=>access); app.onClose(jobs.close); }
     if (preinstalled) installApprovals(app.db, app.operations, app.live, ()=>access);
   }};
   let app = await startLoom(options);
@@ -246,7 +248,7 @@ it('refuses private, other-agent, known-person, capability, malformed and steere
   const original = wake(s.app.db,ids[0])!;
   for (const patch of [
     {member:'private'}, {agent:'other'}, {continuation:'opaque'}, {prompt:'../bad'},
-    {legacy:{...original.legacy,for:'person'}}, {legacy:{...original.legacy,for_people:['person']}},
+    {legacy:{...original.legacy,for:'person'}}, {legacy:{...original.legacy,continuation:'archived-handle'}}, {legacy:{...original.legacy,for_people:['person']}},
     {legacy:{...original.legacy,for_why:'steered'}}, {legacy:{...original.legacy,for_why:'other-agent'}},
   ] as Partial<Wake>[]) {
     s.change(ids[0],{...original,...patch});
@@ -309,4 +311,12 @@ it('does not copy private or project-scoped saved words into an agent-scoped app
     expect(s.call('clock.askVouch',{target:`art:${ids[0]}`})).toMatchObject({ok:false,code:'invalid'});
     expect(load(s.app.db).approvals).toHaveLength(0);
   }
+});
+
+it('fails closed with no owning filing composition and leaves no card or receipt', async () => {
+  const s=await setup(false,true), before=wakes(s.app.db), approvals=load(s.app.db);
+  const receipts=s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all();
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'unavailable'});
+  expect(wakes(s.app.db)).toEqual(before); expect(load(s.app.db)).toEqual(approvals);
+  expect(s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all()).toEqual(receipts);
 });
