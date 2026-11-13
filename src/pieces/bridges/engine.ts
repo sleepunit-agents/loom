@@ -123,34 +123,36 @@ export class Bridges implements BridgesRole {
           const person = personFor(db,v,message.user);
           if (!person) reason='unknown user';
           else if (addressed(v,message,route,all(db,'venues'))) {
-            const adapter = this.adapters.find(a => a.platform === v.platform);
-            if (!adapter) throw new Error('Adapter unavailable');
-            const {token} = await this.credentials(v);
-            const inspected = await adapter.inspect(v,token,message);
-            const key = keyFor(v,message,person);
-            const admitted = inspected === 'allow' ? await this.runtime.admit({agent:v.agent,person,venue:key.venue,channel:message.parent ?? message.channel,dm:message.dm,group:message.group,readers:route?.readers ?? [],peer:!!message.bot}) : inspected;
-            if (admitted === 'wait') { this.retry(); continue; }
-            if (admitted === 'allow') {
-              if (this.closed) return;
-              const current = venueById(db,row.venue);
-              if (!current?.enabled || identity(current)!==row.identity || personFor(db,current,message.user)!==person
-                || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
-              const at = eventTime(v.platform,message.id,message.at);
-              if (!at) { state='held'; reason='invalid event time'; }
-              else if (!message.bot && isStop(message.text)) {
-                await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
-                state='delivered';
-              } else {
-                const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
-                if (outcome === 'retry') { this.retry(); continue; }
-                if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
-                else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
-                else {
-                  db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
+            const at = eventTime(v.platform,message.id,message.at);
+            if (!at) { state='held'; reason='invalid event time'; }
+            else {
+              const adapter = this.adapters.find(a => a.platform === v.platform);
+              if (!adapter) throw new Error('Adapter unavailable');
+              const {token} = await this.credentials(v);
+              const inspected = await adapter.inspect(v,token,message);
+              const key = keyFor(v,message,person);
+              const admitted = inspected === 'allow' ? await this.runtime.admit({agent:v.agent,person,venue:key.venue,channel:message.parent ?? message.channel,dm:message.dm,group:message.group,readers:route?.readers ?? [],peer:!!message.bot}) : inspected;
+              if (admitted === 'wait') { this.retry(); continue; }
+              if (admitted === 'allow') {
+                if (this.closed) return;
+                const current = venueById(db,row.venue);
+                if (!current?.enabled || identity(current)!==row.identity || personFor(db,current,message.user)!==person
+                  || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
+                if (!message.bot && isStop(message.text)) {
+                  await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
                   state='delivered';
+                } else {
+                  const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
+                  if (outcome === 'retry') { this.retry(); continue; }
+                  if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
+                  else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
+                  else {
+                    db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
+                    state='delivered';
+                  }
                 }
-              }
-            } else reason='not admitted';
+              } else reason='not admitted';
+            }
           } else reason='not addressed';
         }
       } catch { this.retry(); continue; }

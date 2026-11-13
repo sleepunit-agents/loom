@@ -105,6 +105,14 @@ describe('in-process bridge delivery',()=>{
     expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'held'});
     expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
   });
+  it.each(['admission-wait','credential-denied'])('holds malformed events before %s transient checks',async failure=>{
+    const f=await fixture(); if (failure==='admission-wait') f.setGate('wait'); else f.denySecret();
+    await f.engine.receive(f.venue.id,f.message({at:'bad'})); await f.engine.flush();
+    f.clock.advance(5000); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'invalid event time'});
+    expect(f.admitted).toEqual([]); expect(f.secretGets).toEqual([]);
+    expect(f.deliveries.size).toBe(0);
+  });
   it('holds malformed event metadata durably instead of inventing an event time',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message({at:'bad'})); await f.engine.flush();
     expect(f.deliveries.size).toBe(0);
@@ -283,6 +291,8 @@ describe('in-process bridge delivery',()=>{
 
 describe('platform event timestamps',()=>{
   it('normalizes offsets and truncates microseconds without rounding',()=>{
+    expect(eventTime('slack','unused','0000-02-29T00:00:00Z')).toBe('0000-02-29T00:00:00.000Z');
+    expect(eventTime('slack','unused','2026-11-12T17:00:00.1234567890Z')).toBe('2026-11-12T17:00:00.123Z');
     expect(eventTime('slack','unused','2026-11-12T11:12:13.999999-06:00')).toBe('2026-11-12T17:12:13.999Z');
     expect(eventTime('slack','1794503533.000999')).toBe('2026-11-12T17:12:13.000Z');
     expect(eventTime('discord',String((BigInt(Date.parse('2026-11-12T17:12:13.123Z'))-1420070400000n)<<22n))).toBe('2026-11-12T17:12:13.123Z');

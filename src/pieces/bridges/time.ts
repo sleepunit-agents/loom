@@ -4,16 +4,16 @@
  */
 export function eventTime(platform: 'discord' | 'slack', id: string, at?: string): string | undefined {
   if (at !== undefined) {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(at)) return;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(at)) return;
     const year = Number(at.slice(0,4)), month = Number(at.slice(5,7)), day = Number(at.slice(8,10));
-    if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year,month,0)).getUTCDate()
+    if (month < 1 || month > 12 || day < 1 || day > [31,(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28,31,30,31,30,31,31,30,31,30,31][month-1]
       || Number(at.slice(11,13)) > 23 || Number(at.slice(14,16)) > 59 || Number(at.slice(17,19)) > 59) return;
-    const milliseconds = Date.parse(at);
+    const milliseconds = Date.parse(at.replace(/(\.\d{3})\d+/, '$1'));
     if (!Number.isFinite(milliseconds)) return;
     return new Date(milliseconds).toISOString();
   }
   if (platform === 'slack') {
-    const match = /^(\d{1,12})\.(\d{1,9})$/.exec(id);
+    const match = /^(\d{1,12})\.(\d+)$/.exec(id);
     if (!match) return;
     return new Date(Number(match[1]) * 1000 + Number(match[2].padEnd(3,'0').slice(0,3))).toISOString();
   }
