@@ -718,3 +718,36 @@ mutations in `prepare` on the strength of the preflight check. Production async
 set/remove still need durable full-input binding, concurrency/uncertain-result
 handling and metadata reconciliation after holder success plus loom rollback.
 Settings value forms remain unavailable in normal next mode.
+
+## Committed holder receipt lookup
+
+The private mutation socket also accepts an empty `POST /v1/receipt`, with the
+same authenticated member assertion and UUID write ID headers as a mutation.
+`localHolderMutations(config).hasReceipt({member, writeId})` returns only a boolean:
+empty `204` means that the resolved actual member's write ID has a durable
+receipt; empty `404` means no receipt was visible at the lookup. Other statuses,
+nonempty/chunked responses, transport errors and invalid provider output fail
+with the same fixed private error. The current authority runs before lookup and
+again before the answer; wrong peers, missing members and revoked owners receive
+no evidence. The persistent executable exposes this through its existing socket,
+with the existing private paths, mutual TLS and five-second absolute deadlines.
+There is no registry/public route, value read, name listing, fingerprint or
+credential output. Lookup does not decrypt, mutate, replay or extend a receipt.
+
+A positive answer is evidence for **that member/write ID only**. It cannot verify
+a caller's proposed name, action, mode or value. Before using it for metadata
+reconciliation, the daemon must durably reserve the complete registry viewer/id,
+operation name and keyed full-input fingerprint, bind the unique holder write ID
+to that reservation, and retain the metadata needed to finish in commit order.
+A different input or operation ID must not borrow a prior write's receipt. Those
+admission/reservation and metadata reconciliation components are still required.
+
+A negative answer is never a cancellation fence: a write encrypting or committing
+concurrently can become durable after the lookup, even after its connection has
+failed. Keep its reservation and retry the identical full input/member/write ID;
+never release it, generate a new write ID or conclude rollback from `false`.
+The store's existing atomic ciphertext/receipt transaction makes a failed commit
+invisible and a successful receipt survive restarts and later replacement/removal.
+Normal Settings value forms and production async registry writes remain disabled
+until durable admission and metadata reconciliation are connected. No credential,
+installed configuration, real import or host activation accompanies this change.
