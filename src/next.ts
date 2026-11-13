@@ -20,9 +20,11 @@ import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
-import { installChanges } from './pieces/changes/index.js';
+import { installSecrets } from './pieces/secrets/index.js';
+import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
-import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
+import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
@@ -50,9 +52,20 @@ const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
 export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
+/** Trusted in-process composition only; never accepted from an operation or HTTP input.
+ * source must be an authenticated separate holder transport delivering owned buffers.
+ * Bindings contain public forge owner names and secret names, never credential values.
+ */
+export interface NextChangesOptions {
+  source: SecretValueSource;
+  github: Readonly<Record<string, string>>;
+  request?: typeof fetch;
+  interval?: number;
+}
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
+  changes?: NextChangesOptions;
 }
 export function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
@@ -79,12 +92,22 @@ export function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
-  if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
-    approvals: changesApprovals(app.operations),
-    projects: householdProjects(new SharingDatabase(app.db, options.home)),
-    attribution: () => householdAttribution(app.db, options.home),
-    knownAgents: () => new HouseholdDatabase(app.db).household(options.home)?.agents ?? [],
-  });
+  if (!app.operations.has('changes.list')) {
+    const attribution = () => householdAttribution(app.db, options.home);
+    const approvals = changesApprovals(app.operations);
+    // No default holder, legacy token lookup, or installation-time grant. An
+    // unconfigured reader fails before acquiring a value or contacting GitHub.
+    const credentials = options.changes;
+    if (credentials) {
+      if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing);
+      if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
+    }
+    const secrets = githubSecrets(credentials
+      ? secretUseRole(app.db, credentials.source, sharing, {kind: 'service', id: 'changes'}, () => app.operations.clock.now(), app.live)
+      : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
+    installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
+      staging: options.staging, interval: credentials?.interval, request: credentials?.request});
+  }
   const inventory = mindSources(app.db, options.home);
   if (!app.operations.has('mind.knowledgeList')) {
     const path = inventory?.commons.knowledge;

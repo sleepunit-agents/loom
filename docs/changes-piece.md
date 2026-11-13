@@ -99,7 +99,7 @@ a newer denial revokes earlier unspent allowances across principals and denies
 pending sibling requests without a conversation. Conversation asks keep their
 existing handling. Always sets `project:<slug>` to `do` and grants
 that head in the same outer operation transaction. Refresh records a durable request
-but does not start a forge read in this composition.
+and wakes the root-owned job after the operation commits.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
 current project membership/revocation and approval controls.
 `src/changes-approvals.test.ts` covers real grants, denial then allowance in the
@@ -107,8 +107,8 @@ same clock tick, stale heads, project rules, person-specific requests, and loss
 of ownership. Equal-timestamp approval receipts resolve to the newest inserted
 receipt, so a later Yes supersedes Not yet even within one second.
 
-Cutover still requires daemon startup in the next root and authenticated Secrets composition. The daemon installer now owns
-its service viewer and registers shutdown with the foundation. Those integrations remain open. No production import,
+Next mode starts the daemon on the foundation clock, including durable refresh and restart scheduling.
+The daemon owns its installed service Viewer and registers shutdown with the foundation. No production import,
 deployment, old-service shutdown or live-home modification is part of this branch.
 
 ## Evidence
@@ -181,5 +181,22 @@ The adapter snapshots the bindings and delegates each use to Secrets, which chec
 current service registration, owner service grants, expiry and `never` policy,
 including after the value source replies. Agent grants cannot authorize it and
 installation creates no grants. The existing fixed GitHub transport still owns
-redaction and generic read failures. Root wiring and the actual authenticated
-value source remain separate composition work; this adapter discovers no files.
+redaction and generic read failures. The next root accepts trusted `startLoom({next: true, changes: {source, github,
+request?, interval?}})` composition. It installs Secrets metadata and owner service
+grant operations when this explicit configuration is supplied, then binds the real
+`secretUseRole` to the installed Changes service. It never creates a name or grant.
+`request` is an in-process transport seam, not a caller-controlled URL. `interval`
+is clamped by the job. Without configuration the daemon still runs; an unmapped
+repository fails before any value acquisition or forge request and preserves its
+previous snapshot. Staging holds both acquisition and forge calls even with a grant.
+
+The production authenticated holder transport is still being built by Secrets
+(t-2208). Neither `loom serve --next` nor this unit invents one: the CLI currently
+starts with no credential configuration. Only trusted embedding code can supply
+`source` and public owner/name bindings; neither is accepted through an operation,
+HTTP input, environment token, old token file or runtime identity guess. Completing
+that transport and its final CLI configuration remains required before live reads
+can be activated. This unit exercises real grants with an explicit fixture source,
+not production credential delivery. `src/changes-startup.test.ts` covers automatic
+startup, HTTP refresh, denied agent grants, real service grant/revoke, staging,
+unconfigured startup, revocation during acquisition and close during acquisition.
