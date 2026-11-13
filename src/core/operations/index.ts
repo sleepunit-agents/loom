@@ -18,6 +18,11 @@ export interface Operation<I = unknown> {
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   run(ctx: Context, input: I): unknown;
+  /** Audit a rejected attempt after its effects have rolled back. This hook may
+   * append audit rows only; it must never apply or retry the rejected action.
+   * Audit failures do not change the caller's rejection.
+   */
+  rejected?(viewer: Viewer, input: I, failure: Failure, now: number): void;
 }
 export function operation<I>(op: Operation<I>): Operation<I> { return op; }
 function canonical(value: unknown): string {
@@ -82,8 +87,12 @@ export class Operations {
         if (op.write) this.db.prepare('INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, now + 30 * 86400_000);
         return JSON.parse(serialized) as Result;
       })();
-    } catch (e) { return e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
+    } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
     finally { this.frames.pop(); }
+    if (!result.ok && op.rejected) {
+      try { this.db.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()))(); }
+      catch { /* An audit failure cannot turn a refused action into success. */ }
+    }
     if (result.ok && changes.length) {
       const parent = this.frames.at(-1);
       if (parent) parent.push(...changes);

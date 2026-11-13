@@ -7,6 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import { installSharing } from './pieces/sharing/index.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { installApprovals } from './pieces/approvals/index.js';
 import type { Sharing } from './core/index.js';
 import { installNext, listenNext, type NextOptions } from './next.js';
 import { ownHome } from './core/daemon-home.js';
@@ -31,7 +32,9 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
     if (next) effects = installNext(app, nextOptions);
     else if (!listen) {
       if (!app.operations.has('household.createProject')) installSharing(app, home);
-      if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => new SharingDatabase(app.db, home).sharing()));
+      const access = sharing ?? (() => new SharingDatabase(app.db, home).sharing());
+      if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, access);
+      if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, access);
     }
   } catch (e) { app.close(); await release(); throw e; }
   if (next) {
