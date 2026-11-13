@@ -515,8 +515,8 @@ holder acquisition. The initial endpoint is Discord's documented
 `wss://gateway.discord.gg`; resume endpoints must be Discord gateway WSS hosts.
 No redirects, compression, arbitrary gateway hosts or credential diagnostics.
 
-The mandatory private store callbacks are a composition contract, not an installed
-store: `load` returns an identity/credential-generation-bound checkpoint;
+The mandatory private store callbacks are a composition contract, implemented
+by the unregistered `discordInbox` below: `load` returns an identity/credential-generation-bound checkpoint;
 `commit` atomically retains needed raw dispatches and their session/URL/sequence;
 `reset` durably removes an invalid cursor. A raw receiver must commit before
 resolving and deduplicate platform message identities. It must not perform
@@ -539,14 +539,48 @@ session IDs are never returned as records or diagnostics.
 
 The fake sockets/clock and disposable `startLoom` SQLite fixture prove protocol,
 commit ordering, rollback and daemon-restart resume. This fixture is not the
-production store: private Discord raw/session storage, metadata normalization,
-service authentication, credential-generation invalidation and root registration
-remain required. No history poller fills gaps when Discord invalidates or expires
+production composition: the private store below still needs metadata normalization,
+service authentication, credential-generation wiring and root registration. No history poller fills gaps when Discord invalidates or expires
 a session; resume is bounded by Discord's retained events, not lossless recovery.
 Opening the preview or starting the current next root starts no Discord socket.
 
 | Legacy intake behavior | New transport / remaining work |
 | --- | --- |
 | Poll latest message, then cursor/lookback scans | Identify receives new events; session/sequence Resume replays retained missed events |
-| In-memory delivery queue | Serialized durable-commit contract; production raw/session store still required |
+| In-memory delivery queue | Atomic private raw/session store below; production composition still required |
 | Adapter process reconnect | Gateway heartbeat, Resume/Identify and bounded backoff; daemon registration still required |
+
+## Discord private receipt and session store
+
+`discordInbox` implements the Gateway's private `load`/`commit`/`reset` contract
+in `bridges_discord_sessions` and `bridges_discord_receipts`. One SQLite
+transaction retains a MESSAGE_CREATE and its checkpoint; a failure writing either
+rolls both back. Other dispatches advance the checkpoint without retaining their
+payload. A READY must match the configured bot. Session changes require reset;
+sequences within a session must increase. Only canonical positive uint64 message
+ids are retained; malformed message ids are discarded while advancing the cursor.
+
+The store snapshots setup and binds both tables to a hash of the receiving venue,
+workspace, agent, bot, secret reference and public holder generation. Every call
+checks the current setup revision and trusted generation callback. Restored setup
+still invalidates the old receiver. A new credential cannot load, read or consume
+the prior generation's cursor or words. These private tables have no operation,
+projection or live notification. Session ids are retained only in the cursor table.
+
+Reads page at most 64 pending messages. Consumption erases words and retains the
+message-id tombstone. Reset erases only the cursor; pending messages and dedup
+tombstones survive reset and restart. A replay of the same platform message keeps
+the first receipt. The caller must serialize commits and reset (as the Gateway
+does), and consume only after normalized receipt commits or definite discard.
+No callback may join an enclosing transaction.
+
+This is an unregistered store, not an activated receiver. Metadata normalization,
+authenticated setup/credential composition, staging-gated root lifecycle, obsolete
+identity disposition and a migration/move plan remain required. No old store is
+read and no running home is changed.
+
+| Legacy behavior | New store / remaining work |
+| --- | --- |
+| Memory-only Gateway cursor | Atomic private SQLite session and raw message commit |
+| Replay after reconnect | Permanent platform message-id tombstone per receiving identity/generation |
+| Process-local message queue | Bounded pending receipt reads; normalization and root registration remain required |
