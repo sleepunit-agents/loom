@@ -87,7 +87,7 @@ only its own `holder.db`, containing age ciphertext and durable mutation receipt
 Its explicit directory, identity and independent 32-byte random fingerprint key
 must be private, owned by the process user; database files must not be symlinks or
 hardlinks. Keep the fingerprint key separately from ciphertext database backups.
-Changing either key or identity is refused; rotation still requires implementation.
+Changing either key or identity without explicit retained material is refused; see holder key rotation below.
 
 The trusted authenticated caller supplies the **actual member ID** and UUID
 writeId after checking current household permission. This storage API does not
@@ -894,3 +894,42 @@ value installer retains its single-key contract and is not production compositio
 Holder identity/receipt-key rotation and automatic daemon reconciliation without
 caller plaintext still remain, followed by normal-root composition. Normal next
 mode and Settings value forms stay disabled until those prerequisites are delivered.
+
+
+### Holder identity and receipt-key rotation
+
+The persistent holder configuration accepts optional `previousIdentities` and
+`previousFingerprintKeys`, each an explicit list of absolute private file paths
+(at most 31). `identity` and `fingerprintKey` remain the active pair. Stop the
+holder, preserve all old files, and restart with the new active files and the old
+ones in these lists. No keys are generated or retired, and no real-home rotation
+is performed by this implementation. TLS certificates and their current pinned
+peer fingerprints remain separately configured; these lists contain age identities
+and receipt HMAC keys only.
+
+New ciphertext uses only the active age recipient. Reads retain every historical
+identity. Existing ciphertext, full-input/member receipts, original v1 binding,
+and public generation are unchanged at rotation. Old receipt retries compare the
+original full input against all retained HMAC keys; fresh receipts use only the
+active key. An obsolete add/remove therefore cannot undo a later write, even after
+multiple rotations or removal of all current values. Positive receipt lookup does
+not need a value or decryption. Historical keys cannot be retired while indefinite
+receipts exist.
+
+Startup atomically records the active identity/key pair as a domain-separated
+binding in holder-only `holder_key_history`. Every historical pair (including the
+original v1 binding) must be derivable from the supplied files, even if no values
+or receipts remain. Malformed history, duplicate material, unsafe files or omitted
+historical material refuse startup with a fixed error and leave stored data
+unchanged. V1-only stores upgrade in the same transaction; no ciphertext or receipt
+rewrite occurs. Explicit reactivation of an old pair is allowed with the complete
+ring. Keep every used identity and key separately from the ciphertext backup.
+This is retention-based rotation: existing ciphertext is not reencrypted, and old
+key compromise is not repaired by selecting a new active pair. Operate one holder
+lifetime at a time and restart all holder handles when changing the configuration.
+
+The new holder operations replace no old CLI command; this is explicit configuration
+of the separate holder. Automatic daemon retry/reconciliation, normal root mutation
+composition (Settings values remain disabled), authenticated house flows/trusted
+sinks, Changes/Bridges accounting, remaining Settings parity and the final migration,
+leak and staging ledger remain task obligations.

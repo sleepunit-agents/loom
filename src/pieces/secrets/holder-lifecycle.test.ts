@@ -323,3 +323,25 @@ it('runs durable bridge inspection and split sends on the persistent holder, hou
     for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(sentinel);
   } finally {await engine.close();}
 });
+
+it('loads explicit retained holder identities and receipt keys through the persistent executable config',async()=>{
+ const f=await setup();const app=await startLoom({home:f.appHome,next:true,staging:true,clock:new FakeClock(),secretAuthority:f.authority,stdout:()=>{}});closes.push(app.close);
+ let holder=await startPersistentHolder(f.file);closes.push(async()=>holder.close());
+ const client=localHolderMutations(f.client),source=localSecretSource({...f.client,socket:f.config.read.socket});
+ const add={member:'jonathan',writeId:randomUUID()},remove={member:'jonathan',writeId:randomUUID()};
+ await client.set(add,'API',Buffer.from('CONFIG-ROTATION-SYNTHETIC'),'add');const generation=await source.generation();await holder.close();
+ const identity=join(f.home,'rotated-identity'),fingerprintKey=join(f.home,'rotated-receipt-key');
+ writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(fingerprintKey,randomBytes(32),{mode:0o600});
+ writeFileSync(f.file,JSON.stringify({...f.config,identity,fingerprintKey}),{mode:0o600});
+ await expect(startPersistentHolder(f.file)).rejects.toThrow(/^Persistent secret holder could not start$/);
+ writeFileSync(f.file,JSON.stringify({...f.config,identity,fingerprintKey,previousIdentities:[f.config.identity],previousFingerprintKeys:[f.config.fingerprintKey]}),{mode:0o600});
+ holder=await startPersistentHolder(f.file);expect(await source.generation()).toBe(generation);
+ const old=await source.read('API');expect(Buffer.from(old).toString()).toBe('CONFIG-ROTATION-SYNTHETIC');old.fill(0);
+ await client.set({...add,writeId:randomUUID()},'API',Buffer.from('REPLACED'),'replace');
+ await client.set(add,'API',Buffer.from('CONFIG-ROTATION-SYNTHETIC'),'add');
+ const newer=await source.read('API');expect(Buffer.from(newer).toString()).toBe('REPLACED');newer.fill(0);
+ await client.remove(remove,'API');await client.set({...add,writeId:randomUUID()},'API',Buffer.from('RE-ADDED'),'add');
+ await holder.close();holder=await startPersistentHolder(f.file);await client.remove(remove,'API');
+ expect(await client.hasReceipt(add)).toBe(true);expect(await client.hasReceipt(remove)).toBe(true);
+ const latest=await source.read('API');expect(Buffer.from(latest).toString()).toBe('RE-ADDED');latest.fill(0);
+});

@@ -44,19 +44,33 @@ function privateDatabase(path: string) {
  * of the ciphertext DB. No clear value or unkeyed value digest is persisted.
  * This API owns an internal copy of set's input; the caller still owns its bytes.
  */
-export async function openHolderStore(directory: string, identityFile: string, fingerprintKeyFile: string): Promise<HolderStore> {
-  let db: Database.Database | undefined, key: Buffer | undefined;
+export interface RetainedHolderKeys { identities?: string[]; fingerprintKeys?: string[] }
+export async function openHolderStore(directory: string, identityFile: string, fingerprintKeyFile: string,
+  previous: RetainedHolderKeys = {}): Promise<HolderStore> {
+  let db: Database.Database | undefined;
+  const keys: Buffer[] = [];
   try {
     assertPrivateDirectory(directory);
-    key = privateBytes(fingerprintKeyFile, 32);
-    if (key.length !== 32) throw unavailable();
-    const identity = privateBytes(identityFile);
+    const identityFiles = [identityFile, ...(previous.identities ?? [])];
+    const keyFiles = [fingerprintKeyFile, ...(previous.fingerprintKeys ?? [])];
+    if (identityFiles.length > 32 || keyFiles.length > 32) throw unavailable();
+    for (const file of keyFiles) {
+      const key = privateBytes(file, 32); keys.push(key);
+      if (key.length !== 32) throw unavailable();
+    }
+    if (new Set(keys.map(key => createHmac('sha256', key).update('holder-key-identity-v1').digest('hex'))).size !== keys.length) throw unavailable();
     const encrypt = new Encrypter(), decrypt = new Decrypter();
-    let recipient: string;
-    try {
-      const text = identity.toString('utf8').trim();
-      decrypt.addIdentity(text); recipient = await identityToRecipient(text); encrypt.addRecipient(recipient);
-    } finally { identity.fill(0); }
+    const recipients: string[] = [];
+    for (const file of identityFiles) {
+      const identity = privateBytes(file);
+      try {
+        const text = identity.toString('utf8').trim();
+        const recipient = await identityToRecipient(text);
+        decrypt.addIdentity(text); recipients.push(recipient);
+      } finally { identity.fill(0); }
+    }
+    if (new Set(recipients).size !== recipients.length) throw unavailable();
+    encrypt.addRecipient(recipients[0]);
     const path = join(directory, 'holder.db');
     privateDatabase(path);
     // Refuse unsafe existing SQLite sidecars before opening SQLite.
@@ -68,32 +82,44 @@ export async function openHolderStore(directory: string, identityFile: string, f
     }
     db = new Database(path, {timeout: 0});
     db.pragma('journal_mode = WAL'); db.pragma('synchronous = FULL');
-    const verifier = createHmac('sha256', key).update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
+    const binding = (key: Buffer, recipient: string) => createHmac('sha256', key)
+      .update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
+    const verifier = binding(keys[0], recipients[0]);
+    const supplied = new Set(keys.flatMap(key => recipients.map(recipient => binding(key, recipient))));
+    const historySchema = z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1);
+
     db.transaction(() => {
       db!.exec(`CREATE TABLE IF NOT EXISTS holder_config (id INTEGER PRIMARY KEY CHECK(id=1), verifier TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS holder_key_history (id INTEGER PRIMARY KEY CHECK(id=1), bindings TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_values (name TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_receipts (member TEXT NOT NULL, write_id TEXT NOT NULL,
           fingerprint TEXT NOT NULL, PRIMARY KEY(member, write_id));`);
       const old = db!.prepare('SELECT verifier FROM holder_config WHERE id=1').get() as {verifier:string} | undefined;
-      if (old && old.verifier !== verifier) throw unavailable();
+      const saved = db!.prepare('SELECT bindings FROM holder_key_history WHERE id=1').get() as {bindings:string} | undefined;
+      const history = saved ? historySchema.parse(JSON.parse(saved.bindings)) : old ? [old.verifier] : [];
+      if ((saved && (!old || !history.includes(old.verifier))) || new Set(history).size !== history.length
+        || history.some(hash => !supplied.has(hash))) throw unavailable();
       if (!old) db!.prepare('INSERT INTO holder_config VALUES (1,?)').run(verifier);
+      const updated = [...new Set([...history, verifier])].sort();
+      db!.prepare('INSERT INTO holder_key_history VALUES (1,?) ON CONFLICT(id) DO UPDATE SET bindings=excluded.bindings')
+        .run(JSON.stringify(updated));
       db!.prepare('INSERT OR IGNORE INTO holder_generation VALUES (1,?)').run(randomUUID());
     }).immediate();
-    const store = db, fingerprintKey = key;
+    const store = db;
     let closed = false;
     const check = () => { if (closed) throw unavailable(); };
-    const fingerprint = (who: HolderWrite, action: string, name: string, mode?: string, bytes?: Uint8Array) => {
+    const fingerprint = (fingerprintKey: Buffer, who: HolderWrite, action: string, name: string, mode?: string, bytes?: Uint8Array) => {
       check(); context.parse(who); secretName.parse(name);
       const hmac = createHmac('sha256', fingerprintKey);
       hmac.update(JSON.stringify([1, who.member, who.writeId, action, name, mode ?? null]));
       if (bytes) hmac.update(bytes);
       return hmac.digest('hex');
     };
-    const replay = (who: HolderWrite, hash: string) => {
+    const replay = (who: HolderWrite, hashes: string[]) => {
       const old = store.prepare('SELECT fingerprint FROM holder_receipts WHERE member=? AND write_id=?')
         .get(who.member, who.writeId) as {fingerprint: string} | undefined;
-      if (old && old.fingerprint !== hash) throw unavailable();
+      if (old && !hashes.includes(old.fingerprint)) throw unavailable();
       return !!old;
     };
     const receipt = (who: HolderWrite, hash: string) => store.prepare('INSERT INTO holder_receipts VALUES (?,?,?)')
@@ -106,17 +132,17 @@ export async function openHolderStore(directory: string, identityFile: string, f
           if (!(value instanceof Uint8Array) || !value.byteLength || value.byteLength > 65536 || !['add', 'replace'].includes(mode)) throw unavailable();
           // Snapshot all caller-owned mutable input before the first await.
           who = context.parse(who); bytes = Buffer.from(value);
-          const hash = fingerprint(who, 'set', name, mode, bytes);
-          if (replay(who, hash)) return;
+          const hashes = keys.map(key => fingerprint(key, who, 'set', name, mode, bytes));
+          if (replay(who, hashes)) return;
           const ciphertext = await encrypt.encrypt(bytes);
           check();
           store.transaction(() => {
             // Another request/process may have committed during encryption.
-            if (replay(who, hash)) return;
+            if (replay(who, hashes)) return;
             const exists = !!store.prepare('SELECT 1 FROM holder_values WHERE name=?').get(name);
             if (exists !== (mode === 'replace')) throw unavailable();
             store.prepare('INSERT INTO holder_values VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
-            receipt(who, hash);
+            receipt(who, hashes[0]);
             store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
         } catch { throw unavailable(); }
@@ -125,11 +151,11 @@ export async function openHolderStore(directory: string, identityFile: string, f
       remove(who, name) {
         try {
           who = context.parse(who);
-          const hash = fingerprint(who, 'remove', name);
+          const hashes = keys.map(key => fingerprint(key, who, 'remove', name));
           store.transaction(() => {
-            if (replay(who, hash)) return;
+            if (replay(who, hashes)) return;
             if (!store.prepare('DELETE FROM holder_values WHERE name=?').run(name).changes) throw unavailable();
-            receipt(who, hash);
+            receipt(who, hashes[0]);
             store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
         } catch { throw unavailable(); }
@@ -163,7 +189,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
           return bytes;
         } catch { bytes?.fill(0); throw unavailable(); }
       },
-      close() { if (!closed) { closed = true; fingerprintKey.fill(0); store.close(); } },
+      close() { if (!closed) { closed = true; for (const key of keys) key.fill(0); store.close(); } },
     };
-  } catch { key?.fill(0); db?.close(); throw unavailable(); }
+  } catch { for (const key of keys) key.fill(0); db?.close(); throw unavailable(); }
 }

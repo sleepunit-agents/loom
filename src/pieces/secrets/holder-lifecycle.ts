@@ -7,7 +7,8 @@ import { listenHolderMutations } from './holder-mutations.js';
 import { holderTls, certificateFingerprint, remoteHolderAuthority } from './holder-authority.js';
 const path=z.string().refine(isAbsolute);
 const configSchema=z.object({read:holderTls,mutation:holderTls,authority:holderTls.extend({servername:z.hostname()}),
-  directory:path,identity:path,fingerprintKey:path,daemonFingerprint:certificateFingerprint}).strict();
+  directory:path,identity:path,fingerprintKey:path,previousIdentities:z.array(path).max(31).optional(),
+  previousFingerprintKeys:z.array(path).max(31).optional(),daemonFingerprint:certificateFingerprint}).strict();
 
 export async function startPersistentHolder(file:string) {
   let bytes:Buffer|undefined;
@@ -20,7 +21,8 @@ export async function startPersistentHolder(file:string) {
     const config=configSchema.parse(JSON.parse(bytes.toString('utf8')));
     if(new Set([config.read.socket,config.mutation.socket,config.authority.socket]).size!==3) throw Error();
     const authority=remoteHolderAuthority(config.authority,config.daemonFingerprint);
-    store=await openHolderStore(config.directory,config.identity,config.fingerprintKey);
+    store=await openHolderStore(config.directory,config.identity,config.fingerprintKey,
+      {identities:config.previousIdentities,fingerprintKeys:config.previousFingerprintKeys});
     reader=await listenLocalHolder(config.read,store,config.daemonFingerprint);
     writer=await listenHolderMutations(config.mutation,store,authority);
     let closing:Promise<void>|undefined;
