@@ -25,7 +25,7 @@ or additional package.
 `installClock` installs the prefixed tables, scoped operations, live `wake`,
 `schedule` and pause records, and daemon timers. The installer returns `close`;
 the composition root registers it with the foundation's `onClose` so timers stop
-before SQLite closes. It is currently installed explicitly by tests only.
+before SQLite closes. It is installed in next mode and explicitly in tests.
 Nothing installs it on the existing production path.
 
 The runtime dependency accepts a durable intent and returns started,
@@ -40,9 +40,7 @@ files are temporary role contracts pending the other pieces' implementations.
 The current tests exercise these transitions on `startLoom`/`FakeClock`, including
 pause release order, a parked answer and timeout, changed dispatch permission,
 live-record aging, and the next occurrence across Chicago daylight saving.
-CLI parity, lane assignment, vouch/approval workflows, app and final
-new-side composition remain unfinished; the migration still needs cold review
-before any merge.
+CLI parity, vouch/approval workflows and final runtime/approvals composition remain unfinished. The foundation and importer migration reviews are complete; the lane operations and Clock preview app are merged in separate slices.
 
 ## Old surface inventory and intended replacements
 
@@ -392,3 +390,37 @@ viewer's timezone. The Clock preview link is reserved for the app still to land.
 These reads do not write Attention status or duplicate its runtime job state;
 composition into the desk and live refresh remain later integration work on
 t-2201. The existing live wake/clock records signal refreshes.
+
+## Clock preview app
+
+`/p/clock-preview` is a registered kit Split app on live `wake`, `schedule` and
+`clock` records. It offers active wakes, recent terminal history, ordinary schedules
+and household lanes, with search and agent filtering. A person can create a timed
+wake, create/edit/remove a schedule, run an extra occurrence, create/edit/reassign
+a lane, replace its full text, pause/resume an agent, start fresh work or cancel a
+wake. Whole lane text is available in its reader. Repository paths stay strings;
+there is no daemon file picker. Times display in CT.
+
+Destructive and immediate actions require a concrete confirmation, including in
+the phone reader. Pause has Resume as its inverse. Cancelled wakes and removed
+schedules retain server-defined history; the app does not invent an undo that
+could repeat a body. Parked answer checks, paused rows, staging holds and uncertain
+dispatches have distinct labels. An uncertain wake cannot be run or cancelled again.
+
+Writes use `call` once in an event handler. A window-wide pending receipt survives
+reader/tile navigation and blocks another clock mutation until the original
+transport retry settles. Rejections remain visible, drafts remain intact and
+non-live subscriptions disable mutations and clear readers. All authority remains
+in the server's central policy. The app neither spends approvals nor adopts
+imported provenance. Those workflows remain part of later server slices.
+
+Next mode owns Clock's lifecycle and stops its timer before database shutdown.
+Until runtime dispatch composition exists, every start remains held by Clock's
+default runtime even outside staging; nothing calls the old program. Next-mode
+approval parking composition still remains.
+
+One in-process browser test exercises two windows, live creation/cancellation,
+pause, lane text edits/reassignment, direct-link reload, phone confirmations,
+staging hold and member isolation. It captures Neon Noir and Daylight at 390,
+1280 and 1920 pixels in `artifacts/clock-app/`. CI uploads that directory with
+its shard artifact.
