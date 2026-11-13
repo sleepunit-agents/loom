@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "bin": {
     "loom": "dist/index.js",
-    "loom-taskstore": "dist/taskstore-client.js"
+    "loom-taskstore": "dist/taskstore-client.js",
+    "loom-changes": "dist/changes-client.js"
   },
   "files": [
     "dist",

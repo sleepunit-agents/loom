@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { changesCommands } from './commands.js';
+import { projectFeed, threadFeed } from './feeds.js';
 import { randomUUID } from 'node:crypto';
 import { migrate, operation, maySee, mayAct, OperationError, type Db, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { tasksRole } from '../tasks/role.js';
 import { schema } from './schema.js';
-import { active, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask } from './model.js';
+import { active, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask, short, tasksCited } from './model.js';
 import { loadChanges } from './store.js';
 import type { Approvals } from './roles.js';
 const emptyAttribution:Attribution={agents:{},ownerLogins:[]};
@@ -21,24 +23,25 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
  const decorate=(c:Change,v:Viewer)=>{
   const rule=c.agent?options.approvals?.rule(v,c.agent,targetOf(c)):undefined;
   const wait=waitsOn(c,rule),attribution=options.attribution?.()??emptyAttribution;
-  return {...c,...wait,words:stateLine(c,wait.words),...taskLinks(c,readTasks(v),[...Object.keys(attribution.agents),...(attribution.taskOwner?[attribution.taskOwner]:[])]),...(rule?{rule}:{})};
+  return {...c,...wait,status:wait.words,words:stateLine(c,wait.words),...taskLinks(c,readTasks(v),[...Object.keys(attribution.agents),...(attribution.taskOwner?[attribution.taskOwner]:[])]),...(rule?{rule}:{})};
  };
  for(const verb of ['list','references','cited-by','project-feed','thread-feed','show'] as const) operations.register(operation({
-  name:`changes.${verb}`,cli:{name:verb,positional:verb==='cited-by'?['task']:verb==='show'?['id']:[],flags:{project:'project',since:'since',conversation:'conversation'}},
-  input:z.object({id:z.string().optional(),task:z.string().optional(),project:z.string().optional(),since:z.string().optional(),conversation:z.string().optional(),references:z.array(z.string()).max(200).optional()}).passthrough(),output:z.unknown(),
+  name:`changes.${verb}`,cli:changesCommands.find(c=>c.name===verb),
+  input:z.object({cli:z.boolean().optional(),id:z.string().optional(),task:z.string().regex(/^t-[0-9]+$/).optional(),project:z.string().optional(),since:z.string().optional(),conversation:z.string().optional(),references:z.array(z.string()).max(200).optional()}).passthrough(),output:z.unknown(),
   may:(v,input)=>access(v,`changes.${verb}`)&&(verb!=='show'||!loadChanges(db).find(c=>c.id===input.id)||see(v,loadChanges(db).find(c=>c.id===input.id)!)),
   run(ctx,input){
    let changes=all(ctx.viewer).filter(c=>active(c,ctx.now)).map(c=>decorate(c,ctx.viewer));
    if(verb==='show') { const c=all(ctx.viewer).find(c=>c.id===input.id); if(!c) throw new OperationError('not-found','Change not found');return decorate(c,ctx.viewer); }
    if(verb==='references') {const wanted=new Set((input.references??[]).flatMap(r=>citations(r)));return changes.filter(c=>wanted.has(c.id));}
-   if(verb==='cited-by') return changes.filter(c=>c.tasks.some(t=>t.id===input.task));
-   if(verb==='project-feed') changes=changes.filter(c=>c.project===input.project&&(!input.since||Date.parse(c.updated??'')>=Date.parse(input.since)));
-   if(verb==='thread-feed') {const wanted=new Set((input.references??[]).flatMap(citations));return {items:changes.filter(c=>c.conversation===input.conversation||wanted.has(c.id)).sort((a,b)=>Number(b.conversation===input.conversation)-Number(a.conversation===input.conversation)).slice(0,50)};}
+   if(verb==='cited-by') {if(!input.task) throw new OperationError('invalid','cited-by needs a task');return changes.filter(c=>tasksCited(c).includes(input.task!)||c.tasks.some(t=>t.id===input.task)).map(c=>({id:c.id,title:c.title,short:short(c),page:c.page,words:stateLine(c,waitsOn(c).words)}));}
+   if(verb==='project-feed') changes=changes.filter(c=>c.project===input.project);
+   if(verb==='thread-feed') {if(!/^cv-[0-9a-f]{12}$/.test(input.conversation??'')) throw new OperationError('invalid','thread-feed needs a conversation');return threadFeed(changes,input.conversation!,input.references??[],ctx.now,new Set(loadChanges(db).filter(c=>!see(ctx.viewer,c)).map(c=>c.id)));}
    changes.sort((a,b)=>groups.indexOf(a.group)-groups.indexOf(b.group)||Date.parse(b.updated??'')-Date.parse(a.updated??''));
-   return verb==='project-feed'?{groups:groups.map(group=>({title:group,waiting:group==='you',items:changes.filter(c=>c.group===group)})).filter(g=>g.items.length)}:changes;
+   if(verb==='project-feed') return projectFeed(changes,ctx.now);
+   return input.cli ? {stdout:changes.filter(c=>c.state==='open').map(c=>`${c.id}  ${c.words}  — ${c.title}\n`).join('')} : changes;
   }
  }));
- operations.register(operation({name:'changes.refresh',write:true,cli:{name:'refresh',write:true},input:z.object({}).passthrough(),output:z.object({message:z.string()}),
+ operations.register(operation({name:'changes.refresh',write:true,cli:changesCommands.find(c=>c.name==='refresh'),input:z.object({}).passthrough(),output:z.object({message:z.string()}),
   may:v=>mayAct(v,{type:'change'},sharing(),'household','changes.refresh'),
   run(ctx){db.prepare('INSERT INTO changes_jobs(id,due) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET due=excluded.due').run(ctx.now);ctx.changed('change-sync','status');options.onRefresh?.();return {message:'asked for a read'};}
  }));
