@@ -848,3 +848,20 @@ it.each(['deliver','stop'] as const)('does not consume a deferred runtime %s res
     if(change!=='shutdown') {active=true;f.clock.advance(5000);await f.engine.flush();expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'delivered'});if(phase==='deliver')expect(f.deliveries.size).toBe(1);}
   }
 });
+
+it('rechecks synchronous owning policy after awaited admission before intake and the final outbound authorization',async()=>{
+ const f=await fixture();let allowed=true;f.runtime.current=()=>allowed;
+ f.runtime.admit=async()=>{allowed=false;return 'allow';};
+ await f.engine.receive(f.venue.id,f.message());await f.engine.flush();
+ expect(f.deliveries.size).toBe(0);
+ allowed=true;f.runtime.admit=async()=> 'allow';await f.engine.flush();
+ expect(f.deliveries.size).toBe(1);
+ const incomingId=[...f.deliveries.keys()][0];f.engine.reply({id:'policy-race-reply',incomingId,text:'NO POST'});
+ f.adapter.send=async(_v,_address,_text,_id,authorize)=>{
+  f.runtime.admit=async()=>{allowed=false;return 'allow';};
+  if(!await authorize())throw Error('Owning policy changed');
+  f.adapter.posts.push(['LEAK']);return {id:'wrong'};
+ };
+ await f.engine.flush();expect(f.adapter.posts).toEqual([]);
+ expect(f.app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('policy-race-reply')).toEqual({state:'uncertain'});
+});

@@ -230,3 +230,28 @@ it.each([{guest:true},{pair:'paired'},{peer:true},{readers:['jonathan']}] as con
  await f.receive('stop','1794503534.000000');await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_inbox WHERE state='pending' AND retry_since IS NOT NULL").get());
  expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');expect(f.app.db.prepare('SELECT * FROM runtime_bridge_stops').all()).toEqual([]);expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);expect(f.posts).toEqual([]);
 });
+
+it('holds archived gates and proposals before admission, including after exact adoption',async()=>{
+ const f=await setup();
+ const insert=(collection:string,key:string,doc:unknown)=>f.app.db.prepare('INSERT INTO runtime_import_documents VALUES (?,?,?)').run(collection,key,JSON.stringify({collection,key,doc:JSON.stringify(doc),rev:4,updated:'original',by:'owner'}));
+ insert('gates','art',{people:{jonathan:{tier:3,restrict:'Original owner restriction'}}});
+ insert('policy','art',{deny:['Read']});insert('gate-proposals','art.p-original',{agent:'art',entry:{tier:1},why:'Original question'});
+ await f.receive();await until(()=>!!f.app.db.prepare('SELECT id FROM bridges_inbox WHERE retry_since IS NOT NULL').get());
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([]);expect(f.posts).toEqual([]);
+ const read=value<{archive:string}>(await f.post(f.owner,'runtime.readBodyPolicy',{agent:'art'}));
+ value(await f.post(f.owner,'runtime.adoptBodyPolicy',{agent:'art',archive:read.archive}));
+ f.clock.advance(5000);await until(()=>!!f.app.db.prepare('SELECT id FROM bridges_inbox WHERE retry_since IS NOT NULL').get());
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([]);
+ // Even valid adopted documents cannot enter the DM path before its runner
+ // enforces the compiled deny list and standing restriction.
+ expect(await f.post(f.runner,'runtime.claimableJobs',{})).toMatchObject({ok:true,value:{jobs:[]}});
+});
+it('new policy fences existing body input/read/reply and stops its runner without reusing native history',async()=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const running=await f.running();
+ value(await f.post(f.owner,'runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{jonathan:{tier:3,restrict:'New restriction'}}},policy:{deny:['Read']}}));
+ expect(await f.post(running.body,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(running.body,'runtime.reply',{id:'late',text:'NO'})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.runner,'runtime.takeInput',{job:running.job})).toMatchObject({ok:false});
+ expect(await f.post(f.runner,'runtime.jobControl',{job:running.job})).toMatchObject({ok:true,value:{stop:true,history:'discard'}});
+ expect(f.posts).toEqual([]);
+});

@@ -1103,7 +1103,16 @@ before release. The accessor grants no registry permission and launches no work.
 | Gates export/import review | Owner read plus digest-bound adoption from the already imported private archive |
 | Owner policy replacement | Revision-bound `runtime.configureBodyPolicy`, blocked until original archive adoption |
 
-External delivery is still unavailable. Trusted Bridges admission/replies,
+The household-DM path merged in #1104 is now guarded by
+`bodyPolicyExecutionHeld`: any active owner configuration or associated imported
+permission/proposal source holds admission, delivery, input and body reads/replies
+until that path enforces compiled body rules. Adoption alone never removes this
+hold. Existing bound runners receive stop/discard; delayed outbox sends also
+recheck owning policy synchronously after asynchronous admission and at final
+outbound authorization. Fresh household DMs without owner configuration or
+archived permission sources keep #1104's central member binding contract.
+
+General external delivery, compiled-policy enforcement by the separate runner,
 proposal decisions, lifecycle/history, source queues and original pending owner
 requests, accounts/models, Clock/Comms retry integration, Runtime Kit screens,
 generated client and complete old-command parity remain on t-2209. No running

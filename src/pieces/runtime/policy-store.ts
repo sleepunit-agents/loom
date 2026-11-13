@@ -11,8 +11,8 @@ interface Configuration { revision: number; gates: unknown; policy: unknown; arc
 /** Exact imported rows remain archived, even after owner edits or proposal decisions. */
 function archived(db: Db, agent: string) {
   const predicate = `((collection IN ('gates','policy') AND key=?) OR (collection='gate-proposals' AND
-    (substr(key,1,length(?)+1)=?||'.' OR json_extract(CASE WHEN json_valid(json_extract(record,'$.doc')) THEN json_extract(record,'$.doc') ELSE '{}' END,'$.agent')=?)))`;
-  const args = [agent,agent,agent,agent];
+    (key=? OR substr(key,1,length(?)+1)=?||'.' OR json_extract(CASE WHEN json_valid(json_extract(record,'$.doc')) THEN json_extract(record,'$.doc') ELSE '{}' END,'$.agent')=?)))`;
+  const args = [agent,agent,agent,agent,agent];
   // Refuse an unbounded owner response before loading source words. Never truncate.
   const size = db.prepare(`SELECT coalesce(sum(length(CAST(record AS BLOB))),0) AS n FROM runtime_import_documents WHERE ${predicate}`).get(...args) as { n: number };
   if (size.n > 1024*1024) fail('Archived permission documents exceed the review limit');
@@ -39,6 +39,14 @@ export function currentBodyPolicy(db: Db, agent: string) {
   if (!current || current.archive !== source.key) return fail('Owner permission documents need reconciliation');
   if (!valid(current.gates,current.policy)) return fail('Owner permission documents need repair');
   return { revision: current.revision, key: digest(current), gates: structuredClone(current.gates), policy: structuredClone(current.policy) };
+}
+/** The initial household-DM path does not enforce compiled body rules yet.
+ * Hold configured/imported agents until its runner integration can enforce them.
+ * Never treat an unreadable source as absent. This also gates delayed sends.
+ */
+export function bodyPolicyExecutionHeld(db: Db, agent: string): boolean {
+  try { return !!stored(db,agent) || archived(db,agent).rows.length>0; }
+  catch { return true; }
 }
 export function installBodyPolicyStore(db: Db, operations: Operations, sharing: () => Sharing) {
   // Gate editing was always household-owner work, including another member's agent.

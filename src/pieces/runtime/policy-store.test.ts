@@ -93,10 +93,19 @@ it('receipts replay acknowledgements without reverting later policy and late fai
  await f.restart();expect(f.call('configureBodyPolicy',input,owner,'original')).toEqual({ok:true,value:{agent:'art',revision:1}});
  expect(currentBodyPolicy(f.app.db,'art')).toMatchObject({revision:2,policy:{}});
  f.app.db.exec("CREATE TRIGGER abort_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'abort'); END");
- expect(f.configure(2)).toMatchObject({ok:false,code:'unavailable'});expect(currentBodyPolicy(f.app.db,'art')).toMatchObject({revision:2,policy:{}});
+ const edit={agent:'art',revision:2,gates,policy};
+ expect(f.call('configureBodyPolicy',edit,owner,'failed-edit')).toMatchObject({ok:false,code:'unavailable'});expect(currentBodyPolicy(f.app.db,'art')).toMatchObject({revision:2,policy:{}});
  f.archive('gates','mark',gates);const result=f.call('readBodyPolicy',{agent:'mark'});if(!result.ok)throw Error(result.message);
- expect(f.call('adoptBodyPolicy',{agent:'mark',archive:(result.value as {archive:string}).archive})).toMatchObject({ok:false,code:'unavailable'});
+ const adopt={agent:'mark',archive:(result.value as {archive:string}).archive};
+ expect(f.call('adoptBodyPolicy',adopt,owner,'failed-adopt')).toMatchObject({ok:false,code:'unavailable'});
  expect(f.app.db.prepare('SELECT * FROM runtime_body_policy WHERE agent=?').get('mark')).toBeUndefined();
+ f.app.db.exec('DROP TRIGGER abort_receipt');
+ expect(f.call('configureBodyPolicy',edit,owner,'failed-edit')).toEqual({ok:true,value:{agent:'art',revision:3}});
+ expect(f.call('adoptBodyPolicy',adopt,owner,'failed-adopt')).toEqual({ok:true,value:{agent:'mark',revision:1}});
+ expect(f.configure(3,gates,{}).ok).toBe(true);
+ expect(f.call('configureBodyPolicy',edit,owner,'failed-edit')).toEqual({ok:true,value:{agent:'art',revision:3}});
+ expect(currentBodyPolicy(f.app.db,'art')).toMatchObject({revision:4,policy:{}});
+ expect(f.call('adoptBodyPolicy',adopt,owner,'failed-adopt')).toEqual({ok:true,value:{agent:'mark',revision:1}});
 });
 it('refuses oversized source words before returning a truncated owner review',async()=>{
  const f=await setup();f.archive('gate-proposals','art.p-large',{agent:'art',words:'x'.repeat(1024*1024)});
