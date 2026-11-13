@@ -88,3 +88,23 @@ it('generates both clients, never retries minting, and retries revocation with o
   expect(await f.client('token',['create','{}'],async()=>new Response('private-witness',{status:503}))).toMatchObject({code:1,calls:1,stdout:''});
   expect(await f.client('sessions',['revoke','[]'])).toMatchObject({code:2,calls:0});
 });
+it('rolls back the entire compromised line and its retry receipt when device removal cannot commit',async()=>{
+  const f=await setup(),root=hash('operator-bearer'),child=hash('child');
+  f.s.tokens.change(x=>x.push({role:'owner',member:'jonathan',label:'child',sha256:child,passkey:hash('credential'),from_sha256:root,created:'2026-01-01'}));
+  f.s.sessions.change(x=>{x.passkeys={child:{id:'child',secret:child,publicKey:'key',counter:0,alg:-7,label:'child',created:0}};x.push={subs:{child:{session:'0'.repeat(64),token:child,at:0,sub:{endpoint:'child',keys:{auth:'a',p256dh:'k'}}}}};});
+  const before={tokens:f.s.tokens.document(),sessions:f.s.sessions.read()};
+  f.app.db.exec("CREATE TEMP TRIGGER fail_device_remove BEFORE DELETE ON household_push BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+  expect(f.call('token.revoke',{label:'operator',withPasskeys:true},'rollback')).toMatchObject({ok:false,code:'unavailable'});
+  expect({tokens:f.s.tokens.document(),sessions:f.s.sessions.read()}).toEqual(before);
+  expect(f.app.db.prepare("SELECT count(*) AS n FROM core_operations WHERE id='rollback'").get()).toEqual({n:0});
+  f.app.db.exec('DROP TRIGGER fail_device_remove');
+  expect(f.call('token.revoke',{label:'operator',withPasskeys:true},'rollback')).toEqual({ok:true,value:{revoked:2,passkeys:1,devices:1}});
+});
+it('updates safe Live sessions at the expiry boundary without a new write',async()=>{
+  const f=await setup(),cookie=f.s.createSession(hash('operator-bearer'));
+  f.s.sessions.change(x=>{x.sessions[hash(cookie)].issuedAt=f.s.now()-30*86400+1;});
+  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer operator-bearer'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+  ws.send(JSON.stringify({kind:'subscribe',type:'signin.admin'}));const first=JSON.parse((await once(ws,'message'))[0].toString());expect(first.records[0].sessions[0].ended).toBe(false);
+  const changed=once(ws,'message');f.clock.advance(1000);const update=JSON.parse((await changed)[0].toString());expect(update.record.sessions[0].ended).toBe(true);
+  expect(f.s.session(cookie)).toBeUndefined();
+});
