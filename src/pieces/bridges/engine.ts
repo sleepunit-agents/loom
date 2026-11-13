@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 import type { Clock, Context } from '../../core/index.js';
-import type { Address, Message, Venue } from './model.js';
-import { keyFor } from './model.js';
+import type { Address, Message, Route, Venue } from './model.js';
+import { keyFor, conversationKind } from './model.js';
 import { eventTime } from './time.js';
 import { addressed, isStop } from './routing.js';
-import { all, venueById, routeFor, personFor } from './store.js';
+import { all, venueById, routeFor, personFor, setupRevision } from './store.js';
 import type { BridgeRuntime, BridgeSecrets, BridgesRole, VenueAdapter, VenueConnection } from './role.js';
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 interface Inbox { id: string; venue: string; identity: string; message: string; state: 'pending'|'held'|'dropped'|'delivered' }
@@ -79,6 +79,7 @@ export class Bridges implements BridgesRole {
     if (this.closed) throw new Error('Bridges closed');
     const v = receivedAs ?? venueById(this.app.db,venueId);
     if (!v) throw new Error('Unknown venue');
+    message = {...message,...conversationKind(v,message)};
     const id = hash([v.platform,v.workspace,message.channel,message.id,v.agent]);
     this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
     this.changed('bridges.venue',v.id);
@@ -93,7 +94,9 @@ export class Bridges implements BridgesRole {
     if (old) { if (old.incoming !== input.incomingId || old.text !== input.text) throw new Error('Reply id reused'); return; }
     const incoming = db.prepare("SELECT * FROM bridges_inbox WHERE id=? AND state='delivered'").get(input.incomingId) as Inbox | undefined;
     if (!incoming) throw new Error('No delivered message for reply');
-    const m = JSON.parse(incoming.message) as Message;
+    const raw = JSON.parse(incoming.message) as Message;
+    const v = venueById(db,incoming.venue);
+    const m = v ? {...raw,...conversationKind(v,raw)} : raw;
     const address: Address = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group};
     db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,incoming.identity,JSON.stringify(address),input.text,this.clock.now());
     if (context) context.changed('bridges.send',input.id); else this.changed('bridges.send',input.id);
@@ -110,11 +113,42 @@ export class Bridges implements BridgesRole {
     if (this.cancelRetry || this.closed) return;
     this.cancelRetry = this.clock.at(this.clock.now()+5000, () => { this.cancelRetry=undefined; void this.flush(); });
   }
+  private setupUnchanged(v: Venue, message: Message | undefined, route: Route | undefined, revision: string) {
+    const current = venueById(this.app.db,v.id);
+    return !this.closed && current?.enabled && setupRevision(this.app.db) === revision
+      && JSON.stringify(current) === JSON.stringify(v)
+      && (!message || JSON.stringify(routeFor(this.app.db,current,message.channel,message.parent)) === JSON.stringify(route));
+  }
+  /** No admission cache: a reply may run long after the original receipt. */
+  private async admit(v: Venue, message: Message, route: Route | undefined, adapter: VenueAdapter, token: string, person: string) {
+    const inspected = await adapter.inspect(v,token,message);
+    if (inspected === 'drop' || inspected === 'wait') return inspected;
+    let people = [person];
+    if (v.platform === 'slack' && message.group) {
+      if (typeof inspected !== 'object' || inspected?.kind !== 'allow' || !Array.isArray(inspected.members)) return 'drop';
+      const members = inspected.members;
+      if (members.some(id => typeof id !== 'string' || !id) || new Set(members).size !== members.length
+        || !members.includes(v.bot) || !members.includes(message.user)) return 'drop';
+      const humans = members.filter(id => id !== v.bot);
+      const resolved = humans.map(id => personFor(this.app.db,v,id));
+      if (humans.length < 2 || resolved.some(p => !p) || new Set(resolved).size !== resolved.length) return 'drop';
+      people = resolved as string[];
+    } else if (inspected !== 'allow' && (typeof inspected !== 'object' || inspected?.kind !== 'allow')) return 'drop';
+    const key = keyFor(v,message,person);
+    for (const member of people) {
+      const admitted = await this.runtime.admit({agent:v.agent,person:member,venue:key.venue,
+        channel:message.parent ?? message.channel,dm:message.dm,group:message.group,
+        readers:route?.readers ?? [],peer:!!message.bot});
+      if (admitted !== 'allow') return admitted === 'wait' ? 'wait' : 'drop';
+    }
+    return 'allow';
+  }
   private async drain() {
     const db = this.app.db;
     for (const row of db.prepare("SELECT * FROM bridges_inbox WHERE state='pending' ORDER BY received,id").all() as Inbox[]) {
       if (this.closed) return;
-      const v = venueById(db,row.venue), message = JSON.parse(row.message) as Message;
+      const v = venueById(db,row.venue), raw = JSON.parse(row.message) as Message;
+      const message = v ? {...raw,...conversationKind(v,raw)} : raw;
       let state = 'dropped', reason: string | null = null;
       try {
         if (!v || identity(v)!==row.identity) { state='held'; reason='venue identity changed'; }
@@ -128,16 +162,13 @@ export class Bridges implements BridgesRole {
             else {
               const adapter = this.adapters.find(a => a.platform === v.platform);
               if (!adapter) throw new Error('Adapter unavailable');
+              const revision = setupRevision(db);
               const {token} = await this.credentials(v);
-              const inspected = await adapter.inspect(v,token,message);
+              const admitted = await this.admit(v,message,route,adapter,token,person);
               const key = keyFor(v,message,person);
-              const admitted = inspected === 'allow' ? await this.runtime.admit({agent:v.agent,person,venue:key.venue,channel:message.parent ?? message.channel,dm:message.dm,group:message.group,readers:route?.readers ?? [],peer:!!message.bot}) : inspected;
+              if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
               if (admitted === 'wait') { this.retry(); continue; }
               if (admitted === 'allow') {
-                if (this.closed) return;
-                const current = venueById(db,row.venue);
-                if (!current?.enabled || identity(current)!==row.identity || personFor(db,current,message.user)!==person
-                  || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
                 if (!message.bot && isStop(message.text)) {
                   await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
                   state='delivered';
@@ -167,16 +198,30 @@ export class Bridges implements BridgesRole {
       if (!v?.enabled || identity(v)!==row.identity) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id); this.changed('bridges.send',row.id); continue; }
       const adapter = this.adapters.find(a => a.platform === v.platform);
       if (!adapter) { this.retry(); continue; }
+      const revision = setupRevision(db);
       let token: string;
       try { token=(await this.credentials(v)).token; } catch { this.retry(); continue; }
-      if (this.closed) return;
-      const current = venueById(db,row.venue);
-      if (!current?.enabled || JSON.stringify(current)!==JSON.stringify(v)) { this.retry(); continue; }
+      const original = db.prepare('SELECT message FROM bridges_inbox WHERE id=(SELECT incoming FROM bridges_outbox WHERE id=?)').get(row.id) as {message:string} | undefined;
+      const raw = original ? JSON.parse(original.message) as Message : undefined;
+      const message = raw ? {...raw,...conversationKind(v,raw)} : undefined;
+      const route = message ? routeFor(db,v,message.channel,message.parent) : undefined;
+      if (v.platform === 'slack' && message?.group) {
+        let admitted: 'allow'|'drop'|'wait';
+        try { admitted = await this.admit(v,message,route,adapter,token,personFor(db,v,message.user) ?? ''); } catch { this.retry(); continue; }
+        if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
+        if (admitted === 'wait') { this.retry(); continue; }
+        if (admitted !== 'allow') {
+          db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id);
+          this.changed('bridges.send',row.id); continue;
+        }
+      }
+      if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
       // The effect id is permanent; releasing a staging item allows exactly one attempt.
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);
       try {
-        const result = await adapter.send(v,token,JSON.parse(row.address) as Address,row.text,row.id);
+        const address = JSON.parse(row.address) as Address;
+        const result = await adapter.send(v,token,{...address,...conversationKind(v,address)},row.text,row.id);
         db.prepare("UPDATE bridges_outbox SET state='sent',remote_id=? WHERE id=?").run(result.id,row.id);
         this.effects.finish(`bridges:${row.id}`);
       } catch {

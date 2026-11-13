@@ -4,6 +4,7 @@ import { grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
+import { recordSecretChange } from './history.js';
 import { removeSecretMetadata } from './removal.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
  * The registry stores only an input hash and this fixed acknowledgement.
@@ -28,6 +29,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
         }
       }
       catch { throw new OperationError('unavailable', 'Key holder could not remove the secret'); }
+      recordSecretChange(ctx, receipt, input.name, 'removed');
       removeSecretMetadata(ctx, input.name);
       db.prepare('INSERT INTO secrets_meta VALUES (?,?)').run(receipt, input.name);
       return { removed: true as const };
@@ -50,6 +52,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
       const existing = db.prepare('SELECT record FROM secrets_names WHERE id=?').get(input.name) as { record: string } | undefined;
       if (existing) record.description = (JSON.parse(existing.record) as { description: string }).description;
       db.prepare('INSERT INTO secrets_names VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(input.name, JSON.stringify(record));
+      recordSecretChange(ctx, `set:${ctx.viewer.id}:${input.writeId}`, input.name, input.mode);
       ctx.changed('secret.name', input.name); return { saved: true as const };
     },
   }));

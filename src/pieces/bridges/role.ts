@@ -22,6 +22,11 @@ export interface BridgeSecrets {
   get(agent: string, name: string): Promise<string>;
 }
 export interface VenueConnection { close(): void }
+/** Slack allows only after authenticated platform checks. Group members are the
+ * complete fresh conversations.members set (including the receiving bot); each
+ * human passed users.info. Outbound inspection must also verify current MPIM
+ * kind via conversations.info, without an intake cache. */
+export type Inspection = 'allow' | 'drop' | 'wait' | { kind: 'allow'; members: string[] };
 export interface VenueAdapter {
   platform: Venue['platform'];
   connect(venue: Venue, credentials: { token: string; appToken?: string }, callbacks: {
@@ -29,7 +34,7 @@ export interface VenueAdapter {
     message(message: Message): Promise<void>; dropped(): void;
   }): Promise<VenueConnection>;
   /** Slack workspace/guest/group checks. A failure is wait, never allow. */
-  inspect(venue: Venue, token: string, message: Message): Promise<'allow' | 'drop' | 'wait'>;
+  inspect(venue: Venue, token: string, message: Message): Promise<Inspection>;
   send(venue: Venue, token: string, address: Address, text: string, operationId: string): Promise<{ id: string }>;
 }
 export interface BridgesRole {

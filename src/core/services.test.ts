@@ -102,7 +102,7 @@ it('registers the own types and exact namespace operations for every in-repo ins
     changes: ['change', 'change-sync'], tasks: ['task'], approvals: ['approval', 'approval-rule'],
     attention: ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding'],
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
-    secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy'],
+    secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
     clock: ['wake', 'schedule', 'clock'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
   };

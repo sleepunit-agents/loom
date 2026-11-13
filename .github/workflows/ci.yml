@@ -9,12 +9,12 @@ on:
   merge_group:
 
 # Superseded PR heads must not occupy runners needed by their replacement.
-# Runs on main share one group and a newer merge replaces an older one's run:
-# only the newest main is ever deployed, and with no merge queue (2026-11-12)
-# the older runs only held runners that open PRs were waiting for.
+# Runs on main share one group. A run that has started always finishes, so main
+# gets a build to deploy even while merges keep arriving; a newer merge replaces
+# only a run still waiting behind it (GitHub keeps one pending run per group).
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

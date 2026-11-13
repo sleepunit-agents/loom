@@ -3,6 +3,7 @@ import { operation } from './commands.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
+import { digestProjects, type DigestReferences } from './project-references.js';
 import type { Conversation } from './conversations.js';
 import { attentionRole } from './role.js';
 import { parseNeeds, answersOf, type NeedsOwner } from './needs.js';
@@ -26,7 +27,7 @@ export interface Digest extends Scope {
   needs_owner: NeedsOwner | null; ask: string | null;
 }
 export const digestId = (conversation: string, run: string) => `dg-${createHash('sha256').update(`${conversation}\0${run}`).digest('hex').slice(0, 12)}`;
-export function installDigests(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+export function installDigests(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   const role = attentionRole(operations);
   const read = <T>(table: string, id: string): T | undefined => {
     const row = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
@@ -45,6 +46,8 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
     run(ctx, input) {
       const c = conversation(input.conversation)!;
       const id = digestId(c.id, input.run), previous = read<Digest>('attention_digests', id);
+      const projects = digestProjects(ctx.viewer, c, input.digest.projects, references);
+      if (!projects.ok) return projects;
       const revision = (previous?.revision ?? 0) + 1;
       const records = all(c.id);
       // Commit order, including same-clock rewrites, decides which digest asks now.
@@ -59,7 +62,7 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
         const result = role.raise(ctx.viewer, { ...question, answers: answersOf(input.digest.needs_owner!), ...scope, id: ask, source: { kind: 'conversation', id: c.id } }, `digest-raise:${id}:${revision}`);
         if (!result.ok) return result;
       }
-      const record: Digest = { ...input.digest, ...scope, projects: [...new Set(input.digest.projects)], id, conversation: c.id, run: input.run, revision, order: Math.max(0, ...records.map(d => d.order)) + 1, at: new Date(ctx.now).toISOString(), ask };
+      const record: Digest = { ...input.digest, ...scope, projects: projects.value, id, conversation: c.id, run: input.run, revision, order: Math.max(0, ...records.map(d => d.order)) + 1, at: new Date(ctx.now).toISOString(), ask };
       db.prepare('INSERT INTO attention_digests VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, record=excluded.record').run(id, c.id, revision, JSON.stringify(record));
       c.projects = [...new Set([...records.filter(d => d.id !== id).flatMap(d => d.projects), ...record.projects])].sort();
       db.prepare('UPDATE attention_conversations SET record=? WHERE id=?').run(JSON.stringify(c), c.id);
