@@ -1,11 +1,16 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {X509Certificate,randomBytes,randomUUID} from 'node:crypto';
 import {generateIdentity} from 'age-encryption';
 import {startLoom} from '../../foundation.js';
+import * as foundation from '../../foundation.js';
+import {run as serve} from '../../cli/serve.js';
+import {Readable} from 'node:stream';
+import https from 'node:https';
+import type {Socket} from 'node:net';
 import {fixture} from '../../fixture.js';
 import {FakeClock} from '../../core/clock.js';
 import {configuredSecretWrites} from './holder-config.js';
@@ -96,4 +101,78 @@ it('close during holder acknowledgement performs no late database work and stagi
   expect(prepare).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();prepare.mockRestore();transaction.mockRestore();
   app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,secretWrites:configuredSecretWrites(s.writes),stdout:()=>{}});
   clock.advance(0);await expect.poll(()=>app.db.prepare('SELECT state FROM secrets_write_intents').get()).toEqual({state:'complete'});
+});
+
+it('serve loads explicit strict private writes configuration and dispatches through the normal root',async()=>{
+  const s=await setup(),authorityFile=join(s.home,'authority.json');writeFileSync(authorityFile,JSON.stringify(s.authority),{mode:0o600});
+  const actual=foundation.startLoom;let app:Awaited<ReturnType<typeof startLoom>>|undefined;
+  const start=vi.spyOn(foundation,'startLoom').mockImplementation(async options=>app=await actual({...options,port:0,clock:new FakeClock()}));
+  let ready=false;const running=serve(['--next','--home',s.appHome,'--secret-authority',authorityFile,'--secret-writes',s.writes],
+    {stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:text=>{if(text.includes('next app on'))ready=true;}});
+  let holder:Awaited<ReturnType<typeof startPersistentHolder>>|undefined;
+  try {
+    await expect.poll(()=>ready).toBe(true);holder=await startPersistentHolder(s.file);
+    expect(start.mock.calls[0][0].secretWrites).toBeDefined();
+    expect(await app!.operations.callAsync('http',owner,'secrets.set',{name:'API',writeId:randomUUID(),mode:'add',value:'CLI-ROOT-SENTINEL'},'cli')).toMatchObject({ok:true});
+  } finally {await holder?.close();process.emit('SIGTERM');expect(await running).toBe(0);start.mockRestore();}
+});
+it('CLI rejects incomplete and malformed mutation config with fixed value-free diagnostics',async()=>{
+  const s=await setup(),error:string[]=[];
+  const io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:(text:string)=>error.push(text)};
+  expect(await serve(['--secret-writes',s.writes],io)).toBe(2);expect(error.splice(0)).toEqual(['--secret-writes requires --next\n']);
+  expect(await serve(['--next','--secret-writes',s.writes],io)).toBe(2);expect(error.splice(0)).toEqual(['--secret-writes requires --secret-authority\n']);
+  const file=join(s.home,'authority.json');writeFileSync(file,JSON.stringify(s.authority),{mode:0o600});
+  const valid=JSON.parse(readFileSync(s.writes,'utf8'));
+  for(const bad of [{...valid,extra:'PRIVATE-SENTINEL'},{...valid,holder:{...valid.holder,extra:'PRIVATE-SENTINEL'}},{...valid,retryKeys:{active:'relative',previous:[]}},{...valid,retryKeys:{...valid.retryKeys,extra:'PRIVATE-SENTINEL'}}]) {
+    writeFileSync(s.writes,JSON.stringify(bad),{mode:0o600});
+    expect(await serve(['--next','--secret-authority',file,'--secret-writes',s.writes],io)).toBe(2);
+    expect(error.splice(0)).toEqual(['Invalid secret mutation configuration\n']);
+  }
+  writeFileSync(s.writes,JSON.stringify(valid),{mode:0o600});chmodSync(s.writes,0o644);
+  expect(await serve(['--next','--secret-authority',file,'--secret-writes',s.writes],io)).toBe(2);
+  expect(error.splice(0)).toEqual(['Invalid secret mutation configuration\n']);
+});
+it('configured root removal cancels its managed Attention ask atomically and retries after rollback',async()=>{
+  const s=await setup();const app=await startLoom({home:s.appHome,next:true,clock:new FakeClock(),secretAuthority:s.authority,secretWrites:configuredSecretWrites(s.writes),stdout:()=>{}});stops.push(app.close);
+  const holder=await startPersistentHolder(s.file);stops.push(holder.close);
+  expect((await app.operations.callAsync('http',owner,'secrets.set',{name:'API',writeId:randomUUID(),mode:'add',value:'ATTENTION-ROOT-SENTINEL'},'add')).ok).toBe(true);
+  const request=app.operations.call('direct',{kind:'agent',id:'art'},'secrets.requestHouse',{agent:'art',target:'API',scope:{house:'h-1'},why:'fixture',minutes:2},'request');
+  expect(request.ok).toBe(true);if(!request.ok)throw Error('request refused');const id=(request.value as {id:string}).id;
+  const ask=()=>app.operations.call('direct',owner,'attention.get',{id});
+  expect(ask()).toMatchObject({ok:true,value:{state:'open'}});
+  const before=app.db.prepare('SELECT * FROM secrets_names').all(),changed=vi.spyOn(app.live,'changed');
+  app.db.exec("CREATE TRIGGER reject_cancel BEFORE UPDATE ON attention_asks BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  const input={name:'API',writeId:randomUUID()};
+  expect(await app.operations.callAsync('http',owner,'secrets.remove',input,'remove')).toMatchObject({ok:false,code:'unavailable'});
+  expect(ask()).toMatchObject({ok:true,value:{state:'open'}});expect(app.db.prepare('SELECT * FROM secrets_names').all()).toEqual(before);
+  // The holder has committed removal, but metadata and Attention must roll back together.
+  await expect(s.source.read('API')).rejects.toThrow();
+  expect(changed.mock.calls.flatMap(c=>c[0]).filter(c=>c.type==='attention.ask'||c.type==='secret.name')).toEqual([]);
+  app.db.exec('DROP TRIGGER reject_cancel');
+  expect(await app.operations.callAsync('http',owner,'secrets.remove',input,'remove')).toMatchObject({ok:true,value:{removed:true}});
+  expect(ask()).toMatchObject({ok:true,value:{state:'resolved'}});
+});
+
+it.each(['receipt','mutation'])('shutdown destroys an actually stalled authenticated %s request before database close',async stall=>{
+  const s=await setup(),clock=new FakeClock(),serverConfig=JSON.parse(readFileSync(s.file,'utf8')).mutation;
+  const sockets=new Set<Socket>();let received=false;
+  const server=https.createServer({ca:readFileSync(serverConfig.ca),cert:readFileSync(serverConfig.cert),key:readFileSync(serverConfig.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
+    req.resume();
+    if(stall==='mutation'&&req.url==='/v1/receipt'){res.writeHead(404,{'content-length':'0'});res.end();}
+    else received=true;
+  });
+  server.on('connection',socket=>{sockets.add(socket);socket.on('error',()=>{});socket.once('close',()=>sockets.delete(socket));});
+  await new Promise<void>(resolve=>server.listen(serverConfig.socket,resolve));
+  // Fixture listener uses the same private protocol directory and permissions.
+  chmodSync(serverConfig.socket,0o600);
+  stops.push(async()=>{for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+  const config=configuredSecretWrites(s.writes),app=await startLoom({home:s.appHome,next:true,clock,secretAuthority:s.authority,secretWrites:config,stdout:()=>{}});stops.push(app.close);
+  const actual=https.request,requests:ReturnType<typeof https.request>[]=[];
+  const spy=vi.spyOn(https,'request').mockImplementation((...args:Parameters<typeof https.request>)=>{const req=actual(...args);requests.push(req);return req;});
+  const pending=app.operations.callAsync('http',owner,'secrets.set',{name:'API',writeId:randomUUID(),mode:'add',value:'SOCKET-ROOT-SENTINEL'},'stall');
+  await expect.poll(()=>received).toBe(true);await app.close();
+  const db=vi.spyOn(app.db,'prepare');expect(await pending).toMatchObject({ok:false,code:'unavailable'});expect(db).not.toHaveBeenCalled();
+  expect(requests.length).toBeGreaterThan(0);expect(requests.every(r=>r.destroyed)).toBe(true);
+  await expect.poll(()=>sockets.size).toBe(0);db.mockRestore();spy.mockRestore();
+  await expect(config.holder.hasReceipt({member:'jonathan',writeId:randomUUID()})).rejects.toThrow();
 });

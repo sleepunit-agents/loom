@@ -12,6 +12,8 @@ import type {HolderWrite} from './holder-store.js';
 import {bindSecretRetryKey, type SecretRetryKeyMaterial} from './retry-key.js';
 
 export interface AsyncSecretMutations {
+  /** Production transports drain or cancel active IO before daemon shutdown. */
+  close?(): void | Promise<void>;
   set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add'|'replace'): Promise<void>;
   remove(who: HolderWrite, name: string): Promise<void>;
   hasReceipt(who: HolderWrite): Promise<boolean>;

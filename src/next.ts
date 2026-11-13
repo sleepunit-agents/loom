@@ -98,13 +98,20 @@ export interface NextChangesOptions {
   interval?: number;
 }
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets' | 'credentialEpoch' | 'observeCredentials' | 'name' | 'receive'> { name?: SlackDaemonOptions['name']; receive?: SlackDaemonOptions['receive']; runtime?: BridgeRuntime; source: SecretValueSource & HolderGeneration; discordSocket?: DiscordDaemonOptions['socket'] }
+const secretMutationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
-  try { await bridgeDaemons.get(app)?.close(); }
-  finally { try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); } finally { await runtimeClosers.get(app)?.(); } }
+  try { await secretMutationClosers.get(app)?.(); }
+  finally {
+    try { await bridgeDaemons.get(app)?.close(); }
+    finally {
+      try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
+      finally { await runtimeClosers.get(app)?.(); }
+    }
+  }
 }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
@@ -255,10 +262,11 @@ export async function installNext(app: Foundation, options: NextOptions) {
   }
   if (options.secretWrites) {
     const holder = heldSecretMutations(options.secretWrites.holder, effects);
-    app.onClose(holder.close);
+    app.onClose(()=>{void holder.close();});
     const recovery = installAsyncSecretValuesFromFile(app.db, app.operations, sharing, holder,
       options.secretWrites.retryKeys, secretAttention);
-    startSecretReconciliation(app, recovery);
+    const job = startSecretReconciliation(app, recovery);
+    secretMutationClosers.set(app,async()=>{job.close();await holder.close();});
   }
   return effects;
 }
