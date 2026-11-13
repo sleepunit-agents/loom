@@ -59,3 +59,17 @@ it('fails closed after restart when a persisted source ask has no installed hand
   expect(call('attention.resolve', { id: 'one', reason: 'Detach' })).toMatchObject({ ok: false, code: 'denied' });
   expect(call('attention.get', { id: 'one' })).toMatchObject({ ok: true, value: { state: 'open' } });
 });
+it('never promotes a public source label into a capability when the source is installed later', async () => {
+  const first = await setup(undefined, undefined, false);
+  expect(first.call('attention.raise', { id: 'forged', agent: agent.id, ask: 'Forged scope?', answers: 'yes-no', source: { kind: 'piece', id: 'fixture' } }, agent).ok).toBe(true);
+  await first.app.close(); closes.pop();
+  const hook = vi.fn(); const second = await setup(hook, first.home);
+  expect(second.call('fixture.raise', { id: 'forged' }, agent)).toMatchObject({ ok: false, code: 'conflict' });
+  expect(second.call('fixture.other', { id: 'forged' })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(second.call('attention.get', { id: 'forged' })).toMatchObject({ ok: true, value: { state: 'open', agent: agent.id } });
+  // The old public record retains only its original policy; it never calls a trusted handler.
+  expect(second.call('attention.answer', { id: 'forged', answer: { kind: 'yes' } }).ok).toBe(true);
+  expect(hook).not.toHaveBeenCalled();
+  const record = second.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get('forged') as {record: string};
+  expect(JSON.parse(record.record)).not.toHaveProperty('sourceManaged');
+});

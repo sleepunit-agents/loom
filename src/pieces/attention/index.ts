@@ -36,11 +36,11 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   };
   const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
   const sources = new Map<string, (ctx: Context, ask: Ask) => void>();
-  const managed = (record: Pick<Ask, 'source' | 'sourceManaged'>) => record.sourceManaged === true || record.source.kind === 'piece' && sources.has(record.source.id);
+  const managed = (record: Pick<Ask, 'source' | 'sourceManaged'>) => record.sourceManaged === true;
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
-      if (managed(input) || old && managed(old)) return false;
+      if (input.source.kind === 'piece' && sources.has(input.source.id) || old && managed(old)) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
@@ -65,7 +65,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       record.state = 'answered'; record.changedAt = ctx.now;
       record.answer = { ...input.answer, by: ctx.viewer, at: ctx.now };
       saveAsk(record); ctx.changed('attention.ask', record.id);
-      const hook = record.source.kind === 'piece' ? sources.get(record.source.id) : undefined;
+      const hook = managed(record) && record.source.kind === 'piece' ? sources.get(record.source.id) : undefined;
       if (managed(record) && !hook) throw new OperationError('unavailable', 'Ask source is not installed');
       if (hook) {
         const result: unknown = hook(ctx, record);
@@ -114,7 +114,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     const check = (ctx: Context) => {
       if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Source needs its enclosing database transaction');
     };
-    const own = (record: Ask) => record.source.kind === 'piece' && record.source.id === name;
+    const own = (record: Ask) => managed(record) && record.source.kind === 'piece' && record.source.id === name;
     return {
       raise(ctx, input) {
         check(ctx);
