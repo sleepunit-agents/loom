@@ -57,6 +57,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await page.setViewportSize({width,height:900}); await page.reload();
         await expect.poll(() => page.locator('.next-shell').count()).toBe(1);
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
+        await expect.poll(() => page.getByText('All clear.',{exact:true}).count()).toBe(1);
         await page.screenshot({path:join(shots,`new-${look}-${width}.png`),animations:'disabled'});
       }
     }
