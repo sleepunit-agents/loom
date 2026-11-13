@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /** Separate crypto-only process. Never launched on a request path by loom. */
 import { parseArgs } from 'node:util';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { listenLocalHolder } from './pieces/secrets/local-holder.js';
 import { ageSecretSource } from './pieces/secrets/age-source.js';
 export async function run(argv: string[], stderr: (text:string)=>void): Promise<number> {
@@ -21,6 +22,11 @@ export async function run(argv: string[], stderr: (text:string)=>void): Promise<
   } catch { stderr('Local secret holder could not start\n'); return 2; }
   finally { process.off('SIGTERM', stop); process.off('SIGINT', stop); }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/** npm installs the executable through a symlink; compare canonical paths. */
+export function isHolderEntrypoint(argv1: string | undefined): boolean {
+  try { return !!argv1 && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(argv1); }
+  catch { return false; }
+}
+if (isHolderEntrypoint(process.argv[1])) {
   process.exitCode = await run(process.argv.slice(2), text => process.stderr.write(text));
 }

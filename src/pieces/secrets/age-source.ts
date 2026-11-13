@@ -22,6 +22,13 @@ export function ageSecretSource(directory: string, identityFile: string): Secret
       if (!secretName.safeParse(name).success) throw failed();
       check();
       const ciphertext = privateBytes(join(directory, `${name}.age`), 128 * 1024);
+      // Raw age STREAM has no compression: one <=64KiB plaintext chunk
+      // requires <=64KiB+16 payload bytes, after header and 16-byte nonce.
+      // Reject oversized ciphertext payload BEFORE the library allocates plaintext.
+      const separator = ciphertext.indexOf('\n--- ');
+      const headerEnd = separator < 0 ? -1 : ciphertext.indexOf(10, separator + 5);
+      const payloadSize = ciphertext.length - headerEnd - 1 - 16;
+      if (headerEnd < 0 || headerEnd >= 16 * 1024 || payloadSize <= 16 || payloadSize > 64 * 1024 + 16) throw failed();
       bytes = await decrypt.decrypt(ciphertext);
       if (!bytes.length || bytes.length > 64 * 1024) throw failed();
       return bytes;

@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Encrypter, generateIdentity, identityToRecipient } from 'age-encryption';
+import { Decrypter, Encrypter, generateIdentity, identityToRecipient } from 'age-encryption';
 import { localSecretSource, listenLocalHolder, privateBytes } from './local-holder.js';
 import { ageSecretSource } from './age-source.js';
 import { configuredSecretHolder } from './holder-config.js';
@@ -235,4 +235,48 @@ it('holder executable composes age and TLS, shuts down cleanly, and redacts star
   writeFileSync(file,'VALUE-MUST-NOT-LOG');
   expect(await run(['--socket',server.socket,'--ca',server.ca,'--cert',server.cert,'--key',server.key,'--identity',file,'--values',directory],s=>errors.push(s))).toBe(2);
   expect(errors).toEqual(Array(3).fill('Local secret holder could not start\n'));
+});
+
+it('rejects oversized age payloads before invoking plaintext decryption, accepting exactly 64 KiB',async()=>{
+  const {home}=setup();const directory=join(home,'values');mkdirSync(directory,{mode:0o700});
+  const identity=await generateIdentity(),file=join(home,'identity');writeFileSync(file,identity,{mode:0o600});
+  const encrypt=new Encrypter();encrypt.addRecipient(await identityToRecipient(identity));
+  const source=ageSecretSource(directory,file),decrypt=vi.spyOn(Decrypter.prototype,'decrypt');
+  for(const length of [0,65537,102400]) {
+    writeFileSync(join(directory,'github.age'),await encrypt.encrypt(new Uint8Array(length)),{mode:0o600});
+    await expect(source.read('github')).rejects.toThrow(/^Secret decryption unavailable$/);
+    expect(decrypt).not.toHaveBeenCalled();
+  }
+  writeFileSync(join(directory,'github.age'),await encrypt.encrypt(new Uint8Array(65536).fill(65)),{mode:0o600});
+  const bytes=await source.read('github');expect(bytes.length).toBe(65536);expect(bytes.every(v=>v===65)).toBe(true);bytes.fill(0);expect(decrypt).toHaveBeenCalledOnce();
+});
+it('recognizes the npm symlink entrypoint without starting the executable on import',async()=>{
+  const {home}=setup();const {isHolderEntrypoint}=await import('../../secret-holder.js');
+  const module=fileURLToPath(new URL('../../secret-holder.ts',import.meta.url)),link=join(home,'loom-secret-holder');symlinkSync(module,link);
+  expect(isHolderEntrypoint(module)).toBe(true);expect(isHolderEntrypoint(link)).toBe(true);
+  expect(isHolderEntrypoint(undefined)).toBe(false);expect(isHolderEntrypoint(join(home,'missing'))).toBe(false);expect(isHolderEntrypoint(join(home,'ca.pem'))).toBe(false);
+});
+it('absolute deadline ends a response that keeps streaming below each inactivity cutoff',async()=>{
+  let interval:ReturnType<typeof setInterval>|undefined;
+  const {client,received}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.write('X');interval=setInterval(()=>res.write('X'),1000);});
+  vi.useFakeTimers();
+  try {
+    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    await vi.waitFor(()=>expect(received.length).toBeGreaterThan(0));
+    for(let n=0;n<3;n++) {const before=received.length;await vi.advanceTimersByTimeAsync(1000);await vi.waitFor(()=>expect(received.length).toBeGreaterThan(before));}
+    await vi.advanceTimersByTimeAsync(2000);await result;
+    expect(received.every(b=>b.every(v=>v===0))).toBe(true);
+  } finally {clearInterval(interval);vi.useRealTimers();}
+});
+it('absolute deadline also bounds a peer that never completes TLS',async()=>{
+  const {client,server:config}=setup();const {createServer}=await import('node:net');
+  let connected=false;const sockets:import('node:net').Socket[]=[];
+  const peer=createServer(socket=>{connected=true;sockets.push(socket);});
+  await new Promise<void>((resolve,reject)=>{peer.once('error',reject);peer.listen(config.socket,resolve);});chmodSync(config.socket,0o600);
+  closes.push(async()=>{for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
+  vi.useFakeTimers();
+  try {
+    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await result;
+  } finally {vi.useRealTimers();}
 });

@@ -275,6 +275,9 @@ identity. No request starts a child process. The age key is loaded only in the
 holder; the daemon owns a different TLS client key. No value is supplied in
 arguments, environment, errors, logs or plaintext files. Values are decrypted
 in memory, bounded to 64 KiB, and owned buffers are erased after sending or use.
+The reader accepts raw age envelopes with headers below 16 KiB and one payload
+chunk: it bounds encrypted payload length before invoking decryption, so oversized
+plaintext is never materialized. The age library still authenticates the whole file.
 The TLS implementation and JavaScript may retain internal/string copies; trusted
 callbacks still must not retain, return or log credential strings.
 
