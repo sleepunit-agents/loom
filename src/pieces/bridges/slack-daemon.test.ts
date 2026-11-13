@@ -218,3 +218,14 @@ it('does not acquire any credential until the initial asynchronous generation is
     held.resolve('00000000-0000-4000-8000-000000000000');await until(()=>f.sockets.length===1);
   } finally {held.resolve('00000000-0000-4000-8000-000000000000');}
 });
+
+it('root closes the shared monitor during pending generation IO and prevents late polling',async()=>{
+  const f=await setup();await until(()=>f.sockets.length===1);
+  const held=deferred<string>();f.source.generation.mockImplementationOnce(()=>held.promise);
+  f.clock.advance(5000);await until(()=>f.source.generation.mock.results.at(-1)?.value===held.promise);
+  await f.app.close();expect(f.app.db.open).toBe(false);const polls=f.source.generation.mock.calls.length;
+  const reads=f.source.read.mock.calls.length,calls=f.request.mock.calls.length;
+  held.resolve('00000000-0000-4000-8000-000000000001');await settle();f.clock.advance(60_000);await settle();
+  expect(f.source.generation).toHaveBeenCalledTimes(polls);expect(f.source.read).toHaveBeenCalledTimes(reads);
+  expect(f.request).toHaveBeenCalledTimes(calls);expect(f.sockets).toHaveLength(1);
+});

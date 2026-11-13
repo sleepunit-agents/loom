@@ -32,12 +32,12 @@ const checkpoint=(seq:number)=>({session:'SESSION',url:'wss://gateway.discord.gg
 async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,grant=true,pending=false,secondAuth,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;secondAuth?:Promise<Response>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
+async function setup({staging=false,grant=true,pending=false,secondAuth,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;secondAuth?:Promise<Response>;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
   const home=mkdtempSync(join(tmpdir(),'discord-root-'));fixture(home);
   const clock=new FakeClock();let epoch='00000000-0000-4000-8000-000000000000';
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
   const sockets:FakeSocket[]=[];const buffers:Uint8Array[]=[];
-  const source={generation:vi.fn(async()=>epoch),read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
+  const source={generation:vi.fn(generation ?? (async()=>epoch)),read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
   let authReads=0;
   const request=vi.fn<typeof fetch>(async url=>{
     const path=String(url);
@@ -226,4 +226,12 @@ it('generation failure retires Discord while another venue authentication is pen
     expect(f.sockets[0].terminate).toHaveBeenCalledOnce();expect(f.app.db.open).toBe(true);
   } finally {held.resolve(Response.json({id:'200',bot:true}));}
   await settle();const calls=f.request.mock.calls.length;f.clock.advance(5000);await settle();expect(f.request).toHaveBeenCalledTimes(calls);
+});
+
+it('does not acquire Discord credentials until initial asynchronous generation is available',async()=>{
+  const held=deferred<string>(),f=await setup({generation:()=>held.promise});
+  try {
+    await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(f.sockets).toHaveLength(0);
+    held.resolve('00000000-0000-4000-8000-000000000000');await until(()=>f.sockets.length===1);
+  } finally {held.resolve('00000000-0000-4000-8000-000000000000');}
 });

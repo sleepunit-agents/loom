@@ -19,8 +19,11 @@ it('waits for initial public generation and notifies only changes or loss/recove
   } finally {monitor.close();}
 });
 it.each(['',first+'\n','not-a-generation','00000000-0000-1000-8000-000000000000'])('refuses malformed generation %j',async value=>{
-  const clock=new FakeClock(),monitor=bridgeCredentials({generation:()=>value},clock);
-  await settle();expect(monitor.current()).toBeUndefined();monitor.close();
+  const clock=new FakeClock(),generation=vi.fn(()=>first),changed=vi.fn();
+  const monitor=bridgeCredentials({generation},clock);monitor.observe(changed);
+  await settle();expect(monitor.current()).toBe(first);changed.mockClear();
+  generation.mockReturnValue(value);clock.advance(5000);await settle();
+  expect(monitor.current()).toBeUndefined();expect(changed).toHaveBeenCalledOnce();monitor.close();
 });
 it('bounds a stalled poll, ignores its late result and recovers independently',async()=>{
   const clock=new FakeClock(),held=deferred<string>(),generation=vi.fn(async()=>first);
