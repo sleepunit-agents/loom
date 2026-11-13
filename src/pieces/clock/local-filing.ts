@@ -12,9 +12,10 @@ const invalid = (message: string): never => { throw new OperationError('invalid'
 const denied = (message: string): never => { throw new OperationError('denied', message); };
 export function localWords(prompt: string, note: string) {
   if (!prompt.includes(localMarker)) invalid('A local wake needs its explicit local marker');
-  const body = prompt.replaceAll(localMarker, '').trim();
+  const raw = prompt.replaceAll(localMarker, '');
+  if (raw.normalize('NFKC') !== raw || /[^\P{C}\n]|\p{Default_Ignorable_Code_Point}/u.test(raw)) invalid('Local words must read exactly as they run, without compatibility or control characters');
+  const body = raw.trim();
   if (!body || [...body].length > 270) invalid('A local wake needs 1 to 270 characters shown in full');
-  if (body.normalize('NFKC') !== body || /[^\P{C}\n]|\p{Default_Ignorable_Code_Point}/u.test(body)) invalid('Local words must read exactly as they run, without compatibility or control characters');
   const said = note.normalize('NFKC').replace(/\s+/gu, ' ').replace(/[^\P{C}]/gu, '').trim();
   const shownNote = [...said].length > 160 ? [...said].slice(0,157).join('') + '...' : said;
   const digest = createHash('sha256').update(prompt).digest('hex');

@@ -61,7 +61,7 @@ it('refuses changed notes before mutating existing filing, cards or audit',async
 });
 it('refuses invalid and undisplayable executable words before creating a card',async()=>{
   const s=await setup();
-  for(const p of ['no marker',localMarker,localMarker+'\n'+ 'a'.repeat(271),localMarker+'\nＡ',localMarker+'\ntext\tmore',localMarker+'\ntext\u200bmore',localMarker+'\ntext\rmore',localMarker+'\nInspect\u034f disk',localMarker+'\nInspect\ufe0f disk'])
+  for(const p of ['no marker',localMarker,localMarker+'\n'+ 'a'.repeat(271),localMarker+'\nＡ',localMarker+'\ntext\tmore',localMarker+'\ntext\u200bmore',localMarker+'\ntext\rmore',localMarker+'\nInspect\u034f disk',localMarker+'\nInspect\ufe0f disk',localMarker+'\n\tInspect disk\r',localMarker+'\n\u00a0Inspect disk'])
     expect(s.request(p)).toMatchObject({ok:false,code:'invalid'});
   expect(load(s.app.db).approvals).toEqual([]);
   expect(s.app.db.prepare("SELECT * FROM clock_meta WHERE key LIKE 'local-filing:%'").all()).toEqual([]);
@@ -113,4 +113,15 @@ it('requires both trusted Clock operation access and independent owning Approval
   expect(s.request()).toMatchObject({ok:false,code:'denied'});expect(load(s.app.db).approvals).toEqual([]);
   s.access.services.clock.operations.push('approvals.piece-request');s.access.services.approvals.operations=[];
   expect(s.request().ok).toBe(true);
+});
+
+it('keeps exact note bytes even when another note has the same card excerpt',async()=>{
+  const s=await setup();
+  for(const [before,after] of [['line one','line\none'],['n'.repeat(200)+' first','n'.repeat(200)+' second']]) {
+    const p=prompt+' '+before.length;
+    const card=value<{id:string}>(s.request(p,before)),state=load(s.app.db);
+    expect(localWords(p,before).details).toBe(localWords(p,after).details);
+    expect(s.request(p,after)).toMatchObject({ok:false,code:'denied'});
+    expect(filedLocal(s.app.db,card.id)?.note).toBe(before);expect(load(s.app.db)).toEqual(state);
+  }
 });
