@@ -17,7 +17,7 @@ const sourcePolicy = z.object({
     agents: z.array(secretAgent).max(1000).optional(),
     houses: z.array(secretAgent).max(1000).optional(),
     // The old decide() clamps positive integer durations at eight hours.
-    minutes: z.number().int().positive().transform(n => Math.min(n, 480)).optional(),
+    minutes: z.number().positive().refine(Number.isInteger).transform(n => Math.min(n, 480)).optional(),
   }).strict()).default({}),
 }).strict();
 const canonical = (value: unknown): string => {

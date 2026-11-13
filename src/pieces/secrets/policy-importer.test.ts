@@ -1,4 +1,8 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import subprocess from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -87,4 +91,42 @@ it('receipt failure and asynchronous interruption leave an initialized destinati
   expect(db.prepare('SELECT * FROM secrets_meta').all()).toEqual([]);
   expect(db.prepare('SELECT * FROM core_migrations ORDER BY number').all()).toEqual(before);
   expect(importSecretPolicy(db, from).imported).toBe(true);
+});
+
+it('clamps all old positive integer durations, including beyond safe-integer range', () => {
+  for (const minutes of [481, 999, Number.MAX_SAFE_INTEGER, 9007199254740992, 1e100]) {
+    expect(parseLegacySecretPolicy(Buffer.from(JSON.stringify({ secrets: { API: { minutes } } })))).toEqual({ default: 'ask', secrets: { API: { minutes: 480 } } });
+  }
+});
+it('reads only the explicit policy file and invokes no old program', () => {
+  const { db, from } = setup(fixture); const bytes = readFileSync(from);
+  const read = vi.spyOn(fs, 'readFileSync').mockImplementation(path => {
+    if (path !== from) throw new Error('Unexpected filesystem read');
+    return bytes;
+  });
+  const processes = (['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'] as const)
+    .map(name => vi.spyOn(subprocess, name).mockImplementation(() => { throw new Error('Unexpected child process'); }));
+  syncBuiltinESMExports();
+  try {
+    expect(importSecretPolicy(db, from).imported).toBe(true);
+    expect(read.mock.calls).toEqual([[from]]);
+    for (const process of processes) expect(process).not.toHaveBeenCalled();
+  } finally { vi.restoreAllMocks(); syncBuiltinESMExports(); }
+});
+it('commits SHA-256 of source bytes and refuses a whitespace-only change', () => {
+  const { db, from } = setup(fixture); const bytes = readFileSync(from);
+  const checksum = createHash('sha256').update(bytes).digest('hex');
+  expect(importSecretPolicy(db, from).checksum).toBe(checksum);
+  expect(db.prepare("SELECT value FROM secrets_meta WHERE key='policy-source-checksum'").get()).toEqual({ value: checksum });
+  const before = db.prepare('SELECT * FROM secrets_meta ORDER BY key').all();
+  writeFileSync(from, bytes.toString() + '\n');
+  expect(() => importSecretPolicy(db, from)).toThrow('different secret policy source');
+  expect(db.prepare('SELECT * FROM secrets_meta ORDER BY key').all()).toEqual(before);
+});
+it('detects changed membership even when the stored policy has exactly the expected names', () => {
+  const { db, from } = setup(fixture); migrate(db, 'secrets', schema);
+  const corrupted = { default: 'never', secrets: { ...fixture.secrets, API: { ...fixture.secrets.API, minutes: 480, houses: ['art'] } } };
+  db.exec("CREATE TRIGGER corrupt_membership AFTER INSERT ON secrets_meta WHEN NEW.key='policy' BEGIN UPDATE secrets_meta SET value='" + JSON.stringify(corrupted) + "' WHERE key='policy'; END");
+  expect(() => importSecretPolicy(db, from)).toThrow('comparison failed');
+  expect(db.prepare('SELECT * FROM secrets_meta').all()).toEqual([]);
 });
