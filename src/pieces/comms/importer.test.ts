@@ -177,13 +177,13 @@ it('uses the supplied opener for both completed WAL backups without source mutat
 it('closes supplied source handles on open and read failures and never falls back',async()=>{
  const s=await source(),to=home();copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
  const app=createFoundation({home:to});cleanup.push(()=>app.close());
- for(const failOpen of [true,false]) {
+ for(const failure of ['open','household-read','comms-read']) {
   const opened:Database.Database[]=[];const calls:string[]=[];
   const open=(path:string)=>{
    calls.push(path);
-   if(calls.length===2&&failOpen)throw Error('snapshot open failed');
+   if(calls.length===2&&failure==='open')throw Error('snapshot open failed');
    const db=new Database(path,{readonly:true,fileMustExist:true});opened.push(db);
-   if(calls.length===2&&!failOpen)vi.spyOn(db,'prepare').mockImplementation(()=>{throw Error('snapshot read failed');});
+   if((calls.length===2&&failure==='household-read')||(calls.length===1&&failure==='comms-read'))vi.spyOn(db,'prepare').mockImplementation(()=>{throw Error('snapshot read failed');});
    return db;
   };
   await expect(importComms(app.db,s.from,to,{},open)).rejects.toThrow();
