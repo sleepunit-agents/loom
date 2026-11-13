@@ -1,3 +1,4 @@
+import { installMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
@@ -105,6 +106,11 @@ export function installNext(app: Foundation, options: NextOptions) {
     const projects = installMindProjects(app.operations, app.live, { agents: inventory?.agents ?? [], sharing, people: mindRole(app.operations),
       tasks: projectTasks(tasksRole(app.operations), v => v.kind === 'member' && maySee(v, {type:'task'}, sharing())), changes: projectChanges(app.operations) });
     app.onClose(() => projects.close());
+  }
+  if (!app.operations.has('mind.activityList')) {
+    const household = new HouseholdDatabase(app.db).household(options.home);
+    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github});
+    app.onClose(() => activity.close());
   }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
