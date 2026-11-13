@@ -32,8 +32,8 @@ it('bounds a stalled poll, ignores its late result and recovers independently',a
     await settle();generation.mockImplementationOnce(()=>held.promise);clock.advance(5000);await settle();
     clock.advance(4999);await settle();expect(monitor.current()).toBe(first);
     clock.advance(1);await settle();expect(monitor.current()).toBeUndefined();
-    held.resolve(second);await settle();expect(monitor.current()).toBeUndefined();
     clock.advance(5000);await settle();expect(monitor.current()).toBe(first);
+    held.resolve(second);await settle();expect(monitor.current()).toBe(first);
   } finally {monitor.close();}
 });
 it('contains synchronous provider failure and stops timers/listeners on close during a read',async()=>{
@@ -44,4 +44,15 @@ it('contains synchronous provider failure and stops timers/listeners on close du
   clock.advance(5000);await settle();unsubscribe();monitor.close();monitor.close();
   held.resolve(first);await settle();clock.advance(60_000);await settle();
   expect(monitor.current()).toBeUndefined();expect(generation).toHaveBeenCalledTimes(2);expect(changed).not.toHaveBeenCalled();
+});
+
+it('schedules the next poll five seconds after a deferred successful read completes',async()=>{
+  const clock=new FakeClock(),held=deferred<string>(),generation=vi.fn(()=>held.promise);
+  const monitor=bridgeCredentials({generation},clock);
+  try {
+    await settle();expect(generation).toHaveBeenCalledTimes(1);clock.advance(3000);await settle();
+    held.resolve(first);await settle();expect(monitor.current()).toBe(first);
+    clock.advance(4999);await settle();expect(generation).toHaveBeenCalledTimes(1);
+    clock.advance(1);await settle();expect(generation).toHaveBeenCalledTimes(2);
+  } finally {monitor.close();}
 });
