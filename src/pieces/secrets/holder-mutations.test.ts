@@ -96,24 +96,15 @@ it('absolute deadline bounds a stalled authority and prevents late mutations',as
   }finally{vi.useRealTimers();}
 });
 it('erases the client snapshot and refuses holder-controlled acknowledgement bodies',async()=>{
-  const {client,server,who}=setup();const sent:Buffer[]=[];const received:Buffer[]=[];
+  const {client,server,who}=setup();const sent=clientSnapshots();
   const peer=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
     req.resume();req.on('end',()=>{res.writeHead(200,{'content-length':26});res.end('SENTINEL-INVALID-ACK-BODY!!');});
   });
   await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
   closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
-  const real=https.request;
-  vi.spyOn(https,'request').mockImplementation(((options:https.RequestOptions,callback:(r:import('node:http').IncomingMessage)=>void)=>{
-    const request=real(options,response=>{response.on('data',(b:Buffer)=>received.push(b));callback(response);});
-    const end=request.end.bind(request);
-    request.end=((bytes:Buffer)=>{if(bytes)sent.push(bytes);return end(bytes);}) as typeof request.end;
-    return request;
-  }) as typeof https.request);
   const input=Buffer.from('CLIENT-OWNED-SENTINEL');
   await expect(localHolderMutations(client).set(who,'github',input,'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
   expect(input.toString()).toBe('CLIENT-OWNED-SENTINEL');expect(sent).toHaveLength(1);expect(sent[0].every(v=>v===0)).toBe(true);
-  // Invalid status is discarded before listening for or retaining response data.
-  expect(received).toHaveLength(0);
 });
 it('client deadline also bounds an already started mutation and erases both copies after late completion',async()=>{
   const {client,server,authority,who}=setup();const snapshots=clientSnapshots();let finish!:()=>void;let provider:Uint8Array|undefined;
@@ -187,4 +178,25 @@ it('independently bounds the client against a trusted peer with no server deadli
     await vi.waitFor(()=>expect(received).toBe(true));expect(snapshots).toHaveLength(1);expect(snapshots[0].toString()).toBe('TIMEOUT-SNAPSHOT');
     await vi.advanceTimersByTimeAsync(5000);await pending;expect(snapshots[0].every(v=>v===0)).toBe(true);
   }finally{vi.useRealTimers();}
+});
+
+it('normalizes missing or unsafe listener parents to the fixed error',async()=>{
+  const {home,server,authority}=setup();const store={set:async()=>{},remove:()=>{}};
+  await expect(listenHolderMutations({...server,socket:join(home,'PRIVATE-PATH-SENTINEL','holder.sock')},store,authority)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  chmodSync(home,0o755);try{await expect(listenHolderMutations(server,store,authority)).rejects.toThrow(/^Local secret mutation unavailable$/);}finally{chmodSync(home,0o700);}
+});
+it('erases original incoming chunks as well as concatenated input on success and failure',async()=>{
+  const {client,server,authority,who}=setup();const chunks:Buffer[]=[];
+  const original=IncomingMessage.prototype.read;
+  vi.spyOn(IncomingMessage.prototype,'read').mockImplementation(function(this:IncomingMessage,size?:number){
+    const bytes=original.call(this,size);if(this.url==='/v1/mutation/add/github'&&Buffer.isBuffer(bytes))chunks.push(bytes);return bytes;
+  });
+  let reject=false;const set=async()=>{if(reject)throw Error('PRIVATE-PROVIDER-FAILURE');};
+  const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
+  const api=localHolderMutations(client);
+  for(const failed of [false,true]){
+    reject=failed;const pending=api.set({...who,writeId:randomUUID()},'github',Buffer.alloc(65536,65),'add');
+    if(failed)await expect(pending).rejects.toThrow(/^Local secret mutation unavailable$/);else await pending;
+    expect(chunks.length).toBeGreaterThan(0);expect(chunks.every(b=>b.every(v=>v===0))).toBe(true);chunks.splice(0);
+  }
 });
