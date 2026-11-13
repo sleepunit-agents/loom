@@ -80,7 +80,11 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
         for (const surface of ['home','work','launcher']) {
-          if(surface==='home') { if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0); }
+          if(surface==='home') {
+            await page.getByRole('button',{name:'Check again',exact:true}).click();
+            await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
+            if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0);
+          }
           if(surface==='work') {
             await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
             await expect.poll(()=>page.locator('[data-tile=inbox]').count()).toBe(1);
