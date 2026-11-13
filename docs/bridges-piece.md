@@ -361,3 +361,50 @@ fresh Web API inspection, admission and daemon registration remain required. Thi
 slice changes neither `serve --next` nor the legacy programs and makes no live
 connection. The existing engine's normalized inbox cannot simply receive the raw
 payload: durable raw receipt must precede fallible platform metadata reads.
+
+## Slack raw durable inbox
+
+Migration 3 installs private `bridges_slack_receipts` on every new-side home. The
+`slackInbox` receiver is the production store building block for Socket Mode;
+composition and daemon startup are still pending. It takes an authenticated,
+explicit workspace/bot/agent/app binding and checks the current enabled venue
+before accepting a receipt. The app id must come from authenticated composition,
+never be copied from an incoming payload to manufacture its expected value.
+
+The receiver validates `event_callback`, matching `team_id` and `api_app_id`, and
+bounded `event_id`/inner event fields. It commits the event in its own transaction
+before its Promise resolves, without metadata HTTP calls, admission or runtime
+availability. Calling it from an enclosing transaction fails rather than ACKing
+work that might roll back. The [Slack Events API field reference](https://docs.slack.dev/apis/events-api/)
+defines the app/workspace binding and globally unique `event_id`; this is distinct
+from the Socket Mode `envelope_id` ACK address. The first event is immutable and
+deduplicated per connection identity and app across envelopes and restarts.
+Different events with the same message timestamp remain distinct raw receipts;
+the normalized engine still deduplicates platform message ids per addressed agent.
+
+Only the inner event is stored, bounded to 1 MiB. The outer verification token and
+authorization array are not retained. No operation or live record exposes raw
+words. Pending reads are bounded to at most 64 entries and recheck the current
+venue snapshot and transactional setup revision; any setup edit, including an
+edit-and-restore, disablement or removal/recreation, invalidates the old receiver.
+Composition must recreate receivers after every setup revision, including link and
+route edits. A fresh receiver with the same identity may recover its pending work. A
+replacement identity cannot read or consume its predecessor's events. Old pending
+rows remain private for disposition; they are never silently rebound.
+
+The daemon normalizer must page `pending`, perform fresh metadata/People/runtime
+checks, and durably accept the normalized message through engine.receive before
+calling `consume`, or consume after a definite discard. Consumption erases the
+raw event and keeps its permanent deduplication tombstone. A crash after normalized
+receipt but before consumption replays the raw event against the engine's stable
+message id. Temporary normalization failures must retain raw receipts for retry;
+their expiry, staging hold, setup-change disposition, serialized drain and shutdown
+lifecycle are still required composition work. There is no production socket
+registration, admission, metadata normalizer, or credential/app verification path
+in this slice, and no activation claim.
+
+| Legacy behavior | Replacement / remaining work |
+| --- | --- |
+| Socket handler ACK before in-memory queue | Socket receiver now has a production SQLite store; fixture proves commit before ACK |
+| Restart loses queued raw events | Pending raw events and dedup tombstones survive restart |
+| Fallible metadata before normalized receipt | Raw receipt precedes all metadata; daemon normalizer/registration still required |

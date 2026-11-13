@@ -17,10 +17,12 @@ import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { clockVouchApplication } from './pieces/clock/role.js';
 import { installClock } from './pieces/clock/index.js';
+import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
+import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installSecrets } from './pieces/secrets/index.js';
@@ -153,11 +155,13 @@ export function installNext(app: Foundation, options: NextOptions) {
   mindTransports.set(app, sources);
   if (!app.operations.has('clock.list')) {
     // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { deadmanAgents: options.clockDeadmanAgents, approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   installAttentionMaintenance(app);
-  return installEffects(app, sharing, !!options.staging);
+  const effects = installEffects(app, sharing, !!options.staging);
+  if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects);
+  return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
   const sources = mindTransports.get(app) ?? [];
