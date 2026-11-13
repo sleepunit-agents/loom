@@ -103,20 +103,21 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
   register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => see(ctx.viewer, s, 'schedule')));
-  register('scheduleRemove', idInput, true, (v, i) => !schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails), (ctx, i) => {
+  register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || act(v, s, !!s.laneDetails) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     for (const w of wakes(db).filter(w => w.schedule === s.id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; saveWake(ctx, w); }
     db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { id: s.id };
   });
   register('scheduleRun', idInput, true, (v, i) => !!schedule(db, i.id) && act(v, schedule(db, i.id)!, true), (ctx, i) => make(ctx, schedule(db, i.id)!, ctx.now, { bypassPause: true }));
-  const laneName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(100);
+  const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const laneId = (name: string) => `lane/${name}`;
   const getLane = (name: string) => { const s = schedule(db, laneId(name)); if (!s?.laneDetails) throw new OperationError('not-found', 'Lane not found'); return s; };
   const laneInput = z.object({ name: laneName });
   const laneSetInput = laneInput.extend({ agent: text.optional(), at: z.union([text, z.array(text)]).optional(), days: z.string().optional(),
-    text: text.optional(), source: text.optional(), local: z.boolean().optional(), note: z.string().max(100_000).optional(), model: text.optional(), slot: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).optional() });
+    text: text.optional(), source: text.optional(), local: z.boolean().optional(), note: z.string().max(100_000).optional(), model: text.optional(), slot: laneName.optional() });
+  const cancelLaneWork = (ctx: Context, w: Wake, reason: string) => { w.state = 'cancelled'; w.outcome = reason; saveWake(ctx, w); event(ctx, w, 'cancel'); };
   const cancelOccurrences = (ctx: Context, id: string) => {
-    for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; w.outcome = 'Lane changed'; saveWake(ctx, w); event(ctx, w, 'cancel'); }
+    for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing')) cancelLaneWork(ctx, w, 'Lane changed');
   };
   function setLane(ctx: Context, i: z.infer<typeof laneSetInput>) {
     const old = schedule(db, laneId(i.name));
@@ -128,14 +129,14 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (details.source && (/^(?:\/|[A-Za-z]:)/.test(details.source) || details.source.split('/').includes('..'))) invalid('Lane sources must be relative repository paths');
     const days = i.days ?? old?.days ?? ''; calendar(() => daysOf(days));
     const head = `This is a loom lane: household work on a schedule ("${i.name}"), assigned to you; the owner reassigns it on loom's Clock page. Do it as yourself.\n\n`;
-    const body = details.text.length <= 8000 ? details.text : `The lane's text is too long to hand over here: read it with \`wake lane text ${i.name}\` and follow it exactly, as if it were this prompt.`;
+    const body = details.text.length <= 6500 ? details.text : `The lane's text is too long to hand over here: read it with \`wake lane text ${i.name}\` and follow it exactly, as if it were this prompt.`;
     const s: Schedule = { id: laneId(i.name), lane: i.name, agent: agent!, at: calendar(() => timesOf(at!)), days,
       prompt: (details.local ? '<!-- house: local -->\n' : '') + head + body, note: i.note ?? old?.note ?? '', model: i.model ?? old?.model, slot: i.slot ?? old?.slot,
-      laneDetails: details, by: ctx.viewer, enabled: true, changedAt: ctx.now };
+      laneDetails: details, laneVersion: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
     cancelOccurrences(ctx, s.id);
     // A file-backed lane replaces a self-chained one-off only on its assignee's clock.
     if (details.source) for (const w of wakes(db).filter(w => w.agent === s.agent && !w.schedule && w.file === details.source && active(w) && w.state !== 'firing')) {
-      w.state = 'cancelled'; w.outcome = 'Replaced by household lane'; saveWake(ctx, w); event(ctx, w, 'cancel');
+      cancelLaneWork(ctx, w, 'Replaced by household lane');
     }
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   }
@@ -145,7 +146,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   };
   register('laneSet', laneSetInput, true, maySetLane, setLane);
   register('laneAssign', laneInput.extend({ agent: text }), true, maySetLane, (ctx, i) => { getLane(i.name); return setLane(ctx, i); });
-  register('laneRemove', laneInput, true, v => mayAct(v, {}, sharing(), 'household'), (ctx, i) => {
+  register('laneRemove', laneInput, true, (v, i) => { const s = schedule(db, laneId(i.name)); return mayAct(v, {}, sharing(), 'household') && (!s || create(v, s)); }, (ctx, i) => {
     const s = getLane(i.name); cancelOccurrences(ctx, s.id); db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { name: i.name };
   });
   register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
@@ -168,7 +169,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (r.state === 'started') { w.state = 'fired'; w.outcome = r.body; }
     else if (r.state === 'not-started') {
       w.failures++; w.outcome = r.reason;
-      if (w.failures >= 6) w.state = 'failed';
+      if (w.laneVersion && (!w.schedule || schedule(db, w.schedule)?.laneVersion !== w.laneVersion)) { w.state = 'cancelled'; w.outcome = `Superseded lane did not start: ${r.reason}`; }
+      else if (w.failures >= 6) w.state = 'failed';
       else { w.state = 'pending'; w.due = Math.max(ctx.now + 1, r.retryAt ?? ctx.now + 15 * 60_000 * 2 ** (w.failures-1)); }
     } else { w.state = 'held'; w.hold = r.state === 'uncertain' ? 'uncertain' : 'staging'; w.outcome = r.reason; }
     saveWake(ctx, w); event(ctx, w, w.state); return w;

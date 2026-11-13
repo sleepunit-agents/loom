@@ -165,3 +165,12 @@ self-chained work, retaining cancellation history rather than deleting the wake.
 The lane operation fixtures port the old set/assign/text/remove, partial sheet
 edits, long text/local marker, slot and file self-chain cases, plus reassignment
 while dispatch is in flight. The old page and client formatting are still pending.
+
+Each lane revision has a version carried by its occurrences. If a superseded or
+removed lane's in-flight runtime call returns definitely-not-started, that
+occurrence is cancelled instead of retried on the former assignee. Started and
+uncertain outcomes retain their original attribution and are never silently
+repeated. Lane removal through either operation also requires target
+create/give-work policy, in addition to household policy. Names and slots use the
+legacy lowercase-letter-first, 40-character format; the inline-text limit remains
+6,500 characters.

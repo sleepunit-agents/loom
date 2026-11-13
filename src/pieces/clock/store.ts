@@ -3,6 +3,8 @@ export type WakeState = 'pending' | 'parked' | 'firing' | 'held' | 'fired' | 'ca
 export interface Work extends Scope {
   agent: string; prompt?: string; file?: string; note: string; model?: string;
   continuation?: string; slot?: string; approval?: string; place?: string;
+  /** Identifies lane work superseded while a runtime start was in flight. */
+  laneVersion?: string;
 }
 export interface Wake extends Work {
   id: string; due: number; state: WakeState; createdAt: number; changedAt: number;
