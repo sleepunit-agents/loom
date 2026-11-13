@@ -19,12 +19,12 @@ afterEach(() => { for (const close of cleanups.splice(0)) close(); });
 async function settled() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
 function fixture(overrides: Partial<SlackSocketOptions> = {}) {
   const clock = new FakeClock(), sockets: FakeSocket[] = [];
-  const request = vi.fn(async () => Response.json({ok:true,url:'wss://wss-primary.slack.com/link/?ticket=PRIVATE'}));
+  const request = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ok:true,url:'wss://wss-primary.slack.com/link/?ticket=PRIVATE'}));
   const receive = vi.fn(async (_payload: Record<string,unknown>) => {});
-  const withValue = vi.fn(async (_name: string, use: (value: string) => Promise<unknown>) => use('APP-SECRET'));
+  const withValue = vi.fn(async <T>(_name: string, use: (value: string) => Promise<T>): Promise<T> => use('APP-SECRET'));
   const socket = vi.fn((_url: string) => { const s = new FakeSocket(); sockets.push(s); return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>; });
   const beforeConnect = vi.fn(() => true);
-  const transport = slackSocket({appSecret:'slack-app',secrets:{withValue:withValue as any},clock,request:request as typeof fetch,receive,socket,beforeConnect,...overrides});
+  const transport = slackSocket({appSecret:'slack-app',secrets:{withValue},clock,request:request as typeof fetch,receive,socket,beforeConnect,...overrides});
   cleanups.push(transport.close);
   return {clock,sockets,request,receive,withValue,socket,beforeConnect,transport};
 }
@@ -75,7 +75,7 @@ describe('Slack Socket Mode transport', () => {
     const f = fixture({request:vi.fn(async () => Response.json(body)) as typeof fetch}); await settled(); expect(f.socket).not.toHaveBeenCalled();
   });
   it('bounds HTTP body, and expires a stuck HTTP request with abort and backoff', async () => {
-    const f = fixture({request:vi.fn(async () => new Response('x'.repeat(16_385))) as typeof fetch}); await settled(); expect(f.socket).not.toHaveBeenCalled();
+    const f = fixture({request:vi.fn(async () => Response.json({ok:true,url:'wss://wss.slack.com/link',padding:'x'.repeat(16_385)})) as typeof fetch}); await settled(); expect(f.socket).not.toHaveBeenCalled();
     const g = fixture({request:vi.fn((_url, init) => new Promise((_resolve,reject) => init?.signal?.addEventListener('abort',()=>reject(Error('PRIVATE'))))) as typeof fetch});
     await settled(); g.clock.advance(15_000); await settled(); expect(g.socket).not.toHaveBeenCalled();
     g.clock.advance(999); await settled(); expect(g.withValue).toHaveBeenCalledOnce();
@@ -114,6 +114,41 @@ describe('Slack Socket Mode transport', () => {
     for (let i=0; i<65; i++) s.frame(envelope(String(i)));
     await settled(); expect(s.terminate).toHaveBeenCalledOnce(); expect(s.send).not.toHaveBeenCalled();
   });
+  it('bounds otherwise-valid event frames before receipt or ACK', async () => {
+    const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
+    s.frame({...envelope(),payload:{...payload,event:{...payload.event,text:'x'.repeat(1024*1024)}}}); await settled();
+    expect(s.terminate).toHaveBeenCalledOnce(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).not.toHaveBeenCalled();
+  });
+  it('caps exponential backoff at 60 seconds and resets after hello', async () => {
+    const request = vi.fn(async (): Promise<Response> => { throw Error('unavailable'); });
+    const f = fixture({request:request as typeof fetch}); await settled();
+    for (const delay of [1000,2000,4000,8000,16000,32000,60000,60000]) {
+      const count = f.withValue.mock.calls.length;
+      f.clock.advance(delay-1); await settled(); expect(f.withValue).toHaveBeenCalledTimes(count);
+      f.clock.advance(1); await settled(); expect(f.withValue).toHaveBeenCalledTimes(count+1);
+    }
+    request.mockResolvedValueOnce(Response.json({ok:true,url:'wss://wss.slack.com/link'}));
+    f.clock.advance(60000); await settled(); const s = f.sockets[0]; s.hello(); s.emit('close');
+    const count = f.withValue.mock.calls.length;
+    f.clock.advance(999); await settled(); expect(f.withValue).toHaveBeenCalledTimes(count);
+    f.clock.advance(1); await settled(); expect(f.withValue).toHaveBeenCalledTimes(count+1);
+  });
+  it('aborts the pending HTTP request on shutdown', async () => {
+    let signal: AbortSignal | undefined;
+    const aborted = vi.fn();
+    const f = fixture({request:vi.fn((_url, init) => new Promise<Response>((_resolve,reject) => {
+      signal = init?.signal ?? undefined;
+      signal?.addEventListener('abort',()=>{aborted(); reject(Error('private'));});
+    })) as typeof fetch});
+    await settled(); expect(signal?.aborted).toBe(false); f.transport.close(); await settled();
+    expect(signal?.aborted).toBe(true); expect(aborted).toHaveBeenCalledOnce(); expect(f.socket).not.toHaveBeenCalled();
+    f.clock.advance(120000); await settled(); expect(f.withValue).toHaveBeenCalledOnce();
+  });
+  it.each(['error','close'])('reconnects on socket %s independently', async event => {
+    const f = fixture(); await settled(); const s = f.sockets[0]; s.hello(); s.emit(event);
+    expect(s.terminate).toHaveBeenCalledOnce(); f.clock.advance(1000); await settled();
+    expect(f.sockets).toHaveLength(2); expect(f.withValue).toHaveBeenCalledTimes(2);
+  });
   it('handles ACK failure and consumes unsupported interactions without delivery', async () => {
     const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
     s.frame({type:'interactive',envelope_id:'i'}); await settled(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).toHaveBeenCalledOnce();
@@ -125,7 +160,9 @@ describe('Slack Socket Mode transport', () => {
     try {
       app.db.exec('CREATE TABLE socket_fixture (id TEXT PRIMARY KEY, content TEXT)');
       const receive = vi.fn(async (p: Record<string,unknown>) => {
-        app.db.transaction(() => app.db.prepare('INSERT OR IGNORE INTO socket_fixture VALUES (?,?)').run((p.event as any).ts,JSON.stringify(p)))();
+        const event = p.event;
+        if (!event || typeof event !== 'object' || !('ts' in event) || typeof event.ts !== 'string') throw Error('Invalid fixture event');
+        app.db.transaction(() => app.db.prepare('INSERT OR IGNORE INTO socket_fixture VALUES (?,?)').run(event.ts,JSON.stringify(p)))();
       });
       const f = fixture({receive}); await settled(); const s = f.sockets[0]; s.hello();
       s.send.mockImplementation((_text, callback) => { expect(app.db.inTransaction).toBe(false); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:1}); callback(); });
