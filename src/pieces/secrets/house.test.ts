@@ -56,7 +56,8 @@ it('refuses forged scope, copied viewers, dead jobs, revoked tokens and policy-h
  expect(f.call('secrets.houseRequest',{job:f.job,name:'API',why:'fixture',minutes:2},agentOnly,'retry')).toMatchObject({ok:false,code:'denied'});
  expect(f.call('secrets.houseStatus',{id:request.id},agentOnly)).toMatchObject({ok:false,code:'denied'});
  const change=(set:object)=>f.app.db.transaction(()=>{const {changedAt:_,...job}=f.store.read('job',f.job)!;f.store.put('job',{...job,...set},f.clock.now());})();
- change({state:'done',endedAt:f.clock.now()});denied();
+ change({state:'running',endedAt:f.clock.now()});denied();
+ change({state:'done',endedAt:undefined});denied();
  change({state:'running',endedAt:undefined,service:'slack'});denied();
  change({service:undefined});
  change({imported:{history:'unknown'}});denied();
