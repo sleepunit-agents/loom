@@ -26,6 +26,10 @@ import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
+import { installMindPeople } from './pieces/mind/people.js';
+import { installMindPeopleActions } from './pieces/mind/people-actions.js';
+import { createPersonHalf } from './backends/people-creation.js';
+import { HouseholdDatabase } from './core/household/document.js';
 import { installMindKnowledge } from './pieces/mind/index.js';
 import { installMindKnowledgeActions } from './pieces/mind/actions.js';
 import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
@@ -78,6 +82,15 @@ export function installNext(app: Foundation, options: NextOptions) {
     app.onClose(() => actions.close());
   }
 
+  if (!app.operations.has('mind.peopleList')) {
+    const reader = installMindPeople(app.operations, app.live, { directory: inventory?.commons.people, agents: inventory?.agents ?? [], sharing,
+      projectHref: (agent, slug) => app.operations.has('mind.projectsList') ? `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}` : undefined });
+    app.onClose(() => reader.close());
+    const agent = new HouseholdDatabase(app.db).household(options.home)?.default;
+    const actions = installMindPeopleActions(app.operations, { directory: inventory?.commons.people,
+      relationship: inventory?.agents.find(a => a.agent === agent)?.memories, agent, sharing, create: createPersonHalf });
+    app.onClose(() => actions.close());
+  }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);

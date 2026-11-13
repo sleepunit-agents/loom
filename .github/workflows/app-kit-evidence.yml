@@ -5,6 +5,8 @@ on:
       - 'web/src/kit/**'
       - 'scripts/app-kit-legacy.json'
       - 'src/ui/*app*.test.ts'
+      - 'web/src/pieces/people/**'
+      - 'src/pieces/mind/people*.ts'
       - 'web/src/inbox*'
       - 'web/src/changes*'
       - '.github/workflows/app-kit-evidence.yml'
@@ -55,6 +57,21 @@ jobs:
           export LOOM_TEST_SHOTS="$LOOM_SHOTS"
           nice -n 19 npx vitest run src/ui/inbox-app.integration.test.ts --testNamePattern='kit screenshot' --maxWorkers=1
           nice -n 19 npx vitest run src/ui/changes-app.integration.test.ts --testNamePattern='1440|390' --maxWorkers=1
+      - name: Capture People on the hosted after runner
+        if: matrix.version == 'after'
+        env:
+          LOOM_PEOPLE_EVIDENCE: '1'
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          nice -n 19 npx vitest run src/ui/mind-people-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/people-browser.json
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.version == 'after'
+        with:
+          name: people-app-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/people-app/
+            artifacts/people-browser.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always()
         with:

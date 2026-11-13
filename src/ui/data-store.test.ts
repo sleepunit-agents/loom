@@ -137,3 +137,13 @@ it('settles a successful void result whose value was omitted by JSON', async () 
   expect(await request.result).toEqual({ ok: true });
   expect(request.getSnapshot().pending).toBe(false); f.store.close();
 });
+
+it('explicitly retries unavailable results with the same frozen id/input and a fresh result promise',async()=>{
+  const f=fixture();f.watch();const socket=f.sockets[0];socket.open();
+  const input={name:'Original'},request=f.store.call('mind.personAdd',input),first=request.result;
+  input.name='Changed';const original=socket.sent.at(-1);
+  socket.message({kind:'result',request:request.id,result:{ok:false,code:'unavailable',message:'Source failure'}});
+  expect((await first).ok).toBe(false);request.retry?.();expect(socket.sent.at(-1)).toEqual(original);expect(request.getSnapshot().pending).toBe(true);expect(request.result).not.toBe(first);
+  const attempt=request.result;socket.message({kind:'result',request:request.id,result:{ok:true,value:{slug:'original'}}});expect(await attempt).toEqual({ok:true,value:{slug:'original'}});
+  const count=socket.sent.length;request.retry?.();expect(socket.sent).toHaveLength(count);f.store.close();
+});
