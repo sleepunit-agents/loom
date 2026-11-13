@@ -11,7 +11,7 @@ import { findingId, median, dueToProgressSeconds, startAttentionRetention } from
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const alice: Viewer = { kind: 'member', id: 'alice' }, art: Viewer = { kind: 'agent', id: 'art' };
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['carol'], agents: ['art'] } }, services: {
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['carol'], agents: ['art'] }, restricted: { members: ['alice'], agents: [] } }, services: {
   reader: { types: ['attention.day', 'attention.finding', 'attention.turn'], operations: [] },
   worker: { types: ['attention.day', 'attention.finding', 'attention.turn'], operations: ['attention.fold', 'attention.retain', 'attention.findings', 'attention.writeFinding'] },
   dayOnly: { types: ['attention.day'], operations: ['attention.retain'] },
@@ -119,6 +119,9 @@ it('applies inherited private and project scope to folds, stats, findings and li
   expect(call('writeFinding', { ...finding, conversation: projectId }, art)).toMatchObject({ ok: true });
   expect(call('fold', { conversation: projectId }, art)).toMatchObject({ ok: true });
   expect(call('stats', { conversation: projectId }, { kind: 'member', id: 'carol' })).toMatchObject({ value: { counts: { reply: 1 } } });
+  const restrictedId = conversationId('art', 'relay', 'restricted');
+  expect(write({ ...reply, place: 'restricted' }, { project: 'restricted' })).toMatchObject({ ok: true });
+  expect(call('writeFinding', { ...finding, conversation: restrictedId }, art)).toMatchObject({ code: 'denied' });
 });
 it('requires service operation grants for collections and writes, and both stats source types', async () => {
   const { call, write } = await setup(); write(reply);
@@ -155,6 +158,10 @@ it('rolls back nested folding and findings with receipts and notifications on ou
 it('runs retention only by explicit daemon composition, covers more than the desk limit and stops on close', async () => {
   const { app, clock, write, call } = await setup();
   for (let i = 0; i < 101; i++) write({ ...base, place: `place-${i}` });
+  // Installing the piece must not schedule retention, even when the clock moves.
+  clock.advance(86400000);
+  expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(101);
+  expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
   const report = vi.fn(), stop = startAttentionRetention(app.operations, alice, report);
   expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
   clock.advance(0);
