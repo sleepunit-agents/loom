@@ -43,7 +43,7 @@ import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verif
 import { installTouched, type TouchSource } from './core/touched/index.js';
 import { listenForTouchSources } from './core/touched/group.js';
 import { prepareTouchSources } from './core/touched/prepare.js';
-import { installAttention } from './pieces/attention/index.js';
+import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -57,7 +57,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
-  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing) : undefined;
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing) : installedAttentionSources(app.operations);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {

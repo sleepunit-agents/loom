@@ -14,11 +14,11 @@ const agent: Viewer = { kind: 'agent', id: 'art' };
 const sharing = () => ({ members: { jonathan: { owner: true, agents: ['art'] }, guest: { owner: false, agents: ['art'] } }, projects: {}, services: {} });
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-async function setup(home = mkdtempSync(join(tmpdir(), 'clock-notices-')), next = false, runtime?: { startBody(): Promise<StartResult> }) {
+async function setup(home = mkdtempSync(join(tmpdir(), 'clock-notices-')), next: boolean | 'preinstalled' = false, runtime?: { startBody(): Promise<StartResult> }) {
   if (!homes.includes(home)) homes.push(home);
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, next, sharing, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
-    if (next) return;
+  const app = await startLoom({ home, clock, next: !!next, sharing, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
+    if (next) { if (next === 'preinstalled') installAttention(app.db, app.operations, app.live, sharing); return; }
     const sources = installAttention(app.db, app.operations, app.live, sharing);
     const notices = sources.register('clock', () => {});
     const jobs = installClock(app.db, app.operations, app.live, sharing, { notices, runtime });
@@ -98,13 +98,16 @@ it('rolls back the outcome with a failed notice write', async () => {
   expect(a.notices()).toHaveLength(0);
 });
 
-it('composes household notices on the real next side without a fixture installer', async () => {
-  const a = await setup(undefined, true);
+it.each([true, 'preinstalled'] as const)('composes household notices on the real next side (%s)', async next => {
+  const a = await setup(undefined, next);
   const w = a.outcome(a.set(), { state: 'not-started', code: 'quota', reason: 'PRIVATE QUOTA' });
   expect(w.state).toBe('pending');
   expect(a.notices()).toHaveLength(1);
   const id = a.notices()[0].id;
+  const before = a.app.db.prepare('SELECT * FROM clock_wakes ORDER BY id').all();
   expect(a.call('attention.answer', { id, answer: { kind: 'done' } }).ok).toBe(true);
+  expect(a.app.db.prepare('SELECT * FROM clock_wakes ORDER BY id').all()).toEqual(before);
+  expect(a.app.db.prepare('SELECT COUNT(*) AS n FROM runtime_jobs').get()).toEqual({ n: 0 });
   expect(a.call('clock.list', {})).toMatchObject({ ok: true, value: [expect.objectContaining({ state: 'pending', failures: 0 })] });
 });
 
@@ -123,4 +126,32 @@ it('publishes from the actual asynchronous daemon outcome path once per threshol
     expect(a.notices()).toHaveLength(n < 3 ? 0 : n < 6 ? 1 : 2);
   }
   expect(calls).toBe(6); expect(w.state).toBe('failed');
+});
+
+it('holds uncertain after the daemon cannot record its notice, and does not launch again after restart', async () => {
+  const a = await setup(undefined, false, { async startBody() { return { state: 'not-started', code: 'quota', reason: 'PRIVATE' }; } });
+  const w = a.set();
+  a.app.db.exec("CREATE TRIGGER refuse_notice BEFORE INSERT ON attention_asks BEGIN SELECT RAISE(ABORT, 'fixture interruption'); END");
+  const clock = a.app.operations.clock as FakeClock;
+  clock.advance(60_000); for (let step = 0; step < 6; step++) await Promise.resolve();
+  expect(a.call('clock.list', {})).toMatchObject({ ok: true, value: [expect.objectContaining({ id: w.id, state: 'held', hold: 'uncertain', failures: 0 })] });
+  expect(a.notices()).toHaveLength(0);
+  await a.close();
+  let starts = 0;
+  const b = await setup(a.home, false, { async startBody() { starts++; return { state: 'started', body: 'unexpected' }; } });
+  (b.app.operations.clock as FakeClock).advance(8 * 86400_000);
+  for (let step = 0; step < 6; step++) await Promise.resolve();
+  expect(starts).toBe(0);
+  expect(b.call('clock.list', {})).toMatchObject({ ok: true, value: [expect.objectContaining({ state: 'held', hold: 'uncertain' })] });
+});
+it('does not reopen an acknowledged quota notice when the pending wake retries after restart', async () => {
+  const a = await setup();
+  let w = a.outcome(a.set(), { state: 'not-started', code: 'quota', reason: 'PRIVATE' });
+  const id = a.notices()[0].id;
+  expect(a.call('attention.answer', { id, answer: { kind: 'done' } }).ok).toBe(true);
+  await a.close();
+  const b = await setup(a.home);
+  w = b.outcome(w, { state: 'not-started', code: 'quota', reason: 'PRIVATE AGAIN' });
+  expect(w.failures).toBe(0);
+  expect(b.notices()).toMatchObject([{ id, state: 'answered' }]);
 });

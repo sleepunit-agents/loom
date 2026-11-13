@@ -485,7 +485,8 @@ category. Prompt, note, file, project/member scope and runtime error text never
 enter a household notice. Only household owners can see or acknowledge them under
 Attention's existing policy. Acknowledgement does not retry, cancel, approve or
 start work; the Clock reader remains the place to inspect the wake. Next mode
-registers this source when it installs Attention; independent Clock installations
+registers this source using the installed Attention registry capability, including
+when an installer already supplied Attention. Independent Clock installations
 may omit it. Existing staging/uncertain outcomes do not report definite failures.
 
 The offline registry merged in #951 already registers Clock after household;

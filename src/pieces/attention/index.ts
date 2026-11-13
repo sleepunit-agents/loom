@@ -25,6 +25,10 @@ const answer = z.union([
 const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
+// Capabilities are tied to the exact in-process registry, never reconstructed
+// from persisted data or a request's source label.
+const installedSources = new WeakMap<Operations, AttentionSources>();
+export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
@@ -147,6 +151,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       },
     };
   } };
+  installedSources.set(operations, role);
   return role;
 
 }
