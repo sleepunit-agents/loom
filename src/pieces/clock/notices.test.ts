@@ -81,8 +81,10 @@ it('notifies on failed continuation and suppressed quota triage but never on hel
   const a = await setup();
   const continuation = a.outcome(a.set({ continuation: 'opaque' }), { state: 'not-started', reason: 'PRIVATE FAILURE' });
   expect(continuation.state).toBe('failed');
+  expect(a.notices()).toMatchObject([{ id: `clock:${continuation.id}:failed`, refs: [continuation.id] }]);
   const triage = a.outcome(a.set({ place: 'alert:runtime-quota' }), { state: 'not-started', code: 'quota', reason: 'PRIVATE QUOTA' });
   expect(triage.state).toBe('cancelled');
+  expect(a.notices().find(n => n.id === `clock:${triage.id}:quota`)).toMatchObject({ refs: [triage.id] });
   a.outcome(a.set(), { state: 'held', reason: 'Staging' });
   a.outcome(a.set(), { state: 'uncertain', reason: 'Unknown' });
   expect(a.notices()).toHaveLength(2);
@@ -154,4 +156,11 @@ it('does not reopen an acknowledged quota notice when the pending wake retries a
   w = b.outcome(w, { state: 'not-started', code: 'quota', reason: 'PRIVATE AGAIN' });
   expect(w.failures).toBe(0);
   expect(b.notices()).toMatchObject([{ id, state: 'answered' }]);
+});
+
+it('omits file and private scope metadata from household notices', async () => {
+  const a = await setup();
+  const w = a.outcome(a.set({ prompt: undefined, file: 'PRIVATE-FILE.md', project: 'PRIVATE-PROJECT', member: 'jonathan' }), { state: 'not-started', code: 'quota', reason: 'PRIVATE-ERROR' });
+  expect(a.notices()).toMatchObject([{ id: `clock:${w.id}:quota`, refs: [w.id] }]);
+  expect(JSON.stringify(a.notices())).not.toMatch(/PRIVATE|jonathan/);
 });
