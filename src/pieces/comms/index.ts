@@ -307,7 +307,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};
   },
  }));
- async function post(agent:string,place:string,raw:AgentPost) {
+ async function post(agent:string,place:string,raw:AgentPost,terminal=false) {
   const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
   const available=()=>{
    const t=requireAgent(agent,place);
@@ -327,6 +327,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(words,JSON.stringify(meta),place,old.seq);return {seq:old.seq};
    }
    let result;try{result=append(db,t,{id:m.id,kind:m.kind,at:clock.now(),sender:agent,words,hash:key.hash(JSON.stringify(m)),record:JSON.stringify(meta)});}catch{return fail('conflict','Reply id already used');}
+   // Only the first notice settles a turn; a replay must not stop a later body.
+   if(terminal&&!result.repeat){t.working=false;t.workingSince=null;t.workingBeat=null;saveThread(db,t);}
    return {seq:result.seq};
   })();
   touched(requireAgent(agent,place),result.seq);return result;
@@ -355,6 +357,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,deliver,reconcileEnds,reconcileDeliveries,
+  notice(agent,place,raw) {
+   const n=z.object({kind:z.enum(['no-reply','loop']),id:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/)}).strict().parse(raw);
+   const name=agent.charAt(0).toUpperCase()+agent.slice(1);
+   return post(agent,place,{id:`notice:${n.kind}:${n.id}`,kind:'error',run:n.id,
+    text:n.kind==='no-reply'?`${name} finished without replying.`:`Paused: ${name} was repeating itself.`,step:{error:n.kind}},true);
+  },
   describe(agent,place) {
    const t=requireAgent(agent,place);
    if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');

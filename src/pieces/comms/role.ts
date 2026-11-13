@@ -39,6 +39,8 @@ export interface Comms {
  trace(agent: string, thread: string): DeliveryTrace;
  /** Only the trusted runtime constructs this binding; never derive it from tool arguments. */
  reader(binding: ReadBinding): ThreadReader;
+ /** Terminal runtime event, deduplicated by its stable run/event id; clears working atomically once. */
+ notice(agent: string, thread: string, notice: {kind: 'no-reply' | 'loop'; id: string}): Promise<{seq: number}>;
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;
  deliver(agent: string, thread: string, seq: number): Promise<void>;
  title(agent: string, thread: string, title: string): void;

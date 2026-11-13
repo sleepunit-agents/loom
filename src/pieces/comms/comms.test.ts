@@ -54,6 +54,59 @@ it('refuses every runtime post kind before encryption when ownership or the inst
  await expect(s.comms.post('art',place,{id:'closed',kind:'reply',text:'refused private words'})).rejects.toThrow();
  expect(seals).toBe(before);
 });
+for(const kind of ['no-reply','loop'] as const)it(`records an encrypted terminal notice once without stopping a later turn (${kind})`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ s.comms.status('art',place,'working');s.comms.activity('art',place,{at:s.clock.now(),tokens:25});
+ const notice={kind,id:'run-terminal'};
+ const first=await s.comms.notice('art',place,notice);
+ expect(first).toEqual({seq:2});
+ const stored=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages WHERE seq=2').get());
+ expect(stored).not.toContain('finished without replying');expect(stored).not.toContain('was repeating itself');
+ const page=await s.call('messages',{thread:place});
+ expect(JSON.stringify(page)).toContain(kind==='no-reply'?'Art finished without replying.':'Paused: Art was repeating itself.');
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ expect(row()).toMatchObject({working:false,workingSince:null,workingBeat:null});
+ s.clock.advance(1000);s.comms.status('art',place,'working');
+ const before=JSON.stringify(row());
+ expect(await s.comms.notice('art',place,notice)).toEqual(first);
+ expect(JSON.stringify(row())).toBe(before);
+ await s.restart();expect(await s.comms.notice('art',place,notice)).toEqual(first);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:2});
+ expect(()=>s.comms.trace('art',place)).not.toThrow();
+});
+for(const boundary of ['revoked','closed','conversation','archived'] as const)it(`rejects a terminal notice changed during encryption (${boundary})`,async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);s.comms.status('art',place,'working');pause=true;
+ const result=s.comms.notice('art',place,{kind:'no-reply',id:'run-terminal'});const rejected=expect(result).rejects.toThrow();await began;
+ if(boundary==='revoked')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ else if(boundary==='closed')await s.comms.close();
+ else if(boundary==='archived')await s.call('change',{thread:place,action:'archive'});
+ else s.app.db.prepare("UPDATE comms_threads SET record=json_set(record,'$.conversation','replacement') WHERE id=?").run(place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());
+ release();await rejected;
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all())).toBe(before);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:1});
+});
+it('validates and isolates terminal notices before encryption and rolls back turn settlement with a failed append',async()=>{
+ let seals=0;const s=await setup({key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);s.comms.status('art',place,'working');const before=seals;
+ for(const input of [{kind:'unknown',id:'run'}, {kind:'loop',id:'bad id'}, {kind:'loop',id:'run',text:'private'}])
+  expect(()=>s.comms.notice('art',place,input as never)).toThrow();
+ await expect(s.comms.notice('pond-bot',place,{kind:'loop',id:'run'})).rejects.toThrow();
+ expect(seals).toBe(before);
+ s.app.db.exec("CREATE TRIGGER refuse_notice BEFORE UPDATE ON comms_threads BEGIN SELECT RAISE(ABORT, 'refused'); END");
+ await expect(s.comms.notice('art',place,{kind:'loop',id:'run'})).rejects.toThrow();
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:1});
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record).working).toBe(true);
+ s.app.db.exec('DROP TRIGGER refuse_notice');
+ await s.comms.notice('art',place,{kind:'loop',id:'run'});
+ s.clock.advance(14*86400_000);
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).not.toContain('was repeating itself');
+ expect(await s.comms.notice('art',place,{kind:'loop',id:'run'})).toEqual({seq:2});
+ expect((s.app.db.prepare('SELECT words FROM comms_messages WHERE seq=2').get() as {words:unknown}).words).toBeNull();
+});
 it('encrypts rows with age; only acknowledgements enter retry storage, and runtime receives the words',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  expect(s.deliveries[0]).toMatchObject({thread:place,text:'secret member words',agent:'art'});
