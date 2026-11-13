@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { fixture } from '../../fixture.js';
@@ -10,6 +10,7 @@ import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
 import { wake } from '../clock/store.js';
 import { START_CONFIRM_MS, clockRuntime } from './clock.js';
+import type { Wake } from '../clock/store.js';
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
@@ -109,7 +110,68 @@ it('does not requeue after restart during dispatch or after losing confirmation'
   f.clock.advance(3600_000);await settle();expect(f.store.ids('job')).toEqual([job]);
 });
 it('waits for the real outcome and closes pending waiters without claiming a start',async()=>{
-  const f=await setup(),runtime=clockRuntime(f.app);
+  const f=await setup(),runtime=clockRuntime(f.app,f.app.effects!);
   const pending=runtime.startBody({viewer:owner,intent:'attempt',wake:{id:'w-fixture',agent:'art',prompt:'work',note:'fixture',due:1,state:'firing',createdAt:1,changedAt:1,by:owner,failures:0}});
   await f.app.close();expect(await pending).toMatchObject({state:'uncertain'});
+});
+it('never calls a rejected retry definitely unstarted when this wake already has an accepted intent',async()=>{
+  const f=await setup(),id=await f.schedule(),original=wake(f.app.db,id)!;
+  const result=await clockRuntime(f.app,f.app.effects!).startBody({viewer:owner,intent:'different-attempt',wake:{...original,prompt:'changed work'}});
+  expect(result).toMatchObject({state:'uncertain'});
+  expect(f.store.ids('job')).toHaveLength(1);
+});
+it('replays explicit placement without re-authorizing a revoked box and rejects changed placement intent',async()=>{
+  const f=await setup(),input={...f.input,box:'a'},job=f.jobOf(f.call('runtime.startBody',input));
+  f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','a')!;f.store.put('box',{...box,revokedAt:0,mayHost:[]},f.clock.now());})();
+  expect(f.jobOf(f.call('runtime.startBody',input))).toBe(job);
+  expect(f.call('runtime.startBody',f.input)).toMatchObject({ok:false,code:'conflict'});
+  const auto={...f.input,source:{kind:'manual',id:'auto'}};
+  // Use another box for the automatic placement fixture.
+  f.app.db.transaction(()=>f.store.put('settings',{id:'art',agent:'art',boxes:['b'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},f.clock.now()))();
+  f.jobOf(f.call('runtime.startBody',auto));
+  expect(f.call('runtime.startBody',{...auto,box:'b'})).toMatchObject({ok:false,code:'conflict'});
+});
+it('keeps source-less operation identity after restart and receipt expiry',async()=>{
+  const f=await setup(),{source:_,...input}=f.input;
+  const job=f.jobOf(f.call('runtime.startBody',input,owner,'source-less'));
+  await f.restart();f.app.db.prepare('UPDATE core_operations SET expires=?').run(f.clock.now()-1);
+  expect(f.jobOf(f.call('runtime.startBody',input,owner,'source-less'))).toBe(job);
+  expect(f.call('runtime.startBody',{...input,brief:'changed'},owner,'source-less')).toMatchObject({ok:false,code:'conflict'});
+});
+it.each(['file','continuation','slot','approval','local','missing-house'])('holds %s work through the installed Clock without creating a job',async feature=>{
+  const f=await setup();
+  if(feature==='missing-house') f.app.db.prepare('DELETE FROM runtime_settings').run();
+  const extra=feature==='file'?{file:'routines/upkeep.md'}:feature==='local'?{prompt:'<!-- house: local -->\nWork'}:
+    feature==='missing-house'?{prompt:'work'}:{prompt:'work',[feature]:'fixture'};
+  const result=f.call('clock.in',{agent:'art',note:'fixture',when:'1s',...extra});expect(result.ok).toBe(true);
+  const {id}=(result as {ok:true;value:Wake}).value;f.clock.advance(1000);await settle();
+  expect(wake(f.app.db,id)).toMatchObject({state:'held'});expect(f.store.ids('job')).toEqual([]);
+});
+it('holds a file-backed lane run-now through the actual Clock adapter',async()=>{
+  const f=await setup(),lane=f.call('clock.laneSet',{name:'upkeep',agent:'art',at:'03:31',text:'work',source:'routines/upkeep.md'});
+  expect(lane.ok).toBe(true);const id=(lane as {ok:true;value:{id:string}}).value.id;
+  const result=f.call('clock.scheduleRun',{id});expect(result.ok).toBe(true);
+  const work=(result as {ok:true;value:Wake}).value;f.clock.advance(0);await settle();
+  expect(wake(f.app.db,work.id)).toMatchObject({state:'held'});expect(f.store.ids('job')).toEqual([]);
+});
+it('keeps terminal-without-confirmation uncertain and accepts waiting as runner confirmation',async()=>{
+  const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+  await f.post(f.runner,'claimJob',{job});
+  await f.post(f.runner,'finishJob',{job,state:'failed'});await settle();
+  expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
+  expect(f.call('clock.now',{id})).toMatchObject({ok:false,code:'invalid'});
+  expect(f.store.ids('job')).toEqual([job]);
+  const other=await setup(),otherWake=await other.schedule(),otherJob=other.store.ids('job')[0];
+  await other.post(other.runner,'claimJob',{job:otherJob});
+  await other.post(other.runner,'reportJob',{job:otherJob,state:'waiting'});await settle();
+  expect(wake(other.app.db,otherWake)).toMatchObject({state:'fired',outcome:otherJob});
+});
+it('publishes only metadata for successful starts and emits no brief words',async()=>{
+  const f=await setup(),changed=vi.spyOn(f.app.live,'changed');
+  const job=f.jobOf(f.call('runtime.startBody',f.input));
+  for(const name of ['runtime.listJobs','runtime.listSettings','runtime.listBindings']) {
+    const result=f.call(name,{});expect(result.ok).toBe(true);expect(JSON.stringify(result)).not.toContain(f.input.brief);
+  }
+  expect(f.store.read('job',job)).toMatchObject({state:'queued'});
+  expect(JSON.stringify(changed.mock.calls)).not.toContain(f.input.brief);
 });

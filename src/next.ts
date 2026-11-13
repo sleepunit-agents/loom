@@ -154,12 +154,12 @@ export function installNext(app: Foundation, options: NextOptions) {
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
+  const effects = installEffects(app, sharing, !!options.staging);
   if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { runtime: clockRuntime(app), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { runtime: clockRuntime(app, effects), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   installAttentionMaintenance(app);
-  const effects = installEffects(app, sharing, !!options.staging);
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects);
   return effects;
 }

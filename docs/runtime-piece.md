@@ -665,8 +665,9 @@ not claim to implement those paths or change the separate runner program.
 house configuration, and stores the brief in `runtime_inputs`. Its reply is
 `{job,state}`, never a claim that a body has started. It is available through
 the same registry doors as the runtime role. Members must own the requested
-agent; an agent may start its own work under central scope checks. Runners and
-services cannot create starts. Private member work and model-account selection
+agent; an agent may start its own work under central scope checks. Runners cannot
+create starts; services require explicit central type and operation grants.
+Private member work and model-account selection
 fail unavailable until their trusted delivery/account implementations land.
 An optional model request reaches the runner's one-time input payload.
 
@@ -684,7 +685,7 @@ observer waits for the assigned runner's `running` or `waiting` report before
 returning `started` to Clock. Queue, claim and input acknowledgements leave the
 wake firing. Before a queue exists, a placement refusal is definitely not
 started and Clock may use its normal retry policy. Missing house configuration,
-lane files, continuations, slots, approval-bearing and local wakes are held
+lanes (including inlined file-backed lanes), lane files, continuations, slots, approval-bearing and local wakes are held
 without creating a job; those trusted inputs remain required follow-up work.
 
 The confirmation deadline is 60 seconds on the daemon's clock. A still-held
