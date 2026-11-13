@@ -162,3 +162,61 @@ it('keeps owner permission adoption empty and verifies against source rather tha
  f.app.db.prepare('INSERT INTO runtime_body_policy VALUES (?,?)').run('art','{}');
  expect(compareRuntimeImport(f.app.db,expected)).toBe(false);
 });
+
+function deletedThread(f: ReturnType<typeof fixture>, venue='loom') {
+ const db=new Database(f.sources.household);
+ db.exec('DELETE FROM comms_threads; CREATE TABLE comms_deleted(id TEXT,member TEXT,agent TEXT,channel INTEGER,conversation TEXT)');
+ db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null);db.close();
+ const path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ const binding={...JSON.parse(readFileSync(path,'utf8')),venue,place:'th:kehvhuwzdm'};
+ writeFileSync(path,JSON.stringify(binding));return {path,binding};
+}
+it.each(['loom','spawn'])('retains deleted %s thread bindings only in the exact private archive and reports id-only skips on retries',venue=>{
+ const f=fixture(),{path}=deletedThread(f,venue),before=readFileSync(path);
+ f.options.conversations[cv]={} as typeof f.options.conversations[typeof cv];
+ const skipped=[{id:cv,reason:'skipped: owning Comms thread deleted'}];
+ expect(f.read()).toMatchObject({skipped,expected:{binding:[]}});
+ expect(f.run()).toMatchObject({imported:true,skipped});expect(f.run()).toMatchObject({imported:false,skipped});
+ expect(f.app.db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
+ expect(compareRuntimeArchive(f.app.db,f.read())).toBe(true);
+ expect(compareRuntimeImport(f.app.db,runtimeImportTables(f.read()))).toBe(true);
+ expect(readFileSync(path)).toEqual(before);
+ f.app.db.prepare('INSERT INTO runtime_bindings VALUES (?,?,?)').run(cv,JSON.stringify({id:cv}),0);
+ expect(compareRuntimeImport(f.app.db,runtimeImportTables(f.read()))).toBe(false);
+});
+it.each(['missing','agent','conversation','member','ambiguous'])('refuses %s deleted-thread evidence rather than skipping a binding',change=>{
+ const f=fixture();deletedThread(f);
+ const db=new Database(f.sources.household);
+ if(change==='missing')db.exec('DELETE FROM comms_deleted');
+ if(change==='agent')db.exec("UPDATE comms_deleted SET agent='other'");
+ if(change==='conversation')db.exec("UPDATE comms_deleted SET conversation='cv-ffffffffffff'");
+ if(change==='member')f.options.conversations[cv]={member:'guest'};
+ if(change==='ambiguous')db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('th:kehvhuwzdm',cv,'art','jonathan',null);
+ db.close();expect(f.read).toThrow(/owning Comms source/);
+});
+it('requires an explicit map entry even for a deleted binding and detects changed deletion evidence',()=>{
+ const f=fixture();deletedThread(f);delete (f.options.conversations as Record<string,unknown>)[cv];
+ expect(f.read).toThrow('every source id');f.options.conversations[cv]={member:'jonathan'};
+ expect(()=>readRuntimeImport(f.sources,f.options,identities,openSnapshotSqlite,{afterSnapshot:()=>{
+ const db=new Database(f.sources.household);db.exec('DELETE FROM comms_deleted');db.close();
+ }})).toThrow('changed during import');
+});
+it('requires the owning private audience for spawned Comms threads too',()=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place:'th:missing'}));
+ f.options.conversations[cv]={} as typeof f.options.conversations[typeof cv];
+ expect(f.read).toThrow(/requires a member|owning Comms source/);
+});
+
+it.each(['loom','spawn'])('matches a live %s th place to its bare owning Comms id',venue=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue,place:'th:live'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='live'");db.close();
+ expect(f.read().expected.binding).toEqual([{id:cv,agent:'art',venue,place:'th:live',member:'jonathan'}]);
+});
+it('supports the old tombstone schema without a conversation column without inventing a conversation',()=>{
+ const f=fixture();deletedThread(f);const db=new Database(f.sources.household);
+ db.exec('ALTER TABLE comms_deleted DROP COLUMN conversation');db.close();
+ expect(f.read().skipped).toEqual([{id:cv,reason:'skipped: owning Comms thread deleted'}]);
+});

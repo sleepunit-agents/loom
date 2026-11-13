@@ -23,7 +23,7 @@ export function importRuntime(db: Db, sources: RuntimeImportSources, options: un
     if (before) {
       const mapping = db.prepare("SELECT value FROM runtime_import_meta WHERE key='source-options'").get() as {value:string}|undefined;
       if (before.value!==source.checksum || mapping?.value!==source.options) throw Error('A different runtime source or mapping was already imported');
-      return {ok:true,imported:false,checksum:source.checksum};
+      return {ok:true,imported:false,checksum:source.checksum,skipped:source.skipped};
     }
     for (const table of [...Object.keys(expected),'runtime_import_chunks']) if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) throw Error('Runtime destination must be empty');
     for (const [table,rows] of Object.entries(expected)) for (const row of rows) {
@@ -34,6 +34,6 @@ export function importRuntime(db: Db, sources: RuntimeImportSources, options: un
     controls.interrupt?.();
     if(readRuntimeInventory(sources,open).checksum!==source.checksum)throw Error('Runtime source changed during import');
     if (!compareRuntimeImport(db,expected) || !compareRuntimeArchive(db,source)) throw Error('Runtime import ids, counts or content differ');
-    return {ok:true,imported:true,checksum:source.checksum};
+    return {ok:true,imported:true,checksum:source.checksum,skipped:source.skipped};
   })();
 }

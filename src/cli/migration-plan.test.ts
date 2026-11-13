@@ -240,3 +240,8 @@ it.each(['paths','audiences','projects','unknown','snapshot','array-order'])('in
   if (kind === 'array-order') f.plan.importers.attention.paths.reverse();
   expect(migrationPlanChecksum(f.plan)).not.toBe(before);
 });
+
+it('names an accidental SQLite sidecar in the unlisted snapshot file refusal',async()=>{
+ const f=await fixture(false);writeFileSync(join(f.root,'home','household.db-shm'),'unlisted');
+ expect(()=>prepareMigrationPlan(f.root)).toThrow('Snapshot contains an unlisted file: "home/household.db-shm"');
+});

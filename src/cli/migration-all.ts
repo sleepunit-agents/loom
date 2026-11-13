@@ -12,8 +12,9 @@ import { SecretsImportRefusal } from '../pieces/secrets/importer.js';
 import type { IOStreams } from './io.js';
 
 const receiptName = '.migration-all.json', pendingName = '.migration-all.pending';
-const receiptSchema = z.object({ version: z.literal(1), checksum: z.string().regex(/^[a-f0-9]{64}$/), plan: z.unknown(), now: z.number().int().nonnegative(), completed: z.array(z.string()).refine(v => new Set(v).size === v.length) }).strict();
-type Receipt = { version: 1; checksum: string; plan: MigrationPlan; now: number; completed: string[] };
+const runtimeSkippedSchema=z.array(z.object({id:z.string().regex(/^cv-[0-9a-f]{12}$/),reason:z.literal('skipped: owning Comms thread deleted')}).strict());
+const receiptSchema = z.object({ version: z.literal(1), checksum: z.string().regex(/^[a-f0-9]{64}$/), plan: z.unknown(), now: z.number().int().nonnegative(), runtimeSkipped:runtimeSkippedSchema.optional(), completed: z.array(z.string()).refine(v => new Set(v).size === v.length) }).strict();
+type Receipt = { runtimeSkipped?: z.infer<typeof runtimeSkippedSchema>; version: 1; checksum: string; plan: MigrationPlan; now: number; completed: string[] };
 function canonical(path: string): string {
   try { return realpathSync(path); }
   catch (e) {
@@ -92,7 +93,7 @@ function saveReceipt(home: string, receipt: Receipt, publication: Publication): 
   publication.rename(join(home, pendingName), join(home, receiptName));
   const dir = openSync(home, 'r'); try { publication.sync(dir); } finally { closeSync(dir); }
 }
-export interface MigrationReport { status: 'complete' | 'incomplete'; snapshot: string; plan: string; pieces: { name: string; status: 'imported' | 'completed' }[]; missing: string[]; blocked: string[] }
+export interface MigrationReport { status: 'complete' | 'incomplete'; snapshot: string; plan: string; pieces: { name: string; status: 'imported' | 'completed' }[]; missing: string[]; blocked: string[]; skipped?: {piece:'runtime';id:string;reason:string}[] }
 /** Hooks and alternate registries are internal TypeScript only, never JSON plan options. */
 export async function runMigrationAll(snapshot: string, destination: string, supplied?: unknown, controls: { registry?: MigrationRegistry; now?: () => number; afterPiece?: (name: string) => void; publication?: Publication } = {}): Promise<MigrationReport> {
   const prepared = prepareMigrationPlan(snapshot, supplied), home = canonical(destination);
@@ -106,7 +107,7 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
     const checked = prepareMigrationPlan(snapshot, prepared.plan);
     const plan = checked.plan, checksum = migrationPlanChecksum(plan);
     const previous = readReceipt(home, plan);
-    const receipt = previous ?? { version: 1 as const, checksum, plan, now: (controls.now ?? Date.now)(), completed: [] };
+    const receipt:Receipt = previous ?? { version: 1 as const, checksum, plan, now: (controls.now ?? Date.now)(), completed: [] };
     for (const path of publicationLeftovers) unlinkSync(path);
     chmodSync(home, 0o700);
     if (!previous) saveReceipt(home, receipt, controls.publication ?? durablePublication);
@@ -122,6 +123,7 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
     const report: MigrationReport = { status: missing.size || blocked.size ? 'incomplete' : 'complete', snapshot: plan.snapshot, plan: checksum, pieces: [], missing: [...missing].sort(), blocked: [...blocked].sort() };
     if (entries.every(entry => receipt.completed.includes(entry.name))) {
       report.pieces = entries.map(entry => ({ name: entry.name, status: 'completed' }));
+      if(receipt.runtimeSkipped?.length)report.skipped=receipt.runtimeSkipped.map(row=>({piece:'runtime',...row}));
       return report;
     }
     const app = createFoundation({ home });
@@ -137,12 +139,14 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
             return { slug: project.slug, name: project.name, repos: project.repositories };
           }) };
         } } : input;
-        await entry.run({ db: app.db, home, now: receipt.now, snapshot: { root: checked.root, manifest: checked.manifest } }, effective);
+        const result=await entry.run({ db: app.db, home, now: receipt.now, snapshot: { root: checked.root, manifest: checked.manifest } }, effective);
+        if(entry.name==='runtime' && result && typeof result==='object' && 'skipped' in result)receipt.runtimeSkipped=runtimeSkippedSchema.parse(result.skipped);
         // If death lands before this write, the importer's own transaction/receipt makes retry safe.
         controls.afterPiece?.(entry.name);
         receipt.completed.push(entry.name); saveReceipt(home, receipt, controls.publication ?? durablePublication);
         report.pieces.push({ name: entry.name, status: 'imported' });
       }
+      if(receipt.runtimeSkipped?.length)report.skipped=receipt.runtimeSkipped.map(row=>({piece:'runtime',...row}));
       return report;
     } finally { app.close(); }
   } finally { release(); }

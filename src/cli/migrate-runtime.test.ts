@@ -14,6 +14,7 @@ import { run } from './migrate.js';
 import { createFoundation } from '../core/app.js';
 import { importHousehold } from './household-importer.js';
 import type { IOStreams } from './io.js';
+import { loadKey } from '../pieces/comms/crypto.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
 vi.mock('node:fs',async original=>{
   const actual=await original<typeof import('node:fs')>();
@@ -25,7 +26,7 @@ const bytes=(root:string):unknown=>Object.fromEntries(readdirSync(root).sort().m
   try{return[name,readFileSync(join(root,name)).toString('base64')];}
   catch(e){if((e as NodeJS.ErrnoException).code!=='EISDIR')throw e;return[name,bytes(join(root,name))];}
 }));
-async function fixture() {
+async function fixture(deleted=false) {
   const root=mkdtempSync(join(tmpdir(),'migration-runtime-'));roots.push(root);
   const old=join(root,'old'),state=join(root,'state'),data=join(root,'data'),snapshot=join(root,'snapshot'),home=join(root,'new');
   mkdirSync(join(old,'commons','stores'),{recursive:true});mkdirSync(state);mkdirSync(join(data,'delivery','conversations'),{recursive:true});mkdirSync(join(data,'runs'));
@@ -39,6 +40,15 @@ async function fixture() {
   const store=new Database(join(old,'commons','stores','runtime.db'));store.pragma('journal_mode=WAL');
   store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER PRIMARY KEY,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
   for(const collection of ['gates','grants','policy','gate-proposals'])store.prepare('INSERT INTO docs VALUES (?,?,?,?,?,?)').run(collection,'art','{"private":true}',1,'2026-11-13T00:00:00Z','owner');
+  if(deleted) {
+    await loadKey(old);
+    const comms=new Database(join(old,'comms.db'));
+    comms.exec('CREATE TABLE comms_messages(thread,seq,at,kind,sender,id,hash,text,card_json,run,delivered,step); CREATE TABLE comms_asks(thread,ref,approval,raised,seen,words,answer_json); CREATE TABLE conversation_steps(seq,conversation,at,run,id,tool,state,words)');comms.close();
+    const db=new Database(join(old,'household.db'));
+    db.exec('CREATE TABLE comms_threads(id,agent,member,conversation,title,titled_by,project,pinned,archived,opened,last,read_seq,first_id,first_hash,stop,working_since); CREATE TABLE comms_deleted(id,member,agent,channel,conversation,at)');
+    db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null,'2026-11-13T00:00:00Z');db.close();
+    writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'loom',place:'th:kehvhuwzdm',msgs:[{text:'PRIVATE DELETED WORDS'}]}));
+  }
   // Snapshot must include WAL-only source records.
   await createSnapshot(old,snapshot,undefined,{runtime:state,'runtime-data':data});store.close();
   const plan=prepareMigrationPlan(snapshot).plan;
@@ -146,4 +156,30 @@ it('never probes omitted runtime defaults and refuses supplied empty roots',asyn
   const empty=join(f.root,'empty-data');mkdirSync(empty);
   const emptySnapshot=join(f.root,'empty-snapshot');await createSnapshot(f.old,emptySnapshot,undefined,{runtime:f.state,'runtime-data':empty});
   expect(prepareMigrationPlan(emptySnapshot).plan.importers.runtime.paths).toContain('runtime-data');
+});
+
+it('reports archive-only deleted bindings through standalone and all import, resume and independent verification',async()=>{
+ const f=await fixture(true);f.options.conversations['cv-abcdef123456']={} as typeof f.options.conversations['cv-abcdef123456'];
+ f.plan.importers.runtime.options=f.options;const before=bytes(f.snapshot);
+ const skipped=[{id:'cv-abcdef123456',reason:'skipped: owning Comms thread deleted'}];
+ await expect(runMigrationAll(f.snapshot,f.home,f.plan,{afterPiece:name=>{if(name==='runtime')throw Error('death after commit');}})).rejects.toThrow('death after commit');
+ for(let i=0;i<2;i++) {
+  const report=await runMigrationAll(f.snapshot,f.home,f.plan);
+  expect(report).toMatchObject({status:'complete',skipped:skipped.map(row=>({piece:'runtime',...row}))});
+  expect(JSON.stringify(report)).not.toMatch(/jonathan|PRIVATE|kehvhuwzdm/);
+ }
+ expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'verified'});
+ const home=join(f.root,'standalone');const app=createFoundation({home});importHousehold(app.db,home,join(f.snapshot,'home'),123);app.close();
+ const mapping=join(f.root,'map.json');writeFileSync(mapping,JSON.stringify(f.options));
+ let stdout='';const io:IOStreams={stdin:Readable.from([]),stdout:s=>stdout+=s,stderr:()=>{},env:{}};
+ for(let i=0;i<2;i++) {
+  stdout='';expect(await run(['runtime','--home',home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
+  expect(JSON.parse(stdout)).toMatchObject({imported:i===0,skipped});expect(stdout).not.toMatch(/PRIVATE|jonathan|kehvhuwzdm/);
+ }
+ expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'verified'});
+ expect(bytes(f.snapshot)).toEqual(before);
+ const db=new Database(join(home,'loom.db'));
+ expect(db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);expect(db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
+ db.prepare("UPDATE runtime_import_chunks SET bytes=? WHERE path='data/delivery/conversations/cv-abcdef123456.json'").run(Buffer.from('corrupt'));db.close();
+ expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'different'});
 });

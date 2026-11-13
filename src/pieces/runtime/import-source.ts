@@ -79,10 +79,16 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
     return value;
   });
   let documents: Row[] = [], revisions: Row[] = [];
-  let privateThreads:Row[]=[];
+  let privateThreads:Row[]=[], deletedThreads:Row[]=[];
   if(sources.household) {
     const db=open(sources.household);
-    try{privateThreads=db.prepare('SELECT id,conversation,agent,member,project FROM comms_threads ORDER BY id').all() as Row[];}
+    try{
+      privateThreads=db.prepare('SELECT id,conversation,agent,member,project FROM comms_threads ORDER BY id').all() as Row[];
+      if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='comms_deleted'").get()) {
+        const hasConversation=(db.prepare('PRAGMA table_info(comms_deleted)').all() as {name:string}[]).some(column=>column.name==='conversation');
+        deletedThreads=db.prepare(`SELECT id,${hasConversation?'conversation':'NULL AS conversation'},agent,member FROM comms_deleted ORDER BY id`).all() as Row[];
+      }
+    }
     finally{db.close();}
   }
   if (sources.store) {
@@ -99,8 +105,8 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
       }
     } finally { db.close(); }
   }
-  const source = canonicalRuntimeSource({roots:Object.keys(sources).filter(key=>sources[key as keyof RuntimeImportSources]!==undefined).sort(),files,documents,revisions,privateThreads});
-  return {files,filePaths,state,conversations,documents,revisions,privateThreads,source,checksum:createHash('sha256').update(source).digest('hex')};
+  const source = canonicalRuntimeSource({roots:Object.keys(sources).filter(key=>sources[key as keyof RuntimeImportSources]!==undefined).sort(),files,documents,revisions,privateThreads,deletedThreads});
+  return {files,filePaths,state,conversations,documents,revisions,privateThreads,deletedThreads,source,checksum:createHash('sha256').update(source).digest('hex')};
 }
 
 /** Explicit mappings prevent guessing a job's audience from prose or old bearer keys. */
@@ -151,12 +157,27 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     // No imported job is claimable. Active work needs authoritative runner reconciliation.
     expected.job.push(records.job.parse({id,agent,...scope(options.jobs[id]),box,runner:box,title:'Imported runtime work',state:terminal.has(String(house.state))?house.state:'uncertain',imported:{history:house.writtenOff?'discard':'unknown'},createdAt:stamp(house.created),...(terminal.has(String(house.state))&&house.updated?{endedAt:stamp(house.updated)}:{}),...(house.service?{service:house.service}:{})}));
   }
+  const skipped: {id:string;reason:'skipped: owning Comms thread deleted'}[] = [];
   for (const c of inventory.conversations) {
     const id = text(c.conversation), audience = scope(options.conversations[id]);
-    if (c.venue === 'loom' && !audience.member) throw Error('Private Comms conversation requires a member');
-    if(c.venue==='loom') {
-      const threads=inventory.privateThreads.filter(t=>t.conversation===id);
-      if(threads.length!==1 || threads[0].id!==c.place || threads[0].agent!==c.agent || threads[0].member!==audience.member
+    const agent=knownAgent(c.agent);
+    // Comms places use th:<id>, while the old household tables store the bare id.
+    // Older fixtures/stores can retain the full place as the table id.
+    const placeId=typeof c.place==='string'&&c.place.startsWith('th:')?c.place.slice(3):undefined;
+    const threads=inventory.privateThreads.filter(t=>t.conversation===id || t.id===c.place || (placeId!==undefined&&t.id===placeId));
+    const deleted=placeId===undefined?[]:inventory.deletedThreads.filter(t=>t.id===placeId || t.id===c.place);
+    if(deleted.length) {
+      const tombstone=deleted[0];
+      if(deleted.length!==1 || threads.length || tombstone.agent!==agent || !identities.members.includes(String(tombstone.member))
+        || (tombstone.conversation!==null&&tombstone.conversation!==id)
+        || (audience.member!==undefined&&audience.member!==tombstone.member) || audience.project!==undefined)
+        throw Error('Runtime deleted binding must match the owning Comms source');
+      skipped.push({id,reason:'skipped: owning Comms thread deleted'});continue;
+    }
+    if(c.venue==='loom' || c.venue==='spawn' || placeId!==undefined || threads.length) {
+      if(!audience.member)throw Error('Private Comms conversation requires a member');
+      if(threads.length!==1 || threads[0].conversation!==id || (threads[0].id!==c.place&&threads[0].id!==placeId)
+        || threads[0].agent!==agent || threads[0].member!==audience.member
         || (audience.project!==undefined&&threads[0].project!==audience.project))throw Error('Runtime private audience must match the owning Comms source');
     }
     // Old run/body/home pointers and signed attestations are retained only in the archive.
@@ -164,5 +185,5 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
   }
   controls.afterSnapshot?.();
   if (readRuntimeInventory(sources,open).source !== inventory.source) throw Error('Runtime source changed during import');
-  return {...inventory,expected,options:canonicalRuntimeSource(options)};
+  return {...inventory,expected,skipped,options:canonicalRuntimeSource(options)};
 }
