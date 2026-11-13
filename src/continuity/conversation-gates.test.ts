@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { bodyHouseConversation, createLoomServer, houseWriteProblem, type LoomServerConfig } from '../server.js';
 import { bindHouseConversation } from '../household-store.js';
-import { recordTurn, writeDigest } from '../backends/conversations.js';
+import { recordTurn, writeDigest, writeFinding } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openProjectsStore } from '../backends/projects.js';
 import type { ConversationSelection } from '../conversations.js';
@@ -70,11 +70,13 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
   const { conversation } = recordTurn(contextDir, 'art', {
     venue: 'session', place: 'private', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
   }, 'test');
+  writeFinding(contextDir, { conversation, seq: 1, measure: 'clarity', score: 1, text: 'private-finding-marker' });
   writeDigest(contextDir, { conversation, run: 'seed' }, { summary: 'private-conversation-marker', projects: ['loom'] });
   const projects = openProjectsStore(contextDir)!;
   projects.write({ slug: 'loom', name: 'Loom' }); projects.close();
   bindHouseConversation(home, { agent: 'art', house: 'h-1', conversation });
   const before = readFileSync(join(home, 'household.db'));
+  const binding = vi.spyOn(registry, 'houseConversation');
   for (const caller of [{ house: 'h-1' }, { house: 'h-1', service: 'discord' }, { service: 'discord' }]) {
     const config: LoomServerConfig = { contextDir, caller, conversationSelection: { household, agent: 'art' }, memorySelection: { agent: 'art' }, peopleSelection: null };
     const { server } = createLoomServer(config);
@@ -87,12 +89,17 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
       for (const result of [identity, await call('episodes'), await call('project_hub', { slug: 'loom' }), await call('conversations'), await call('conversation_findings')]) {
         expect(result.isError).not.toBe(true);
         expect(JSON.stringify(result.content)).not.toContain('private-conversation-marker');
+        expect(JSON.stringify(result.content)).not.toContain('private-finding-marker');
       }
       const list = await call('conversations'); expect(JSON.stringify(list.content)).not.toContain(conversation);
       for (const [name, args] of [
         ['conversation', { id: conversation }], ['conversation_digest', { summary: 'should never be written' }],
         ['comms_title', { title: 'should never be written' }], ['comms_thread', {}],
-      ] as const) expect((await call(name, args)).isError, name).toBe(true);
+      ] as const) {
+        expect((await call(name, args)).isError, name).toBe(true);
+        expect(binding, name).not.toHaveBeenCalled();
+      }
+      expect(binding).not.toHaveBeenCalled();
     } finally { await client.close(); await server.close(); }
   }
   expect(readFileSync(join(home, 'household.db'))).toEqual(before);
