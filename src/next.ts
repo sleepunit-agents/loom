@@ -20,15 +20,18 @@ import { householdProjects } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
+import { signin, installSignin, sameOrigin } from './core/signin/index.js';
+import { signinRoutes } from './core/signin/routes.js';
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
-export function nextSessionResolver(_app: Foundation): NextSessionResolver { return () => undefined; }
+export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
 }
 export function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
+  if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
@@ -63,6 +66,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const api = httpDoor(app, auth);
   const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
   const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+  routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {
     // A stateless transport per request binds every call to this caller.
@@ -111,13 +115,14 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   try {
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
-        const origin = req.headers.origin;
-        if (origin && origin !== `${'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`) { res.writeHead(403); res.end(); return; }
-        if (req.url?.startsWith('/api/')) return api(req, res);
+        if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }
+        // The ephemeral credential endpoint authenticates a bearer itself. Generic
+        // operation routing cannot mint a link, even with encoded path parameters.
+        if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');
