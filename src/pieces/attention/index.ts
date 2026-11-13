@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
@@ -24,6 +25,7 @@ const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
+  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);

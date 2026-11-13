@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
@@ -22,6 +23,7 @@ export interface ApprovalOptions {
   localAgent?: string;
 }
 export function installApprovals(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ApprovalOptions = {}) {
+  registerBuiltinService(operations, 'approvals', ['approval', 'approval-rule']);
   migrate(db,'approvals',schema);
   const context = (viewer: Viewer, input: Record<string,unknown>, now: number, piece = false): DomainContext => {
     const resolved = piece ? input.caller as Caller : options.caller?.(viewer,typeof input.principal === 'string' ? input.principal : undefined);
