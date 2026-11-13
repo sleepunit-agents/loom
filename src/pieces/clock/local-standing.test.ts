@@ -180,3 +180,26 @@ it('a definitely not-started retry and an uncertain result both keep the target 
     expect(load(s.app.db).standing[0].uses).toBe(1);
   }
 });
+
+it('rechecks immutable executable words after intent commit and before runtime invocation',async()=>{
+  const startBody=vi.fn(async(_input:Parameters<import('./role.js').Runtime['startBody']>[0])=>({state:'started' as const,body:'body'}));
+  const s=await setup({startBody}),id=idOf(s);allow(s,id);recover(s,id);
+  const stop=s.app.live.observe(changes=>{
+    const w=wakes(s.app.db)[0];
+    if(changes.some(c=>c.type==='wake') && w.state==='firing') {
+      stop();s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...w,prompt:prompt+'changed'}),w.id);
+    }
+  });
+  s.clock.advance(3600000);await settle();expect(startBody).not.toHaveBeenCalled();
+  expect(wakes(s.app.db)[0]).toMatchObject({state:'held',hold:'permission'});
+});
+it('keeps a firing target occupied while runtime has not reported its outcome',async()=>{
+  let finish!:(r:import('./role.js').StartResult)=>void;
+  const s=await setup({startBody:()=>new Promise(resolve=>{finish=resolve;})}),id=idOf(s);allow(s,id);recover(s,id);
+  s.access.services.clock.operations.push('clock.localSchedule','approvals.piece-use-local');
+  s.clock.advance(3600000);await settle();expect(wakes(s.app.db)[0].state).toBe('firing');
+  expect(recover(s,id).ok).toBe(false);
+  expect(clockLocalRecovery(s.app.operations).schedule(caller,{approval:id,mode:'in',when:'1h'}).ok).toBe(false);
+  expect(load(s.app.db).standing[0].uses).toBe(1);expect(wakes(s.app.db)).toHaveLength(1);
+  finish({state:'started',body:'body'});await settle();expect(recover(s,id).ok).toBe(true);
+});
