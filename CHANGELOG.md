@@ -1032,6 +1032,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add owner-only next-mode `household.show` and generated `loom-household show` JSON summary.
 
+### Settings
+
+- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
