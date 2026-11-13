@@ -81,7 +81,16 @@ and unknown option text cannot be reflected. Importer tests cover malformed
 versions/identities, duplicates, ambiguous destination mappings, nonempty homes,
 forged source caches and lock ownership through database close and failure.
 
-Cutover requires the next-mode composition root, a centrally authorized job
+Next mode registers the Changes operations and Live records without a fixture
+installer. Reads project stored records through current database-backed household
+project mappings and Sharing. Until trusted runtime attribution is composed, the
+root supplies empty attribution: cached agent/mine labels confer no authority,
+and confirmation/answers remain closed. Refresh records a durable request but
+does not start a forge read in this read-only composition.
+`src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
+current project membership/revocation, and closed approval controls.
+
+Cutover still requires daemon startup/shutdown in the next root, a centrally authorized job
 viewer, the real Approvals adapter, and an injected Secrets role (fake secrets
 until that piece lands). Those integrations remain open. No production import,
 deployment, old-service shutdown or live-home modification is part of this branch.
