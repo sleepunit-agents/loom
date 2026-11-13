@@ -46,7 +46,7 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
     expect(op('putLinks',{id:'person',platform,workspace:'house',user:'200',person:'jonathan'}).ok).toBe(true);
     expect(op('putRoutes',{id:'channel',platform,workspace:'house',channel:'300',primary:'art'}).ok).toBe(true);
   }
-  const message=(overrides: Partial<Message>={}): Message=>({at:'2026-11-12T17:00:00.123456Z',label:'House chat',id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
+  const message=(overrides: Partial<Message>={}): Message=>({at:'2026-11-12T17:00:00.123456Z',label:'House chat',id:'m1',channel:platform==='slack'?'D300':'300',user:'200',text:'hi',mentions:[],dm:platform==='slack',...overrides});
   return {runtime,admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
@@ -55,7 +55,7 @@ describe('in-process bridge delivery',()=>{
     expect(f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'mark'}).ok).toBe(true);
     f.adapter.inspection={kind:'allow',members:['100','200','201']};
     // MPIMs route to their own bot, even without a route or summons.
-    const message=f.message({channel:'G300',group:true});
+    const message=f.message({channel:'G300',group:true,dm:false});
     return {...f,groupMessage:message};
   }
   it('routes Slack groups to the receiving bot and admits every human before delivery',async()=>{
@@ -63,6 +63,35 @@ describe('in-process bridge delivery',()=>{
     await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
     expect(f.admitted).toEqual(['jonathan','mark']); expect(f.deliveries.size).toBe(1);
     expect([...f.deliveries.values()][0].key.venue).toBe('slack:house:group:G300');
+  });
+  it('derives group identity and admission from non-D Slack ids even without flags',async()=>{
+    const f=await groupFixture(); const raw={...f.groupMessage,dm:true,group:undefined};
+    f.adapter.inspection='allow';
+    await f.engine.receive(f.venue.id,raw); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0); expect(f.admitted).toEqual([]);
+    f.adapter.inspection={kind:'allow',members:['100','200','201']};
+    await f.engine.receive(f.venue.id,{...raw,id:'m2'}); await f.engine.flush();
+    const incoming=[...f.deliveries.values()][0];
+    expect(incoming.key.venue).toBe('slack:house:group:G300');
+    expect(incoming.address).toMatchObject({group:true,dm:false});
+    expect(f.admitted).toEqual(['jonathan','mark']);
+    f.engine.reply({id:'reply',incomingId:incoming.id,text:'hello'}); await f.engine.flush();
+    expect(f.adapter.posts[0][2]).toMatchObject({group:true,dm:false});
+  });
+  it('reclassifies pre-fix pending receipts and replies before admission and posting',async()=>{
+    const f=await groupFixture(); f.setGate('wait');
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    const raw={...f.groupMessage,dm:true,group:undefined};
+    f.app.db.prepare('UPDATE bridges_inbox SET message=?').run(JSON.stringify(raw));
+    f.setGate('allow'); f.adapter.inspection='allow';
+    f.clock.advance(5000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    // A previously delivered pre-fix receipt can already have a pending reply.
+    f.app.db.prepare("UPDATE bridges_inbox SET state='delivered',message=?").run(JSON.stringify(raw));
+    const {id}=f.app.db.prepare('SELECT id FROM bridges_inbox').get() as {id:string};
+    f.engine.reply({id:'reply',incomingId:id,text:'secret'});
+    f.app.db.prepare('UPDATE bridges_outbox SET address=?').run(JSON.stringify({channel:'G300',dm:true}));
+    await f.engine.flush(); expect(f.adapter.posts).toEqual([]);
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'held'});
   });
   it.each([
     ['legacy boolean','allow'],

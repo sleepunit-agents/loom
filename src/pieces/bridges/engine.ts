@@ -3,7 +3,7 @@ import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 import type { Clock, Context } from '../../core/index.js';
 import type { Address, Message, Route, Venue } from './model.js';
-import { keyFor } from './model.js';
+import { keyFor, conversationKind } from './model.js';
 import { eventTime } from './time.js';
 import { addressed, isStop } from './routing.js';
 import { all, venueById, routeFor, personFor, setupRevision } from './store.js';
@@ -79,6 +79,7 @@ export class Bridges implements BridgesRole {
     if (this.closed) throw new Error('Bridges closed');
     const v = receivedAs ?? venueById(this.app.db,venueId);
     if (!v) throw new Error('Unknown venue');
+    message = {...message,...conversationKind(v,message)};
     const id = hash([v.platform,v.workspace,message.channel,message.id,v.agent]);
     this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
     this.changed('bridges.venue',v.id);
@@ -93,7 +94,9 @@ export class Bridges implements BridgesRole {
     if (old) { if (old.incoming !== input.incomingId || old.text !== input.text) throw new Error('Reply id reused'); return; }
     const incoming = db.prepare("SELECT * FROM bridges_inbox WHERE id=? AND state='delivered'").get(input.incomingId) as Inbox | undefined;
     if (!incoming) throw new Error('No delivered message for reply');
-    const m = JSON.parse(incoming.message) as Message;
+    const raw = JSON.parse(incoming.message) as Message;
+    const v = venueById(db,incoming.venue);
+    const m = v ? {...raw,...conversationKind(v,raw)} : raw;
     const address: Address = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group};
     db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,incoming.identity,JSON.stringify(address),input.text,this.clock.now());
     if (context) context.changed('bridges.send',input.id); else this.changed('bridges.send',input.id);
@@ -144,7 +147,8 @@ export class Bridges implements BridgesRole {
     const db = this.app.db;
     for (const row of db.prepare("SELECT * FROM bridges_inbox WHERE state='pending' ORDER BY received,id").all() as Inbox[]) {
       if (this.closed) return;
-      const v = venueById(db,row.venue), message = JSON.parse(row.message) as Message;
+      const v = venueById(db,row.venue), raw = JSON.parse(row.message) as Message;
+      const message = v ? {...raw,...conversationKind(v,raw)} : raw;
       let state = 'dropped', reason: string | null = null;
       try {
         if (!v || identity(v)!==row.identity) { state='held'; reason='venue identity changed'; }
@@ -198,7 +202,8 @@ export class Bridges implements BridgesRole {
       let token: string;
       try { token=(await this.credentials(v)).token; } catch { this.retry(); continue; }
       const original = db.prepare('SELECT message FROM bridges_inbox WHERE id=(SELECT incoming FROM bridges_outbox WHERE id=?)').get(row.id) as {message:string} | undefined;
-      const message = original ? JSON.parse(original.message) as Message : undefined;
+      const raw = original ? JSON.parse(original.message) as Message : undefined;
+      const message = raw ? {...raw,...conversationKind(v,raw)} : undefined;
       const route = message ? routeFor(db,v,message.channel,message.parent) : undefined;
       if (v.platform === 'slack' && message?.group) {
         let admitted: 'allow'|'drop'|'wait';
@@ -215,7 +220,8 @@ export class Bridges implements BridgesRole {
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);
       try {
-        const result = await adapter.send(v,token,JSON.parse(row.address) as Address,row.text,row.id);
+        const address = JSON.parse(row.address) as Address;
+        const result = await adapter.send(v,token,{...address,...conversationKind(v,address)},row.text,row.id);
         db.prepare("UPDATE bridges_outbox SET state='sent',remote_id=? WHERE id=?").run(result.id,row.id);
         this.effects.finish(`bridges:${row.id}`);
       } catch {

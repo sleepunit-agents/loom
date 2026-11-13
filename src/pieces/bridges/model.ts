@@ -23,7 +23,14 @@ export interface Message {
 }
 export interface Address { channel: string; thread?: string; dm: boolean; group?: boolean }
 export interface ConversationKey { agent: string; who: string; venue: string }
+/** Slack non-D conversations are always gated as groups, including old queues. */
+export function conversationKind(venue: Pick<Venue,'platform'>, message: Pick<Message,'channel'|'dm'|'group'>): {dm:boolean;group?:boolean} {
+  if(venue.platform !== 'slack') return {dm:message.dm,group:message.group};
+  const group=!!message.group || !message.channel.startsWith('D');
+  return {dm:!group,group};
+}
 export function keyFor(venue: Venue, message: Message, person: string): ConversationKey {
-  const place = message.dm ? `dm:${person}` : message.group ? `group:${message.channel}` : message.thread ? `thread:${message.channel}:${message.thread}` : `channel:${message.channel}`;
-  return { agent: venue.agent, who: message.dm ? person : place, venue: `${venue.platform}:${venue.workspace}:${place}` };
+  const {dm,group}=conversationKind(venue,message);
+  const place = dm ? `dm:${person}` : group ? `group:${message.channel}` : message.thread ? `thread:${message.channel}:${message.thread}` : `channel:${message.channel}`;
+  return { agent: venue.agent, who: dm ? person : place, venue: `${venue.platform}:${venue.workspace}:${place}` };
 }

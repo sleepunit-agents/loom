@@ -100,7 +100,9 @@ People links. Real Slack integration must still check users.info (same team, not
 stranger, deleted or bot), inspect every member and admit each with runtime, and return the full checked member set as `{kind:'allow', members}`. For a group,
 that includes the receiving bot and the sender, with at least two distinct humans;
 every human must resolve unambiguously to a different People link and pass runtime
-admission. A bare `allow` cannot authorize a Slack group. Groups route to their
+admission. A bare `allow` cannot authorize a Slack group. The engine derives non-D Slack
+conversation IDs as groups at routing, receipt, queue drain, reply and send boundaries,
+including queued messages predating this check; an absent group flag cannot bypass it. Groups route to their
 receiving bot without needing a primary route or mention, as DMs do.
 
 The engine repeats inspection and all-member admission before EVERY group post,
