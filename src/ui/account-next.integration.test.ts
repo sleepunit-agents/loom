@@ -1,0 +1,47 @@
+/** Account's one browser acceptance: actual sign-in, WebAuthn, two windows, six images; CI only. */
+import { it, expect, vi } from 'vitest';
+import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { chromium } from 'playwright-core';
+import { startLoom } from '../foundation.js';
+import { fixture } from '../fixture.js';
+import { FakeClock } from '../core/clock.js';
+import { signin } from '../core/signin/index.js';
+const root=resolve(import.meta.dirname,'../../dist/web');
+const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
+it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
+  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-12T12:00:00Z')),webRoot:root});
+  const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try{
+    const context=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
+    const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
+    const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+    const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!link.ok)throw Error('Fixture sign-in failed');
+    await a.goto(base+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
+    const secondLink=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!secondLink.ok)throw Error('Second sign-in failed');
+    await b.goto(base+(secondLink.value as {path:string}).path);const otherSignedIn=b.waitForResponse(r=>r.request().method()==='POST');await b.getByRole('button',{name:'Sign in',exact:true}).click();expect((await otherSignedIn).status()).toBe(303);
+    await a.goto(base+'/p/account-preview');await b.goto(base+'/p/account-preview');
+    const registration=a.getByRole('form',{name:'Add a passkey',exact:true});await expect.poll(()=>registration.getByRole('textbox').isEnabled()).toBe(true);
+    await registration.getByRole('textbox').fill('Browser passkey');await registration.getByRole('button',{name:'Add a passkey',exact:true}).click();
+    await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);
+    const s=signin(loom),source=Object.values(s.sessions.read().sessions)[0].secret,temporary=s.createSession(source,{label:'Temporary browser'});
+    loom.live.changed([{type:'core.access',id:'credentials'}]);
+    const read=loom.operations.call('direct',{kind:'member',id:'jonathan'},'account.read',{});if(!read.ok)throw Error();
+    const ref=(read.value as {sessions:Array<{ref:string;label?:string}>}).sessions.find(x=>x.label==='Temporary browser')!.ref;
+    const end=a.getByRole('form',{name:`Sign out session ${ref}`,exact:true});await expect.poll(()=>end.count()).toBe(1);await end.getByRole('button').click();expect(s.session(temporary)).toBeDefined();
+    await end.getByRole('checkbox').check();await end.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:`Sign out session ${ref}`,exact:true}).count()).toBe(0);expect(s.session(temporary)).toBeUndefined();
+    const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
+      await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
+    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});await a.getByRole('button',{name:'Sign out this device',exact:true}).click();
+    await expect.poll(()=>a.getByRole('button',{name:'Sign in with a passkey',exact:true}).count()).toBe(1);expect((await (await context.request.get(base+'/auth/session')).json()).viewer).toBeNull();expect((await (await otherContext.request.get(base+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
+    expect(errors).toEqual([]);await context.close();await otherContext.close();
+  }finally{await browser.close();await loom.close();vi.unstubAllEnvs();rmSync(home,{recursive:true,force:true});}
+},60_000);

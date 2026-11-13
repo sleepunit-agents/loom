@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
+- Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
@@ -1095,6 +1096,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
 
 - Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
+
+- Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
 
 ## [0.16.1] - 2026-10-25
 
