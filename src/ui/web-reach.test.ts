@@ -18,9 +18,9 @@ const resolveSpec = (from: string, spec: string): string | undefined => {
 };
 
 describe('the app carries nothing it doesn\'t use', () => {
-  it('every module under web/src is reached from main.tsx', () => {
+  it('every module under web/src is reached from a shipped entry', () => {
     const seen = new Set<string>();
-    const todo = [join(src, 'main.tsx'), join(src, 'looks/boot.js')];
+    const todo = [join(src, 'main.tsx'), join(src, 'shell/main.tsx'), join(src, 'looks/boot.js')];
     while (todo.length) {
       const f = todo.pop()!;
       if (seen.has(f)) continue;

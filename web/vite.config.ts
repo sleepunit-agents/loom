@@ -25,14 +25,17 @@ function looks(): Plugin {
       const fileName = `assets/look-${createHash('sha256').update(src).digest('base64url').slice(0, 8)}.js`;
       this.emitFile({ type: 'asset', fileName, source: src });
       // Every look's tokens are in the app's stylesheet (index.css imports looks/looks.css): without them nothing paints.
-      const css = Object.values(bundle).filter((f) => f.type === 'asset' && /^assets\/index-[^/]+\.css$/.test(f.fileName)).map((f) => String((f as { source: unknown }).source)).join('');
+      const css = Object.values(bundle).filter((f) => f.type === 'asset' && /^assets\/[^/]+\.css$/.test(f.fileName)).map((f) => String((f as { source: unknown }).source)).join('');
       for (const look of ['neon', 'lowlight', 'daylight']) if (!new RegExp(`\\[data-look="?${look}"?\\]`).test(css)) throw new Error(`loom-looks: the app's stylesheet has no ${look} tokens (looks/looks.css)`);
       const html = bundle['index.html'];
       if (!html || html.type !== 'asset') throw new Error('loom-looks: no index.html in the build');
       // First in the head, before the app's stylesheet: it decides which look paints.
       const anchor = '<meta charset="UTF-8" />';
       if (!String(html.source).includes(anchor)) throw new Error(`loom-looks: index.html has no ${anchor} to put the look's script after`);
-      html.source = String(html.source).replace(anchor, `${anchor}\n    <script src="/app/${fileName}"></script>`);
+      for (const name of ['index.html', 'next.html']) {
+        const page = bundle[name];
+        if (page?.type === 'asset') page.source = String(page.source).replace(anchor, `${anchor}\n    <script src="/app/${fileName}"></script>`);
+      }
     },
   };
 }
@@ -43,5 +46,5 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), looks()],
   css: { postcss: { plugins: [accessMedia()] } },
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
-  build: { outDir: '../dist/web', emptyOutDir: true },
+  build: { rolldownOptions: { input: { index: path.resolve(import.meta.dirname, 'index.html'), next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },
 });
