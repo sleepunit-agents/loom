@@ -28,7 +28,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.pathname==='/live'||url.pathname.startsWith('/api/'))return route.continue();const path=url.pathname.startsWith('/app/')?resolve(root,url.pathname.slice(5)):join(root,'index.html');if(!path.startsWith(root+'/')||!existsSync(path))return route.fulfill({status:404,body:''});await route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});});
-  const a=await context.newPage(),b=await context.newPage();await b.clock.install({time:clock.now()});await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
+  const a=await context.newPage(),b=await context.newPage();await b.addInitScript(()=>{const sockets:WebSocket[]=[];Reflect.set(window,'__fixtureSockets',sockets);const Native=window.WebSocket;window.WebSocket=class extends Native{constructor(url:string|URL,protocols?:string|string[]){super(url,protocols);sockets.push(this);}};});await b.clock.install({time:clock.now()});await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
   const row=(page:typeof a)=>page.locator('[data-split-row]').filter({hasText:'New thread with art'});
   await expect.poll(()=>row(a).count()).toBe(1);await row(a).click();await row(b).click();
   await expect.poll(()=>a.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
@@ -102,6 +102,47 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
   await capture('comms',true);
+  const conversation=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
+  const created=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Work made in this thread',agent:'art',source:`conversation:${conversation}`,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work');
+  expect(created).toMatchObject({ok:true,value:{result:{ok:true}}});
+  const task=(created as {ok:true;value:{result:{id:string}}}).value.result.id;
+  await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
+  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/${task}`);
+  const blocker=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Blocking fixture work',agent:'art',actor:'art',at:new Date(clock.now()).toISOString()},'fixture-blocker');
+  expect(blocker).toMatchObject({ok:true,value:{result:{ok:true}}});
+  const blockerId=(blocker as {ok:true;value:{result:{id:string}}}).value.result.id;
+  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.link',{id:task,dependsOn:blockerId,type:'blocks',actor:'art',at:new Date(clock.now()).toISOString()},'fixture-block')).toMatchObject({ok:true,value:{result:{ok:true}}});
+  await b.setViewportSize({width:390,height:900});
+  await expect.poll(()=>b.getByRole('button',{name:'Work (1 · 1 needs a look)',exact:true}).getAttribute('aria-expanded')).toBe('false');
+  expect(await b.getByRole('region',{name:'Work in this thread'}).count()).toBe(0);
+  await b.getByRole('button',{name:'Work (1 · 1 needs a look)',exact:true}).click();
+  await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Blocked');
+  const badge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="bad"]');
+  expect(await badge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
+  await capture('comms-work',true);
+  // At desktop widths the region is visible beside the message column without a toggle.
+  expect(await b.getByRole('button',{name:/^Work/}).count()).toBe(0);
+  const workBox=await b.getByRole('region',{name:'Work in this thread'}).boundingBox(),messageBox=await b.getByLabel('Thread messages').boundingBox();
+  expect(workBox!.x).toBeGreaterThanOrEqual(messageBox!.x+messageBox!.width);
+  const closed=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.close',{id:task,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work-close');
+  expect(closed).toMatchObject({ok:true,value:{result:{ok:true}}});
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Done');
+  const doneBadge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="ok"]');
+  expect(await doneBadge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
+  const importedId='..';
+  expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.import',{tasks:[{id:importedId,title:'Imported work link',type:'task',status:'closed',closedAt:new Date(clock.now()-8*86400000).toISOString(),priority:2,createdBy:'art',createdAt:new Date(clock.now()-9*86400000).toISOString(),agent:'art',source:`conversation:${conversation}`,description:'Imported work detail'}],actor:'art',at:new Date(clock.now()).toISOString()},'fixture-imported-work')).toMatchObject({ok:true,value:{result:{ok:true}}});
+  await expect.poll(()=>a.getByRole('link',{name:'Imported work link'}).count()).toBe(1);
+  await a.getByRole('link',{name:'Imported work link'}).click();
+  await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);
+  await a.goto(`${loom.url}/p/comms-preview/thread/${place.replace(/^th:/,'')}`);
+  await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
+  await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
+  await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});
+  await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(0);
+  await b.clock.fastForward(250);
+  await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
+  await b.clock.resume();
+
   await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
   await expect.poll(()=>b.getByLabel('Thinking status').count()).toBe(0);
@@ -161,12 +202,18 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>starts.length).toBe(beforeKeyboardSend+1);
   expect(await composer.evaluate(el=>document.activeElement===el)).toBe(true);
   expect(await composer.inputValue()).toBe('');
+  // Start the scroll-away proof only after the actual own-message Live record,
+  // not merely its operation acknowledgement or optimistic preview.
+  await expect.poll(()=>messages.getByText('Sent above the keyboard',{exact:true}).count()).toBe(1);
   await expect.poll(composerBottom).toBeLessThanOrEqual(470);
   await b.evaluate(()=>{
    for(const key of ['height','offsetTop','scale'])Reflect.deleteProperty(window.visualViewport!,key);
    window.visualViewport!.dispatchEvent(new Event('resize'));
   });
   await expect.poll(()=>b.locator('.loom-comms').getAttribute('data-comms-keyboard')).toBe(null);
+  // Let the existing resize observer adopt restored geometry before testing a
+  // separate deliberate scroll. No wall-clock sleep or extra browser is used.
+  await messages.evaluate(el=>new Promise<void>(resolve=>{const observer=new ResizeObserver(()=>{observer.disconnect();resolve();});observer.observe(el);}));
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
   expect(await gap()).toBeGreaterThan(80);

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
 import { ActionForm, actionsFor, actionLabel, useAnswer, type Action } from './actions';
+import { taskId, taskSegment } from './route';
 import type { ChangeRecord } from '../changes/model';
 import { inFolder, matches, pullRequests, type Task, type TaskAnswer } from './model';
 
@@ -38,9 +39,9 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0];
   const base = path.split('/task/')[0];
-  const selected = /\/task\/(t-\d+)$/.exec(path)?.[1];
+  const selected = taskId(path);
   const navigate = (id?: string) => {
-    const next = id ? `${base}/task/${id}` : base;
+    const next = id ? `${base}/task/${taskSegment(id)}` : base;
     if (go) go(next);
     else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
   };
@@ -58,7 +59,7 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
   const olderState = useAnswer(olderTask);
   const [archive,setArchive] = useState<Call<TaskAnswer>>();
   const archiveState = useAnswer(archive);
-  // Older closed tasks are fetched only by an explicit request. Never retain them across a lost subscription.
+  // Older closed tasks are fetched only by an explicit reader selection or URL. Never retain them across a lost subscription.
   const old = status === 'live' && archiveAt === records && archiveState.result?.ok && archiveState.result.value.result.ok ? archiveState.result.value.result.entries ?? [] : [];
   const all = [...records, ...old.filter(t => !records.some(live => live.id === t.id))];
   const loadedTask = olderAt === records && olderState.result?.ok && olderState.result.value.result.ok ? olderState.result.value.result.task : undefined;
@@ -69,10 +70,14 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
     { heading:'Projects' }, ...[...new Set(records.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({ id:`project:${project}`,label:project,count:records.filter(t => inFolder(t,`project:${project}`)).length })),
     { heading:'Epics' }, ...records.filter(t => t.type === 'epic' && records.some(child => child.parent === t.id && child.status !== 'closed')).map(t => ({ id:`epic:${t.id}`,label:t.title,count:records.filter(child => inFolder(child,`epic:${t.id}`)).length })),
   ];
-  const open = (id: string) => {
-    navigate(id); setAction(undefined);
-    if (!records.some(t => t.id === id)) { setOlderAt(records); setOlderTask(call<TaskAnswer>('tasks.show',{id})); }
-  };
+  // A direct reader URL is an explicit detail request, including aged-out tasks.
+  // Bind every response to this exact Live snapshot; access loss/replacement
+  // hides it before any asynchronous detail can render.
+  useEffect(() => {
+    if(status !== 'live' || !selected || records.some(t => t.id === selected)) { setOlderTask(undefined); setOlderAt(undefined); return; }
+    setOlderAt(records); setOlderTask(call<TaskAnswer>('tasks.show',{id:selected}));
+  },[records,status,selected]);
+  const open = (id: string) => { navigate(id); setAction(undefined); };
   const act = (a: Action, id = selected) => { const target = a === 'create' ? undefined : id; navigate(target); setAction({ action:a,id:target }); };
   const activeForm = action && (action.action === 'create' || (current && action.id === current.id));
   return <Split className="h-full" label="Tasks" folders={folders} folder={folder} onFolder={id => { setFolder(id); setAction(undefined); }}

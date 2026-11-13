@@ -10,6 +10,12 @@ runtime role. `web/src/pieces/comms` renders records through the shared data
 client and kit. The importer is an offline command, not a second running data
 path. Neither running piece nor browser reads the old stores.
 
+Runtime integration update: main now includes the runtime owner's
+[private Comms/body composition](https://github.com/sleepunit-agents/loom/pull/1043).
+Its current contract is in [runtime-piece.md](runtime-piece.md). Earlier missing-binding
+statements below record prior checkpoints; final integration/parity acceptance
+is still required before this whole rebuild is complete.
+
 ## Current operations and records
 
 All `comms.*` operations require a socket authenticated as a real page session.
@@ -24,6 +30,7 @@ project or the household never grants access to another member's thread.
 | `comms.route` | Optional item agent; current configured owned recipients, pick and reason. Missing registry yields no recipients. |
 | `comms.about` | Agent and ref or page; up to five recent open owned threads about that item. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
+| `comms.work` | Thread; currently visible Tasks/Changes made in that exact conversation, plus piece-level failures. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
 | `comms.change` | Thread and title/project/pin/unpin/archive/unarchive/read/stop/delete action. |
@@ -89,7 +96,7 @@ data does not remove the behavior it delivered.
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
-| `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
+| `/work`, `comms-work` piece feeds | Shared piece roles and live records | Partial: made-here Tasks/Changes now read through their roles, with exact conversation source matching, per-piece central filtering, bad/warn/newest ordering and links to their new apps. Window-only `threadWork` records update the panel from task/change/thread/access events and expire closed changes at seven days. Referenced work/notes and reverse source links still remain. |
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
 | `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule and five recent owned-thread matching now exist as window-only operations. Imported associations now use destination-key fingerprints. Production registry binding and attachment UI remain missing. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
@@ -894,3 +901,28 @@ It checks bearer operation/subscription denial, page subscription, revocation,
 expiry, CSRF and revocation during private decryption. This is the authentication
 prerequisite only: `installNext` still needs Comms composition, its private runtime
 reference path, trusted metadata, Attention and staging-release reconciliation.
+
+
+## Made-here work
+
+`comms.work` and the window-only scoped `threadWork` record use the original
+thread member as viewer for the Tasks export and Changes thread-feed/list roles.
+They read no piece tables or old programs. Tasks match the exact
+`conversation:<id>` source; Changes keeps its existing trusted task-citation
+attribution. Project visibility is checked independently by each owning piece.
+No message decryption or new work index is involved. Another household owner
+cannot read a thread's panel; bearer callers cannot read either surface.
+
+The panel shows up to 100 items, bad then warn then other statuses, newest first,
+with fixed app links and “Made here”. Owner-assigned open work reads Waiting on you for its assignee, or Waiting on the owner's member id for another viewer; it uses the current sharing registry, without opening a people store. Imported task ids over 200 characters are omitted. A failing role is named (Tasks or Changes)
+without returning its error details; the other role can still answer. Task
+status is the stored status, not a claim of readiness: visible unfinished
+blockers show Blocked, and hidden blockers are not exposed or inferred. Closed
+Changes disappear at their owning piece's exact seven-day deadline, including
+from an idle subscription. Archive keeps the panel; deletion and lost ownership
+remove it. A disconnected page hides cached work until its subscription is live.
+
+This completes the made-here portion only. References cited in words, note refs,
+ref chip resolution and reverse “From” links remain required. The current runtime binding is documented in runtime-piece.md; its remaining parity and final integration acceptance still need checking. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
+
+Cold review for this work-panel unit stopped at the three-round bound, raw final BLOCKING. All reported defects were folded with component/socket/browser regressions afterward; these final fixes are author-tested and CI-verified, not cold-clear. Exact raw results and reconciliation are in loom note `loom/2026-11-13-comms-work-review`. No fourth round.
