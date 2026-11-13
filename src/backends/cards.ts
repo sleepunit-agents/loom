@@ -283,12 +283,14 @@ const BASE_COLUMNS = ['slug', 'name', 'card_json', 'archived_at', 'archived_by',
  */
 export class CardTable<R extends CardRowBase> {
   private readonly columns: string[];
+  private changes: Set<string> | undefined;
   readonly selectRowSql: string;
 
   constructor(
     readonly db: Database,
     private readonly spec: { table: string; revisions: string; extraColumns?: readonly string[]; noun: CardNoun },
     private readonly actor: string | null,
+    private readonly committed?: (slug: string) => void,
   ) {
     // The base columns' order is load-bearing: write-race tests hook the
     // row read by its `SELECT slug, name, card_json` prefix.
@@ -338,11 +340,25 @@ export class CardTable<R extends CardRowBase> {
          ON CONFLICT(slug) DO UPDATE SET ${cols.filter((c) => c !== 'slug').map((c) => `${c} = excluded.${c}`).join(', ')}`,
       )
       .run(row);
+    this.changes?.add(row.slug);
   }
 
   /** One BEGIN IMMEDIATE transaction around `fn`, retried as a whole on SQLITE_BUSY. */
   mutate<T>(fn: () => T): T {
-    return retryWrite(() => this.db.transaction(fn).immediate());
+    const parent = this.changes;
+    const changes = new Set<string>();
+    this.changes = changes;
+    try {
+      const result = retryWrite(() => {
+        changes.clear();
+        return this.db.transaction(fn).immediate();
+      });
+      if (parent) for (const slug of changes) parent.add(slug);
+      else if (!this.db.inTransaction) for (const slug of changes) {
+        try { this.committed?.(slug); } catch { /* notification never undoes a committed card */ }
+      }
+      return result;
+    } finally { this.changes = parent; }
   }
 
   requireActive(slug: string, verb: string): R {

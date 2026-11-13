@@ -1,3 +1,4 @@
+import { notifyWrites } from '../core/touched/writes.js';
 /**
  * SQLite + sqlite-vec memory backend.
  *
@@ -145,6 +146,7 @@ export class SqliteVecBackend implements MemoryBackend {
     this.db.pragma('busy_timeout = 5000');
     sqliteVec.load(this.db);
     this.initSchema();
+    notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
   }
 
   // ── MemoryBackend interface ──

@@ -1,3 +1,5 @@
+import { touched } from '../core/touched/index.js';
+import { dirname } from 'node:path';
 /**
  * Project cards — the condensed current state of a body of work
  * (docs/specs/projects.md). A project card does for a body of work what a
@@ -398,6 +400,7 @@ export class ProjectsStore {
       this.db,
       { table: 'projects', revisions: 'project_revisions', extraColumns: ['status'], noun: PROJECT_NOUN },
       config.actor ?? null,
+      slug => touched(dirname(config.dbPath), 'project', slug),
     );
   }
 
