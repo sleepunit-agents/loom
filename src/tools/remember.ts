@@ -5,6 +5,7 @@
  * backend (sqlite-vec + fastembed); the interface stays generic so
  * future stacks can swap in without changing the tool contract.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { MemoryInput, MemoryRef } from '../backends/types.js';
 import { EPISODE_CATEGORY, EPISODE_DEFAULT_TTL } from '../categories.js';
@@ -36,6 +37,7 @@ export function validateMemoryInput(input: MemoryInput): string | null {
 export async function remember(
   contextDir: string,
   input: MemoryInput,
+  selection?: MemorySelection,
 ): Promise<MemoryRef> {
   const reason = validateMemoryInput(input);
   if (reason !== null) {
@@ -43,7 +45,7 @@ export async function remember(
     // the typed rejection (dispatch wraps it into a typed envelope at the edge).
     throw new Error(`Error: ${reason}`);
   }
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   // An episode is short-term by definition: without an explicit ttl it gets the
   // tier default, so a body can never accidentally leave a permanent episode.
   const isEpisode = input.category === EPISODE_CATEGORY;

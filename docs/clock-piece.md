@@ -308,7 +308,12 @@ missing or malformed values default to an hour. The clock adds one minute and
 clamps the wait to 15 minutes through eight days. A quota result never increments
 the existing failure count, including on repeated waits, and a persisted deadline
 survives restart. Ordinary definite failures retain exponential backoff and the
-six-failure limit. Superseded work is cancelled before applying either retry path.
+six-failure limit. A continuation instead becomes terminal `failed` on its first
+definite non-quota failure, even if runtime supplies a retry time. Its report
+authority belongs to that firing. Structured quota waits remain eligible for
+deferral without spending a failure. Uncertain or thrown outcomes remain held.
+Superseded work is cancelled before applying either retry path. Continuation
+handle, issuer and deadline validation still require the runtime resolver.
 
 The clock keeps the same wake id with a fresh dispatch intent after a confirmed
 not-started outcome; there is no old HTTP delivery-id adapter. It records

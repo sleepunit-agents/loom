@@ -4,6 +4,7 @@
  * Clears the archived flag and wipes the tombstone note. The memory
  * becomes visible to recall, list, audit, and findSimilar again.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { RestoreInput } from '../backends/types.js';
 
@@ -12,6 +13,7 @@ import type { RestoreInput } from '../backends/types.js';
 export async function restore(
   contextDir: string,
   input: RestoreInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   const isSingle = input.ref || (input.category && input.title);
 
@@ -19,7 +21,7 @@ export async function restore(
     return 'Nothing to restore. Provide a ref or category+title.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const result = await backend.restore(input);
 
   if (result.restored.length === 0) {

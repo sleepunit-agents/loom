@@ -314,6 +314,47 @@ describe('durable daemon clock', () => {
     result.resolve({ state: 'not-started', code: 'quota', reason: 'No room' }); await settled();
     expect(wake(app.db, run.id)).toMatchObject({ state: 'cancelled', failures: 0 });
   });
+  it('does not retry a failed continuation, including after restart or an explicit retry hint', async () => {
+    const startBody = vi.fn(async () => ({ state: 'not-started', reason: 'out of quota is only reason text', retryAt: 1 } as const));
+    const app = await loom({ runtime: { startBody } });
+    const w = app.value('in', { agent: 'art', prompt: 'Report once', note: 'report', continuation: 'opaque-report-handle', when: '1m' });
+    app.clock.advance(60_000); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'failed', failures: 1, outcome: 'out of quota is only reason text', continuation: 'opaque-report-handle' });
+    expect(app.value<{ kind: string }[]>('log').at(-1)?.kind).toBe('failed');
+    expect(startBody).toHaveBeenCalledTimes(1);
+    await app.close();
+    const restarted = await loom({ runtime: { startBody } }, app.dir, app.clock);
+    restarted.clock.advance(8 * 86400_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    expect(wake(restarted.db, w.id)).toMatchObject({ state: 'failed', failures: 1 });
+    expect(wakes(restarted.db)).toHaveLength(1);
+  });
+  it('defers continuation quota waits but stops at the first definite failure', async () => {
+    const startBody = vi.fn<() => Promise<StartResult>>()
+      .mockResolvedValueOnce({ state: 'not-started', code: 'quota', reason: 'No model room' })
+      .mockResolvedValue({ state: 'not-started', reason: 'Report refused' });
+    const app = await loom({ runtime: { startBody } });
+    const w = app.value('in', { agent: 'art', prompt: 'Report once', note: 'report', continuation: 'opaque-report-handle', when: '1m' });
+    app.clock.advance(60_000); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'pending', failures: 0, due: app.clock.now() + 61 * 60_000 });
+    expect(app.value<{ kind: string }[]>('log').at(-1)?.kind).toBe('quota-wait');
+    app.clock.advance(61 * 60_000); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'failed', failures: 1, outcome: 'Report refused' });
+    app.clock.advance(8 * 86400_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(2);
+  });
+  it.each(['held', 'uncertain', 'throw'] as const)('holds a continuation on %s rather than treating it as a definite failure', async state => {
+    const startBody = vi.fn(async (): Promise<StartResult> => {
+      if (state === 'throw') throw new Error('Lost answer');
+      return { state, reason: 'No definite result' };
+    });
+    const app = await loom({ runtime: { startBody } });
+    const w = app.value('in', { agent: 'art', prompt: 'Report once', note: 'report', continuation: 'opaque-report-handle', when: '1m' });
+    app.clock.advance(60_000); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: state === 'held' ? 'staging' : 'uncertain', failures: 0 });
+    app.clock.advance(8 * 86400_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+  });
   it('backs off ordinary failures through six attempts even when the reason mentions quota', async () => {
     const startBody = vi.fn(async () => ({ state: 'not-started', reason: 'quota: no model has room' } as const));
     const app = await loom({ runtime: { startBody } });

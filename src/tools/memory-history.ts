@@ -6,6 +6,7 @@
  * (metadata only) or read one snapshot's full content. To put a snapshot
  * back, use memory_revision_restore.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 
 export interface MemoryHistoryToolInput {
@@ -16,12 +17,13 @@ export interface MemoryHistoryToolInput {
 export async function memoryHistory(
   contextDir: string,
   input: MemoryHistoryToolInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   if (!input.ref) {
     return 'Error: ref is required.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   try {
     // ── Read mode ──
     if (input.revision_id !== undefined) {

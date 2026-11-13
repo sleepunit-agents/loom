@@ -81,9 +81,12 @@ export function resolveRepoRoot(): string {
   return resolve(dirname(thisFile), '..');
 }
 
+/** Trusted private-store selection; null is standalone, undefined preserves legacy overrides. */
+export type MemorySelection = { agent?: string } | null;
+
 // Explicit composition always uses the selected context's private store.
 // Undefined keeps the legacy process-wide override for existing callers.
-export function resolveSqliteDbPath(contextDir: string, selection?: { agent?: string } | null): string {
+export function resolveSqliteDbPath(contextDir: string, selection?: MemorySelection): string {
   return (selection === undefined ? process.env.LOOM_SQLITE_DB_PATH : undefined) ?? resolve(contextDir, 'memories.db');
 }
 

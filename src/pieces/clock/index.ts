@@ -219,7 +219,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         if (w.place === 'alert:runtime-quota') { w.state = 'cancelled'; eventKind = 'quota-notice'; }
         else { w.state = 'pending'; w.due = quotaDue(r.retryAfter, ctx.now); eventKind = 'quota-wait'; }
       }
-      else if (++w.failures >= 6) w.state = 'failed';
+      // A continuation's report authority belongs to this firing; a fresh
+      // attempt after a definite failure cannot carry that authority forward.
+      else if (++w.failures >= 6 || w.continuation) w.state = 'failed';
       else { w.state = 'pending'; w.due = Math.max(ctx.now + 1, r.retryAt ?? ctx.now + 15 * 60_000 * 2 ** (w.failures-1)); }
     } else { w.state = 'held'; w.hold = r.state === 'uncertain' ? 'uncertain' : 'staging'; w.outcome = r.reason; }
     saveWake(ctx, w); event(ctx, w, eventKind ?? w.state); return w;

@@ -5,6 +5,7 @@
  * results for display. The backend handles the actual search strategy
  * (keyword, vector, etc.).
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { RecallInput, MemoryMatch } from '../backends/types.js';
 
@@ -30,8 +31,9 @@ export function formatResults(matches: MemoryMatch[]): string {
 export async function recall(
   contextDir: string,
   input: RecallInput,
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const matches = await backend.recall(input);
 
   if (matches.length === 0) {

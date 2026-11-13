@@ -3,16 +3,16 @@ import { registerBuiltinService } from '../../core/services.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
-import { operation, maySee, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, maySee, mayAct, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView, type KnowledgeOpen } from './knowledge.js';
 
 /** Composition supplies paths from household database metadata, never household.json. */
 export function installMindKnowledge(operations: Operations, live: Live, options: {
-  path: string; sharing(): Sharing;
+  path?: string; sharing(): Sharing;
 }) {
   registerBuiltinService(operations, 'mind', ['knowledge']);
   // One retained read-only connection, including across live notifications.
-  const db = existsSync(options.path) ? new BetterSqlite3(options.path, { readonly: true, fileMustExist: true, timeout: 0 }) : undefined;
+  const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { readonly: true, fileMustExist: true, timeout: 0 }) : undefined;
   const visible = (viewer: Viewer) => maySee(viewer, { type: 'knowledge' }, options.sharing());
   const view = (slug?: string) => {
     const load = () => knowledgeView(db, operations.clock.now(), slug, slug !== undefined);
@@ -29,6 +29,14 @@ export function installMindKnowledge(operations: Operations, live: Live, options
   operations.register(operation({ name: 'mind.knowledgeRead', input: z.object({ slug: z.string().min(1).max(200) }), output: z.unknown(),
     may: visible, run: (ctx, input) => read(input.slug, ctx.viewer) ?? { ok: false, code: 'not-found', message: 'Knowledge page not found' },
   }));
+  // Permission state is explicit: an empty authorized store differs from denial.
+  live.register({ name: 'knowledge.access', ids: () => ['knowledge'],
+    read: (_id, viewer) => ({ id: 'knowledge', allowed: visible(viewer),
+      canAdd: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeAdd'),
+      canVerify: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeVerify'),
+      canRecheck: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeRecheck') }),
+    inScope: () => true,
+  });
   live.register({ name: 'knowledge', ids: scope => scope === undefined ? view().pages.map(p => p.slug) : [scope], read,
     inScope: (r, scope) => scope === undefined || r.id === scope,
     // A referring page can have lost its link or disappeared entirely. Refresh
