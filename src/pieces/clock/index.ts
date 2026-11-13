@@ -8,7 +8,7 @@ import { filedLocal, localFilingWords, installLocalFiling } from './local-filing
 import { clockCommands, clockOperationCommands } from './commands.js';
 import { command, localCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
@@ -59,6 +59,8 @@ function quotaDue(reset: unknown, now: number): number {
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
 export interface ClockOptions {
+  /** Runtime-owned current binding proof; capacity only, never authority. */
+  capacityConversation?(viewer: Viewer): string | undefined;
   caller?(viewer: Viewer): import('../approvals/role.js').Caller | undefined;
   runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource; vouchFiling?: VouchFiling;
   /** Trusted composition opt-in. Safety work acts as each named agent, never an owner. */
@@ -95,6 +97,12 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         return result;
       } }));
   }
+  function capacityFor(origin: string, conversation?: string): NonNullable<Wake['apiCapacity']> {
+    return { origin, ...(conversation ? { bucket: createHash('sha256').update(JSON.stringify([origin, conversation])).digest('hex') } : {}) };
+  }
+  function capacity(viewer: Viewer): Wake['apiCapacity'] {
+    return viewer.kind === 'agent' ? capacityFor(viewer.id, options.capacityConversation?.(viewer)) : undefined;
+  }
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
     work(w);
     const filing=w.approval && filedLocal(db,w.approval);
@@ -103,7 +111,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       && row.state !== 'firing' && row.hold !== 'uncertain')) {
       old.state = 'cancelled'; old.outcome = 'Replaced by real work'; saveWake(ctx, old); event(ctx, old, 'deadman-cleared');
     }
-    const row: Wake = { ...w, id: `w-${randomUUID()}`, due, state: 'pending', createdAt: ctx.now, changedAt: ctx.now, by: ctx.viewer, failures: 0, ...extra };
+    const row: Wake = { ...w, id: `w-${randomUUID()}`, due, state: 'pending', createdAt: ctx.now, changedAt: ctx.now, by: ctx.viewer, failures: 0, apiCapacity: capacity(ctx.viewer), ...extra };
     saveWake(ctx, row); event(ctx, row, 'set'); return row;
   }
   const nonempty = (agent: string) => wakes(db).some(w => w.agent === agent && active(w));
@@ -117,10 +125,16 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (!s.enabled || wakes(db).some(w => w.schedule === s.id && active(w) && w.due > after)) return;
     make({ ...ctx, viewer: s.by }, s, calendar(() => nextOccurrence(s, after)), { schedule: s.id });
   }
-  function oneOffRoom(agent: string) {
-    // Before runNow was recorded, immediate lane runs carried only bypassPause.
-    const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
-    if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
+  // Before runNow was recorded, immediate lane runs carried only bypassPause.
+  const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
+  function oneOffRoom(ctx: Context, agent: string, api = capacity(ctx.viewer)) {
+    const pending = wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w));
+    if (pending.length >= 50) invalid('At most 50 pending one-off wakes');
+    if (!api) return;
+    const apiPending = pending.filter(w => w.apiCapacity);
+    if (apiPending.length >= 40) invalid('At most 40 API-origin one-off wakes per agent');
+    if (apiPending.filter(w => w.apiCapacity!.bucket === api.bucket).length >= 20)
+      invalid('At most 20 API-origin one-off wakes per conversation; unbound bodies share one bucket');
   }
   function localTargetRoom(target:string,standing:boolean,except?:string,member?:string) {
     if(wakes(db).some(w=>w.id!==except && w.member===member && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
@@ -167,7 +181,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const words=localFilingWords(filing);
       const due=calendar(()=>i.mode==='at'?parseAt(i.when,ctx.now):parseIn(i.when,ctx.now));
       if(due<=ctx.now) invalid('Wake must be in the future');
-      oneOffRoom(i.caller.who.agent);
+      const apiCapacity = capacityFor(i.caller.who.agent, i.caller.conversation);
+      oneOffRoom(ctx, i.caller.who.agent, apiCapacity);
       localTargetRoom(filing.target,standing,undefined,i.caller.member);
       const owning=approvalsRole(operations,'clock');
       const expected={target:filing.target,digest:words.digest,details:words.details,caller:{...filing.caller,who:{...filing.caller.who}}};
@@ -175,7 +190,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         expected:{target:filing.target,digest:words.digest,details:words.details,caller:filing.caller}},randomUUID());
       if(!result.ok) throw new OperationError(result.code,result.message);
       const row=make({...ctx,viewer:{kind:'agent',id:i.caller.who.agent}},
-        {agent:i.caller.who.agent,project:i.caller.project,member:i.caller.member,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
+        {agent:i.caller.who.agent,project:i.caller.project,member:i.caller.member,prompt:filing.prompt,note:filing.note,approval:i.approval},due,{apiCapacity});
       if(standing) {
         bindStandingWake(db,row,filing,i.caller);
         db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(receiptKey,JSON.stringify({name:receipt.name,hash:receipt.inputHash,result:row}));
@@ -205,13 +220,13 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
           return { alreadyScheduled: true, schedule: s.id, due: occurrence.due };
       }
     }
-    oneOffRoom(i.agent);
+    oneOffRoom(ctx, i.agent);
     return make(ctx, i, due);
   });
   register('park', workInput.extend({ on: text }), true, (v, i) => create(v, i) && !!options.approvals?.check(i.on, v), (ctx, i) => {
     newWork(i);
     if (!/^[aq]-[\w-]+$/.test(i.on)) invalid('Park on an approval or question');
-    oneOffRoom(i.agent);
+    oneOffRoom(ctx, i.agent);
     const a = options.approvals!.check(i.on, ctx.viewer)!;
     return make(ctx, i, ctx.now, { state: 'parked', wait: { id: i.on, until: ctx.now + day, kind: a.kind, target: a.target } });
   });
@@ -286,6 +301,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       prompt: `Woken now: ${ctx.viewer.id} asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.` }, ctx.now, { bypassPause: true });
     const w = get(i.id); if (w.state === 'firing' || w.state === 'fired' || w.state === 'cancelled') invalid('Wake already dispatched or cancelled');
     if (w.hold === 'uncertain') invalid('Uncertain dispatch needs reconciliation before another body can start');
+    if (!active(w) && oneOff(w)) oneOffRoom(ctx, w.agent, w.apiCapacity);
     existingLocalTargetRoom(w);
     w.state = 'pending'; w.due = ctx.now; w.bypassPause = true; w.runNow ??= false; delete w.hold; saveWake(ctx, w); return w;
   });
@@ -324,7 +340,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
-    oneOffRoom(s.agent);
+    oneOffRoom(ctx, s.agent);
     return make(ctx, i.note === undefined ? s : { ...s, note: `${s.lane ?? s.id.split('/').pop()} run now${i.note ? `: ${i.note}` : ''}` }, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
   });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);

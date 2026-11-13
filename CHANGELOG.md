@@ -14,9 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
 
+- Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 
 - Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.
+- Prepare required Runtime policy files on Linux workers with descriptor-pinned reads and resolved-content history keys; configured-policy execution remains held.
+
 - Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
 - Preserve deleted private Comms bindings only in the Runtime import archive, report their skipped ids, and validate spawned thread ownership.
 

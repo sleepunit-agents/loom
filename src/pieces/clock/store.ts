@@ -9,6 +9,9 @@ export interface Work extends Scope {
   scheduleRevision?: string;
 }
 export interface Wake extends Work {
+  /** Capacity only. Bucket hashes a Runtime-proven conversation; absent means the shared unknown bucket.
+   * Never use this metadata as principal, visibility, mutation, join or dispatch authority. */
+  apiCapacity?: { origin: string; bucket?: string };
   id: string; due: number; state: WakeState; createdAt: number; changedAt: number;
   by: Viewer; schedule?: string; attempt?: string; outcome?: string; hold?: string;
   failures: number; bypassPause?: boolean;

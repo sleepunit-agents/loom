@@ -279,3 +279,22 @@ it.each(['before','during'] as const)('does not release first claimed input when
  if(phase==='before')expect(f.app.db.prepare('SELECT id FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toBeUndefined();
  expect(await f.post(f.runner,'runtime.jobControl',{job})).toMatchObject({ok:true,value:{stop:true,history:'discard'}});
 });
+
+it('uses only the live bridge source binding for Clock conversation capacity',async()=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
+ const {body}=await f.running();
+ const input={agent:'art',when:'1h',prompt:'Ordinary future work',note:''};
+ for(let n=0;n<20;n++)expect(await f.post(f.unbound,'clock.in',input)).toMatchObject({ok:true});
+ expect(await f.post(f.unbound,'clock.in',input)).toMatchObject({ok:false,code:'invalid'});
+ const created=value<{id:string}>(await f.post(body,'clock.in',input));
+ const row=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(created.id) as {record:string}).record);
+ expect(row.apiCapacity).toMatchObject({origin:'art',bucket:expect.stringMatching(/^[a-f0-9]{64}$/)});
+ await f.restart();
+ const again=value<{id:string}>(await f.post(body,'clock.in',input));
+ const persisted=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(again.id) as {record:string}).record);
+ expect(persisted.apiCapacity).toEqual(row.apiCapacity);
+ // A changed authenticated venue link removes the old source's separate share,
+ // even if its body credential and Runtime job have not yet been cleaned up.
+ f.app.db.transaction(()=>put(f.app.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'}))();
+ expect(await f.post(body,'clock.in',input)).toMatchObject({ok:false,code:'invalid'});
+});

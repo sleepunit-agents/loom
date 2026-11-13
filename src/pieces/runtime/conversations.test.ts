@@ -605,3 +605,59 @@ it('recovers standing private work through the public body command without retur
  replayDenied();
 
 });
+
+it('gives Clock capacity only to a current owning conversation, never copied proof or a public job conversation string',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ const input={agent:'art',when:'1h',prompt:'Ordinary future work',note:''};
+ const first=value<{id:string}>(await f.post(body,'clock.in',{...input,conversation:'forged',apiCapacity:{origin:'other',bucket:'forged'}}));
+ const bucket=wakes(f.app.db).find(w=>w.id===first.id)!.apiCapacity!.bucket;
+ expect(bucket).toMatch(/^[a-f0-9]{64}$/);expect(bucket).not.toBe(conversation);
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ const copy=value<{id:string}>(f.app.operations.call('direct',{...viewer},'clock.in',input,'capacity-copy'));
+ expect(wakes(f.app.db).find(w=>w.id===copy.id)?.apiCapacity).toEqual({origin:'art'});
+ for(let n=0;n<19;n++)expect(await f.post(f.unbound,'clock.in',input)).toMatchObject({ok:true});
+ expect(await f.post(f.unbound,'clock.in',input)).toMatchObject({ok:false,code:'invalid'});
+ // This public start is member-free. Its conversation argument cannot bind it
+ // to the private job that owns that Comms thread, even once it is running.
+ const forged=value<{job:string}>(await f.post(f.owner,'runtime.startBody',{agent:'art',conversation,brief:'Ordinary public job',title:'Public start'})).job;
+ expect(await f.post(f.runner,'runtime.claimJob',{job:forged})).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'runtime.takeInput',{job:forged})).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'runtime.reportJob',{job:forged,state:'running'})).toMatchObject({ok:true});
+ const other=f.token(`agent:art@${forged}`);
+ expect(await f.post(other,'clock.in',input)).toMatchObject({ok:false,code:'invalid',message:expect.stringContaining('20 API-origin')});
+ expect(await f.post(body,'clock.in',input)).toMatchObject({ok:true});
+ await f.restart();
+ const after=value<{id:string}>(await f.post(body,'clock.in',input));
+ expect(wakes(f.app.db).find(w=>w.id===after.id)?.apiCapacity?.bucket).toBe(bucket);
+ // Drift ahead of credential cleanup cannot keep a private share alive.
+ const store=runtimeStore(f.app.db),binding=store.read('binding',conversation)!;
+ f.app.db.prepare("UPDATE runtime_bindings SET record=json_set(record,'$.job','another-job') WHERE id=?").run(conversation);
+ expect(await f.post(body,'clock.in',input)).toMatchObject({ok:false,code:'invalid'});
+ f.app.db.transaction(()=>{const {changedAt:_,...before}=binding;store.put('binding',before,f.clock.now());})();
+ expect(await f.post(body,'clock.in',input)).toMatchObject({ok:true});
+ expect(await f.socket('comms.change',{thread,action:'archive'})).toMatchObject({ok:true});
+ expect(await f.post(body,'clock.in',input)).toMatchObject({ok:false});
+});
+
+it('shares the proven one-off quota with private local recovery and refuses before spending its approval',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ for(let n=0;n<20;n++)expect(await f.post(body,'clock.in',{agent:'art',when:'1h',prompt:'Future work',note:''})).toMatchObject({ok:true});
+ const bucket=wakes(f.app.db)[0].apiCapacity!.bucket;
+ const card=value<{id:string}>(await f.post(body,'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Inspect disk',note:'PRIVATE capacity'}));
+ value(await f.socket('approvals.answer',{id:card.id,action:'allow'}));
+ const recovery={agent:'art',approval:card.id,mode:'in',when:'1h'};
+ expect(await f.post(body,'clock.recoverLocal',recovery)).toMatchObject({ok:false,code:'invalid',message:expect.stringContaining('20 API-origin')});
+ expect(readApproval(f.app.db,card.id)?.state).toBe('allowed');expect(wakes(f.app.db)).toHaveLength(20);
+ value(await f.socket('clock.cancel',{id:wakes(f.app.db)[0].id}));
+ const recovered=value<{id:string}>(await f.post(body,'clock.recoverLocal',recovery));
+ expect(wakes(f.app.db).find(w=>w.id===recovered.id)).toMatchObject({member:'jonathan',apiCapacity:{origin:'art',bucket}});
+ expect(readApproval(f.app.db,card.id)?.state).toBe('used');
+ expect(await f.post(body,'clock.list',{agent:'art'})).toMatchObject({ok:true,value:expect.not.arrayContaining([expect.objectContaining({id:recovered.id})])});
+});
