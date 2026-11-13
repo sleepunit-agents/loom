@@ -151,3 +151,22 @@ it('refuses words on source-managed yes/no asks before callback, records, notifi
   expect(call('answer',{id:'managed',answer:{kind:'yes'}})).toMatchObject({ok:true});
   expect(callback).toHaveBeenCalledTimes(1);
 });
+
+it('commits a declared managed words answer together with its callback and replays without invoking it again', async () => {
+  const { app, call, sources } = await setup(true, true);
+  const callback = vi.fn((ctx, record) => {
+    expect(ctx.db.inTransaction).toBe(true);
+    expect(JSON.parse((app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(record.id) as {record:string}).record)).toMatchObject({state:'answered',answer:{kind:'words',text:'A managed reply'}});
+  });
+  const source = sources!.register('managed-words', callback);
+  app.operations.register(operation({name:'test.managedWords',write:true,input:z.object({}),output:z.unknown(),may:()=>true,
+    run(ctx) { source.raise(ctx, {id:'managed-words',ask:'Which?',answers:'words'}); return null; },
+  }));
+  expect(app.operations.call('direct',{kind:'member',id:'alice'},'test.managedWords',{},'managed-words-raise')).toMatchObject({ok:true});
+  expect(call('answer',{id:'managed-words',answer:{kind:'yes'}})).toMatchObject({code:'invalid'});
+  const input={id:'managed-words',answer:{kind:'words',text:'A managed reply'}};
+  const first=call('answer',input,undefined,'managed-words-answer');
+  expect(first).toMatchObject({ok:true,value:{answer:{kind:'words',text:'A managed reply'}}});
+  expect(call('answer',input,undefined,'managed-words-answer')).toEqual(first);
+  expect(callback).toHaveBeenCalledTimes(1);
+});

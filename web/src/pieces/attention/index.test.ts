@@ -152,11 +152,11 @@ it.each(['denied','closed'] as const)('offers no answer after a %s display read'
   expect(f.call).toHaveBeenCalledTimes(1);
 });
 
-it('keeps a source-managed yes/no ask in its declared mode',async()=>{
-  const record=ask('managed',{sourceManaged:true}),shown=request<Ask>();
+it.each(['yes-no','words'] as const)('keeps a source-managed %s ask in its declared mode',async(answers)=>{
+  const record=ask('managed',{sourceManaged:true,answers}),shown=request<Ask>();
   f.call.mockReturnValueOnce(shown.call);
   await draw(h(AskReader,{ask:record,snapshot:{records:[record],status:'live'},go:vi.fn()}));
   await shown.finish({ok:true,value:record});
-  expect(buttons('Yes')).toHaveLength(1);
-  expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+  expect(buttons('Yes')).toHaveLength(answers==='words'?0:1);
+  expect(tree!.root.findAllByType('textarea')).toHaveLength(answers==='words'?1:0);
 });
