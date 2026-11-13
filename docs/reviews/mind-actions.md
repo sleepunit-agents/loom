@@ -43,4 +43,19 @@ Raw BLOCKING: one CRITICAL, one NIT. Both folded:
 - NIT, actionable: confirm outcome and a second successful viewer were missing.
   Tests assert both audit outcomes and attribution to another named owner.
 
-Round 3 pending on the revised frozen artifact.
+Round 3: commit b2d80d556dc6bf694efe100513aebfcfc9401ad3,
+TREE sha256:a31f7099d84857fdf6c2c9374e5d5281bdf0427322f5e3630c9c0d94422f538f.
+Raw CLEAR: no findings. Stop under the three-round bound. All real findings from
+rounds 1–2 were folded with regression tests. The final implementation passes
+86 affected Mind/foundation/touch/architecture tests plus TypeScript and diff
+checks. This ledger-only update changes no reviewed implementation or tests.
+
+Author judgment: source receipts commit with effects, retain their original
+expiry and reserve the global write-id namespace. Versioned source metadata
+migrations are additive and reversible by leaving their unused tables in place.
+No known hole remains in this unit. It remains additive/unenabled pending the
+source socket composition and four apps. No host rollout was performed.
+
+Raw transcripts and the frozen recipe are retained in loom note
+loom/2026-11-12-mind-action-receipts-evidence. Review evidence is not merge
+permission; current-head checks and the live merge rule still govern.
