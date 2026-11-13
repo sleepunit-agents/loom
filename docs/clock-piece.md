@@ -469,3 +469,26 @@ or importer-all registration; those remain on t-2201.
 | Subprocess-dependent log messages | New structured event time, kind and outcome/note, filtered as displayed, with the legacy duration and last-2000 rule. |
 | A separate lane registry surviving removal of its schedule | One owning schedule row. Removing it through either command removes the lane; no orphaned registry is kept. |
 | Caller-supplied principal statement | Refused; only the authenticated viewer and future runtime resolver can establish provenance. |
+
+## Attention start-failure notices
+
+When composed with Attention's trusted household source, each wake raises one
+notice at the third definite start failure, one when automatic retries stop
+(including the first failed continuation), and one on model quota deferral or
+suppressed quota triage. Stable wake-and-kind identities prevent receipt retries,
+repeated quota waits and restarts from reopening an acknowledged notice. The
+outcome and notice commit together. A source failure rolls back both; the daemon
+then holds the dispatch uncertain rather than retrying an unrecorded outcome.
+
+Notices link to Clock and carry only the wake id, generic explanation and failure
+category. Prompt, note, file, project/member scope and runtime error text never
+enter a household notice. Only household owners can see or acknowledge them under
+Attention's existing policy. Acknowledgement does not retry, cancel, approve or
+start work; the Clock reader remains the place to inspect the wake. Next mode
+registers this source when it installs Attention; independent Clock installations
+may omit it. Existing staging/uncertain outcomes do not report definite failures.
+
+The offline registry merged in #951 already registers Clock after household;
+`loom migrate all` invokes the same transactional importer as the standalone
+command, with its old WAKE_DATA directory selected from the validated snapshot.
+No import or live move is performed by either implementation slice.

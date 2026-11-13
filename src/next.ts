@@ -57,7 +57,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
-  if (!app.operations.has('attention.raise')) installAttention(app.db, app.operations, app.live, sharing);
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing) : undefined;
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
@@ -111,7 +111,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   mindTransports.set(app, sources);
   if (!app.operations.has('clock.list')) {
     // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing);
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   return installEffects(app, sharing, !!options.staging);
