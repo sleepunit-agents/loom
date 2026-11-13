@@ -17,7 +17,9 @@ export function LocalScheduling({ approval, snapshot }: { approval: Approval; sn
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!enabled) return;
     const values = new FormData(event.currentTarget);
-    setReview({records:snapshot.records,input:{approval:approval.id,mode:values.get('mode') as Timing['mode'],when:String(values.get('when')),standing:values.get('authority') === 'standing'}});
+    const mode = values.get('mode'), authority = values.get('authority'), when = String(values.get('when') ?? '');
+    if ((mode !== 'in' && mode !== 'at') || !['once','standing'].includes(String(authority)) || !when.trim()) return;
+    setReview({records:snapshot.records,input:{approval:approval.id,mode,when,standing:authority === 'standing'}});
   }
   return <section aria-label="Schedule saved local work" className="grid min-w-0 gap-3 p-5 [overflow-wrap:anywhere]">
     <h2>Schedule saved local work</h2>
@@ -25,7 +27,7 @@ export function LocalScheduling({ approval, snapshot }: { approval: Approval; sn
     <p>Scheduling keeps those words and the original note. Local delivery is still held; a saved wake does not mean a body has started.</p>
     {eligible ? <form aria-label="Local work timing" onSubmit={submit} className="grid gap-3">
       <fieldset disabled={!enabled} className="grid gap-3">
-        <label>Timing <select name="mode" defaultValue="in"><option value="in">In</option><option value="at">At (CT)</option></select></label>
+        <label>Timing <select name="mode" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="in">In</option><option value="at">At (CT)</option></select></label>
         <label>When<Input name="when" required placeholder="30m, or 2026-11-14 08:31 for At" /></label>
         <label>Use approval <select name="authority" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="once">One-time Allow</option><option value="standing">Existing Allow every time</option></select></label>
         <p>One-time Allow can be spent once before expiry. Every-time requires an existing active rule for these exact words and permits one outstanding wake.</p>

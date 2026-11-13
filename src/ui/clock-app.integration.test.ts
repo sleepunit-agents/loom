@@ -227,9 +227,11 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     expect(wakes(loom.db)).toHaveLength(beforeLocal);
     await expect.poll(()=>b.getByRole('form',{name:'Local work timing'}).count()).toBe(1);
     const timing=b.getByRole('form',{name:'Local work timing'});
-    await timing.getByLabel('Timing',{exact:true}).selectOption('at');
     await timing.getByRole('textbox',{name:'When',exact:true}).fill('not a date');
     await timing.getByLabel('Use approval',{exact:true}).selectOption('once');
+    await timing.getByRole('button',{name:'Review timing',exact:true}).click();
+    expect(await b.getByRole('region',{name:'Confirm local timing'}).count()).toBe(0);
+    await timing.getByLabel('Timing',{exact:true}).selectOption('at');
     await timing.getByRole('button',{name:'Review timing',exact:true}).click();
     expect(wakes(loom.db)).toHaveLength(beforeLocal);
     await b.getByRole('button',{name:'Schedule these saved words',exact:true}).click();
@@ -239,6 +241,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await timing.getByRole('button',{name:'Review timing',exact:true}).click();
     const confirmation=b.getByRole('region',{name:'Confirm local timing'});
     expect(await confirmation.getByText(exactDetails!,{exact:true}).count()).toBe(1);
+    expect(await confirmation.getByText('At (CT): 2026-11-13 09:31',{exact:true}).count()).toBe(1);
+    expect(await confirmation.getByText('Spend one-time Allow',{exact:true}).count()).toBe(1);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
@@ -252,18 +256,23 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText(/Saved wake .*Local delivery remains held./).count()).toBe(1);
     const scheduleCalls=()=>calls.mock.calls.filter(args=>args[2]==='clock.scheduleLocalFromWindow');
     expect(scheduleCalls().at(-1)?.[3]).toEqual({approval:localCards[0],mode:'at',when:'2026-11-13 09:31',standing:false});
+    await b.getByRole('button',{name:/^Wakes/}).click();await row(b,'Morning review').click();
+    expect(await b.getByText('Saved',{exact:true}).count()).toBe(0);
+    expect(await b.getByText(/Saved wake .*Local delivery remains held./).count()).toBe(0);
     await openLocal(b,1);await b.getByRole('button',{name:'Deny',exact:true}).click();
     await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[1])?.state).toBe('denied');
     await openLocal(b,2);await b.getByRole('button',{name:'Allow every time',exact:true}).click();
     await expect.poll(()=>load(loom.db).standing.length).toBe(1);
     expect(wakes(loom.db)).toHaveLength(beforeLocal+1);
     await expect.poll(()=>b.getByRole('form',{name:'Local work timing'}).count()).toBe(1);
+    await b.getByRole('form',{name:'Local work timing'}).getByLabel('Timing',{exact:true}).selectOption('in');
     await b.getByRole('form',{name:'Local work timing'}).getByRole('textbox',{name:'When',exact:true}).fill('3h');
     await b.getByRole('form',{name:'Local work timing'}).getByLabel('Use approval',{exact:true}).selectOption('standing');
     await b.getByRole('button',{name:'Review timing',exact:true}).click();
     await b.getByRole('button',{name:'Schedule these saved words',exact:true}).click();
     await expect.poll(()=>wakes(loom.db).filter(w=>w.approval===localCards[2]).length).toBe(1);
     expect(load(loom.db).standing[0].uses).toBe(1);
+    expect(wakes(loom.db).find(w=>w.approval===localCards[2])).toMatchObject({member:'jonathan',prompt:'<!-- house: local -->\nReport host disk usage: Standing job.',note:'Standing job',due:clock.now()+3*3600_000});
     expect(scheduleCalls().at(-1)?.[3]).toEqual({approval:localCards[2],mode:'in',when:'3h',standing:true});
     expect(await b.getByRole('button',{name:'Run now',exact:true}).count()).toBe(0);
     const guest=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await guest.grantPermissions(['local-network-access'],{origin:loom.url});await guest.addCookies([{name:'loom_ui',value:guestSession,url:loom.url}]);await guest.route('**/*',staticFiles);
