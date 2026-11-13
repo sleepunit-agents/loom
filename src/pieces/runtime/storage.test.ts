@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
+import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
 import { runtimeStore } from './store.js';
 import type { RuntimeRecords } from './records.js';
@@ -14,10 +14,10 @@ const art: Viewer = { kind: 'agent', id: 'art' };
 const runner: Viewer = { kind: 'runner', id: 'r1' };
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function setup(home?: string, nextMode = true) {
+async function setup(home?: string, nextMode = true, sharing: () => Sharing = fixtureSharing) {
   if (!home) { home = mkdtempSync(join(tmpdir(), 'runtime-storage-')); const dir = home; cleanups.push(() => rmSync(dir, { recursive: true, force: true })); }
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, next: nextMode, sharing: fixtureSharing, authenticate: () => ({ viewer: art, valid: () => true }) });
+  const app = await startLoom({ home, clock, next: nextMode, sharing, authenticate: () => ({ viewer: art, valid: () => true }) });
   cleanups.push(app.close);
   const call = (op: string, viewer = owner, scope?: string) => app.operations.call('direct', viewer, `runtime.${op}`, scope === undefined ? {} : { scope });
   return { app, clock, home, store: runtimeStore(app.db), call };
@@ -56,10 +56,23 @@ it('checks each record with central policy, including private and exact runner j
   expect(ids('listJobs', runner)).toEqual(['assigned']);
   expect(ids('listJobs', { kind: 'runner', id: 'r2' })).toEqual(['other-agent', 'other-runner']);
   expect(ids('listJobs', owner, 'pond-bot')).toEqual(['other-agent']);
+  expect(ids('listBindings', owner)).toEqual(['cv-private']);
+  expect(ids('listJobs', owner)).toContain('private');
   expect(ids('listBindings', art)).toEqual([]);
   expect(ids('listBindings', { kind: 'member', id: 'pollock' })).toEqual([]);
   expect(ids('listSettings', art)).toEqual(['art']);
   expect(ids('listSettings', runner)).toEqual([]);
+});
+it('requires both a service type grant and a service operation grant', async () => {
+  const { app, store, call } = await setup(undefined, true, () => ({ ...fixtureSharing(), services: {
+    typed: { types: ['runtime.job'], operations: [] },
+    operation: { types: [], operations: ['runtime.listJobs'] },
+    allowed: { types: ['runtime.job'], operations: ['runtime.listJobs'] },
+  } }));
+  app.db.transaction(() => { store.put('job', job('shared'), 1); store.put('job', job('private', { member: 'jonathan' }), 1); })();
+  for (const id of ['typed', 'operation']) expect(call('listJobs', { kind: 'service', id })).toMatchObject({ ok: false, code: 'denied' });
+  expect(call('listJobs', { kind: 'service', id: 'allowed' })).toMatchObject({ ok: true, value: { records: [{ id: 'shared' }] } });
+  expect(call('listBindings', { kind: 'service', id: 'allowed' })).toMatchObject({ ok: false, code: 'denied' });
 });
 it('persists records across restart, preserves timestamps on no-ops and rolls back interrupted writes', async () => {
   const first = await setup();
