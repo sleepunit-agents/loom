@@ -1,7 +1,9 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import { bridgeEffects, sendStatus, type VenueRecord, type RouteRecord, type SendRecord, type EffectRecord } from './model';
+
+import { RouteEditor, routeInput, type RouteInput, type RouteWrite } from './route-editor';
 
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
@@ -25,6 +27,8 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
   const match = /\/item\/([^/]+)\/([^/]+)$/.exec(path);
   let selected: { folder: string; id: string } | undefined;
   try { if (match) selected = { folder: match[1], id: decodeURIComponent(match[2]) }; } catch { /* Unknown address stays empty. */ }
+  const writes = useRef(new Map<string, RouteWrite>());
+  const [, redraw] = useState(0);
   const [folder, setFolder] = useState(selected?.folder ?? 'venues');
   const navigate = (nextFolder: string, id?: string) => {
     const next = '/p/bridges-preview' + (id ? `/item/${nextFolder}/${encodeURIComponent(id)}` : '');
@@ -43,19 +47,28 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
   const ready = [venues, routes, sends, effects].every(s => s.status === 'live');
   const status = [venues, routes, sends, effects].find(s => s.status !== 'live')?.status;
   const held = ready ? bridgeEffects(effects.records) : [];
-  const view = selected?.folder ?? folder;
+  const view = selected?.folder === 'new-route' ? 'routes' : selected?.folder ?? folder;
   const venue = ready && selected?.folder === 'venues' ? venues.records.find(v => v.id === selected.id) : undefined;
   const route = ready && selected?.folder === 'routes' ? routes.records.find(r => r.id === selected.id) : undefined;
   const send = ready && selected?.folder === 'sends' ? sends.records.find(s => s.id === selected.id)
     : ready && selected?.folder === 'effects' && held.some(e => e.id === selected.id) ? sends.records.find(s => `bridges:${s.id}` === selected.id) : undefined;
   const effect = ready && selected?.folder === 'effects' ? held.find(e => e.id === selected.id)
     : send ? held.find(e => e.id === `bridges:${send.id}`) : undefined;
+  const newRoute: RouteInput | undefined = selected?.folder === 'new-route' ? (routes.records.some(r => r.id === selected.id) ? routeInput(routes.records.find(r => r.id === selected.id)!) : { id: selected.id, platform: 'discord', workspace: '', channel: '', peer: false, guest: false, readers: [], notes: [] }) : undefined;
+  const writeRoute = (kind: RouteWrite['kind'], input: RouteInput | { id: string }) => {
+    if (!ready || writes.current.get(input.id)?.call.getSnapshot().pending) return;
+    const request = call<{ id: string }>(kind === 'save' ? 'bridges.putRoutes' : 'bridges.removeRoutes', input);
+    writes.current.set(input.id, { kind, call: request }); redraw(n => n + 1);
+  };
   const open = (id: string) => navigate(view, id);
   const rows = !ready ? [] : view === 'venues' ? venues.records.map(v => ({ id: v.id, title: `${v.agent} · ${v.platform}`, meta: `${v.workspace} · ${v.received} received · ${v.delivered ?? 0} delivered · ${v.held ?? 0} held in 24 hours`, status: v.enabled ? v.connection : 'Disabled' }))
     : view === 'routes' ? routes.records.map(r => ({ id: r.id, title: r.channel, meta: `${r.platform} · ${r.workspace}`, status: r.primary ? `Primary: ${r.primary}` : 'No primary' }))
     : view === 'sends' ? sends.records.map(s => ({ id: s.id, title: s.id, meta: s.venue, status: sendStatus(s, held.find(e => e.id === `bridges:${s.id}`)) }))
     : held.map(e => ({ id: e.id, title: e.title, meta: e.id, status: e.state === 'uncertain' ? 'Uncertain · review required' : e.state }));
-  const reader = !ready ? null : venue ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
+  const reader = !ready ? null : newRoute ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
+    <RouteEditor key={newRoute.id} route={newRoute} fresh request={writes.current.get(newRoute.id)} write={writeRoute} />
+    <Button variant="outline" onClick={() => navigate('routes', newRoute.id)}>Open saved route</Button>
+  </article> : venue ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
     <h1 className="text-2xl font-semibold">{venue.agent} · {venue.platform}</h1><p>{venue.enabled ? venue.connection : 'Disabled'}</p>
     <p>Workspace: {venue.workspace}</p><p>Bot: {venue.bot}</p>
     <section><h2>Last 24 hours</h2><p>{venue.received} received · {venue.delivered ?? 0} delivered · {venue.held ?? 0} held</p></section>
@@ -65,6 +78,7 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
     <p>Primary: {route.primary ?? 'None'}</p>{route.parent && <p>Parent: {route.parent}</p>}
     <p>{route.guest ? 'Guest route' : 'Household route'} · {route.peer ? 'Peers enabled' : 'Peers disabled'}</p>
     <p>Readers: {route.readers.join(', ') || 'None listed'}</p>
+    <RouteEditor key={route.id} route={routeInput(route)} fresh={false} request={writes.current.get(route.id)} write={writeRoute} />
   </article> : send || effect ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
     <h1 className="text-2xl font-semibold">{send ? 'Reply send' : effect!.title}</h1>
     {send && <><p>{send.id}</p><p>{sendStatus(send, effect)}</p><p>Connection: {send.venue}</p><p>Receipt: {send.incoming}</p></>}
@@ -80,6 +94,7 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
       { id: 'effects', label: 'Staged effects', count: ready ? held.length : undefined },
     ]}
     listTitle={view === 'venues' ? 'Connections' : view === 'routes' ? 'Routes' : view === 'sends' ? 'Pending sends' : 'Staged effects'} listMeta={rows.length}
+    listTop={ready && view === 'routes' ? <div className="p-3"><Button onClick={() => navigate('new-route', crypto.randomUUID())}>New route</Button></div> : undefined}
     list={!ready ? status === 'loading' ? <Loading label="Opening bridges…" /> : <Error text={status === 'denied' ? 'Sign in with access to bridges.' : 'Waiting for connection.'} />
       : rows.length ? <List label="Bridge items">{rows.map(r => <Row key={r.id} title={r.title} meta={r.meta} status={r.status} selected={r.id === selected?.id} onClick={() => open(r.id)} />)}</List>
       : <Empty title="No items here" text="Configured connections, routes and held sends appear here as they become available." />}

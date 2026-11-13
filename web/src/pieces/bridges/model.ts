@@ -6,7 +6,7 @@ export interface VenueRecord extends LiveRecord {
 }
 export interface RouteRecord extends LiveRecord {
   id: string; platform: 'discord' | 'slack'; workspace: string; channel: string;
-  parent?: string; primary?: string; peer: boolean; guest: boolean; readers: string[];
+  parent?: string; primary?: string; pair?: string; peer: boolean; guest: boolean; readers: string[]; notes: string[];
 }
 export interface SendRecord extends LiveRecord {
   id: string; venue: string; incoming: string; state: string; remoteId?: string; created: number;
