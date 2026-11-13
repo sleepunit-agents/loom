@@ -6,6 +6,7 @@ import { fixture } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
 import { z } from 'zod';
 import { FakeClock, operation, failure, mayCreate, type RecordType, type Viewer } from '../../core/index.js';
+import type { AttentionSources } from './role.js';
 import { installAttention } from './index.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -14,14 +15,15 @@ async function setup(install = true, next = false) {
   const types = new Map<string, RecordType>();
   const home = mkdtempSync(join(tmpdir(), 'attention-')); dirs.push(home);
   if (next) fixture(home);
+  let sources: AttentionSources | undefined;
   const app = await startLoom({ home, next, clock: new FakeClock(), sharing, install: install ? app => {
     const register = app.live.register.bind(app.live);
     app.live.register = type => { types.set(type.name, type); register(type); };
-    installAttention(app.db, app.operations, app.live, sharing);
+    sources = installAttention(app.db, app.operations, app.live, sharing);
   } : undefined });
   closes.push(app.close); let n = 0;
   const call = (name: string, input: unknown, viewer: Viewer = { kind: 'member', id: 'alice' }, key = `operation-${++n}`) => app.operations.call('direct', viewer, `attention.${name}`, input, key);
-  return { app, call, types };
+  return { app, call, types, sources };
 }
 const ask = { id: 'ask-1', agent: 'art', ask: 'Continue?', source: { kind: 'piece', id: 'example' } };
 it('keeps stable asks immutable, first answer wins across owners, and retries return the receipt', async () => {
@@ -132,4 +134,20 @@ it.each([undefined, 'yes-no', 'words'] as const)('never persists private reply w
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   expect(JSON.stringify(app.db.prepare('SELECT * FROM attention_asks').all())).not.toContain('private-reply-canary');
   expect(changed).not.toHaveBeenCalled();
+});
+
+it('refuses words on source-managed yes/no asks before callback, records, notifications or retry storage', async () => {
+  const { app, call, sources } = await setup(true, true);
+  const callback = vi.fn();
+  const source = sources!.register('test-managed', callback);
+  app.operations.register(operation({name:'test.managed',write:true,input:z.object({}),output:z.unknown(),may:()=>true,
+    run(ctx) { source.raise(ctx, {id:'managed',ask:'Allow?',answers:'yes-no'}); return null; },
+  }));
+  expect(app.operations.call('direct',{kind:'member',id:'alice'},'test.managed',{},'managed-raise')).toMatchObject({ok:true});
+  const snapshot = () => ['attention_asks','core_operations'].map(t=>app.db.prepare(`SELECT * FROM ${t}`).all());
+  const before = snapshot(), changed = vi.spyOn(app.live,'changed');
+  expect(call('answer',{id:'managed',answer:{kind:'words',text:'Do something else'}})).toMatchObject({code:'invalid'});
+  expect(snapshot()).toEqual(before); expect(changed).not.toHaveBeenCalled(); expect(callback).not.toHaveBeenCalled();
+  expect(call('answer',{id:'managed',answer:{kind:'yes'}})).toMatchObject({ok:true});
+  expect(callback).toHaveBeenCalledTimes(1);
 });
