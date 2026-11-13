@@ -27,6 +27,10 @@ Options:
 `;
 
 export async function run(argv: string[], io: IOStreams): Promise<number> {
+  if (argv[0] === 'all' || argv[0] === 'plan') {
+    const { migrateAll } = await import('./migration-all.js');
+    return migrateAll(argv.slice(1), io, argv[0] === 'plan');
+  }
   if (argv[0] === 'snapshot') {
     const { migrateSnapshot } = await import('./migration-snapshot.js');
     return migrateSnapshot(argv.slice(1), io);

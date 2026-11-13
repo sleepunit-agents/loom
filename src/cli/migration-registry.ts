@@ -3,6 +3,7 @@ import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { Db } from '../core/index.js';
 import type { SnapshotManifest } from './migration-snapshot.js';
+import { openSnapshotSqlite } from './migration-sqlite.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
 import { importAttention, type ImportScopes } from '../pieces/attention/importer.js';
@@ -97,9 +98,9 @@ export function createMigrationRegistry(): MigrationRegistry {
   registry.register({ name: 'household', dependencies: [], reads: ['home/ (household metadata, identity files and keys)'],
     run: (context, input) => importHousehold(context.db, context.home, single(context, input), context.now) });
   registry.register<Parameters<typeof importTasks>[3]>({ name: 'tasks', dependencies: ['household'], reads: ['tasks/store.db'],
-    run: (context, input) => importTasks(context.db, single(context, input), context.now, input.options) });
+    run: (context, input) => importTasks(context.db, single(context, input), context.now, input.options, openSnapshotSqlite) });
   registry.register<ImportScopes>({ name: 'attention', dependencies: ['household'], reads: ['home/**/memories.db (conversation tables)'],
-    run: (context, input) => importAttention(context.db, input.paths.map(path => snapshotPath(context, path)), input.options) });
+    run: (context, input) => importAttention(context.db, input.paths.map(path => snapshotPath(context, path)), input.options, {}, openSnapshotSqlite) });
   registry.register({ name: 'clock', dependencies: ['household'], reads: ['home/<old WAKE_DATA>/'],
     run: (context, input) => importClock(context.db, single(context, input), context.now) });
   registry.register<Parameters<typeof importApprovals>[3]>({ name: 'approvals', dependencies: ['household'], reads: ['home/<old approvals directory>/'],
