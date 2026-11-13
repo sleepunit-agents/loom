@@ -17,7 +17,7 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | Old command | Current next replacement or gap |
 | --- | --- |
 | `loom household show` | `loom-household show '{}'`; same summary fields, JSON instead of aligned text |
-| `loom household add AGENT` | `loom-household addAgent '{"agent":"AGENT"}'`; registers an existing context, JSON agent list instead of `Agents: …` |
+| `loom household add AGENT` | `loom-household addAgent '{"agent":"AGENT"}'`; registers an existing context (also in Setup), JSON agent list instead of `Agents: …` |
 | `loom household init AGENT [--owner PERSON]` | **Pending** fresh-household initialization. The old directory move/symlink and implicit commons split have no next command; importing an existing household is a separate operation |
 | `loom household commons` | **Pending** explicit offline commons migration. The app importer does not move knowledge or split People; neither the daemon nor stdio runs this old command implicitly |
 | `loom household sprite AGENT SHEET PIXELLAB` and its weight/variant options | **Pending** artwork installation on the new side |
@@ -52,7 +52,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 
 | Old action or route | Current next replacement or gap |
 | --- | --- |
-| `member-set`, `member-remove` | `household.setMember`, `household.removeMember`; owner operations are implemented, Setup controls pending |
+| `member-set`, `member-remove` | `household.setMember`, `household.removeMember`; owner operations and Setup member controls are implemented |
 | `add-agent` | `household.addAgent` covers registration only; **pending** context bootstrap, creed/rules, appearance, first token and harness snippet |
 | `create-token`, `revoke-token` on agent Setup | **Pending** complete token administration and Setup; plain revocation exists as above |
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
@@ -61,8 +61,8 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `backup-set`, Setup health/backup status | **Pending** next backup settings/status integration; no new-side invocation of the old backup program |
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
-| GET `/a/AGENT/setup` | **Pending** `/p/setup-preview`, record subscriptions, mutations, and 390/1280/1920 Neon Noir and Daylight screenshot artifacts |
-| GET `/new-agent`, GET `/members` | **Pending** Setup forms; member backend operations exist |
+| GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; **pending** read-only identity, health, token/session and full bootstrap coverage |
+| GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; **pending** fresh context bootstrap |
 | GET `/account`, GET `/passkeys` | **Pending** complete Account administration screen; the new sign-in shell is not that screen |
 | `passkey-remove` (including descendants), `session-revoke` | **Pending** Account administration operations/records; passkey login/registration and own-session logout already exist |
 | `signin-link`, `member-link` | `signin.link` and the explicit next link client cover owner link issuance; **pending** Account/Setup UI. Browser sessions cannot mint links through its HTTP door |

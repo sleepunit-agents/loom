@@ -18,7 +18,7 @@ export function installSharing(app: Foundation, home: string) {
     read(id, viewer) {
       if (!mayAct(viewer, {}, store.sharing(), 'household')) return;
       const household = new HouseholdDatabase(app.db).household(home);
-      return household ? { id, members: household.members.map(m => m.person), agents: household.agents, agentAccounts: Object.fromEntries(household.agents.map(agent => [agent, new HouseholdAccounts(app.db, home).get(agent)])) } : undefined;
+      return household ? { id, members: household.members.map(m => m.person), membership: household.members.map(m => ({ person: m.person, role: m.role, agents: m.agents })), defaultAgent: household.default, agents: household.agents, agentAccounts: Object.fromEntries(household.agents.map(agent => [agent, new HouseholdAccounts(app.db, home).get(agent)])) } : undefined;
     },
     inScope: () => true,
   });

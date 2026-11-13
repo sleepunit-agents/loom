@@ -408,3 +408,21 @@ in this slice, and no activation claim.
 | Socket handler ACK before in-memory queue | Socket receiver now has a production SQLite store; fixture proves commit before ACK |
 | Restart loses queued raw events | Pending raw events and dedup tombstones survive restart |
 | Fallible metadata before normalized receipt | Raw receipt precedes all metadata; daemon normalizer/registration still required |
+
+## Slack authenticated app evidence
+
+`slackApi.authenticate` calls [auth.test](https://docs.slack.dev/reference/methods/auth.test/)
+with the configured bot secret and requires the configured workspace and bot user.
+It then queries [bots.info](https://docs.slack.dev/reference/methods/bots.info/)
+using the returned bot ID (distinct from its user ID), checks the same bot/user and
+`deleted: false`, and returns only `{workspace, bot, app}`. `bots.info` requires
+`users:read`, already needed by intake inspection. Missing scopes, mismatches,
+malformed metadata and API failures return `wait` for configuration repair.
+Each request independently checks staging and current service secret authority.
+No cache, incoming payload, token or response text supplies the expected app ID.
+
+This is point-in-time evidence for future composition, not an authority lease or
+proof that a separately configured app-level token belongs to that app. Composition
+must invalidate/revalidate on setup or credential changes and use this app ID to
+reject mismatched incoming `api_app_id` values. Socket registration, raw drain,
+normalization/admission and lifecycle remain required; nothing starts IO on install.
