@@ -21,7 +21,7 @@ const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanups.splice(0))await close();});
 async function until(condition:()=>boolean){for(let n=0;n<4000;n++){if(condition())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<200;i++)await Promise.resolve();}
-it.each(['own','commons','missing','other'] as const)('composes %s People visibility, durable engine and separate staging releases',async visibility=>{
+it.each(['own','commons','missing','other','no-runtime'] as const)('composes %s People visibility, durable engine and separate staging releases',async visibility=>{
   const home=mkdtempSync(join(tmpdir(),'bridge-composition-'));fixture(home);const clock=new FakeClock();
   const path=visibility==='commons'?'commons/people.db':visibility==='other'?'agents/mark/memories.db':'agents/art/memories.db';
   mkdirSync(join(home,path.substring(0,path.lastIndexOf('/'))),{recursive:true});const people=new PeopleStore({dbPath:join(home,path)});if(visibility!=='missing')people.write({slug:'jonathan',name:'Trusted Jonathan'});
@@ -42,7 +42,7 @@ it.each(['own','commons','missing','other'] as const)('composes %s People visibi
   const socket=()=>Object.assign(new EventEmitter(),{readyState:1,terminate:vi.fn(),send:vi.fn(),ping:vi.fn()}) as unknown as WebSocket;
   let foundation!:import('../../core/app.js').Foundation;
   const app=await startLoom({home,next:true,staging:true,clock,stdout:()=>{},bridges:{source,request,socket,
-    runtime:{admit:async()=>{if(admitWait){admitStarted.resolve();await admitWait;}return 'allow';},deliver:async i=>{deliveries.push(i);return 'delivered';},stop:async()=>{}}},
+    runtime:visibility==='no-runtime'?undefined:{admit:async()=>{if(admitWait){admitStarted.resolve();await admitWait;}return 'allow';},deliver:async i=>{deliveries.push(i);return 'delivered';},stop:async()=>{}}},
     install(a){foundation=a;
       const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
       for(const name of ['bot','app'])for(const [verb,input] of [['describe',{name,description:name}],['grantService',{service:'bridges',name}]] as const)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${verb}`,input,`${verb}-${name}`).ok).toBe(true);
@@ -57,7 +57,9 @@ it.each(['own','commons','missing','other'] as const)('composes %s People visibi
     clock.advance(0);
   };
   release();await until(()=>app.db.prepare('SELECT id FROM core_effects WHERE id LIKE ?').get('bridges:inspect:%')!==undefined);
-  expect(deliveries).toEqual([]);expect(posts).toEqual([]);release();await until(()=>deliveries.length===1);await settle();
+  expect(deliveries).toEqual([]);expect(posts).toEqual([]);release();
+  if(visibility==='no-runtime'){await until(()=>request.mock.calls.filter(([url])=>String(url).endsWith('users.info')).length>=2);await settle();expect(app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'pending',reason:null});expect(app.db.prepare('SELECT retry_since FROM bridges_inbox').get()).toMatchObject({retry_since:expect.any(Number)});expect(deliveries).toEqual([]);expect(app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);expect(posts).toEqual([]);return;}
+  await until(()=>deliveries.length===1);await settle();
   expect(deliveries[0]).toMatchObject(visibility==='own'?{label:'DM with Trusted Jonathan',text:'hello @Trusted Jonathan'}:{label:'DM',text:'hello @someone'});
   expect(app.operations.call('direct',{kind:'agent',id:'art'},'mind.personRead',{id:'commons:jonathan'})).toMatchObject({ok:false,code:'denied'});
   // A durable reply fixture enters the actual installed engine's send path.

@@ -304,9 +304,9 @@ it('runs durable bridge inspection and split sends on the persistent holder, hou
   const marker=await source.generation();
   const adapters=venueAdapters(secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live),{request,lifetime:()=>marker,beforeRead:()=>true});
   // Explicit fake only for the bridge runtime and its effect gate; platform IO is fake HTTP.
-  const deliveries:string[]=[];
+  const deliveries:string[]=[];let admission=0,expireAt:number|undefined;
   const effects:ReturnType<typeof installEffects>={status:()=>undefined,onReleased:()=>()=>{},beforeOutside:()=>true,finish:()=>{}};
-  const engine=new Bridges(app,clock,{admit:async()=> 'allow',deliver:async i=>{deliveries.push(i.id);return 'delivered';},stop:async()=>{}},adapters,effects);
+  const engine=new Bridges(app,clock,{admit:async()=>{if(++admission===3 && expireAt!==undefined)clock.advance(expireAt-clock.now());return 'allow';},deliver:async i=>{deliveries.push(i.id);return 'delivered';},stop:async()=>{}},adapters,effects);
   try {
     await engine.receive(venue.id,{id:'600',channel:'400',user:'300',dm:false,at:'2026-11-13T18:00:00Z',text:'hello',mentions:[]});await engine.flush();expect(requests).toEqual([]);expect(deliveries).toEqual([]);
     expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE'}).ok).toBe(true);
@@ -315,6 +315,8 @@ it('runs durable bridge inspection and split sends on the persistent holder, hou
     expect(app.db.prepare('SELECT state,remote_id FROM bridges_outbox WHERE id=?').get('whole')).toEqual({state:'sent',remote_id:'500'});
     revoke=true;engine.reply({id:'partial',incomingId:deliveries[0],text:'y'.repeat(2100)});await engine.flush();expect(posts.map(p=>p.length)).toEqual([2000,100,2000]);
     expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('partial')).toEqual({state:'uncertain'});await engine.flush();expect(posts).toHaveLength(3);
+    revoke=false;expireAt=clock.now()+1000;admission=0;expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE',expiresAt:expireAt}).ok).toBe(true);
+    engine.reply({id:'expiry',incomingId:deliveries[0],text:'must not post after final admission expiry'});await engine.flush();expect(admission).toBe(3);expect(posts).toHaveLength(3);expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('expiry')).toEqual({state:'uncertain'});
     for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(sentinel);
   } finally {await engine.close();}
 });

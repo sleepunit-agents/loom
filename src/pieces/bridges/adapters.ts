@@ -1,6 +1,6 @@
 /** Credential-owning HTTP adapters. Daemons own sockets; the durable engine owns
  * retry/uncertainty and authorizes every chunk. No credential enters the engine. */
-import type { SecretUse } from '../secrets/role.js';
+import type { SecretUseAuthority } from '../secrets/role.js';
 import type { Venue, Message } from './model.js';
 import type { VenueAdapter, Inspection } from './role.js';
 import { discordApi } from './discord-api.js';
@@ -18,7 +18,7 @@ async function json(response:Response) {
   const data:unknown=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   if(!object(data))throw Error('Bridge unavailable');return data;
 }
-export function venueAdapters(secrets:SecretUse, options:{
+export function venueAdapters(secrets:SecretUseAuthority, options:{
   /** Public holder generation + setup/authority lifetime; undefined always refuses IO. */
   lifetime(venue:Venue):string|undefined;
   /** Staging gate for reads. Called before acquisition and after every await. */
@@ -58,7 +58,7 @@ export function venueAdapters(secrets:SecretUse, options:{
       return postReply(platform,text,async part=>{
         if(!current() || !await authorize() || !current())throw Error('Bridge reply attempt uncertain');
         return secrets.withValue(v.tokenSecret,async token=>{
-          if(!current() || !await authorize() || !current())throw Error('Bridge reply attempt uncertain');
+          if(!current() || !await authorize() || !current() || !secrets.mayUse(v.tokenSecret))throw Error('Bridge reply attempt uncertain');
           const slackText=part.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
           const response=await request(platform==='discord'?`https://discord.com/api/v10/channels/${target.channel}/messages`:'https://slack.com/api/chat.postMessage',{
             method:'POST',redirect:'error',signal:AbortSignal.timeout(15_000),

@@ -713,7 +713,10 @@ source to both Changes and Bridges. No extra source discovery or grants are
 introduced. The root installs the durable `Bridges` engine and the real
 `venueAdapters`, alongside the existing socket daemons. The engine no longer
 has `BridgeSecrets.may/get` or receives a token; HTTP adapters acquire each
-value through the bridges service's `SecretUse.withValue`.
+value through the bridges service's `SecretUse.withValue`. The same role exposes
+`SecretUseAuthority.mayUse`, an immediate check of its existing registration,
+name and grant/expiry rules; adapters use it after asynchronous admission and
+immediately before posting, without acquiring or returning another value.
 
 Each inspection authenticates the configured bot/workspace and fetches fresh
 recipient metadata. Each outgoing chunk rechecks runtime admission, setup,

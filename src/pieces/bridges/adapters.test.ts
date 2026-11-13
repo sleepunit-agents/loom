@@ -19,7 +19,7 @@ function fixture(platform:'discord'|'slack') {
     const body=JSON.parse(String(init?.body));
     return Response.json(platform==='discord'?{id:'400',channel_id:'300'}:{ok:true,channel:body.channel,ts:'1794503533.000001'});
   });
-  const adapter=venueAdapters({withValue:use},{lifetime:()=>marker,beforeRead:()=>!held,request}).find(a=>a.platform===platform)!;
+  const adapter=venueAdapters({withValue:use,mayUse:()=>true},{lifetime:()=>marker,beforeRead:()=>!held,request}).find(a=>a.platform===platform)!;
   return {adapter,use,request,rotate:()=>{marker='second';},lose:()=>{marker=undefined;},hold:()=>{held=true;}};
 }
 it.each(['discord','slack'] as const)('%s authenticates and inspects fresh metadata before allowing',async platform=>{
