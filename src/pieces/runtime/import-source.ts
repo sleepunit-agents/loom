@@ -168,7 +168,7 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     const deleted=placeId===undefined?[]:inventory.deletedThreads.filter(t=>t.id===placeId || t.id===c.place);
     if(deleted.length) {
       const tombstone=deleted[0];
-      if(deleted.length!==1 || threads.length || tombstone.agent!==agent || !identities.members.includes(String(tombstone.member))
+      if(deleted.length!==1 || threads.length || tombstone.agent!==agent || typeof tombstone.member!=='string' || !identities.members.includes(tombstone.member)
         || (tombstone.conversation!==null&&tombstone.conversation!==id)
         || (audience.member!==undefined&&audience.member!==tombstone.member) || audience.project!==undefined)
         throw Error('Runtime deleted binding must match the owning Comms source');

@@ -220,3 +220,18 @@ it('supports the old tombstone schema without a conversation column without inve
  db.exec('ALTER TABLE comms_deleted DROP COLUMN conversation');db.close();
  expect(f.read().skipped).toEqual([{id:cv,reason:'skipped: owning Comms thread deleted'}]);
 });
+
+for(const venue of ['loom','spawn'])it.each(['agent','conversation','place'])('refuses mismatched live '+venue+' Comms %s evidence',change=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue,place:'th:live'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='live'");
+ if(change==='agent')db.exec("UPDATE comms_threads SET agent='other'");
+ if(change==='conversation')db.exec("UPDATE comms_threads SET conversation='cv-ffffffffffff'");
+ if(change==='place')db.exec("UPDATE comms_threads SET id='elsewhere'");
+ db.close();expect(f.read).toThrow('owning Comms source');
+});
+it('refuses a valid project on a deleted binding even with the correct owning member',()=>{
+ const f=fixture();deletedThread(f);
+ (f.options.conversations as Record<string,unknown>)[cv]={member:'jonathan',project:'pond'};
+ expect(f.read).toThrow('owning Comms source');
+});

@@ -121,10 +121,13 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
       return true;
     });
     const report: MigrationReport = { status: missing.size || blocked.size ? 'incomplete' : 'complete', snapshot: plan.snapshot, plan: checksum, pieces: [], missing: [...missing].sort(), blocked: [...blocked].sort() };
-    if (entries.every(entry => receipt.completed.includes(entry.name))) {
-      report.pieces = entries.map(entry => ({ name: entry.name, status: 'completed' }));
+    const finishReport=()=>{
       if(receipt.runtimeSkipped?.length)report.skipped=receipt.runtimeSkipped.map(row=>({piece:'runtime',...row}));
       return report;
+    };
+    if (entries.every(entry => receipt.completed.includes(entry.name))) {
+      report.pieces = entries.map(entry => ({ name: entry.name, status: 'completed' }));
+      return finishReport();
     }
     const app = createFoundation({ home });
     try {
@@ -146,8 +149,7 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
         receipt.completed.push(entry.name); saveReceipt(home, receipt, controls.publication ?? durablePublication);
         report.pieces.push({ name: entry.name, status: 'imported' });
       }
-      if(receipt.runtimeSkipped?.length)report.skipped=receipt.runtimeSkipped.map(row=>({piece:'runtime',...row}));
-      return report;
+      return finishReport();
     } finally { app.close(); }
   } finally { release(); }
 }
