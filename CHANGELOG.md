@@ -1094,6 +1094,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
 
+- Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

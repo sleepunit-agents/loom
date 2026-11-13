@@ -1,4 +1,5 @@
 /** Next-mode credentials. Only loom.db is consulted; no legacy file activation. */
+import { installAccount } from './account.js';
 import { installAccessAdmin } from './admin.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
@@ -20,6 +21,8 @@ const random = () => randomBytes(32).toString('hex');
 interface StoredSession { issuedAt: number; secret: string; signedInAt?: number; agent?: true; device?: string; label?: string; via?: 'token'|'link'|'passkey' }
 interface BrowserSession { s: StoredSession; viewer: Viewer; expiresAt: number }
 const MONTH = 30 * 86400, HOURS = 6 * 3600;
+/** Actual browser validity, also used by safe Account/admin projections. */
+export const sessionExpiresAt=(s:{issuedAt:number;agent?:true;device?:string})=>(s.issuedAt+(s.agent||/^HeadlessChrome\b/.test(s.device??'')?HOURS:MONTH))*1000;
 const clean = (s?: string) => (s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu,' ').replace(/\s+/g,' ').trim().slice(0,60);
 /** Normalize before truncation: ordinary headless UAs begin with Mozilla and can be long. */
 function deviceOf(ua?: string): string | undefined {
@@ -94,11 +97,11 @@ export class Signin {
   checkCsrf(req: IncomingMessage, value: string) { const id=cookieId(req); return !!id && eq(value,this.csrf(id)); }
   session(id: string, recordUse = false): BrowserSession | undefined {
     const s=this.sessions.get('sessions',hash(id)); if (!s) return;
-    const max=s.agent || /^HeadlessChrome\b/.test(s.device ?? '') ? HOURS : MONTH;
-    if (this.now() >= s.issuedAt+max) return;
+    const expiresAt=sessionExpiresAt(s);
+    if (this.now()*1000 >= expiresAt) return;
     const t=this.token(s.secret); if (!t || t.viewer.kind!=='member') return;
     if (recordUse) this.used(s.secret,id);
-    return {s,...t,expiresAt:Math.min((s.issuedAt+max)*1000,t.expiresAt ?? Infinity)};
+    return {s,...t,expiresAt:Math.min(expiresAt,t.expiresAt ?? Infinity)};
   }
   /** Usage is diagnostic, never authority. Pure token/session checks do not call this. */
   private used(digest: string, id?: string): void {
@@ -216,6 +219,7 @@ export function installSignin(app: Foundation) {
   ` }]);
   const s=signin(app);
   installAccessAdmin(app);
+  installAccount(app);
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
   app.operations.register({name:'signin.setPrincipal',write:true,input:z.object({kind:z.enum(['runner','service']),id:z.string().regex(/^[a-z0-9-]+$/),active:z.boolean()}),output:z.object({ok:z.literal(true)}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{new HouseholdRows(ctx.db,'settings').put(`signin-principal:${i.kind}:${i.id}`,{active:i.active});ctx.changed('core.access','credentials');return {ok:true as const};}});
