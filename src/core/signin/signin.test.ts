@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomBytes, generateKeyPairSync, createHash, sign } from 'node:crypto';
 import { once } from 'node:events';
+import { request } from 'node:http';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -184,7 +185,7 @@ it('session cap evicts ended sessions first, then agent sessions before a person
 });
 it('rejects mismatched RP hosts and forged forwarding headers on requests and upgrades',async()=>{
   const f=await setup(),origin=f.loom.url.replace('http:','https:');vi.stubEnv('LOOM_PUBLIC_URL',origin);
-  expect((await f.post('/login/passkey/options',{}, {host:'other.invalid',origin:'http://other.invalid'})).status).toBe(404);
+  const mismatched=await new Promise<number>((ok,no)=>{const req=request(new URL('/login/passkey/options',f.loom.url),{method:'POST',headers:{host:'other.invalid',origin:'http://other.invalid','content-type':'application/json'}},res=>{res.resume();ok(res.statusCode!);});req.on('error',no);req.end('{}');});expect(mismatched).toBe(404);
   const forged={origin:'https://evil.invalid','x-forwarded-host':'evil.invalid','x-forwarded-proto':'https'};
   expect((await f.post('/login/passkey/options',{},forged)).status).toBe(403);
   for(const extra of [forged,{host:'other.invalid',origin}]){const ws=new WebSocket(f.loom.url.replace('http:','ws:')+'/live',{headers:{cookie:`loom_ui=${f.cookie}`,...extra}});ws.on('error',()=>{});const status=await new Promise<number>(ok=>ws.once('unexpected-response',(_r,res)=>{res.resume();ws.terminate();ok(res.statusCode!);}));expect(status).toBe(401);}
