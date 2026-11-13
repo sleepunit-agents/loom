@@ -49,3 +49,9 @@ it('never rewrites or shrinks persisted audit history',()=>{
   expect(()=>persist(a.db,{...state,audit:[{...audit,event:'allow'}]},now)).toThrow('cannot change');
   expect(load(a.db).audit).toEqual([audit]);
 });
+it('uses only the explicit map for project scope even when source asserts a project',()=>{
+  const a=setup();writeFileSync(join(a.source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:{...receipt,project:'pond'}}}));
+  importApprovals(a.db,a.source,now);expect(load(a.db).approvals[0]).not.toHaveProperty('project');
+  const b=setup();writeFileSync(join(b.source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:{...receipt,project:'pond'}}}));
+  importApprovals(b.db,b.source,now,{projects:{[receipt.id]:'guides'}});expect(load(b.db).approvals[0].project).toBe('guides');
+});

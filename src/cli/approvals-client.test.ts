@@ -61,3 +61,7 @@ it('retries a 503 even when its response body has already failed',async()=>{
   const a=setup();a.request.mockResolvedValueOnce(new Response(new ReadableStream({start(controller){controller.error(Error('reset'));}}),{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({ok:true,value:{stdout:'done',stderr:'',exit:0}})));
   expect(await a.run()).toBe(0);expect(a.request).toHaveBeenCalledTimes(2);
 });
+it('redacts the credential in command error stderr inside a successful envelope',async()=>{
+  const a=setup();a.request.mockResolvedValue(new Response(JSON.stringify({ok:true,value:{stdout:'',stderr:'invalid credential test-bearer\n',exit:1}})));
+  expect(await a.run()).toBe(1);expect(a.output()).toEqual({stdout:'',stderr:'invalid credential [redacted]\n'});expect(a.request).toHaveBeenCalledTimes(1);
+});

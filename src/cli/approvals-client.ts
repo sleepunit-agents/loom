@@ -67,7 +67,7 @@ export async function runApprovalsClient(argv: string[], io: IOStreams, runtime:
       return fail(refusal.success ? refusal.data.message.replaceAll(token, '[redacted]') : 'Invalid daemon response');
     }
     io.stdout(answer.data.value.stdout);
-    io.stderr(answer.data.value.stderr);
+    io.stderr(answer.data.value.stderr.replaceAll(token, '[redacted]'));
     return answer.data.value.exit;
   }
   return fail('loom daemon is unavailable');

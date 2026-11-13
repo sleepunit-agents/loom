@@ -42,6 +42,7 @@ export function importApprovals(db: Db, from: string, now: number, options: { in
     for(const a of expected.approvals){
       // Explicit migration map: approval id or its proven conversation; no title or repo guessing.
       const project=projects[a.id]??(a.conversation?projects[a.conversation]:undefined);
+      delete a.project;
       if(project)a.project=project;
       a.agent=a.who.agent;
     }

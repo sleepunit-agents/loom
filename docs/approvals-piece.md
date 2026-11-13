@@ -68,7 +68,7 @@ kept, rather than rewritten to claim it was asked in that conversation.
 reads `approvals.json`, optional `rules.json`, and optional `audit.jsonl` only
 inside the importer. An optional `--projects` JSON object explicitly maps
 approval ids or proven conversation ids to household project slugs. No guessing
-from titles. The source and mapping checksum, import and comparison of all
+from titles; source-provided project fields do not establish destination scope and are discarded unless the explicit map supplies scope. The source and mapping checksum, import and comparison of all
 records happen in one destination transaction; interrupted runs roll back,
 identical repeated input is a no-op, different input is refused. Explicit null rule collections and malformed audit envelopes are refused. Import tests preserve every collection, exercise both mapping keys and map checksum changes, and force schema/content rollback on interruption or comparison failure.
 
@@ -86,6 +86,6 @@ untouched stores until the owner retires those stores.
 - Complete old contract cases and independent CLI output/exit oracle fixtures.
 - Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
 - Complete overlap denial and owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
-- Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. Persistence/importer/client review remains to run (at most three rounds for that separate unit).
+- Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. The separate persistence/importer/client review also stopped at three rounds: final BLOCKING with two CRITICAL findings, both folded with regression tests (command stderr credential redaction and map-only project scope). No fourth read and no CLEAR claimed; final folds are unreviewed. Full ledger: loom note loom/2026-11-12-approvals-importer-client-review.
 - One two-window app test; screenshots at 390, 1280, 1920 in Neon Noir and
   Daylight as CI artifacts; no browser suite on loom's machine.
