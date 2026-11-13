@@ -1,4 +1,6 @@
 import Appearance from './appearance';
+import { markIosApp } from '../standalone';
+markIosApp();
 import { lazy, StrictMode } from 'react';
 import { LazyMotion, domAnimation } from 'motion/react';
 import { createRoot } from 'react-dom/client';
