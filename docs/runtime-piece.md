@@ -949,6 +949,9 @@ lifecycle reconciliation must explicitly settle old jobs, services, revocations,
 queued delivery, gates and account state before any replacement body can run.
 This importer does not make general delivery, models/accounts or services usable.
 
+The following archive layout requires
+[streaming migration PR1100](https://github.com/sleepunit-agents/loom/pull/1100)
+to merge first; ship this cache disposition only in a release containing that fix.
 Private `runtime_import_sources` holds per-file SHA-256/size descriptors; ordered
 `runtime_import_chunks` holds exact source bytes in at most 1 MiB BLOB parts, including sealed
 slots, words and inert old keys; it has no live collection or read operation.
