@@ -25,9 +25,13 @@ export const boxRecord = z.object({
 export const jobRecord = z.object({
   id, ...scope, runner: id, box: id, title: z.string().max(200),
   state: z.enum(['queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost', 'uncertain']),
+  service: id.optional(),
   conversation: id.optional(), model: id.optional(), account: id.optional(),
   /** Assigned runner authoritatively fenced a claim against ever starting. */
   startFailed: z.literal(true).optional(),
+  /** Owner ended exact silent work; no returned body may resume its history. */
+  principalReset: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),
+  writtenOff: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),
   startRequest: z.object({box:id.optional()}).strict().optional(),
   made: buildIdentity.optional(), claimedAt: z.number().int().optional(),
   build: z.string().regex(/^loom-house-[a-z][a-z0-9-]{0,39}:[0-9a-f]{20}$/).optional(),

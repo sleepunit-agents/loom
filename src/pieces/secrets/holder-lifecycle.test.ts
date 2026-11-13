@@ -57,10 +57,13 @@ it('composes persistent holder and actual current database authority across rest
   await expect(api.hasReceipt(who)).resolves.toBe(false);
   await api.set(who,'API',Buffer.from(value),'add');
   await expect(api.hasReceipt(who)).resolves.toBe(true);
+  const generation=await source.generation();
   const first=await source.read('API');expect(Buffer.from(first).toString()).toBe(value);first.fill(0);
   await api.set({...who,writeId:randomUUID()},'API',Buffer.from('NEW'),'replace');
+  const replacedGeneration=await source.generation();expect(replacedGeneration).not.toBe(generation);
   await holder.close();await app.close();
   app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,stdout:()=>{}});holder=await startPersistentHolder(s.file);
+  expect(await source.generation()).toBe(replacedGeneration);
   await expect(api.hasReceipt(who)).resolves.toBe(true);
   await api.set(who,'API',Buffer.from(value),'add');
   const newer=await source.read('API');expect(Buffer.from(newer).toString()).toBe('NEW');newer.fill(0);
@@ -89,6 +92,8 @@ it('pins both peers beyond the CA and fails closed when authority is absent',asy
   const stranger={...s.client,cert:join(s.home,'stranger.pem'),key:join(s.home,'stranger.key')};
   await expect(localHolderMutations(stranger).set(who,'API',Buffer.from('X'),'add')).rejects.toThrow();
   await expect(localSecretSource({...stranger,socket:s.config.read.socket}).read('API')).rejects.toThrow();
+  await expect(localSecretSource({...stranger,socket:s.config.read.socket}).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(await localSecretSource({...s.client,socket:s.config.read.socket}).generation()).toMatch(/^[0-9a-f-]{36}$/);
   await expect(remoteHolderAuthority({...s.config.authority,servername:'wrong.test'},s.daemonFingerprint)(s.daemonFingerprint,'jonathan')).resolves.toBeNull();
   const wrongHolder=remoteHolderAuthority({...s.config.authority,cert:stranger.cert,key:stranger.key},s.daemonFingerprint);
   await expect(wrongHolder(s.daemonFingerprint,'jonathan')).resolves.toBeNull();

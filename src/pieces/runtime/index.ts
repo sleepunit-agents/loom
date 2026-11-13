@@ -1,3 +1,4 @@
+import { installRuntimeOwnerApplication } from './owner-application.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
@@ -21,6 +22,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   registerBuiltinService(operations, 'runtime', ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding']);
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
+  installRuntimeOwnerApplication(db, operations, sharing, options.credentials);
   installBoxOperations(db, operations, sharing);
   installQueueBody(db, operations, sharing);
   installStartBody(db, operations, sharing, options.privateStart);

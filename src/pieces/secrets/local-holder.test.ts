@@ -39,6 +39,7 @@ it('decrypts persistent age ciphertext through real mutual TLS and current servi
   closes.push(()=>holder.close());
   const configFile=join(home,'config.json');writeFileSync(configFile,JSON.stringify({...client,github:{acme:'github'}}),{mode:0o600});
   const changes=configuredSecretHolder(configFile);
+  await expect(changes.source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
   const appHome=join(home,'next');mkdirSync(appHome,{mode:0o700});fixture(appHome);
   const clock=new FakeClock();
   const app=await startLoom({home:appHome,next:true,staging:true,clock,changes,stdout:()=>{}});closes.push(app.close);
@@ -256,19 +257,19 @@ it('recognizes the npm symlink entrypoint without starting the executable on imp
   expect(isHolderEntrypoint(module)).toBe(true);expect(isHolderEntrypoint(link)).toBe(true);
   expect(isHolderEntrypoint(undefined)).toBe(false);expect(isHolderEntrypoint(join(home,'missing'))).toBe(false);expect(isHolderEntrypoint(join(home,'ca.pem'))).toBe(false);
 });
-it('absolute deadline ends a response that keeps streaming below each inactivity cutoff',async()=>{
+it.each(['read','generation'] as const)('absolute %s deadline ends a response that keeps streaming below each inactivity cutoff',async method=>{
   let interval:ReturnType<typeof setInterval>|undefined;
   const {client,received}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.write('X');interval=setInterval(()=>res.write('X'),1000);});
   vi.useFakeTimers();
   try {
-    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    const result=expect((method === 'read' ? localSecretSource(client).read('github') : localSecretSource(client).generation())).rejects.toThrow(/^Local secret holder unavailable$/);
     await vi.waitFor(()=>expect(received.length).toBeGreaterThan(0));
     for(let n=0;n<3;n++) {const before=received.length;await vi.advanceTimersByTimeAsync(1000);await vi.waitFor(()=>expect(received.length).toBeGreaterThan(before));}
     await vi.advanceTimersByTimeAsync(2000);await result;
     expect(received.every(b=>b.every(v=>v===0))).toBe(true);
   } finally {clearInterval(interval);vi.useRealTimers();}
 });
-it('absolute deadline also bounds a peer that never completes TLS',async()=>{
+it.each(['read','generation'] as const)('absolute %s deadline also bounds a peer that never completes TLS',async method=>{
   const {client,server:config}=setup();const {createServer}=await import('node:net');
   let connected=false;const sockets:import('node:net').Socket[]=[];
   const peer=createServer(socket=>{connected=true;sockets.push(socket);});
@@ -276,7 +277,71 @@ it('absolute deadline also bounds a peer that never completes TLS',async()=>{
   closes.push(async()=>{for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
   vi.useFakeTimers();
   try {
-    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    const result=expect((method === 'read' ? localSecretSource(client).read('github') : localSecretSource(client).generation())).rejects.toThrow(/^Local secret holder unavailable$/);
     await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await result;
   } finally {vi.useRealTimers();}
+});
+
+it('reads only a bounded public generation through the authenticated holder, without obtaining a value',async()=>{
+  const {home,client,server}=setup();const {randomUUID}=await import('node:crypto');
+  let marker=randomUUID();const read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const generation=vi.fn(()=>marker);
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  const source=localSecretSource(client);
+  expect(await source.generation()).toBe(marker);marker=randomUUID();expect(await source.generation()).toBe(marker);
+  expect(read).not.toHaveBeenCalled();
+  await expect(localSecretSource({...client,cert:join(home,'stranger.pem'),key:join(home,'stranger.key')}).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(generation).toHaveBeenCalledTimes(2);
+  generation.mockReturnValueOnce('CREDENTIAL-INSTEAD-OF-GENERATION');
+  await expect(source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  generation.mockImplementationOnce(()=>{throw Error('PRIVATE');});
+  await expect(source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(read).not.toHaveBeenCalled();
+});
+it.each(['X'.repeat(37),'a'.repeat(36),'00000000-0000-4000-8000-00000000000\u00b0'])('rejects malformed holder generation responses without reflecting them',async body=>{
+  const {client}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end(body);});
+  await expect(localSecretSource(client).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+});
+
+it('rejects invalid generation method, path and body framing before the provider runs',async()=>{
+  const {client,server}=setup();const {randomUUID}=await import('node:crypto');
+  const generation=vi.fn(()=>randomUUID()),read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  for(const [method,path,headers,body] of [
+    ['POST','/v1/generation',{},''],
+    ['GET','/v1/generation',{'content-length':'1'},'X'],
+    ['GET','/v1/generation',{'transfer-encoding':'chunked'},'X'],
+    ['GET','/v1/generation?extra=1',{},''],
+    ['GET','/v1/generation/extra',{},''],
+  ] as const) {
+    const status=await new Promise<number>((resolve,reject)=>{
+      const req=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),
+        minVersion:'TLSv1.3',agent:false,method,path,headers},res=>{res.resume();res.once('end',()=>resolve(res.statusCode!));});
+      req.on('error',reject);req.end(body);
+    });
+    expect(status).toBe(503);expect(generation).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();
+  }
+  expect(await localSecretSource(client).generation()).toMatch(/^[0-9a-f-]{36}$/);expect(generation).toHaveBeenCalledOnce();
+});
+
+it('refuses an overlong provider UUID before publishing generation bytes',async()=>{
+  const {client,server}=setup();
+  const holder=await listenLocalHolder(server,{read:async()=>Buffer.from('MUST-NOT-READ'),generation:()=> '12345678-1234-4234-8234-123456789abc\n'});closes.push(holder.close);
+  const result=await new Promise<{status:number;body:string}>((resolve,reject)=>{
+    const req=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),
+      minVersion:'TLSv1.3',agent:false,path:'/v1/generation'},res=>{let body='';res.on('data',b=>{body+=b;});res.once('end',()=>resolve({status:res.statusCode!,body}));});
+    req.on('error',reject);req.end();
+  });expect(result).toEqual({status:503,body:''});
+});
+
+it('bounds a stalled generation provider without reading a value',async()=>{
+  const {client,server}=setup();let finish!:(marker:string)=>void;
+  const generation=vi.fn(()=>new Promise<string>(resolve=>{finish=resolve;})),read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  vi.useFakeTimers();
+  try {
+    const rejected=expect(localSecretSource(client).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+    await vi.waitFor(()=>expect(generation).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(5000);await rejected;expect(read).not.toHaveBeenCalled();
+  } finally {finish('12345678-1234-4234-8234-123456789abc');vi.useRealTimers();}
 });

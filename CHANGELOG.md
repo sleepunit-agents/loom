@@ -17,8 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
 - Next Clock files local approval requests and recovers their exact saved words through authenticated Runtime body proof; `wake --approval` no longer requires retyping private words.
 
+### Added
+- Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
+
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
 ### Added
+
+- Apply next-mode Runtime owner reset and silent-work write-off cards against durable original snapshots, with atomic body/session fencing and central credential revocation.
 
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
 - Reduce first-page JavaScript while keeping app screens loaded on demand.

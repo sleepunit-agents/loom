@@ -1,3 +1,4 @@
+import { runtimeOwnerApplication } from './pieces/runtime/owner-application.js';
 import { storedSprite } from './core/household/sprites.js';
 import { installComms } from './pieces/comms/index.js';
 import { loadKey } from './pieces/comms/crypto.js';
@@ -114,7 +115,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
     localAgent:()=>new HouseholdDatabase(app.db).household(options.home)?.default ?? 'agent',
-    applications: { clock: clockVouchApplication(app.operations) },
+    applications: { clock: clockVouchApplication(app.operations), runtime: runtimeOwnerApplication(app.operations) },
     projects: () => {
       try {
         const store = new SharingDatabase(app.db, options.home);
