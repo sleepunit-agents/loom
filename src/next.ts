@@ -16,6 +16,7 @@ import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
+import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installChanges } from './pieces/changes/index.js';
 import { householdProjects } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
@@ -62,7 +63,7 @@ export function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
     // No legacy attribution or invented caller. The trusted runtime/Secrets
