@@ -51,13 +51,13 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const decode = async (r: MessageRow): Promise<LiveRecord> => {
   const {encoding,stepCipher,privateCipher,legacyHash,...metadata}=JSON.parse(r.record);
   const alive=()=>r.words!==null && r.at + days*day > clock.now();
-  if(!alive())return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,text:null};
+  if(!alive())return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,text:null,keepUntil:r.at+days*day};
   const plain=await key.open(r.words!);
   const privateMetadata=privateCipher?JSON.parse(await key.open(Buffer.from(privateCipher,'base64'))):{};
   const step=stepCipher?JSON.parse(await key.open(Buffer.from(stepCipher,'base64'))):undefined;
   // Crypto can cross the retention deadline. Never return any private field after it.
   const words=encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
-  return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null})});
+  return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null}),keepUntil:r.at+days*day});
  };
  const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?settleStart(rows[n],record):{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});

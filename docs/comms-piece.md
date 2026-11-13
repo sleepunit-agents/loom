@@ -279,3 +279,21 @@ binding and final-start Send again still require the work listed above.
 The window's `comms.retryStart({thread,seq,generation})` decrypts the final notice outside SQLite and rechecks exact source/notice, original routing, ownership, progress, pending delivery and retention at commit. It changes only routing delivery metadata: increments generation and persists sending/attempted:false, retaining original words, hash and deadline. Later uncertain acceptance uses normal receipt fencing for the new generation. Stale callbacks cannot replace the new generation's notice; a current callback can reuse the one encrypted notice row. The app offers Send again only from an authorized retained backend projection and disables it while the request is pending. Existing delivery resend behavior is unchanged.
 
 Validation for this unit: the incoming backend fails the new final-start retry regression because it has no retry projection; the changed backend passes. Twelve backend cases plus an app normalization case cover one generation per duplicate control, old callback suppression, later-generation notices, restart and lost-ack receipt fencing, staging identity/replayed operation receipt, unchanged source words/hash/deadline, and six changes during suspended notice decryption. All 242 focused tests, TypeScript and the web production build pass. The existing browser proof now clicks final-start Send again and observes exactly one generation-one runtime call, then tests current-generation retry settlement. No local browser run; current-head CI must prove it.
+
+Earlier-page retention: page results were cached outside the Live subscription,
+so a loaded older message could retain words after its deadline. Every decoded
+record now carries the server's `keepUntil` routing timestamp. The app expires
+cached pages at that exact deadline, strips all fields except fixed routing
+facts, and rejects responses from a prior subscription or unmounted reader.
+It also removes the successful page request object so its plaintext result does
+not remain in component state. The deadline timer runs while idle as well as
+working, and rendering checks deadlines again if a timer was delayed.
+
+The incoming backend fails the deadline regression with undefined rather than
+the configured one-day deadline. Three added tests cover authoritative deadlines,
+imported asks/work/answers, missing or invalid deadlines, exact expiry, delayed
+responses, disconnect/unmount invalidation and overlapping page deduplication.
+All 245 focused tests, TypeScript and the web build pass. The existing browser
+proof now pushes a message outside the live hundred, loads it as an earlier
+page, and crosses its deadline using only browser time; recent cards remain.
+No local browser run; current-head CI must validate this extension.

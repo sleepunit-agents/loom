@@ -5,6 +5,7 @@ import { readDraft, writeDraft, editDraft, clearDraft, type Draft } from './draf
 import { replyHtml } from './render';
 import { messageView, type Message } from './message';
 import { workingView } from './working';
+import { EarlierPages, retainedMessage } from './pages';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
 const idle:CallState={pending:false,status:'done'};const noop=()=>()=>{};
@@ -28,14 +29,24 @@ function Composer({member,place,agent,onOpened,enabled}:{member:string;place?:st
 }
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  const {records,status}=useRecords<Message>('message',thread.id);const [request,setRequest]=useState<Call>();const state=useRequest(request);
- const [older,setOlder]=useState<Message[]>([]);const [title,setTitle]=useState(thread.title??'');const [project,setProject]=useState(thread.project??'');const [deleting,setDeleting]=useState(false);
+ const [pages]=useState(()=>new EarlierPages());const [older,setOlder]=useState<Message[]>([]);const connection=useRef(status);connection.current=status;const [title,setTitle]=useState(thread.title??'');const [project,setProject]=useState(thread.project??'');const [deleting,setDeleting]=useState(false);
  const [page,setPage]=useState<Call<Message[]>>();const pageState=useRequest(page);const lastRead=useRef(0);
- useEffect(()=>{if(status!=='live'){setOlder([]);return;}const seq=records.at(-1)?.seq??0;if(seq>lastRead.current&&document.visibilityState==='visible'&&document.hasFocus()){lastRead.current=seq;setRequest(call('comms.change',{thread:thread.id,action:'read',seq}));}},[records,status,thread.id]);
+ useEffect(()=>{if(status!=='live'){pages.clear();setOlder([]);setPage(undefined);return;}const seq=records.at(-1)?.seq??0;if(seq>lastRead.current&&document.visibilityState==='visible'&&document.hasFocus()){lastRead.current=seq;setRequest(call('comms.change',{thread:thread.id,action:'read',seq}));}},[records,status,thread.id,pages]);
+ useEffect(()=>()=>pages.clear(),[pages]);
  const act=(action:string,extra:object={})=>{const r=call('comms.change',{thread:thread.id,action,...extra});setRequest(r);if(action==='delete')void r.result.then(result=>{if(result.ok)onDeleted();});};
- const load=async()=>{const task=call<Message[]>('comms.messages',{thread:thread.id,before:older[0]?.seq??records[0]?.seq});setPage(task);const result=await task.result;if(result.ok)setOlder(old=>[...result.value,...old]);};
- const all=status==='live'?[...older.filter(m=>!records.some(r=>r.id===m.id)),...records]:[];
+ const load=async()=>{const generation=pages.begin();const task=call<Message[]>('comms.messages',{thread:thread.id,before:older[0]?.seq??records[0]?.seq});setPage(task);const result=await task.result;if(result.ok&&connection.current==='live'&&pages.accept(generation,result.value,Date.now())){setOlder(pages.rows);setPage(undefined);}};
+ const all=status==='live'?[...older.filter(m=>!records.some(r=>r.id===m.id)),...records].map(m=>retainedMessage(m,Date.now())):[];
  const [now,setNow]=useState(Date.now);
  useEffect(()=>{if(status!=='live'||!thread.working)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[status,thread.working]);
+ // Earlier pages have no Live subscription. Expire them even when no body is running.
+ useEffect(()=>{
+  if(status!=='live')return;
+  if(older.some(m=>typeof m.keepUntil==='number'&&m.keepUntil<=Date.now())){pages.expire(Date.now());setOlder(pages.rows);}
+  const deadlines=[...older,...records].map(m=>m.keepUntil).filter((v):v is number=>typeof v==='number'&&Number.isFinite(v)&&v>Date.now());
+  if(!deadlines.length)return;
+  const timer=setTimeout(()=>{pages.expire(Date.now());setOlder(pages.rows);setNow(Date.now());},Math.min(2147483647,Math.max(1,Math.min(...deadlines)-Date.now())));
+  return()=>clearTimeout(timer);
+ },[older,records,status,pages,now]);
  const working=workingView(thread,all,now,status==='live');
  return <article className="flex h-full min-h-0 flex-col">
   <header className="grid gap-2 border-b p-4"><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}</p>

@@ -92,6 +92,18 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   comms.status('art',place,'working');
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
   await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);
+  // Move the first message outside the live hundred, then load it as an earlier page.
+  // Only the browser crosses its deadline: no server sweep can update that cached page.
+  comms.status('art',place,'done');clock.advance(14*86400000-1000);
+  await b.clock.setSystemTime(clock.now());
+  for(let n=0;n<101;n++)await comms.post('art',place,{id:`page-filler-${n}`,kind:'card',text:`Retained recent card ${n}`});
+  await expect.poll(()=>b.getByText('Retained recent card 100',{exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
+  await b.getByRole('button',{name:'Load earlier messages',exact:true}).click();
+  await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
+  await b.clock.fastForward(1000);
+  await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
+  expect(await b.getByText('Retained recent card 100',{exact:true}).count()).toBe(1);
   await a.getByRole('button',{name:'Delete',exact:true}).click();await a.getByRole('button',{name:'Keep thread',exact:true}).click();expect(await a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60000);

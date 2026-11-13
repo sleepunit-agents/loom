@@ -92,3 +92,21 @@ it('offers final-start retry only from a retained authorized backend projection'
  expect(messageView(m).retryStart).toEqual({seq:1,generation:0});
  for(const change of [{text:null},{retryStart:undefined},{step:{error:'start-retry'}},{retryStart:{seq:1,generation:-1}}])expect(messageView({...m,...change}).retryStart).toBeUndefined();
 });
+
+import { EarlierPages, retainedMessage } from '../../web/src/pieces/comms/pages.js';
+it('expires earlier-page words, imported asks and every private field at the server deadline',()=>{
+ const m:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'ask',from:'art',text:null,keepUntil:100,ask:{ask:'Private question'},answer:{verdict:'yes'},card:{tool:'private tool'},step:{body:'private output'},retryStart:{seq:1,generation:0},ref:'private-ref'};
+ const pages=new EarlierPages();pages.accept(pages.begin(),[m],99);
+ expect(messageView(pages.rows[0]).ask?.question).toBe('Private question');
+ pages.expire(100);expect(pages.rows).toEqual([{id:'th/1',thread:'th',seq:1,at:0,kind:'ask',from:'art',text:null}]);
+ expect(retainedMessage({...m,text:'Private message'},101).text).toBeNull();
+ for(const keepUntil of [undefined,null,'100',NaN,Infinity])expect(retainedMessage({...m,keepUntil},0).text).toBeNull();
+});
+it('discards disconnected or unmounted page responses and expires delayed pages before caching',()=>{
+ const pages=new EarlierPages(),old=pages.begin();pages.clear();
+ const m:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'reply',from:'art',text:'Private reply',keepUntil:100};
+ expect(pages.accept(old,[m],10)).toBe(false);expect(pages.rows).toEqual([]);
+ expect(pages.accept(pages.begin(),[m],100)).toBe(true);expect(JSON.stringify(pages.rows)).not.toContain('Private reply');
+ pages.accept(pages.begin(),[{...m,id:'th/2',seq:2,keepUntil:200}],100);
+ pages.accept(pages.begin(),[m],100);expect(pages.rows.map(m=>m.seq)).toEqual([1,2]);
+});

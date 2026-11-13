@@ -1131,3 +1131,13 @@ it('keeps a staged start generation stable through restart and a repeated operat
  expect(new Set(effects.filter(id=>id.endsWith(':g1'))).size).toBe(1);
  expect(s.app.db.prepare('SELECT at,words,hash FROM comms_messages WHERE thread=? AND seq=1').get(place)).toEqual(source);
 });
+
+it('supplies authoritative retention deadlines on page and runtime-reader records',async()=>{
+ const s=await setup({days:1}),place=await s.open();await s.comms.deliver('art',place,1);
+ const read=async()=>{const result=await s.call('messages',{thread:place});expect(result.ok).toBe(true);return (result as {ok:true;value:Record<string,unknown>[]}).value;};
+ const first=(await read())[0];expect(first.keepUntil).toBe(Number(first.at)+86400000);
+ const bound=await s.comms.reader({agent:'art',valid:()=>true}).read({thread:place});
+ expect(bound.messages[0].keepUntil).toBe(first.keepUntil);
+ await s.comms.post('art',place,{id:'deadline-card',kind:'card',text:'private step',step:{keepUntil:9999999999999}});
+ const card=(await read())[1];expect(card.keepUntil).toBe(Number(card.at)+86400000);
+});
