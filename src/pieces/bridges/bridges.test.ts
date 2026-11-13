@@ -53,12 +53,19 @@ describe('in-process bridge delivery',()=>{
   it('preserves event time and label through durable receipt, restart and duplicate receipt',async()=>{
     const f=await fixture(); f.setGate('wait');
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.engine.receive(f.venue.id,f.message({at:'2026-11-13T00:00:00Z',label:'changed while pending'})); await f.engine.flush();
     await f.close(); closes.splice(closes.indexOf(f.close),1);
     const next=await fixture('discord',false,f.home); await next.engine.sync();
+    const binding=next.app.db.prepare('SELECT record FROM bridges_conversations').get() as {record:string};
+    expect(JSON.parse(binding.record)).toEqual([...next.deliveries.values()][0].key);
     expect([...next.deliveries.values()][0]).toMatchObject({at:'2026-11-12T17:00:00.123Z',label:'House chat'});
     await next.engine.receive(next.venue.id,next.message({at:'2026-11-13T00:00:00Z',label:'changed'})); await next.engine.flush();
     expect(next.deliveries.size).toBe(1);
     expect([...next.deliveries.values()][0]).toMatchObject({at:'2026-11-12T17:00:00.123Z',label:'House chat'});
+    await next.close(); closes.splice(closes.indexOf(next.close),1);
+    const again=await fixture('discord',false,f.home); await again.engine.sync();
+    expect(again.app.db.prepare('SELECT record FROM bridges_conversations').get()).toEqual(binding);
+    expect(again.deliveries.size).toBe(0);
   });
   it.each(['refused','held','retry'] as const)('handles runtime %s without consuming a turn as delivered',async outcome=>{
     const f=await fixture(); f.runtime.deliver=async()=>outcome;
