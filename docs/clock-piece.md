@@ -424,3 +424,37 @@ pause, lane text edits/reassignment, direct-link reload, phone confirmations,
 staging hold and member isolation. It captures Neon Noir and Daylight at 390,
 1280 and 1920 pixels in `artifacts/clock-app/`. CI uploads that directory with
 its shard artifact.
+
+## Opt-in wake client
+
+`loom-wake-client` uses `LOOM_URL`, `LOOM_TOKEN_FILE` and optional `WAKE_AGENT`.
+It does not replace `loom wake` (identity) or install a host command. Agent tokens
+default to their own clock; members select `--agent` or `WAKE_AGENT`. The shared
+command declarations generate registry CLI metadata and help. Parsing, calendar
+validation, policy and human formatting run in `clock.command` in the daemon.
+One outer write receipt covers nested operations and exact stdout/stderr/exit;
+transport retries keep the same body and id. Redirects are refused, retry counts
+are bounded and bearer text is redacted from errors and output.
+
+Timed `-f` remains a relative repository filename for the runtime. Only `lane set
+-f` reads a file in the caller's filesystem and sends its text and relative source
+name. The daemon opens no prompt files. Absolute source names are deliberately
+refused by the new lane operation. No local account or default agent is inferred
+from old config. Legacy model defaults are replaced by runtime model choice.
+
+Fixtures cover at/in token joining, set/list/cancel, parked messages, pause/resume,
+fresh now, schedule set/list/run/rm, lane set/assign/text/rm, six-hour suppression,
+global agent selection, scoped refusals, retry receipts and runtime relay refusal.
+The daemon owns rearming; its new confirmation replaces obsolete systemd counts.
+Empty list says `no pending wakes`: no missing-deadman warning before explicit
+deadman configuration. List reports real held/firing states, never a transient
+unit's armed status. Log prints structured new event time/kind/outcome or note,
+with legacy duration/grep/last-2000 filtering; old subprocess log details are not
+reconstructed. Schedule ids created here are namespaced by agent; existing raw
+ids remain addressable only on their own agent's clock.
+
+Vouch/ask-vouch remain explicit refusals until the owning provenance workflow
+lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
+refused in favor of the daemon, runtime, Clock app and core migration. This client
+slice does not claim completion of provenance, local approvals, runtime dispatch
+or importer-all registration; those remain on t-2201.

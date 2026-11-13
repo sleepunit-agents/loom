@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode Knowledge on live records: topics, page reader and durable check actions, with source socket lifecycle owned by the daemon.
 
 - Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
+- Add the opt-in `loom-wake-client` API command for the new clock, with daemon-side command metadata, legacy scheduling text and bounded idempotent retries.
 - Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
