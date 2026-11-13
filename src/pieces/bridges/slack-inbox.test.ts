@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, migrate, openDb } from '../../core/index.js';
+import { FakeClock, migrate, openDb, type RecordType } from '../../core/index.js';
 import { installBridges } from './index.js';
 import { venueSchema } from './model.js';
 import { put } from './store.js';
@@ -24,7 +24,11 @@ const payload = (eventId='Ev123') => ({ type:'event_callback', team_id:'T123', a
 async function fixture(existing?: string) {
   const home=existing ?? mkdtempSync(join(tmpdir(),'slack-inbox-')); if (!existing) homes.push(home);
   const clock=new FakeClock(1000);
-  const app=await startLoom({home,clock,install(app) { installBridges(app,()=>({members:{},projects:{},services:{}})); }});
+  const types: RecordType[]=[];
+  const app=await startLoom({home,clock,install(app) {
+    const register=app.live.register.bind(app.live);app.live.register=type=>{types.push(type);register(type);};
+    installBridges(app,()=>({members:{jonathan:{owner:true,agents:['art','mark']}},projects:{},services:{}}));
+  }});
   let closed=false;
   const close=async()=>{if(!closed){closed=true;await app.close();}}; closes.push(close);
   if (!existing) {
@@ -32,7 +36,7 @@ async function fixture(existing?: string) {
     put(app.db,'links',{id:'jonathan',platform:'slack',workspace:'T123',user:'U200',person:'jonathan'});
   }
   const inbox=slackInbox(app.db,clock,{venue,app:'A123'});
-  return {home,clock,app,inbox,close};
+  return {home,clock,app,inbox,close,types};
 }
 class Socket extends EventEmitter {
   readyState=1;
@@ -83,6 +87,20 @@ describe('private Slack durable raw inbox',()=>{
     expect(JSON.stringify(g.app.db.prepare('SELECT * FROM bridges_slack_receipts').all())).not.toContain('OUTER-VERIFICATION-TOKEN');
     expect(g.app.operations.call('direct',{kind:'service',id:'bridges'},'bridges.slackReceipts',{},'private')).toMatchObject({ok:false});
   });
+  it('keeps raw words and outer token out of actual operations, registered projections and live changes',async()=>{
+    const f=await fixture();const changes:unknown[]=[];const stop=f.app.live.observe(batch=>changes.push(...batch));
+    await f.inbox.receive(payload());const [raw]=f.inbox.pending();
+    const owner={kind:'member',id:'jonathan'} as const;
+    const result=f.app.operations.call('direct',owner,'bridges.putRoutes',{id:'route',platform:'slack',workspace:'T123',channel:'D123'},'create-route');
+    expect(result).toEqual({ok:true,value:{id:'route'}});
+    const records=f.types.flatMap(type=>type.ids(undefined).map(id=>type.read(id,owner)).concat([type.read(raw.id,owner)]));
+    expect(records).toContainEqual(expect.objectContaining({id:venue.id,bot:venue.bot}));
+    expect(records).toContainEqual(expect.objectContaining({id:'route',channel:'D123'}));
+    expect(changes).toContainEqual({type:'bridges.route',id:'route'});
+    const output=JSON.stringify({result,records,changes,operations:f.app.operations.offered('direct').map(op=>op.name),retryResults:f.app.db.prepare('SELECT result FROM core_operations').all()});
+    expect(output).not.toContain('private words');expect(output).not.toContain('OUTER-VERIFICATION-TOKEN');expect(output).not.toContain(raw.id);
+    stop();
+  });
   it('a failed durable insert never ACKs and leaves no partial receipt',async()=>{
     const f=await fixture();f.app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON bridges_slack_receipts BEGIN SELECT RAISE(ABORT,'private failure'); END;");
     const {socket}=connect(f);await settle();socket.frame({type:'hello'});socket.frame({type:'events_api',envelope_id:'first',payload:payload()});await settle();
@@ -118,6 +136,14 @@ describe('private Slack durable raw inbox',()=>{
     await first.receive(payload());await other.receive({...payload(),api_app_id:'A456'});await second.receive(payload());
     const [row]=other.pending();expect(()=>first.consume(row.id)).toThrow('Unknown');expect(first.pending()).toHaveLength(1);expect(other.pending()).toHaveLength(1);expect(second.pending()).toHaveLength(1);
     expect(f.app.db.prepare('SELECT count(*) AS n FROM bridges_slack_receipts').get()).toEqual({n:3});
+  });
+  it('a replacement identity under the same venue id cannot read or consume prior pending words',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());const [old]=f.inbox.pending();
+    const replacement={...venue,bot:'U456',agent:'mark'};put(f.app.db,'venues',replacement);
+    const fresh=slackInbox(f.app.db,f.clock,{venue:replacement,app:'A456'});
+    expect(fresh.pending()).toEqual([]);expect(()=>fresh.consume(old.id)).toThrow('Unknown');
+    await fresh.receive({...payload(),api_app_id:'A456'});expect(fresh.pending()).toHaveLength(1);expect(fresh.pending()[0].id).not.toBe(old.id);
+    expect(f.app.db.prepare('SELECT state,event FROM bridges_slack_receipts WHERE id=?').get(old.id)).toEqual({state:'pending',event:JSON.stringify(payload().event)});
   });
   it.each(['restore','remove-recreate','unrelated-setup'])('rejects obsolete receiver after %s and lets a fresh receiver recover pending work',async change=>{
     const f=await fixture();await f.inbox.receive(payload());const [row]=f.inbox.pending();
