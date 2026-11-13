@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,14 +8,22 @@ import {generateIdentity} from 'age-encryption';
 import {startPersistentHolder} from './holder-lifecycle.js';
 import {localHolderMutations} from './holder-mutations.js';
 import {localSecretSource} from './local-holder.js';
-import {remoteHolderAuthority} from './holder-authority.js';
+import https from 'node:https';
+import {connect as tlsConnect} from 'node:tls';
+import {connect as netConnect,createServer} from 'node:net';
+import * as storage from './holder-store.js';
+import {privateBytes} from './local-holder.js';
+import {listenHolderAuthority,remoteHolderAuthority} from './holder-authority.js';
+import * as foundation from '../../foundation.js';
+import {Readable} from 'node:stream';
+import {run as serve} from '../../cli/serve.js';
 import {startLoom} from '../../foundation.js';
 import {fixture} from '../../fixture.js';
 import {HouseholdDatabase} from '../../core/household/document.js';
 import {FakeClock} from '../../core/clock.js';
 import {run} from '../../secret-holder.js';
 const homes:string[]=[],closes:(()=>Promise<void>)[]=[];
-afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});vi.restoreAllMocks();});
+afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});vi.restoreAllMocks();});
 async function setup(){
   const home=mkdtempSync(join(tmpdir(),'holder-lifecycle-'));homes.push(home);
   const fixtures=fileURLToPath(new URL('./fixtures/lifecycle-tls/',import.meta.url));
@@ -101,4 +109,85 @@ it('runs the packaged persistent entrypoint until signal and closes both sockets
   await vi.waitFor(()=>expect(existsSync(s.config.mutation.socket)).toBe(true));
   process.emit('SIGTERM');expect(await pending).toBe(0);expect(stderr).not.toHaveBeenCalled();
   expect(existsSync(s.config.read.socket)).toBe(false);expect(existsSync(s.config.mutation.socket)).toBe(false);
+});
+
+it('loads authority configuration through serve next and closes it with the real daemon',async()=>{
+  const s=await setup();const file=join(s.home,'authority.json');writeFileSync(file,JSON.stringify(s.authority),{mode:0o600});
+  const actual=foundation.startLoom;
+  const start=vi.spyOn(foundation,'startLoom').mockImplementation(options=>actual({...options,port:0,clock:new FakeClock()}));
+  let ready!:()=>void;const listening=new Promise<void>(resolve=>{ready=resolve;});
+  const running=serve(['--next','--staging','--home',s.appHome,'--secret-authority',file],
+    {stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:text=>{if(text.includes('next app on'))ready();}});
+  let holder:Awaited<ReturnType<typeof startPersistentHolder>>|undefined;
+  try {
+    await listening;expect(start.mock.calls[0][0].secretAuthority).toEqual(s.authority);
+    holder=await startPersistentHolder(s.file);
+    await localHolderMutations(s.client).set({member:'jonathan',writeId:randomUUID()},'API',Buffer.from('CLI-INTEGRATION'),'add');
+  } finally {await holder?.close();process.emit('SIGTERM');expect(await running).toBe(0);start.mockRestore();}
+  expect(existsSync(s.authority.socket)).toBe(false);
+});
+it('failed daemon authority startup preserves an occupied socket and releases the new home',async()=>{
+  const s=await setup();writeFileSync(s.authority.socket,'occupied',{mode:0o600});
+  await expect(startLoom({home:s.appHome,next:true,staging:true,secretAuthority:s.authority,stdout:()=>{}})).rejects.toThrow(/^Secret holder authority unavailable$/);
+  expect(readFileSync(s.authority.socket,'utf8')).toBe('occupied');rmSync(s.authority.socket);
+  const app=await startLoom({home:s.appHome,next:true,staging:true,secretAuthority:s.authority,stdout:()=>{}});closes.push(app.close);
+  const authorize=remoteHolderAuthority(s.config.authority,s.daemonFingerprint);
+  await expect(authorize(s.daemonFingerprint,'jonathan')).resolves.toBe('jonathan');
+});
+
+it('closes its owned store only after both sockets on failed startup and normal shutdown',async()=>{
+  const s=await setup(),actual=storage.openHolderStore;const closed=vi.fn();
+  vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
+    const store=await actual(...args);
+    return {...store,close(){expect(existsSync(s.config.read.socket)).toBe(false);expect(existsSync(s.config.mutation.socket)).toBe(false);closed();store.close();}};
+  });
+  // Missing listener parent fails after the reader and store have started.
+  const broken={...s.config,mutation:{...s.config.mutation,socket:join(s.home,'missing','mutation.sock')}};
+  writeFileSync(s.file,JSON.stringify(broken),{mode:0o600});
+  await expect(startPersistentHolder(s.file)).rejects.toThrow();expect(closed).toHaveBeenCalledOnce();
+  writeFileSync(s.file,JSON.stringify(s.config),{mode:0o600});
+  const holder=await startPersistentHolder(s.file);await holder.close();await holder.close();expect(closed).toHaveBeenCalledTimes(2);
+});
+it('closes the authority socket when public listener startup fails after its bind',async()=>{
+  const s=await setup(),occupied=createServer();await new Promise<void>(resolve=>occupied.listen(0,'127.0.0.1',resolve));
+  const address=occupied.address();if(!address||typeof address==='string')throw Error('missing port');
+  try {
+    await expect(startLoom({home:s.appHome,next:true,staging:true,secretAuthority:s.authority,port:address.port,stdout:()=>{}})).rejects.toThrow();
+    expect(existsSync(s.authority.socket)).toBe(false);
+  } finally {await new Promise<void>(resolve=>occupied.close(()=>resolve()));}
+  const app=await startLoom({home:s.appHome,next:true,staging:true,secretAuthority:s.authority,stdout:()=>{}});closes.push(app.close);
+});
+it('rejects unknown top-level and nested persistent and authority configuration fields',async()=>{
+  const s=await setup();
+  for(const bad of [{...s.config,extra:true},{...s.config,read:{...s.config.read,extra:true}},
+    {...s.config,mutation:{...s.config.mutation,extra:true}},{...s.config,authority:{...s.config.authority,extra:true}}]) {
+    writeFileSync(s.file,JSON.stringify(bad),{mode:0o600});await expect(startPersistentHolder(s.file)).rejects.toThrow();
+    expect(existsSync(join(s.config.directory,'holder.db'))).toBe(false);
+  }
+  const file=join(s.home,'authority.json');writeFileSync(file,JSON.stringify({...s.authority,extra:true}),{mode:0o600});
+  const stderr=vi.fn();expect(await serve(['--next','--secret-authority',file],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr})).toBe(2);
+  expect(stderr).toHaveBeenCalledWith('Invalid secret holder authority configuration\n');expect(existsSync(s.authority.socket)).toBe(false);
+});
+it('bounds authority connections before TLS and incomplete HTTP headers',async()=>{
+  const s=await setup(),current=vi.fn(()=>true);const authority=await listenHolderAuthority(s.authority,current);closes.push(authority.close);
+  for(const tls of [false,true]) {
+    vi.useFakeTimers();let connected=false,closed=false;
+    const peer=tls?tlsConnect({path:s.authority.socket,servername:'daemon.test',ca:privateBytes(s.config.authority.ca),cert:privateBytes(s.config.authority.cert),key:privateBytes(s.config.authority.key),minVersion:'TLSv1.3'},()=>{connected=true;peer.write('POST /v1/authority HTTP/1.1\r\nHost: daemon.test\r\n');})
+      :netConnect(s.authority.socket,()=>{connected=true;});
+    peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+    try {await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));expect(current).not.toHaveBeenCalled();}
+    finally {peer.destroy();vi.useRealTimers();}
+  }
+});
+it('independently bounds authority clients when a valid pinned peer never acknowledges',async()=>{
+  const s=await setup();let received=false;
+  const server=https.createServer({ca:privateBytes(s.authority.ca),cert:privateBytes(s.authority.cert),key:privateBytes(s.authority.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},req=>{req.resume();req.on('end',()=>{received=true;});});
+  await new Promise<void>(resolve=>server.listen(s.authority.socket,resolve));chmodSync(s.authority.socket,0o600);
+  closes.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+  const authorize=remoteHolderAuthority(s.config.authority,s.daemonFingerprint);
+  vi.useFakeTimers();try {
+    let settled=false;const pending=authorize(s.daemonFingerprint,'jonathan').then(result=>{settled=true;return result;});
+    await vi.waitFor(()=>expect(received).toBe(true));expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000);await expect(pending).resolves.toBeNull();
+  }finally{vi.useRealTimers();}
 });

@@ -14,6 +14,7 @@ export async function startPersistentHolder(file:string) {
   let store:Awaited<ReturnType<typeof openHolderStore>>|undefined;
   let reader:Awaited<ReturnType<typeof listenLocalHolder>>|undefined;
   let writer:Awaited<ReturnType<typeof listenHolderMutations>>|undefined;
+  const cleanup=async()=>{try {await writer?.close();} finally {try {await reader?.close();} finally {store?.close();}}};
   try {
     bytes=privateBytes(file);
     const config=configSchema.parse(JSON.parse(bytes.toString('utf8')));
@@ -23,9 +24,9 @@ export async function startPersistentHolder(file:string) {
     reader=await listenLocalHolder(config.read,store,config.daemonFingerprint);
     writer=await listenHolderMutations(config.mutation,store,authority);
     let closing:Promise<void>|undefined;
-    return {close(){return closing??=(async()=>{try{await writer!.close();}finally{try{await reader!.close();}finally{store!.close();}}})();}};
+    return {close(){return closing??=cleanup();}};
   } catch {
-    try {await writer?.close();} finally {try{await reader?.close();}finally{store?.close();}}
+    try {await cleanup();} catch { /* Keep startup errors private. */ }
     throw new Error('Persistent secret holder could not start');
   } finally {bytes?.fill(0);}
 }
