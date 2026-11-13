@@ -130,3 +130,38 @@ it('detects changed membership even when the stored policy has exactly the expec
   expect(() => importSecretPolicy(db, from)).toThrow('comparison failed');
   expect(db.prepare('SELECT * FROM secrets_meta').all()).toEqual([]);
 });
+
+
+it('refuses duplicate policy keys at every depth, including escaped aliases, before any DB write', () => {
+  const { db, from } = setup({});
+  const before = db.prepare('SELECT * FROM sqlite_master ORDER BY name').all();
+  for (const text of [
+    '{"default":"never","default":"auto"}',
+    '{"secrets":{"API":{"grant":"never"}},"secrets":{}}',
+    '{"secrets":{"API":{"grant":"never"},"API":{"grant":"auto","agents":["art"]}}}',
+    '{"secrets":{"API":{"grant":"never","grant":"auto","agents":["art"]}}}',
+    String.raw`{"default":"never","defa\u0075lt":"auto"}`,
+    String.raw`{"secrets":{"API":{"grant":"never","gr\u0061nt":"auto"}}}`,
+    '{"secrets":{"API":{"value":"PRIVATE"}},"secrets":{}}',
+  ]) {
+    writeFileSync(from, text);
+    expect(() => importSecretPolicy(db, from)).toThrow(/^Invalid legacy secret policy$/);
+    expect(db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(before);
+    expect(db.prepare('SELECT * FROM core_migrations').all()).toEqual([]);
+  }
+});
+it('refuses malformed UTF-8 inside policy agent membership without replacement or schema writes', () => {
+  const { db, from } = setup({});
+  const bytes = Buffer.from('{"secrets":{"API":{"grant":"auto","agents":["art"]}}}');
+  bytes[bytes.indexOf(Buffer.from('art'))] = 0xff;
+  writeFileSync(from, bytes);
+  expect(() => importSecretPolicy(db, from)).toThrow(/^Invalid legacy secret policy$/);
+  expect(db.prepare('SELECT * FROM core_migrations').all()).toEqual([]);
+  expect(readFileSync(from)).toEqual(bytes);
+});
+it('preserves escaped keys, arrays and repeated field names in distinct rules', () => {
+  const text = String.raw`{"defa\u0075lt":"never","secrets":{"API":{"grant":"auto","agents":["art","art"],"houses":["pond-bot"]},"OTHER":{"grant":"never","houses":["art"]}}}`;
+  expect(parseLegacySecretPolicy(Buffer.from(text))).toEqual({default: 'never', secrets: {
+    API: {grant: 'auto', agents: ['art', 'art'], houses: ['pond-bot']}, OTHER: {grant: 'never', houses: ['art']},
+  }});
+});
