@@ -6,6 +6,9 @@ import type { Clock, Db } from '../../core/index.js';
 import type { Venue } from './model.js';
 import { setupRevision, venueById } from './store.js';
 
+export class SlackBindingChanged extends Error {
+  constructor() { super('Slack binding changed'); }
+}
 export interface SlackBinding {
   venue: Venue;
   /** Verified app id from authenticated composition, never from the event itself. */
@@ -28,7 +31,7 @@ export function slackInbox(db: Db, clock: Clock, input: SlackBinding) {
   const key = signature(binding), revision = setupRevision(db);
   function current() {
     const venue = venueById(db, binding.venue.id);
-    if (setupRevision(db) !== revision || !venue?.enabled || JSON.stringify(venue) !== JSON.stringify(binding.venue)) throw Error('Slack binding changed');
+    if (setupRevision(db) !== revision || !venue?.enabled || JSON.stringify(venue) !== JSON.stringify(binding.venue)) throw new SlackBindingChanged();
   }
   function outsideTransaction() {
     // Resolving inside somebody else's transaction could ACK a later rollback.

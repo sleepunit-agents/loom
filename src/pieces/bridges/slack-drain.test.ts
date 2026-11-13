@@ -133,6 +133,20 @@ describe('serialized Slack raw receipt normalization',()=>{
     vi.spyOn(f.clock,'at').mockImplementation((time,fn)=>{let stop!:()=>void;const cancel=at(time,()=>{active.delete(stop);fn();});stop=()=>{active.delete(stop);cancel();};active.add(stop);return stop;});
     f.inspect.mockResolvedValue('wait');const d=f.drain();await d.flush();expect(active.size).toBe(1);await d.close();expect(active.size).toBe(0);
   });
+  it.each(['validation','page'] as const)('recovers a transient %s read failure automatically instead of invalidating the binding',async stage=>{
+    const f=await fixture();await f.inbox.receive(payload());
+    const fail=()=>vi.spyOn(f.app.db,'prepare').mockImplementationOnce(()=>{throw Error('transient storage failure');});
+    let injected=false;
+    const d=f.drain(stage==='page'?{beforeRead:()=>{if(!injected){injected=true;fail();}return true;}}:{});if(stage==='validation') fail();await expect(d.flush()).resolves.toBeUndefined();expect(f.inspect).not.toHaveBeenCalled();expect(f.inbox.pending()).toHaveLength(1);
+    f.clock.advance(5000);await until(()=>f.inbox.pending().length===0);expect(f.receive).toHaveBeenCalledOnce();
+  });
+  it('retains raw words if staging becomes held while the normalized commit is pending',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());const commit=deferred<void>();f.receive.mockReturnValueOnce(commit.promise);
+    const d=f.drain();const flush=d.flush();await until(()=>f.receive.mock.calls.length===1);
+    f.beforeRead.mockReturnValue(false);commit.resolve();await flush;expect(f.inbox.pending()).toHaveLength(1);
+    f.clock.advance(5000);await settle();expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toHaveLength(1);
+    f.beforeRead.mockReturnValue(true);await d.flush();expect(f.receive).toHaveBeenCalledTimes(2);expect(f.inbox.pending()).toEqual([]);
+  });
   it('expires from immutable receipt time across restart; exactly one hour is still eligible',async()=>{
     const f=await fixture();await f.inbox.receive(payload());f.inspect.mockResolvedValue('wait');const d=f.drain();await d.flush();await d.close();await f.close();
     const g=await fixture(f.home);g.clock.advance(3_600_000);g.inspect.mockResolvedValue('wait');const next=g.drain();await next.flush();expect(g.inspect).toHaveBeenCalledOnce();expect(g.inbox.pending()).toHaveLength(1);

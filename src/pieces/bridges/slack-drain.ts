@@ -3,7 +3,7 @@ import type { Clock, Db } from '../../core/index.js';
 import type { Message, Venue } from './model.js';
 import type { Inspection } from './role.js';
 import { slackMessage } from './slack.js';
-import { slackInbox, type SlackBinding, type SlackReceipt } from './slack-inbox.js';
+import { slackInbox, SlackBindingChanged, type SlackBinding, type SlackReceipt } from './slack-inbox.js';
 
 export interface SlackDrainOptions {
   db: Db;
@@ -37,7 +37,10 @@ export function slackDrain(options: SlackDrainOptions) {
     if (db.inTransaction) { retry(); return false; }
     if (!options.current()) { closed = true; cancel?.(); return false; }
     // Enforces the persistent setup revision, including edits restored mid-await.
-    try { inbox.pending(1); return true; } catch { closed = true; cancel?.(); return false; }
+    try { inbox.pending(1); return true; } catch (error) {
+      if (error instanceof SlackBindingChanged) { closed = true; cancel?.(); } else retry();
+      return false;
+    }
   }
   function retry(at = clock.now() + 5000) {
     if (closed || retryAt <= at) return;
@@ -83,6 +86,7 @@ export function slackDrain(options: SlackDrainOptions) {
         if (db.inTransaction) throw Error('Slack normalization requires its own transaction');
         await options.receive(venue.id, message, structuredClone(venue));
         if (!valid()) return;
+        if (!options.beforeRead()) { retry(); return; }
         consume(row.id);
       } catch { postpone(row.id); } // No upstream error, raw words or credentials escape.
     }
@@ -93,7 +97,7 @@ export function slackDrain(options: SlackDrainOptions) {
   function flush(): Promise<void> {
     if (closed) return Promise.resolve();
     if (running) { again = true; return running; }
-    running = (async () => { do { again = false; await drain(); } while (again && !closed); })()
+    running = (async () => { do { again = false; try { await drain(); } catch { retry(); } } while (again && !closed); })()
       .finally(() => { running = undefined; });
     return running;
   }
