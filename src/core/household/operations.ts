@@ -11,7 +11,7 @@ export function installHouseholdProjects(app: Foundation, home: string): void {
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
   app.operations.register(operation({
     name: 'household.setOwnedAgents', write: true,
-    input: z.object({ person: projectSlug, agents: z.array(z.string().min(1).max(40)).max(100) }).strict(),
+    input: z.object({ person: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/), agents: z.array(z.string().min(1).max(40)) }).strict(),
     output: z.array(z.string()), may: owner,
     run(ctx, input) {
       const agents = store.setOwnedAgents(input.person, input.agents);

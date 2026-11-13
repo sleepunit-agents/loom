@@ -277,6 +277,8 @@ it('changes scoped ownership only for household owners, preserving metadata and 
     (raw.members as Array<{ person: string; role: string }>).find(m => m.person === 'pollock')!.role = 'owner';
     (raw.members as Array<{ person: string; agents: unknown }>).find(m => m.person === 'pollock')!.agents = ['mark'];
   }))();
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: ['art'] }, 'scoped-change')).toEqual({ ok: true, value: ['art'] });
+  expect(new HouseholdDatabase(app.db).household(h)?.members.find(m => m.person === 'pollock')).toEqual({ person: 'pollock', role: 'owner', agents: ['art'] });
   expect(app.operations.call('direct', pollock, 'household.setOwnedAgents', input, 'scoped')).toMatchObject({ code: 'denied' });
   expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'scoped-empty')).toMatchObject({ code: 'invalid' });
 });
@@ -299,7 +301,13 @@ it('rolls back ownership, retries and access events together and persists the co
   await app.close();
   const reopened = await startLoom({ home: h, clock, install: app => installHouseholdProjects(app, h) }); closes.push(reopened.close);
   expect(new SharingDatabase(reopened.db, h).sharing().members.pollock.agents).toEqual(['mark']);
+  const reopenedChanges: unknown[] = [];
+  reopened.live.observe(events => reopenedChanges.push(events));
+  expect(reopened.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'newer')).toEqual({ ok: true, value: [] });
+  reopenedChanges.length = 0;
   expect(reopened.operations.call('http', owner, 'household.setOwnedAgents', input, 'owned')).toEqual(result);
+  expect(new SharingDatabase(reopened.db, h).sharing().members.pollock.agents).toEqual([]);
+  expect(reopenedChanges).toEqual([]);
 });
 
 it('evicts an already visible agent record when scoped ownership is removed', async () => {
@@ -322,4 +330,16 @@ it('evicts an already visible agent record when scoped ownership is removed', as
   expect(await next()).toMatchObject({ kind: 'set', records: [] });
   expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: ['pond-bot'] }, 'restore')).toMatchObject({ ok: true });
   expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'private-bot-task' }] });
+});
+
+
+it('accepts imported member names and ownership lists beyond project schema limits', async () => {
+  const { app, h } = await fixture();
+  const person = 'a'.repeat(101);
+  const agents = Array.from({ length: 101 }, (_, i) => `agent-${i}`);
+  app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, {
+    v: 1, agents, members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person, role: 'member', agents: [] }],
+  }))();
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person, agents }, 'large')).toEqual({ ok: true, value: agents });
+  expect(new HouseholdDatabase(app.db).household(h)?.members.find(m => m.person === person)?.agents).toEqual(agents);
 });
