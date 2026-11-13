@@ -62,6 +62,26 @@ describe('durable daemon clock', () => {
     const w = app.value('now', { agent: 'art' }); app.clock.advance(0); await settled();
     expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: 'staging' });
   });
+  it('shares the one-off cap between timed wakes, parking and ordinary run-now', async () => {
+    const app = await loom({ approvals: { check: () => ({ state: 'pending' }), subscribe: () => () => {} } });
+    const schedule = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Daily', note: 'daily' });
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const parked = app.value('park', { agent: 'art', prompt: 'Continue', note: 'waiting', on: 'a-cap' });
+    const before = wakes(app.db);
+    for (const [op, input] of [
+      ['in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' }],
+      ['park', { agent: 'art', prompt: 'More', note: 'more', on: 'a-cap' }],
+      ['scheduleRun', { id: schedule.id }],
+    ] as const) expect(app.call(op, input)).toMatchObject({ ok: false, code: 'invalid' });
+    expect(wakes(app.db)).toEqual(before);
+    app.value('cancel', { id: parked.id });
+    const run = app.value('scheduleRun', { id: schedule.id });
+    expect(run.schedule).toBeUndefined();
+    expect(app.call('park', { agent: 'art', prompt: 'More', note: 'more', on: 'a-cap' })).toMatchObject({ ok: false, code: 'invalid' });
+    // Recurrences have their own slot; another agent has its own one-off budget.
+    expect(wakes(app.db).filter(w => w.schedule === schedule.id && w.state === 'pending')).toHaveLength(1);
+    expect(app.call('in', { agent: 'pond-bot', project: 'pond', prompt: 'Other', note: 'other', when: '2h' }, { kind: 'agent', id: 'pond-bot' }).ok).toBe(true);
+  });
   it('fires an overdue wake once after downtime and records intent before runtime', async () => {
     const dir = home(), clock = new FakeClock(), started = vi.fn(async ({ wake: w }: { wake: Wake }) => {
       expect(wake(second.db, w.id)?.state).toBe('firing');

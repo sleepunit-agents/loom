@@ -225,13 +225,14 @@ prompt, and replacement cancels the uncertain record. All pass with this change.
 
 ## Legacy source audit
 
-The entire pinned `bin/wake` has now been read. The test suite and smoke script
-still require a complete read; this is not a final parity claim. In addition to
+The entire pinned `bin/wake`, `README.md` (404 lines) and `test/smoke.sh`
+(116 lines) have now been read. The Python test suite still requires a complete
+read; this is not a final parity claim. In addition to
 the command inventory above, the source has these domain obligations:
 
 | Legacy behavior | Current new-side gap or choice |
 | --- | --- |
-| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API schedules 20 | Only the ordinary at/in total cap exists. Park/run caps, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
+| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API schedules 20 | The shared 50 cap covers at/in, park and ordinary schedule run-now. Lane run-now accounting, API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
@@ -252,3 +253,26 @@ house allocation/watch, harness session reaping, transient units, launcher
 fallbacks and independent bundle encryption are replaced by the new client,
 runtime or coordinated core move as listed above; they must not be reintroduced
 as daemon subprocesses or reads of the installed piece.
+
+
+## Shared one-off capacity
+
+Timed one-offs, parked waits and ordinary schedule run-now share the same
+per-agent 50-active-one-off check, within their operation transaction. Refusal
+leaves all rows untouched. Cancelled history and recurring occurrences do not
+consume those slots; cancelling a parked wait frees one for run-now. Fresh owner
+wake-now keeps its legacy exemption. The job fixture fills the budget with 49
+timed wakes and one parked wait, refuses each additional one-off path, then
+cancels the wait and runs an ordinary schedule once. It failed before the shared
+check and passes afterwards. Another agent's budget stays separate. API shares
+and lane run-now accounting remain part of the unfinished parity work.
+
+The fully read legacy smoke script verifies runtime delivery's id, agent, local
+placement, wake place, preamble and prompt, absence of a model override, and that
+an available legacy launcher is never invoked. Its systemd and old page checks
+need corresponding new-side registry/app assertions rather than a port of the
+old subprocess test. The README additionally requires continuation deadline
+validation both before commit and before delivery, immutable delivery across
+recovery, no retry of a failed continuation, quota reset plus one minute, and
+suppression of the runtime-quota triage wake itself. These remain runtime/domain
+integration obligations; the new implementation must not restore old launchers.

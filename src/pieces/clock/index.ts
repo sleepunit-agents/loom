@@ -52,15 +52,19 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (!s.enabled || wakes(db).some(w => w.schedule === s.id && active(w) && w.due > after)) return;
     make({ ...ctx, viewer: s.by }, s, calendar(() => nextOccurrence(s, after)), { schedule: s.id });
   }
+  function oneOffRoom(agent: string) {
+    if (wakes(db).filter(w => w.agent === agent && !w.schedule && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
+  }
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
     const due = calendar(() => name === 'at' ? parseAt(i.when, ctx.now) : parseIn(i.when, ctx.now));
     if (due <= ctx.now) invalid('Wake must be in the future');
-    if (wakes(db).filter(w => w.agent === i.agent && !w.schedule && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
+    oneOffRoom(i.agent);
     return make(ctx, i, due);
   });
   register('park', workInput.extend({ on: text }), true, (v, i) => create(v, i) && !!options.approvals?.check(i.on, v), (ctx, i) => {
     if (!/^[aq]-[\w-]+$/.test(i.on)) invalid('Park on an approval or question');
+    oneOffRoom(i.agent);
     const a = options.approvals!.check(i.on, ctx.viewer)!;
     return make(ctx, i, ctx.now, { state: 'parked', wait: { id: i.on, until: ctx.now + day, kind: a.kind, target: a.target } });
   });
@@ -114,6 +118,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
+    if (!s.laneDetails) oneOffRoom(s.agent);
     return make(ctx, s, ctx.now, { bypassPause: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
   });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
