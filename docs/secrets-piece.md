@@ -528,3 +528,55 @@ including under Never. Removal affects future starts; already running houses may
 retain delivered values. Existing temporary grants and request records are not
 revoked or rewritten. No runtime value delivery or production holder mutation is
 activated by editing this metadata.
+
+## Offline metadata import and verification
+
+`loom migrate secrets --home <stopped-new-home> --from <copied-secret-directory>
+--identities <map.json>` imports metadata only. The identity document is
+`{"agents":{"old-art":"art"},"members":{"old-owner":"jonathan"}}`;
+all referenced identities require exact injective mappings to the imported
+household. There is no answering-owner fallback. Import the household first.
+The copied source and destination must be separate, including canonical aliases;
+overlap and symlink/hardlinked input files refuse before acquiring a write lock. This standalone command accepts an
+explicit copied directory, like the other piece import commands; snapshot-manifest
+validation belongs to migrate plan/all/verify. The final move must separately migrate ciphertext and provision the holder; this
+command never decrypts or installs a credential.
+
+The source files are `store.sops.json` (validated top-level names; encrypted
+values and SOPS metadata are discarded), `policy.json`, `requests.json`, and
+`audit.jsonl`. Missing files retain legacy empty defaults, but an entirely absent
+source refuses. Checksums distinguish absence from an explicit empty file.
+Strict JSON decoding rejects duplicate keys, invalid UTF-8 and unexpected metadata
+fields. Invalid input errors never include source bytes. Audit events are retained
+as value-free legacy metadata and projected into change/use history. Historical
+host reads use the explicit `legacy-host` service label; unknown authors use
+`legacy:unattributed`, never an invented owner. A restore is displayed as an add
+while its original event remains in the retained source metadata. Unknown change
+time is zero; Settings uses actual change history for age warnings.
+
+Names, mapped policy, request history, exact scoped grants (including moved
+originals for paired revoke), audit history, pending household Attention asks and
+source receipts commit in one transaction. Pending asks are managed by the real
+Secrets source after next startup and retain their original creation time.
+Source-owned ID collisions refuse. A repeated identical source/mapping is a no-op
+and preserves subsequent edits; a changed source or mapping refuses. Independent
+verification, rather than replay, detects destination edits.
+
+`migrate plan/all/verify` discovers a Secrets directory by the encrypted store or
+its policy/request envelope, registers it after household (and after Attention
+when present), and compares every physical metadata table plus the Secrets-owned
+Attention rows without running the importer or writing the destination. Multiple
+sources require an explicit plan. The default plan records same-name identities
+from the snapshot household; edit it for renamed principals. The default legacy
+source is **outside** the old loom home: `~/.config/loom-secrets`, overridable by
+`LOOM_SECRETS_DIR`. The snapshot coordinator must explicitly carry that root;
+patterns within the loom home cannot discover an external directory. No real
+snapshot/import or holder activation is performed by this implementation.
+
+This completes Secrets metadata persistence/registry verification, not the
+runtime grants transition: legacy runtime path-pattern permissions and relay
+pairs (`commons/stores/runtime.db`, grants/household) are not equivalent to a
+blanket piece grant and must not be broadened by this importer. Their exact
+operation/relay mapping remains on t-2208 with the runtime composition. Holder
+lifecycle, generated command client, remaining typed Settings and final move/leak
+ledger also remain required before that task closes.

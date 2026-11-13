@@ -668,8 +668,9 @@ the same registry doors as the runtime role. Members must own the requested
 agent; an agent may start its own work under central scope checks. Runners cannot
 create starts. Service type/operation grants confer no agent authority: current
 central `mayCreate` also denies agent-scoped service starts with both grants.
-Private member work and model-account selection
-fail unavailable until their trusted delivery/account implementations land.
+Public member-scoped startBody requests and model-account selection fail unavailable.
+Private Comms work uses the trusted acceptance path below; caller-supplied
+conversation metadata alone never opens that path.
 An optional model request reaches the runner's one-time input payload.
 
 A source kind/id is scoped to the authenticated caller and agent, producing a
@@ -700,7 +701,47 @@ The runner still releases input through the staging gate described above.
 Tests run the actual next API with bearer-authenticated fake runners through
 start, queue, claim, held input, owner release, input, start confirmation and
 completion. Clock tests also cover definite refusal, staging, missing and lost
-confirmation, and restart without duplicate dispatch. Conversation delivery,
-trusted body proof, model accounts, remaining lifecycle, importer and screens
-are still required for the full runtime rebuild; this path does not unblock
-Comms or claim the whole task is complete.
+confirmation, and restart without duplicate dispatch. The private conversation path below adds authenticated reads and replies.
+Generation-aware failure/retry notices, model accounts, remaining lifecycle,
+importer and screens are still required for the full runtime rebuild; this
+does not claim the whole task is complete or unblock dependent tasks.
+
+
+## Private conversation path in next mode
+
+Next mode installs Comms with its private key and the real runtime delivery role.
+Member messages remain encrypted in Comms; runtime stores only routing receipts,
+a private binding and a generic instruction to read the bound conversation.
+Acceptance and startBody enqueue share one registry transaction. Later messages
+reuse the active job. An uncertain or lost accepted job remains held for
+reconciliation; another message never starts a replacement automatically. An authorized thread filing change moves its private job
+and binding together under central move policy; message words stay in Comms.
+Queue, claim and input acknowledgements do not mark a
+thread working; assigned runner running/waiting reports confirm its start.
+
+| Old path | Next path |
+| --- | --- |
+| Comms delivery to startBody | Comms RuntimeDelivery -> direct runtime.acceptConversation -> runtime.startBody |
+| Runner finds pending work | runtime.claimableJobs returns assigned job ids only |
+| Runner takes startup input | runtime.takeInput releases a reference plus a central job credential once |
+| Bound body's comms_thread | runtime.readConversation uses the authenticated job proof |
+| Bound body's reply | runtime.reply uses Comms encrypted deduplication, returns seq only |
+| Working/done heartbeat and stop | runtime.conversationStatus updates Comms and generic Attention status |
+| Archive/delete ends body | Comms end role stops the bound job and revokes its central body credentials |
+
+Signin retains job provenance on the exact authenticated viewer object. A shared
+agent token, a caller-supplied job id, another job's token or a reconstructed
+viewer object confers no private read/post capability. The runtime checks the
+current binding, job state, box, house configuration and member access on every
+body call; Comms checks the proof again after asynchronous crypto. Job credentials
+are issued through central Signin into the existing token store, expire after
+24 hours, and are revoked on job completion or box revocation. They are returned
+only by the one-time read-style input release, never written into retry results.
+The assigned runner can control a private job only with runtime-owned binding
+proof under central policy; it cannot list the private record or read messages.
+
+The fixture exercises a real member socket and runner/body HTTP authentication,
+private input and reply, denied callers, restart, revocation and both staging
+gates. Account/model enrollment, generation-aware failure/retry notices, remaining
+lifecycle reconciliation, importer, command parity and screens remain on t-2209.
+No deploy, live import or transition is part of this implementation.

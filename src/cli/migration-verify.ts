@@ -14,7 +14,7 @@ import type { IOStreams } from './io.js';
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
 const optional = (path: string): Buffer | undefined => existsSync(path) ? readFileSync(path) : undefined;
-const verifiers = ['household','tasks','attention','clock','approvals','changes','comms'];
+const verifiers = ['household','tasks','attention','clock','approvals','changes','comms','secrets'];
 /** Compare JSON semantically; ordering is retained inside records, table row order is immaterial. */
 function normalize(records: Row[]): string {
   return canonicalPlanValue(records.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key, (key==='body'||key==='record') && typeof value==='string' ? JSON.parse(value) : value]))).map(row=>canonicalPlanValue(row)).sort());
@@ -52,13 +52,17 @@ export async function verifyMigration(snapshot: string, destination: string, sup
           if (!receipt.completed.includes(piece)) report.differences.push({piece,table:'coordinator-receipt',expected:1,actual:0});
           continue;
         }
-        const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now);
+        const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now,join(checked.root,'home'));
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
           let actual: Row[] | null = null;
           try {
             const columns = table==='approvals_approvals'||table==='approvals_rules' ? 'rowid AS migration_order, *' : '*';
             actual = db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
+            if(table==='attention_asks' && (piece==='secrets'||plan.importers.secrets)) actual=actual.filter(row=>{
+              const secret=JSON.parse(row.record as string).source?.kind==='piece' && JSON.parse(row.record as string).source?.id==='secrets';
+              return piece==='secrets'?secret:!secret;
+            });
           } catch { /* missing schema is a difference */ }
           let equal = false; try { equal = actual!==null && normalize(actual)===normalize(rows); } catch { /* corrupt record is a difference */ }
           if (!equal) report.differences.push({piece,table,expected:rows.length,actual:actual?.length??null});

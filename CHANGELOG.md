@@ -13,11 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
+- Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
 
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
 - Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
+- Connect next-mode private Comms messages to runtime jobs and authenticated body reads, replies and status, keeping private words out of runner inputs and retry receipts.
+
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
+
+- Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
@@ -34,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
+- Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
 - Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
@@ -56,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Preserve project scope on explicit Clock owner-vouch cards, reject mixed scopes and recheck the card scope before applying owner Allow.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
 - Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
@@ -1053,6 +1060,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - New-side household token/session administration and generated `loom-token`/`loom-sessions` clients: safe lists, one-time minting, scoped session revocation and atomic passkey/device compromise cascades.
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
+
+- Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
 
 ## [0.16.1] - 2026-10-25
 

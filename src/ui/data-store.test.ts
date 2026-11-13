@@ -147,3 +147,24 @@ it('explicitly retries unavailable results with the same frozen id/input and a f
   const attempt=request.result;socket.message({kind:'result',request:request.id,result:{ok:true,value:{slug:'original'}}});expect(await attempt).toEqual({ok:true,value:{slug:'original'}});
   const count=socket.sent.length;request.retry?.();expect(socket.sent).toHaveLength(count);f.store.close();
 });
+
+it('single-send calls never queue, replay after a lost result, or allow manual retry', async () => {
+  const f = fixture();
+  const offline = f.store.call('token.create', { label: 'offline' }, false);
+  expect(await offline.result).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(f.sockets).toHaveLength(0);
+  f.watch(); const socket = f.sockets[0]; socket.open();
+  const lost = f.store.call('token.create', { label: 'lost' }, false);
+  expect(socket.sent.filter(x => x.name === 'token.create')).toHaveLength(1);
+  socket.close(); expect(lost.getSnapshot().pending).toBe(false); expect(await lost.result).toMatchObject({ ok: false, code: 'unavailable' });
+  f.next(); f.sockets[1].open(); lost.retry?.(); offline.retry?.();
+  expect(f.sockets[1].sent.filter(x => x.kind === 'call')).toEqual([]);
+  // A late reply from the old connection cannot resurrect the secret.
+  socket.message({ kind: 'result', request: lost.id, result: { ok: true, value: { token: 'fixture-secret' } } });
+  expect(lost.getSnapshot().result).toMatchObject({ ok: false });
+  const failed = f.store.call('token.create', { label: 'failed' }, false);
+  f.sockets[1].message({ kind: 'result', request: failed.id, result: { ok: false, code: 'unavailable', message: 'uncertain' } });
+  const count = f.sockets[1].sent.length; failed.retry?.();
+  expect(f.sockets[1].sent).toHaveLength(count);
+  f.store.close();
+});

@@ -1,3 +1,8 @@
+import { installComms } from './pieces/comms/index.js';
+import { loadKey } from './pieces/comms/crypto.js';
+import { stagingHold } from './pieces/comms/role.js';
+import { attentionRole } from './pieces/attention/role.js';
+import { conversationRuntime } from './pieces/runtime/conversations.js';
 import { MANIFEST, nextWorker } from './next-pwa.js';
 import { installMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
@@ -86,7 +91,7 @@ export interface NextOptions {
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
   clockDeadmanAgents?: readonly string[];
 }
-export function installNext(app: Foundation, options: NextOptions) {
+export async function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
@@ -113,7 +118,8 @@ export function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
+  const conversations=conversationRuntime(app,sharing,v=>signin(app).body(v));
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:conversations.privateStart });
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);
     const approvals = changesApprovals(app.operations);
@@ -171,7 +177,16 @@ export function installNext(app: Foundation, options: NextOptions) {
     bridgeDaemons.set(app,installSlackDaemon(app,effects,{...options.bridges,secrets}));
   }
   installAttentionMaintenance(app);
-  if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects);
+  if (!app.operations.has('comms.open')) {
+    const comms=installComms({db:app.db,operations:app.operations,live:app.live,clock:app.operations.clock,sharing,
+      key:await loadKey(options.home),filing:conversations.refile,runtime:conversations.delivery,hold:stagingHold(effects),attention:attentionRole(app.operations),
+      recipients:()=>{const h=new HouseholdDatabase(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
+    });
+    conversations.connect(comms);
+    app.onClose(()=>{conversations.close();void comms.close();});
+  }
+  if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
+    {valid:conversations.validInput,issue:(agent,job)=>signin(app).issueBody(agent,job)});
   return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

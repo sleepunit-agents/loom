@@ -9,16 +9,16 @@ import { Dock } from '../components/ui/dock';
 import { AppIcon } from '../app-icon';
 import { tintOf } from '../tint';
 import Launcher from './launcher';
-export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void }>> }
+export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed:false };
   static getDerivedStateFromError() { return { failed:true }; }
   render() { return this.state.failed ? <Error text="This app could not open. Close it and try again." /> : this.props.children; }
 }
-function Screen({ app, tile, router }: { app: RegisteredApp; tile: Tile; router: DeskRouter }) {
+function Screen({ app, tile, router, active }: { app: RegisteredApp; tile: Tile; router: DeskRouter; active: boolean }) {
   const View = app.Screen;
-  return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
+  return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
 export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
@@ -99,7 +99,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
             <Button variant="ghost" size="sm" aria-label={`Minimize ${app.title}`} onClick={() => router.remove(tile.id,true)}>−</Button>
             <Button variant="ghost" size="sm" aria-label={`Close ${app.title}`} onClick={() => router.remove(tile.id)}>×</Button>
           </header>
-          <div className="next-page"><Screen app={app} tile={tile} router={router} /></div>
+          <div className="next-page"><Screen app={app} tile={tile} router={router} active={shown && route.focused === tile.id} /></div>
         </section>;
       })}
     </div>

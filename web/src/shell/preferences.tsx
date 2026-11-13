@@ -37,6 +37,10 @@ export default function Preferences() {
         onChange={e => save({ look: e.target.value as Prefs['look'] })}>
         {LOOKS.map(look => <option key={look.look} value={look.look}>{look.name}</option>)}
       </select></label>
+      <label>Ground<select aria-label="Ground" value={prefs?.ground ?? 'depth'} disabled={disabled}
+        onChange={e => save({ ground: e.target.value as Prefs['ground'] })}>
+        <option value="depth">Depth</option><option value="contours">Contours</option><option value="wash">Wash</option>
+      </select></label>
       {(['motion', 'contrast'] as const).map(key => <label key={key}>{key === 'motion' ? 'Reduce motion' : 'Higher contrast'}
         <select aria-label={key === 'motion' ? 'Reduce motion' : 'Higher contrast'} value={prefs?.[key] ?? 'follow'} disabled={disabled}
           onChange={e => save({ [key]: e.target.value })}>

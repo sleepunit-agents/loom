@@ -36,7 +36,7 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);
-    if (next) effects = installNext(app, nextOptions);
+    if (next) effects = await installNext(app, nextOptions);
     else if (!listen) {
       if (!app.operations.has('household.createProject')) installSharing(app, home);
       const access = sharing ?? (() => new SharingDatabase(app.db, home).sharing());

@@ -42,6 +42,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
     engine.reply({ id: 'reply-with-a-stable-operation-id', incomingId: deliveries[0].id, text: 'Private reply words' });
     await engine.flush(); expect(posts).toBe(0);
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+    mkdirSync(resolve('artifacts/bridges-preview'), {recursive:true});
+    await context.tracing.start({screenshots:true,snapshots:true,sources:true});
     await context.grantPermissions(['local-network-access'], { origin: loom.url });
     const a = await context.newPage(), b = await context.newPage();
     const link = loom.operations.call('direct', owner, 'signin.link', { member: 'jonathan' });
@@ -181,5 +183,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
     await b.reload();
     await expect.poll(() => b.getByText('This item is no longer in view', { exact: true }).count()).toBe(1);
     clock.advance(60_000); await engine.flush(); expect(posts).toBe(1);
-  } finally { await browser.close(); await engine.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
-}, 60_000);
+  } finally {
+    for (const context of browser.contexts()) await context.tracing.stop({path:resolve('artifacts/bridges-preview/trace.zip')});
+    await browser.close(); await engine.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
+// Thirty screenshots plus two-window writes: each wait keeps its own deadline.
+}, 120_000);

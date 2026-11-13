@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type LiveRecord } from '../../core/index.js';
+import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type Context, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
@@ -20,6 +20,7 @@ const clientId = z.string().regex(/^[a-z2-7]{16}$/);
 const target = z.object({ thread: id });
 export interface Options {
  db: Db; operations: Operations; live: Live; clock: Clock; sharing(): Sharing; key: WordsKey;
+ filing?(ctx:Context,input:{thread:string;agent:string;member:string;conversation:string;project?:string}):void;
  runtime: RuntimeDelivery; hold: Hold; attention: Attention; days?: number;
  /** Authoritative new-side conversation metadata; absent means step reads are denied. */
  conversation?(id: string): StepConversation | undefined;
@@ -324,7 +325,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     case 'title': if(i.title===undefined)return fail('invalid','A title is required');t.title=i.title;t.titledBy='member';break;
     case 'project': {
      if(i.project && (!maySee(ctx.viewer,{project:i.project},o.sharing()) || !maySee({kind:'agent',id:t.agent},{project:i.project},o.sharing())))return fail('invalid','Choose a project of this agent');
-     t.project=i.project ?? undefined;break;
+     t.project=i.project ?? undefined;o.filing?.(ctx,{thread:t.id,agent:t.agent,member:t.member,conversation:t.conversation,project:t.project});break;
     }
     case 'pin': {
      const pins=(db.prepare('SELECT record FROM comms_threads WHERE member=?').all(t.member) as {record:string}[]).filter(r=>JSON.parse(r.record).pinned).length;
@@ -416,10 +417,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};
   },
  }));
- async function post(agent:string,place:string,raw:AgentPost,terminal=false) {
+ async function post(agent:string,place:string,raw:AgentPost,terminal=false,binding?: import('./role.js').ReadBinding) {
   const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,on:z.unknown().optional().transform(value=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9.-]{0,23}$/.test(value)?value:undefined),run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
   const available=()=>{
    const t=requireAgent(agent,place);
+   if(binding&&(!binding.valid()||binding.agent!==agent||binding.conversation!==t.conversation))return fail('denied','Body binding ended');
    if(closed||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
    if(t.archived!==null)return fail('conflict','Thread archived');
    return t;
@@ -536,7 +538,14 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+ return {confirmStart(agent,place,seq,generation) {
+   const t=requireAgent(agent,place);
+   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,seq,t.member) as MessageRow|undefined;
+   if(closed||t.archived!==null||!row||!see({kind:'member',id:t.member},t)||(JSON.parse(row.record).generation??0)!==generation||!row.words||row.at+days*day<=clock.now())return;
+   if((t.startedThrough??0)>=seq)return;
+   t.working=true;t.workingSince=t.workingSince??clock.now();t.workingBeat=clock.now();t.startedThrough=seq;
+   saveThread(db,t);touched(t);progressChanged(t);
+  },bodyPost:(binding,place,message)=>post(binding.agent,place,message,false,binding),post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
   spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:(t,seqs)=>{touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));progressChanged(t);}}),
   announcements(member) {
    if(closed)return [];
@@ -586,7 +595,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      ...(r.kind==='message'&&['sending','held','failed','delivered'].includes(delivery)?{delivery}:{}),
     };
    });
-   return {thread:t.id,conversation:t.conversation,archived:t.archived,working:t.working,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),messages};
+   return {thread:t.id,conversation:t.conversation,...(t.project?{project:t.project}:{}),archived:t.archived,working:t.working,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),messages};
   },
   reader(binding) {
    // Snapshot trusted routing facts so later caller mutation cannot widen this capability.
