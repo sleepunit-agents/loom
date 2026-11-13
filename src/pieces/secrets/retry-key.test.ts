@@ -110,3 +110,13 @@ it('caps reads and erases the bounded buffer when the file grows after fstat',as
  expect(total).toBe(33);expect(captured.length).toBeGreaterThan(0);for(const b of captured)expect([...b]).toEqual(Array(33).fill(0));
  expect(binding(app)).toBeUndefined();expect(app.operations.has('secrets.set')).toBe(false);expect(h.hasReceipt).not.toHaveBeenCalled();
 });
+
+it('erases every ring file buffer on success and when a later retained file fails',async()=>{
+ const {root,path}=home(),h=holder(),active=join(root,'active.key'),bad=join(root,'bad.key');
+ writeFileSync(active,Buffer.alloc(32,27),{mode:0o600});writeFileSync(bad,Buffer.alloc(31),{mode:0o600});
+ let app=await open(root);installAsyncSecretValuesFromFile(app.db,app.operations,fixtureSharing,h,path);await app.close();app=await open(root);
+ const captured:Buffer[]=[];vi.mocked(readSync).mockImplementation((...args:Parameters<typeof realFs.readSync>)=>{captured.push(args[1] as Buffer);return realFs.readSync(...args);});
+ expect(()=>installAsyncSecretValuesFromFile(app.db,app.operations,fixtureSharing,h,{active,previous:[path,bad]})).toThrow('Secret retry key unavailable');
+ expect(new Set(captured).size).toBe(2);for(const b of captured)expect([...b]).toEqual(Array(33).fill(0));captured.length=0;
+ installAsyncSecretValuesFromFile(app.db,app.operations,fixtureSharing,h,{active,previous:[path]});expect(new Set(captured).size).toBe(2);for(const b of captured)expect([...b]).toEqual(Array(33).fill(0));
+});

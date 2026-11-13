@@ -846,8 +846,8 @@ Every async installer, including the in-memory fixture entry, now atomically
 pins a domain-separated HMAC of a fixed constant in `secrets_meta` under
 `daemon-retry-key-v1` before registering either value operation. No key, value,
 or unkeyed value hash enters the database. The binding and write journal have
-the same indefinite lifetime: reopening with a different key refuses startup,
-even with no unfinished write. Keep the daemon key separately from database
+the same indefinite lifetime: reopening without a previously bound key refuses startup,
+even with no unfinished write. Explicit rotation is described below. Keep the daemon key separately from database
 backups and retain it for every restored journal. Loading runs outside any
 operation/outer transaction so its binding cannot be rolled back underneath
 registered operations.
@@ -859,9 +859,38 @@ binding to make it start; adoption of such a journal needs a separate explicit
 recovery protocol. This does not affect the normal next instance, which has
 never installed async values. No installed home is changed by this work.
 
-This adds loading and mismatch detection, not rotation. Changing the file is
-refused, including after completed writes; safe key rotation must retain the
-old retry identity before that restriction can be lifted. Holder key/identity
-rotation and automatic daemon reconciliation without caller plaintext still
-remain, followed by normal-root composition. Normal next mode and Settings
-value forms stay disabled until those prerequisites are delivered.
+For explicit daemon retry-key rotation, the file argument also accepts
+`{active: absoluteNewKeyFile, previous: [absoluteOldKeyFile, ...]}`. The in-memory
+fixture installer similarly accepts `{active: newBytes, previous: [oldBytes, ...]}`.
+Every file has the same privacy, ownership and bounded-read requirements. All read
+buffers are erased on success or failure; the installer owns crypto copies of every
+key. Startup reads all files before changing the database or registering operations.
+There is no key generation, replacement, discovery, registry rotation operation or
+host activation. Rotate only while the daemon is stopped, using independently
+prepared private files and retaining every historical key separately from backups.
+
+`secrets_meta` also retains a sorted list of all bound key verifiers under
+`daemon-retry-keys-v1`. The original v1 binding remains unchanged. The list and any
+initial v1 binding commit atomically before operation registration; malformed
+manifests, duplicate keys and omission of any historical key refuse startup. A
+v1-only database upgrades when its original key is supplied. No journal row or
+core receipt is rewritten. Keys cannot be retired because retry identities live
+indefinitely; retain the complete key ring for restored backups too. Selecting a
+previous key as active is an explicit configuration choice, not a way to omit
+any other historical key.
+
+Core supplies the hash hook with authenticated canonical viewer, operation name
+and core id. For that exact viewer/id, Secrets compares the supplied full canonical
+input against retained keyed hashes and preserves the old hash only on a match.
+Otherwise it uses the active key. Fresh identities always use the active key, even
+if another viewer's identical input was previously written with an old key. Changed
+input still conflicts before holder IO. Holder ids, attribution and commit order
+remain unchanged; a lost acknowledgement can reconcile after rotation without
+repeating effects. Completed writes remain recoverable after core receipt expiry.
+
+Old-to-new lifecycle: silent key-file replacement stays refused; explicit retained
+key-ring startup replaces the former rotation refusal. The synchronous fixture
+value installer retains its single-key contract and is not production composition.
+Holder identity/receipt-key rotation and automatic daemon reconciliation without
+caller plaintext still remain, followed by normal-root composition. Normal next
+mode and Settings value forms stay disabled until those prerequisites are delivered.

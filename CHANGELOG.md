@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
+
 ### Added
 
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.

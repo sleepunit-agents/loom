@@ -30,7 +30,7 @@ export interface Operation<I = unknown> {
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   /** Private pieces key retry fingerprints so exported receipts cannot test guessed words. */
-  inputHash?(canonicalInput: string): string;
+  inputHash?(canonicalInput: string, identity: Readonly<{viewer: string; id?: string; name: string}>): string;
   /** Async work is prepared outside the synchronous transaction, never persisted by core.
    * Write receipts and recovery are checked first and checked again after await.
    * This is NOT an external-effect commit protocol: concurrent preparations may
@@ -136,7 +136,7 @@ export class Operations {
       result = this.db.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
         if ((op.windowOnly || op.recheckPolicy) && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data)) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
           this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
