@@ -15,6 +15,7 @@ import { importApprovals } from './importer.js';
 import { approvalsRole } from './role.js';
 import { type Caller } from './model.js';
 import type { ApprovalApplications } from './apply.js';
+import { installClock } from '../clock/index.js';
 const owner:Viewer={kind:'member',id:'jonathan'},agent:Viewer={kind:'agent',id:'art'},pollock:Viewer={kind:'member',id:'pollock'},other:Viewer={kind:'agent',id:'pond-bot'};
 const closes:(()=>Promise<void>)[]=[],dirs:string[]=[];
 const dir=()=>{const d=mkdtempSync(join(tmpdir(),'approvals-test-'));dirs.push(d);return d;};
@@ -316,6 +317,8 @@ describe('owner application routing and denial retention',()=>{
   it.each([
     ['grant','tasks:mark','runtime','Access to Tasks.'],
     ['vouch-wake','art:w-000001,w-000002','clock','w-000001 fires at ten\nw-000002 fires at eleven'],
+    ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten'],
+    ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab,w-abcdef','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten\nw-abcdef fires at eleven'],
     ['principal-reset','art:cv-0123456789ab','runtime','The conversation cv-0123456789ab.'],
     ['box-write-off','art:box-one@1762718400','runtime','The box box-one was last heard yesterday.'],
   ])('applies %s through %s exactly once at Allow',async(kind,target,route,details)=>{
@@ -340,6 +343,52 @@ describe('owner application routing and denial retention',()=>{
     a.clock.advance(30*86400_000);
     expect(file('art:w-000002','after')).toMatchObject({ok:false,code:'denied'});
     expect(file('art:w-000003','unrelated')).toMatchObject({ok:true});
+  });
+  it('files vouches for actual clock ids and retains overlapping denials',async()=>{
+    const a=await setup();
+    const clock=installClock(a.db,a.operations,a.live,()=>a.access);
+    closes.push(async()=>clock.close());
+    const ids=Array.from({length:3},(_,i)=>{
+      const result=a.operations.call('direct',owner,'clock.in',{agent:'art',when:'1h',prompt:'Review the work.',note:'Wake '+i},'clock-'+i);
+      expect(result).toMatchObject({ok:true});
+      return (result as {ok:true;value:{id:string}}).value.id;
+    }).sort();
+    const file=(wakes:string[],id:string)=>a.role.call('request',caller,{...ask,kind:'vouch-wake',target:'art:'+wakes.join(','),details:wakes.map(id=>id+' fires in one hour').join('\n')},id);
+    const first=file(ids.slice(0,2),'actual-clock');
+    expect(first).toMatchObject({ok:true});if(!first.ok)return;
+    expect(file(ids.slice(1),'actual-overlap')).toMatchObject({ok:false,code:'denied'});
+    const card=first.value as {id:string};
+    a.value('answer',{id:card.id,action:'deny'},owner);
+    a.clock.advance(30*86400_000);
+    expect(file([ids[1]],'actual-denied')).toMatchObject({ok:false,code:'denied'});
+    expect(file([ids[2]],'actual-unrelated')).toMatchObject({ok:true});
+  });
+  it.each(['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'])('retains mixed-set denial over a single %s id',async(overlap)=>{
+    const a=await setup();
+    const ids=['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'];
+    const file=(ids:string[],id:string)=>a.role.call('request',caller,{...ask,kind:'vouch-wake',target:'art:'+ids.join(','),details:ids.map(id=>id+' fires at ten').join('\n')},id);
+    const first=file(ids,'mixed');expect(first.ok).toBe(true);if(!first.ok)return;
+    const card=first.value as {id:string};
+    expect(file([overlap],'mixed-pending')).toMatchObject({ok:false,code:'denied'});
+    a.value('answer',{id:card.id,action:'deny'},owner);
+    a.clock.advance(30*86400_000);
+    expect(file([overlap],'mixed-denied')).toMatchObject({ok:false,code:'denied'});
+    expect(file(['w-fedcba'],'mixed-unrelated')).toMatchObject({ok:true});
+  });
+  it.each([
+    ['w-01234567-89ab-4cde-8fab-0123456789ab','w-12345678-9abc-4def-8abc-123456789abc'],
+    ['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'],
+  ])('spends an imported UUID/mixed receipt only for its exact set %j',async(first,second)=>{
+    const a=await setup(),source=dir(),target='art:'+first+','+second;
+    const receipt={id:'a-01234567',kind:'vouch-wake',target,what:'Vouch for the wakes.',why:'Resume them.',who:{agent:'art',where:'h-import'},for:'owner',minutes:60,at:'2026-11-12T22:00:00Z',state:'allowed',decided:'2026-11-12T22:01:00Z',expires:'2026-11-13T00:00:00Z',by:'jonathan'};
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt}}));
+    importApprovals(a.db,source,a.clock.now());
+    for(const [i,wrong] of ['art:'+first,target+',w-fedcba','art:'+first+',w-fedcba'].entries()) {
+      expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target:wrong},'wrong-set-'+i)).toMatchObject({ok:false,code:'denied'});
+      expect(load(a.db).approvals[0].state).toBe('allowed');
+    }
+    expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target},'exact-set')).toMatchObject({ok:true,value:{state:'used'}});
+    expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target},'spent-set')).toMatchObject({ok:false,code:'denied'});
   });
   it('pregrants do not answer conversation cards, and a deny revokes unspent yes without closing that thread',async()=>{
     const a=await setup(),conversation='cv-0123456789ab';a.identity({conversation});

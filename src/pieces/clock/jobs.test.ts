@@ -32,6 +32,111 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 // Drain the known dispatch promise chain, without wall-clock sleeps.
 const settled = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('durable daemon clock', () => {
+  it('answers a file lane self-rearm within six hours without creating another wake, even at capacity', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: 'routines/upkeep.md' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    for (let n = 0; n < 50; n++) app.set('2d');
+    const before = wakes(app.db);
+    for (const delta of [-6, 0, 6]) {
+      const r = app.value('in', { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: `${(occurrence.due + delta * 3600_000 - app.clock.now()) / 1000}s` }, { kind: 'agent', id: 'art' });
+      expect(r).toEqual({ alreadyScheduled: true, schedule: s.id, due: occurrence.due });
+    }
+    expect(wakes(app.db)).toEqual(before);
+  });
+  it('keeps an extra file run outside the six-hour boundary and suppresses only live matching occurrences', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: `${(occurrence.due - app.clock.now()) / 1000}s` };
+    const agent: Viewer = { kind: 'agent', id: 'art' };
+    expect(app.value('in', input, agent)).toEqual({ alreadyScheduled: true, schedule: s.id, due: occurrence.due });
+    expect(app.value('in', { ...input, when: `${(occurrence.due + 6 * 3600_000 + 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
+    expect(app.value('in', { ...input, when: `${(occurrence.due - 6 * 3600_000 - 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
+    expect(app.value('in', { ...input, file: 'routines/other.md' }, agent).state).toBe('pending');
+    for (const file of ['./routines/upkeep.md', 'routines//upkeep.md'])
+      expect(app.value('in', { ...input, file }, agent).state).toBe('pending');
+    app.value('pause', { agent: 'art' });
+    app.clock.advance(occurrence.due - app.clock.now()); await settled();
+    expect(wake(app.db, occurrence.id)?.hold).toBe('paused');
+    // A held occurrence is no promise of a future run.
+    expect(app.value('in', { ...input, when: '1m' }, agent).state).toBe('pending');
+  });
+  it('never substitutes unproven or another scope schedule for work or approval continuations', async () => {
+    const access = structuredClone(sharing);
+    access.members.helper = { owner: false, agents: ['art'] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    const agent: Viewer = { kind: 'agent', id: 'art' };
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '12h' };
+    app.value('scheduleSet', { id: 'agent', agent: 'art', at: '03:31', file: input.file, note: 'agent' }, agent);
+    expect(app.value('in', input, agent).state).toBe('pending');
+    app.value('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: input.file });
+    for (const fields of [{ project: 'pond' }, { continuation: 'opaque' }, { approval: 'a-local' }, { place: 'conversation' }])
+      expect(app.value('in', { ...input, ...fields }, agent).state).toBe('pending');
+    expect(app.value('in', input, { kind: 'member', id: 'helper' }).state).toBe('pending');
+    // Invalid work and unauthorized callers cannot turn the no-op into success.
+    expect(app.call('in', { ...input, prompt: 'Both' }, agent)).toMatchObject({ ok: false, code: 'invalid' });
+    expect(app.call('in', input, { kind: 'agent', id: 'stranger' })).toMatchObject({ ok: false, code: 'denied' });
+    access.members.jonathan.owner = false;
+    expect(app.value('in', input, agent).state).toBe('pending');
+  });
+  it('answers the authoring owner through clock.at and retains the result after restart', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db)[0];
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '03:31' };
+    const expected = { alreadyScheduled: true, schedule: s.id, due: occurrence.due };
+    expect(app.value('at', input)).toEqual(expected);
+    await app.close();
+    const restarted = await loom({}, app.dir, app.clock);
+    expect(restarted.value('at', input)).toEqual(expected);
+    expect(wakes(restarted.db)).toEqual([occurrence]);
+  });
+  it.each([
+    'schedule continuation', 'schedule approval', 'schedule place',
+    'occurrence continuation', 'occurrence approval', 'occurrence place',
+    'disabled', 'stale revision', 'stale lane', 'nonfuture', 'held', 'firing', 'run-now', 'bypass pause', 'paused agent',
+    'author lost create', 'other owner', 'agent scope', 'member scope',
+  ])('keeps independent work when the candidate has %s', async scenario => {
+    const access = structuredClone(sharing);
+    access.members.jonathan.agents.push('pond-bot');
+    access.members.other = { owner: true, agents: ['art'] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db)[0];
+    let viewer: Viewer = owner;
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '12h', ...(scenario === 'member scope' ? { member: 'jonathan' } : {}) };
+    const [which, field] = scenario.split(' ');
+    if (which === 'schedule' || which === 'occurrence') Object.assign(which === 'schedule' ? s : occurrence, { [field]: 'capability-or-place' });
+    if (scenario === 'disabled') s.enabled = false;
+    if (scenario === 'stale revision') occurrence.scheduleRevision = 'old';
+    if (scenario === 'stale lane') occurrence.laneVersion = 'old';
+    if (scenario === 'nonfuture') occurrence.due = app.clock.now();
+    if (scenario === 'held') { occurrence.state = 'held'; occurrence.hold = 'uncertain'; }
+    if (scenario === 'firing') occurrence.state = 'firing';
+    if (scenario === 'run-now') occurrence.runNow = true;
+    if (scenario === 'bypass pause') occurrence.bypassPause = true;
+    if (scenario === 'paused agent') app.value('pause', { agent: 'art' });
+    if (scenario === 'author lost create') { access.members.jonathan.agents = []; viewer = { kind: 'agent', id: 'art' }; }
+    if (scenario === 'other owner') viewer = { kind: 'member', id: 'other' };
+    if (scenario === 'agent scope') { s.agent = 'pond-bot'; occurrence.agent = 'pond-bot'; }
+    app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(s), s.id);
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(occurrence), occurrence.id);
+    expect(app.value('in', input, viewer).state).toBe('pending');
+    expect(wakes(app.db)).toHaveLength(2);
+    expect(wake(app.db, occurrence.id)).toEqual(occurrence);
+  });
+  it('uses the next occurrence rather than a later current occurrence for the same schedule', async () => {
+    const app = await loom();
+    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const first = wakes(app.db)[0];
+    const later = { ...first, id: 'w-later', due: first.due + 86400_000 };
+    app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(later.id, JSON.stringify(later), later.changedAt);
+    const before = wakes(app.db);
+    const extra = app.value('in', { agent: 'art', file: 'routines/upkeep.md', note: 'extra', when: '36h' }, { kind: 'agent', id: 'art' });
+    expect(extra.state).toBe('pending');
+    expect(wakes(app.db).filter(w => w.id !== extra.id)).toEqual(before);
+  });
   it('creates an owner wake now without a lane, preserving attribution and bypassing pause', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'now-body' } as const));
     const app = await loom({ runtime: { startBody } });
@@ -488,9 +593,10 @@ describe('durable daemon clock', () => {
     const app = await loom({ runtime: { startBody } }, home(), clock);
     app.value('laneSet', { name: 'local-lane', agent: 'art', at: '03:31', text: 'Local words', local: true });
     app.value('laneSet', { name: 'file-lane', agent: 'art', at: '03:31', text: 'File words', source: 'routines/does-not-exist.md' });
-    const guards = [vi.spyOn(fs, 'readFileSync'), vi.spyOn(fs, 'openSync'), vi.spyOn(childProcess, 'spawn'), vi.spyOn(childProcess, 'execFile'), vi.spyOn(childProcess, 'execSync')];
+    const guards = [vi.spyOn(fs, 'readFileSync'), vi.spyOn(fs, 'openSync'), vi.spyOn(fs, 'existsSync'), vi.spyOn(fs, 'statSync'), vi.spyOn(fs, 'realpathSync'), vi.spyOn(childProcess, 'spawn'), vi.spyOn(childProcess, 'execFile'), vi.spyOn(childProcess, 'execSync')];
     for (const guard of guards) guard.mockClear().mockImplementation(() => { throw new Error('Forbidden lane filesystem/process access'); });
     try {
+      expect(app.value('in', { agent: 'art', file: 'routines/does-not-exist.md', note: 'rearm', when: '31m' }, { kind: 'agent', id: 'art' })).toMatchObject({ alreadyScheduled: true, schedule: 'lane/file-lane' });
       clock.advance(31*60_000); await settled();
       expect(startBody).toHaveBeenCalledTimes(2);
       expect(wakes(app.db).filter(w => w.state === 'held')).toHaveLength(2);

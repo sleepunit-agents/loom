@@ -90,6 +90,13 @@ answers an existing conversation card. An already allowed pregrant can satisfy a
 later identical request for its same authenticated principal; its provenance is
 kept, rather than rewritten to claim it was asked in that conversation.
 
+Wake-vouch targets accept both imported compact wake ids (`w-` plus six lowercase
+hex digits) and the new clock's lowercase UUID ids. Sets remain sorted, unique
+and limited to twelve ids, within the existing 200-character raw target limit;
+callers must split larger batches before filing cards. Denial overlap compares
+complete ids for either format. Accepting an id does not establish its provenance:
+the clock application must still verify every target against its current rows.
+
 ## Import and final move
 
 `loom migrate approvals --home <stopped-next-home> --from <old-directory>`
@@ -112,7 +119,7 @@ untouched stores until the owner retires those stores.
 - The piece, importer, API client and kit app shipped in #856; #869 fixes mobile wrapping. CI verified the two-window answer/stale guard, Rules and history, with six inspected screenshots at 390, 1280 and 1920 in Neon Noir and Daylight. Evidence: loom notes `loom/2026-11-12-approvals-ci-evidence` and `loom/2026-11-12-approvals-mobile-evidence`. No local browser suite was run.
 - Next mode now registers approvals on the same database, operations and Live instance as Sharing and Tasks, without requiring a fixture installer. The existing app registry supplies `/p/approvals-preview`. HTTP coverage verifies request, open, restricted answer, exact spend/retry, persisted history across restart and rollback when an application role is absent. Poisoned old JSON stores are ignored.
 - The independent frozen CLI corpus covers 62 old-program cases; broader parser abbreviations, complex quoting and combinations of errors are not exhaustive.
-- Supply trusted new-runtime caller resolution, proven conversation membership and project repository metadata. Until then callers remain unknown, body-supplied principal/project/conversation fields confer no authority, and no conversation is attached.
+- Next composition reads project repository metadata from household rows on every operation; bare `owner/repo` selectors are GitHub repositories, and locators are case insensitive. Unreadable metadata keeps the safe asking fallback when central Sharing can authorize the operation; with the default database-backed Sharing, a malformed project row makes policy unavailable and the operation refuses before rule matching. No fallback bypasses central policy. Owner previews resolve project rules, and repository changes take effect on the next lookup. Supply trusted new-runtime caller resolution and proven conversation membership. Until then callers remain unknown, body-supplied principal/project/conversation fields confer no authority, and no conversation is attached.
 - Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
 - Complete actual owner-application integration cases. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes have tests.
 - Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. The separate persistence/importer/client review also stopped at three rounds: final BLOCKING with two CRITICAL findings, both folded with regression tests (command stderr credential redaction and map-only project scope). No fourth read and no CLEAR claimed; final folds are unreviewed. Full ledger: loom note loom/2026-11-12-approvals-importer-client-review.

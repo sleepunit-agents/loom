@@ -84,7 +84,7 @@ export async function personVerify(
 
 export async function personArchive(contextDir: string, input: { slug: string; reason: string }, selection?: PeopleSelection): Promise<string> {
   // The actor is the calling agent's name — the value knowledge_write uses for author.
-  return withWritable(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir) }), selection);
+  return withWritable(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir, selection) }), selection);
 }
 
 export async function personRestore(contextDir: string, input: { slug: string }, selection?: PeopleSelection): Promise<string> {
@@ -120,10 +120,10 @@ export function personEnsure(contextDir: string, body: unknown, actor: string, s
   let store: PeopleStore | HouseholdPeople;
   if (input.dry_run) {
     store = h
-      ? new HouseholdPeople(readonlyOrEmpty(commonsPeoplePath(h), actor), readonlyOrEmpty(resolveSqliteDbPath(dir), actor), Date.now, new Set(h.agents))
-      : readonlyOrEmpty(resolveSqliteDbPath(dir), actor);
+      ? new HouseholdPeople(readonlyOrEmpty(commonsPeoplePath(h), actor), readonlyOrEmpty(resolveSqliteDbPath(dir, selection), actor), Date.now, new Set(h.agents))
+      : readonlyOrEmpty(resolveSqliteDbPath(dir, selection), actor);
   } else {
-    store = h ? openHouseholdPeople(h, input.agent ?? hh!.agent, dir, { actor })! : openPeopleStore(dir, { actor })!;
+    store = h ? openHouseholdPeople(h, input.agent ?? hh!.agent, dir, { actor, selection })! : openPeopleStore(dir, { actor, selection })!;
   }
   try {
     return ensurePerson(store, input);
@@ -144,9 +144,10 @@ export function personEnsure(contextDir: string, body: unknown, actor: string, s
 export function personMergeRun(contextDir: string, body: unknown, actor: string, opts: { onlyOwnAgent?: boolean; selection?: PeopleSelection } = {}): PersonMergeResult {
   const input = checkMergeInput(body);
   const hh = selectedHousehold(contextDir, opts.selection);
-  return mergePeople(hh
+  const scope = hh
     ? { household: hh.household, viewer: hh.agent, actor, ...(opts.onlyOwnAgent ? { onlyAgent: hh.agent } : {}) }
-    : { contextDir, agentName: resolveIdentityName(contextDir), actor }, input);
+    : { contextDir, agentName: resolveIdentityName(contextDir, opts.selection), actor };
+  return mergePeople({ ...scope, memorySelection: opts.selection }, input);
 }
 
 /**
@@ -157,7 +158,7 @@ export function personMergeRun(contextDir: string, body: unknown, actor: string,
 export async function personMerge(contextDir: string, input: { from: string; into: string; dry_run?: boolean }, selection?: PeopleSelection): Promise<string> {
   try {
     const hh = selectedHousehold(contextDir, selection);
-    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir), { onlyOwnAgent: true, selection }));
+    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir, selection), { onlyOwnAgent: true, selection }));
   } catch (e) {
     return errorText(e);
   }

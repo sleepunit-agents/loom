@@ -6,20 +6,27 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
+import { TokenDatabase } from '../core/household/tokens.js';
 import { fixture, installFixture, fixtureSharing } from '../fixture.js';
 const root = resolve(import.meta.dirname,'../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app paths, phones show one pane, and windows share live records',async()=>{
   const home=mkdtempSync(join(tmpdir(),'loom-next-browser-'));fixture(home);
-  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-12T12:00:00Z')),install:installFixture,sharing:fixtureSharing,webRoot:root,
-    authenticate:req=>req.headers.cookie?.includes('fixture=jonathan')?{viewer:{kind:'member',id:'jonathan'},valid:()=>true}:undefined});
+  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-12T12:00:00Z')),install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();},sharing:fixtureSharing,webRoot:root});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block'});
-    await context.addCookies([{name:'fixture',value:'jonathan',url:loom.url}]);
     const a=await context.newPage(); const b=await context.newPage();
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));
     await a.goto(loom.url);
+    await expect.poll(()=>a.getByRole('button',{name:'Sign in with a passkey',exact:true}).count()).toBe(1);
+    const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});
+    expect(link.ok).toBe(true);if(!link.ok)throw new Error('fixture sign-in failed');
+    await a.goto(loom.url+(link.value as {path:string}).path);
+    const signingIn=a.waitForResponse(r=>r.request().method()==='POST');
+    await a.getByRole('button',{name:'Sign in',exact:true}).click();
+    expect((await signingIn).status()).toBe(303);
+    expect((await (await context.request.get(loom.url+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
     await expect.poll(()=>a.getByRole('button',{name:'Open Project sharing',exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Pond work'}).count()).toBe(1);

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { openDb } from '../core/db/index.js';
@@ -129,4 +130,29 @@ it('explicit isolation still protects the active legacy memory override', () => 
   expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir, selected)).toThrow('same as memory');
   vi.stubEnv('LOOM_KNOWLEDGE_DB_PATH', selected.knowledgePath);
   expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir)).toThrow('same as memory');
+});
+
+it('attributes explicit MCP knowledge activity to selected agents despite a global identity', async () => {
+  const home = fixture();
+  const art = readContinuityHousehold(home, 'art'), mark = readContinuityHousehold(home, 'mark');
+  vi.stubEnv('LOOM_IDENTITY', 'unrelated-service');
+  const a = await connect({ contextDir: art.contextDir, knowledgeSelection: art });
+  const m = await connect({ contextDir: mark.contextDir, knowledgeSelection: mark });
+  await a('knowledge_write', page('attributed'));
+  await m('knowledge_write', page('attributed', 'Updated by Mark'));
+  await m('knowledge_verify', { slug: 'attributed', freshness_anchor: 'fixture' });
+  await a('knowledge_recall', { slug: 'attributed' });
+  const db = new Database(art.knowledgePath, { readonly: true });
+  try {
+    expect(db.prepare('SELECT author FROM pages WHERE slug = ?').get('attributed')).toEqual({ author: 'art' });
+    expect(db.prepare('SELECT actor FROM page_revisions').all()).toEqual([{ actor: 'mark' }]);
+    expect(db.prepare('SELECT verifier FROM verifications').all()).toEqual([{ verifier: 'mark' }]);
+    expect(db.prepare('SELECT identity FROM knowledge_access').all()).toEqual([{ identity: 'art' }]);
+  } finally { db.close(); }
+  const local = await connect({ contextDir: art.contextDir, knowledgeSelection: null });
+  await local('knowledge_write', page('local-attributed'));
+  const localDb = new Database(join(art.contextDir, 'knowledge.db'), { readonly: true });
+  try {
+    expect(localDb.prepare('SELECT author FROM pages').all()).toEqual([{ author: 'art' }]);
+  } finally { localDb.close(); }
 });

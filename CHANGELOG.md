@@ -12,8 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
+- Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
+- Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
+
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
+- Next mode signs in through database sessions, one-time links and passkeys, with bearer authentication for agents, runners and services.
+
 - On the new clock side, count lane run-now against the one-off budget and wait for model quota reset without consuming job retries.
+- Avoid redundant file-lane self-rearms within six hours of an authorized owner schedule on the new clock side.
 - Preserve clock parked-work continuation instructions and readable answer notes; distinguish an unanswered wait from an expired Allow.
 
 - Keep long approval details and exact targets within the phone reader, with wrapping answer buttons.

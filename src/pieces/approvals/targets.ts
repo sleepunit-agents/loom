@@ -24,7 +24,9 @@ export function grantOf(target: string) {
   return { piece: m[1], agent: m[2], paths };
 }
 export function vouchOf(target: string) {
-  const m = new RegExp(`^(${name}):(w-[0-9a-f]{6}(?:,w-[0-9a-f]{6}){0,11})$`).exec(target);
+  // Retain imported compact ids and accept ids emitted by the in-process clock.
+  const wake = 'w-(?:[0-9a-f]{6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
+  const m = new RegExp(`^(${name}):(${wake}(?:,${wake}){0,11})$`).exec(target);
   if (!m) return;
   const ids = m[2].split(',');
   return JSON.stringify(ids) === JSON.stringify([...new Set(ids)].sort()) ? { agent: m[1], ids } : undefined;

@@ -254,6 +254,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
       return runHousehold(rest, io);
     }
     case 'token': {
+      if (rest[0] === 'link' && rest.includes('--next')) {
+        const { runSigninLink } = await import('../core/signin/client.js');
+        return runSigninLink(rest.slice(1), io);
+      }
       const { runToken } = await import('./household.js');
       return runToken(rest, io);
     }

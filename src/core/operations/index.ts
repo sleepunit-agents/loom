@@ -12,13 +12,25 @@ export type Result = { ok: true; value: unknown } | Failure;
 export const failure = (code: Code, message: string): Failure => ({ ok: false, code, message });
 export class OperationError extends Error { constructor(readonly code: Code, message: string) { super(message); } }
 export interface Change { type: string; id: string }
-export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number }
+/** Stable identity for a write which also commits to a source outside loom.db.
+ * Sources store this receipt atomically with their effects; it is not an intent.
+ */
+export interface WriteReceipt { viewer: string; id: string; name: string; inputHash: string; expires: number }
+export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt> }
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
+/** A committed external result retains its original core retry deadline. */
+export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
 export interface Operation<I = unknown> {
   name: string; cli?: CliCommand; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   run(ctx: Context, input: I): unknown;
+  /** Read an already-committed external receipt by the shared viewer/id key.
+   * Registered hooks run before may for EVERY write, not only this operation.
+   * A mismatched name/hash must conflict. Must not apply an effect; may announce
+   * recovered changes. Shared hook functions are registered only once.
+   */
+  recover?(ctx: Context): RecoveredWrite | undefined;
   /** Audit a rejected attempt after its effects have rolled back. This hook may
    * append audit rows only; it must never apply or retry the rejected action.
    * Audit failures do not change the caller's rejection.
@@ -34,6 +46,7 @@ function canonical(value: unknown): string {
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
+  private recoveries = new Set<NonNullable<Operation['recover']>>();
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void) {
@@ -50,6 +63,7 @@ export class Operations {
   register<I>(op: Operation<I>) {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
     this.ops.set(op.name, op);
+    if (op.write && op.recover) this.recoveries.add(op.recover);
   }
   has(name: string) { return this.ops.has(name); }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
@@ -77,15 +91,24 @@ export class Operations {
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
           if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
         }
-        if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const value = op.run({ db: this.db, viewer, now, changed: (type, id) => { changes.push({ type, id }); } }, parsed.data);
+        const ctx: Context = { db: this.db, viewer, now, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
+        let recovered: RecoveredWrite | undefined;
+        if (op.write) for (const recover of this.recoveries) {
+          recovered = recover(ctx);
+          if (recovered) break;
+        }
+        if (!recovered && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+        const outcome = recovered ?? op.run(ctx, parsed.data);
+        const replay = outcome instanceof RecoveredWrite ? outcome : undefined;
+        if (replay && (!op.write || !Number.isFinite(replay.expires) || replay.expires <= now || replay.expires > ctx.receipt!.expires)) throw new Error('Invalid recovered receipt expiry');
+        const value = replay ? replay.value : outcome;
         if (value instanceof Promise) throw new Error('Operations must be synchronous');
         if (value && typeof value === 'object' && 'ok' in value && value.ok === false) {
           const e = value as Failure; throw new OperationError(e.code, e.message);
         }
         const answer: Result = { ok: true, value: op.output.parse(value ?? null) };
         const serialized = JSON.stringify(answer);
-        if (op.write) this.db.prepare('INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, now + 30 * 86400_000);
+        if (op.write) this.db.prepare('INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, replay?.expires ?? now + 30 * 86400_000);
         return JSON.parse(serialized) as Result;
       })();
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }

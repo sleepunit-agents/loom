@@ -81,12 +81,14 @@ export function resolveRepoRoot(): string {
   return resolve(dirname(thisFile), '..');
 }
 
-export function resolveSqliteDbPath(contextDir: string): string {
-  return process.env.LOOM_SQLITE_DB_PATH ?? resolve(contextDir, 'memories.db');
+// Explicit composition always uses the selected context's private store.
+// Undefined keeps the legacy process-wide override for existing callers.
+export function resolveSqliteDbPath(contextDir: string, selection?: { agent?: string } | null): string {
+  return (selection === undefined ? process.env.LOOM_SQLITE_DB_PATH : undefined) ?? resolve(contextDir, 'memories.db');
 }
 
 /** Null explicitly selects a standalone store; undefined preserves legacy discovery. */
-export type KnowledgeSelection = { household: Household } | null;
+export type KnowledgeSelection = { household: Household; agent?: string } | null;
 
 /**
  * Knowledge is facts about the world. In a household it's the commons, shared
@@ -110,14 +112,19 @@ export function resolveKnowledgeDbPath(contextDir: string, selection?: Knowledge
  * spoofable (any caller could claim to be any identity), so it is derived
  * server-side from the connection instead.
  *
- * LOOM_IDENTITY overrides explicitly (useful for the multi-identity
+ * Explicit composition supplies the agent from trusted household metadata (or
+ * null for standalone); it never reads LOOM_IDENTITY. A selection without agent
+ * metadata uses the canonical context directory name.
+ *
+ * With omitted selection, LOOM_IDENTITY overrides explicitly (useful for the multi-identity
  * knowledge service, where each bearer token maps to a known identity).
  * Otherwise derived from the context dir's real path basename — this
  * resolves symlink aliases (e.g. `~/.config/loom/default` -> the real
  * `.../loom/art` dir) to the actual identity name rather than the alias.
  */
-export function resolveIdentityName(contextDir: string): string {
-  if (process.env.LOOM_IDENTITY) return process.env.LOOM_IDENTITY;
+export function resolveIdentityName(contextDir: string, selection?: { agent?: string } | null): string {
+  if (selection?.agent !== undefined) return selection.agent;
+  if (selection === undefined && process.env.LOOM_IDENTITY) return process.env.LOOM_IDENTITY;
   try {
     return basename(realpathSync(contextDir));
   } catch {

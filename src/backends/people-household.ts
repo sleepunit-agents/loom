@@ -304,10 +304,10 @@ export function openHouseholdPeople(
   h: Household,
   agent: string,
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: { agent?: string } | null } = {},
 ): HouseholdPeople | null {
   const dirPath = commonsPeoplePath(h);
-  const relPath = resolveSqliteDbPath(contextDir);
+  const relPath = resolveSqliteDbPath(contextDir, opts.selection);
   if (opts.readonly && (!existsSync(dirPath) || !existsSync(relPath))) return null;
   if (!opts.readonly) mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
   return new HouseholdPeople(
