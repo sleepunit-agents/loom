@@ -107,3 +107,42 @@ describe('Slack service API inspection', () => {
     expect(await f.api.inspect(venue,message)).toBe('wait');
   });
 });
+
+it('uses the real bridges service grant, erases holder bytes and rechecks revocation between HTTP calls', async () => {
+  const {mkdtempSync, rmSync} = await import('node:fs');
+  const {tmpdir} = await import('node:os'); const {join} = await import('node:path');
+  const {startLoom} = await import('../../foundation.js');
+  const {fixture: homeFixture, fixtureSharing} = await import('../../fixture.js');
+  const {FakeClock} = await import('../../core/index.js');
+  const {installSecrets} = await import('../secrets/index.js');
+  const {installSecretServices, secretUseRole} = await import('../secrets/service.js');
+  const home = mkdtempSync(join(tmpdir(),'slack-service-')); homeFixture(home);
+  const config = {...fixtureSharing(),services:{bridges:{types:[],operations:[]}}};
+  const sharing = () => config, clock = new FakeClock();
+  const app = await startLoom({home,next:true,staging:true,clock,sharing,install(a) {
+    installSecrets(a.db,a.operations,a.live,sharing); installSecretServices(a.db,a.operations,sharing);
+  }});
+  try {
+    let seq = 0;
+    const call = (name: string,input: unknown) => app.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${name}`,input,`slack-${++seq}`);
+    expect(call('describe',{name:venue.tokenSecret,description:'Slack bot'}).ok).toBe(true);
+    const bytes: Uint8Array[] = [];
+    const source = {read:vi.fn(async () => {const b=Buffer.from('CREDENTIAL-SENTINEL'); bytes.push(b); return b;})};
+    const use = secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live);
+    const request = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({Authorization:'Bearer CREDENTIAL-SENTINEL'});
+      expect(call('revokeService',{service:'bridges',name:venue.tokenSecret}).ok).toBe(true);
+      return Response.json({ok:true,channel:{id:'G123',is_mpim:true}});
+    });
+    const api = slackApi(use,()=>true,request as typeof fetch);
+    expect(await api.inspect(venue,message)).toBe('wait');
+    expect(source.read).not.toHaveBeenCalled(); expect(request).not.toHaveBeenCalled();
+    expect(call('grantService',{service:'bridges',name:venue.tokenSecret}).ok).toBe(true);
+    expect(await api.inspect(venue,message)).toBe('wait');
+    expect(source.read).toHaveBeenCalledTimes(1); expect(request).toHaveBeenCalledTimes(1);
+    expect(bytes[0].every(n=>n===0)).toBe(true);
+    const tables = app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
+    const dump = tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
+    expect(JSON.stringify(dump)).not.toContain('CREDENTIAL-SENTINEL');
+  } finally {await app.close(); rmSync(home,{recursive:true,force:true});}
+});
