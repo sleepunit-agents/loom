@@ -58,8 +58,36 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const output=z.unknown();
  const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional(),endGeneration:z.number().int().optional()});
  const hashText=(text:string)=>{const salt=db.prepare("SELECT value FROM comms_meta WHERE key='legacy-salt'").get() as {value:string}|undefined;return salt?createHmac('sha256',Buffer.from(salt.value,'base64')).update(`words\0${text}`).digest('hex'):key.hash(text);};
+ const agentThreads = (member:string) => (db.prepare('SELECT record FROM comms_threads WHERE member=?').all(member) as {record:string}[])
+  .map(r=>JSON.parse(r.record) as Thread).filter(t=>t.archived===null&&see({kind:'member',id:member},t)).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
+ const agentSummaries = (member:string) => {
+  const agents=[...(o.sharing().members[member]?.agents??[])];
+  const threads=agentThreads(member);
+  return {agents,threads,desks:agents.map(agent=> {
+   const mine=threads.filter(t=>t.agent===agent);
+   const unread=mine.map(t=>({t,row:db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='reply' AND seq>? ORDER BY seq LIMIT 1").get(t.id,t.readSeq) as MessageRow|undefined})).filter(item=>item.row);
+   return {agent,unread:unread.length,last:mine[0],first:unread[0]};
+  })};
+ };
+ const firstLine = (value:string) => {
+  const letters=[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(value.replace(/\s+/g,' ').trim())].map(g=>g.segment);
+  return letters.length>160?`${letters.slice(0,159).join('').trimEnd()}…`:letters.join('');
+ };
  operations.register(operation({name:'comms.agents',doors:['socket'],windowOnly:true,input:z.object({}),output,
-  may:v=>v.kind==='member',run:ctx=>({member:ctx.viewer.id,agents:o.sharing().members[ctx.viewer.id]?.agents ?? []}),
+  may:v=>v.kind==='member',
+  prepare:async (_i,ctx)=> {
+   const snapshot=agentSummaries(ctx.viewer.id);
+   const records=await Promise.all(snapshot.desks.map(d=>d.first?.row?decode(d.first.row):undefined));
+   return {snapshot,records};
+  },
+  run(ctx,_i,raw) {
+   const {snapshot,records}=raw as {snapshot:ReturnType<typeof agentSummaries>;records:(LiveRecord|undefined)[]};
+   if(JSON.stringify(agentSummaries(ctx.viewer.id))!==JSON.stringify(snapshot))return fail('conflict','Threads changed; load summaries again');
+   return {member:ctx.viewer.id,agents:snapshot.agents,summaries:snapshot.desks.map((d,n)=>({agent:d.agent,unread:d.unread,
+    ...(d.last?{last:{thread:d.last.id,title:d.last.title,at:d.last.last}}:{}),
+    ...(d.first?.row?{first:{thread:d.first.t.id,text:d.first.row.at+days*day>clock.now()&&typeof records[n]?.text==='string'?firstLine(records[n]!.text as string):null}}:{}),
+   }))};
+  },
  }));
  let closed=false;
  const pending = new Map<string,Promise<void>>();

@@ -19,7 +19,7 @@ project or the household never grants access to another member's thread.
 
 | Operation | Input and result |
 | --- | --- |
-| `comms.agents` | Empty input; member identity and owned agent ids. Agent desk summaries remain to be added. |
+| `comms.agents` | Empty input; member identity, owned agent ids and private summaries (unread open-thread count, latest thread, first unread reply line). |
 | `comms.open` | Agent, client id, words, optional project; thread/sequence acknowledgement. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
@@ -59,7 +59,7 @@ data does not remove the behavior it delivered.
 | --- | --- | --- |
 | `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list and pins work; background jobs, stale working state and aggregate unread still missing. |
 | `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend rejects ids outside that format before encryption or writes. |
-| `/comms/agents`, `agentsComms` | `comms.agents` | Partial: owned ids only; last thread, unread reply count and first unread line missing. |
+| `/comms/agents`, `agentsComms` | `comms.agents` | Backend present: owned ids plus latest open thread, count of unread open threads and first unread line (160 graphemes). Desk UI binding remains. Summaries recheck ownership, exact thread/message snapshots and retention after crypto; read results are never persisted in retry storage. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
 | `/send`, `addMemberMessage`, `resendMessage`, delivery receipts | `comms.send`, `comms.resend`, runtime role | Partial: encrypted row and dedupe work; durable delivery/restart reconciliation, stale sends, busy and precise runtime errors missing. |
 | `/title`, `setTitle`, `comms_title` | `comms.change` and `Comms.title` | Partial: title bounds and member-title precedence work; agent command binding missing. |

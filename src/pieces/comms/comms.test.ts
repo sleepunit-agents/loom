@@ -289,3 +289,43 @@ it('refuses an ask that expires while answer encryption waits, before calling at
  expect(answers).toBe(0);
  expect(s.app.db.prepare("SELECT * FROM comms_messages WHERE kind='answer'").all()).toEqual([]);
 });
+it('summarizes only owned open threads, counting unread threads and folding the first unread line',async()=>{
+ const s=await setup();const first=await s.open();
+ await s.comms.post('art',first,{id:'r1',kind:'reply',text:'  first\n unread  '});
+ await s.comms.post('art',first,{id:'r2',kind:'reply',text:'second'});
+ s.clock.advance(1);const latest=await s.open();
+ const emoji='👩🏽‍💻';await s.comms.post('art',latest,{id:'r3',kind:'reply',text:emoji.repeat(161)});
+ const other=await s.call('open',{agent:'art',id:'otheraaaaaaaaaaa',text:'other words'},{kind:'member',id:'other'});
+ expect(other.ok).toBe(true);
+ await s.comms.post('art',(other as {ok:true;value:{thread:string}}).value.thread,{id:'private',kind:'reply',text:'other private reply'});
+ expect(await s.call('agents',{})).toMatchObject({ok:true,value:{agents:['art'],summaries:[{agent:'art',unread:2,last:{thread:latest},first:{thread:latest,text:emoji.repeat(159)+'…'}}]}});
+ await s.call('change',{thread:latest,action:'archive'});
+ expect(await s.call('agents',{})).toMatchObject({ok:true,value:{summaries:[{unread:1,last:{thread:first},first:{thread:first,text:'first unread'}}]}});
+ await s.call('change',{thread:first,action:'read',seq:3});
+ const result=await s.call('agents',{});expect(result).toMatchObject({ok:true,value:{summaries:[{unread:0}]}});expect(JSON.stringify(result)).not.toContain('other private');expect(JSON.stringify(result)).not.toContain('first unread');
+ expect(await s.call('agents',{},member,false)).toMatchObject({code:'denied'});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM core_operations').all())).not.toContain(emoji);
+});
+for(const change of ['ownership','read','delete','reply'] as const)it(`refuses a stale agent summary after ${change} changes during decryption`,async()=>{
+ let pause=false,resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:key=>({...key,open:async blob=>{if(pause){started();await wait;}return key.open(blob);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);await s.comms.post('art',place,{id:'r',kind:'reply',text:'revoked summary'});
+ pause=true;const reading=s.call('agents',{});await begin;
+ if(change==='ownership'){const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);}
+ else if(change==='reply')await s.comms.post('art',place,{id:'new',kind:'reply',text:'new reply'});
+ else await s.call('change',{thread:place,action:change,seq:2});
+ resume();
+ expect(await reading).toMatchObject({code:'conflict'});
+ if(change==='ownership')expect(await s.call('agents',{})).toMatchObject({ok:true,value:{agents:[],summaries:[]}});
+});
+it('strips the first unread summary line if retention expires while crypto is suspended',async()=>{
+ let pause=false,resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:key=>({...key,open:async blob=>{const text=await key.open(blob);if(pause){started();await wait;}return text;}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);await s.comms.post('art',place,{id:'r',kind:'reply',text:'expired summary'});
+ pause=true;const reading=s.call('agents',{});await begin;
+ // Advance the read clock without firing the sweep: enforce the deadline at return.
+ const now=s.clock.now()+14*86400_000;s.clock.now=()=>now;resume();
+ expect(await reading).toMatchObject({ok:true,value:{summaries:[{unread:1,first:{thread:place,text:null}}]}});
+});

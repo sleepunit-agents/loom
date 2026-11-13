@@ -25,7 +25,7 @@ export interface Operation<I = unknown> {
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   /** Async crypto is prepared outside the synchronous transaction, never persisted by core. */
-  prepare?(input: I): Promise<unknown>;
+  prepare?(input: I, context: { readonly viewer: Viewer }): Promise<unknown>;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
   /** Read an already-committed external receipt by the shared viewer/id key.
@@ -85,7 +85,7 @@ export class Operations {
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
     try {
-      const prepared = await op.prepare?.(parsed.data);
+      const prepared = await op.prepare?.(parsed.data, {viewer});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
     } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
