@@ -13,22 +13,25 @@ import { wake, wakes, type Wake } from './store.js';
 import { load } from '../approvals/store.js';
 import { installApprovals } from '../approvals/index.js';
 import { approvalsRole } from '../approvals/role.js';
+import { installClock } from './index.js';
 import { clockVouchApplication } from './role.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 const ids = ['w-aaaaaa', 'w-bbbbbb', 'w-cccccc'];
-async function setup(preinstalled = false) {
+async function setup(preinstalled = false, noFiling = false) {
   const home = mkdtempSync(join(tmpdir(), 'clock-vouch-'));
   const source = join(home, 'old'); mkdirSync(join(source, 'art'), {recursive:true});
   writeFileSync(join(source, 'art', 'spool.jsonl'), ids.map(id => JSON.stringify({ id, kind:'wake', for:'-',
     at:'2026-11-13 07:00:00', created:'2026-11-13 05:00:00', prompt:'Review my queue', note:'unknown work', origin:'agent:art', fails:3 })).join('\n'));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const access = fixtureSharing();
+  access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
   access.services.clock = {types:['approval'],operations:['approvals.piece-request']};
   let first = true;
   const options = {home, clock, next:true, authenticate: (req: import('node:http').IncomingMessage) => ({viewer:req.headers['x-fixture-agent'] ? {kind:'agent' as const,id:'art'} : owner, valid:()=>true}), sharing:()=>access, stdout:()=>{}, install(app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
     if (first) { importClock(app.db, source, clock.now()); first = false; }
+    if (noFiling) { const jobs = installClock(app.db, app.operations, app.live, ()=>access); app.onClose(jobs.close); }
     if (preinstalled) installApprovals(app.db, app.operations, app.live, ()=>access);
   }};
   let app = await startLoom(options);
@@ -199,4 +202,121 @@ it('offers the live adoption hint only to the current owner for executable eligi
     expect(JSON.parse(raw.toString()).records.every((w:{canVouch:boolean})=>!w.canVouch)).toBe(true);
     expect(s.call('clock.vouch',{target:`art:${ids[0]}`}).ok).toBe(false);
   } finally { for (const ws of sockets) { const closed = once(ws,'close'); ws.terminate(); await closed; } }
+});
+
+it('files an exact owning request, deduplicates retries and overlapping sets, and applies only on owner Allow', async () => {
+  const s = await setup(); const agent: Viewer = {kind:'agent',id:'art'};
+  const before = wakes(s.app.db), receipt = randomUUID(), input = {target:`art:${ids.slice(0,2).join(',')}`};
+  const first = s.call('clock.askVouch',input,agent,receipt);
+  expect(first.ok).toBe(true); if (!first.ok) return;
+  const card = first.value as {id:string;state:string;target:string};
+  expect(card).toMatchObject({state:'pending',target:input.target});
+  expect(s.call('clock.askVouch',input,agent,receipt)).toEqual(first);
+  expect(s.call('clock.askVouch',input,agent)).toEqual(first);
+  expect(load(s.app.db).approvals).toHaveLength(1);
+  expect(wakes(s.app.db)).toEqual(before);
+  const filed = load(s.app.db).approvals[0];
+  expect(filed).toMatchObject({for:'owner',who:{agent:'art',where:"loom's clock"},target:input.target});
+  for (const id of ids.slice(0,2)) expect(filed.details).toContain(`${id} fires ${new Date(before.find(w=>w.id===id)!.due).toISOString()}`);
+  expect(s.call('clock.askVouch',{target:`art:${ids.slice(1).join(',')}`},agent).ok).toBe(false);
+  await s.restart();
+  expect(s.call('clock.askVouch',input,agent)).toEqual(first);
+  expect(s.call('clock.askVouch',{target:`art:${ids.slice(1).join(',')}`},agent).ok).toBe(false);
+  expect(s.call('approvals.answer',{id:card.id,action:'allow'}).ok).toBe(true);
+  for (const id of ids.slice(0,2)) expect(wake(s.app.db,id)).toMatchObject({by:owner,state:'pending'});
+  expect(wake(s.app.db,ids[2])).toEqual(before[2]);
+  expect(load(s.app.db).approvals[0].state).toBe('used');
+});
+it('keeps denial suppression across restart and different target sets', async () => {
+  const s = await setup(), agent: Viewer = {kind:'agent',id:'art'};
+  const card = s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`},agent);
+  const before = wakes(s.app.db);
+  expect(s.call('approvals.answer',{id:card.id,action:'deny'}).ok).toBe(true);
+  await s.restart();
+  for (const target of [`art:${ids[0]}`,`art:${ids.slice(0,2).join(',')}`]) {
+    const r = s.call('clock.askVouch',{target},agent);
+    expect(r).toMatchObject({ok:false,code:'denied'});
+  }
+  expect(load(s.app.db).approvals).toHaveLength(1);
+  expect(wakes(s.app.db)).toEqual(before);
+});
+it('refuses private, other-agent, known-person, capability, malformed and steered requests without filing', async () => {
+  const s = await setup(); const input = {target:`art:${ids[0]}`};
+  for (const viewer of [{kind:'agent',id:'other'},{kind:'member',id:'guest'},{kind:'runner',id:'runner'},{kind:'service',id:'clock'}] as Viewer[]) {
+    expect(s.call('clock.askVouch',input,viewer).ok).toBe(false);
+  }
+  const original = wake(s.app.db,ids[0])!;
+  for (const patch of [
+    {member:'private'}, {agent:'other'}, {continuation:'opaque'}, {prompt:'../bad'},
+    {legacy:{...original.legacy,for:'person'}}, {legacy:{...original.legacy,continuation:'archived-handle'}}, {legacy:{...original.legacy,for_people:['person']}},
+    {legacy:{...original.legacy,for_why:'steered'}}, {legacy:{...original.legacy,for_why:'other-agent'}},
+  ] as Partial<Wake>[]) {
+    s.change(ids[0],{...original,...patch});
+    expect(s.call('clock.askVouch',input,{kind:'agent',id:'art'}).ok).toBe(false);
+  }
+  expect(load(s.app.db).approvals).toHaveLength(0);
+});
+it('fails closed when the owning filing role cannot file and rolls back a failed request', async () => {
+  const s = await setup(), input={target:`art:${ids[0]}`};
+  delete s.access.services.approvals;
+  expect(s.call('clock.askVouch',input,{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'denied'});
+  expect(load(s.app.db).approvals).toHaveLength(0);
+});
+
+it('binds the generated client to one canonical owning request and rejects approval spending', async () => {
+  const s = await setup(), agent: Viewer = {kind:'agent',id:'art'};
+  const result = s.value<{exit:number;stdout:string}>('clock.command',{argv:['ask-vouch',ids[1],ids[0],ids[1]]},agent);
+  expect(result.exit).toBe(0); expect(result.stdout).toContain('asked the owner on loom');
+  expect(load(s.app.db).approvals).toHaveLength(1);
+  expect(load(s.app.db).approvals[0].target).toBe(`art:${ids.slice(0,2).join(',')}`);
+  const bad = s.value<{exit:number}>('clock.command',{argv:['ask-vouch','--approval','a-aaaaaaaa',ids[0]]},agent);
+  expect(bad.exit).toBe(2);
+  expect(wakes(s.app.db).every(w=>w.state==='held')).toBe(true);
+});
+it('lets the current owner file but rejects visible work without target give-work authority', async () => {
+  const s = await setup(), input = {target:`art:${ids.slice(0,2).join(',')}`};
+  s.access.members.jonathan.agents = [];
+  expect(s.value<Wake[]>('clock.list',{agent:'art'}).map(w=>w.id)).toContain(ids[1]);
+  expect(s.call('clock.askVouch',input)).toMatchObject({ok:false,code:'denied'});
+  expect(load(s.app.db).approvals).toHaveLength(0);
+  s.access.members.jonathan.agents = ['art'];
+  expect(s.call('clock.askVouch',input)).toMatchObject({ok:true,value:{state:'pending'}});
+});
+it('rolls back a card persisted before an audit failure and permits retry of the same receipt', async () => {
+  const s = await setup(), agent: Viewer = {kind:'agent',id:'art'}, receipt=randomUUID();
+  const input={target:`art:${ids[0]}`}, before=load(s.app.db), rows=wakes(s.app.db);
+  const receipts=s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all();
+  s.app.db.exec("CREATE TRIGGER fail_filing BEFORE INSERT ON approvals_audit BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect(s.call('clock.askVouch',input,agent,receipt).ok).toBe(false);
+  expect(load(s.app.db)).toEqual(before); expect(wakes(s.app.db)).toEqual(rows);
+  expect(s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all()).toEqual(receipts);
+  s.app.db.exec('DROP TRIGGER fail_filing');
+  expect(s.call('clock.askVouch',input,agent,receipt)).toMatchObject({ok:true});
+  expect(load(s.app.db).approvals).toHaveLength(1);
+});
+it('keeps every maximum-size selection id and due time under the owning details cap', async () => {
+  const s = await setup(), base=wake(s.app.db,ids[0])!;
+  const which=Array.from({length:12},(_,n)=>`w-${n.toString(16).padStart(6,'0')}`).sort();
+  for(const id of which) s.app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(id,JSON.stringify({...base,id,note:'Ａ'.repeat(3000)}),s.clock.now());
+  expect(s.call('clock.askVouch',{target:`art:${which.join(',')}`},{kind:'agent',id:'art'}).ok).toBe(true);
+  const details=load(s.app.db).approvals[0].details!;
+  expect(details.length).toBeLessThanOrEqual(1000);
+  for(const id of which) expect(details).toContain(`${id} fires ${new Date(base.due).toISOString()}`);
+});
+
+it('does not copy private or project-scoped saved words into an agent-scoped approval even for an owner', async () => {
+  const s=await setup(), original=wake(s.app.db,ids[0])!;
+  for(const patch of [{member:'jonathan'},{project:'pond'}]) {
+    s.change(ids[0],{...original,...patch,note:'private words'});
+    expect(s.call('clock.askVouch',{target:`art:${ids[0]}`})).toMatchObject({ok:false,code:'invalid'});
+    expect(load(s.app.db).approvals).toHaveLength(0);
+  }
+});
+
+it('fails closed with no owning filing composition and leaves no card or receipt', async () => {
+  const s=await setup(false,true), before=wakes(s.app.db), approvals=load(s.app.db);
+  const receipts=s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all();
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'unavailable'});
+  expect(wakes(s.app.db)).toEqual(before); expect(load(s.app.db)).toEqual(approvals);
+  expect(s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all()).toEqual(receipts);
 });
