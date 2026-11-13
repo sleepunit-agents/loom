@@ -128,3 +128,11 @@ it('rolls back the already-updated standing use when audit insertion fails',asyn
   expect(s.app.db.prepare("SELECT key FROM approvals_meta WHERE key LIKE 'local-standing-use:%'").all()).toEqual([]);
   s.app.db.exec('DROP TRIGGER abort_audit');expect(s.call({},caller,receipt)).toMatchObject({ok:true,value:{uses:1}});
 });
+it('refuses a missing original receipt without spending or changing audit',async()=>{
+  const s=await setup();s.every();
+  s.app.db.prepare('DELETE FROM approvals_approvals WHERE id=?').run(s.approval);
+  const before=load(s.app.db);
+  for(const mode of ['use','check'] as const)expect(s.call({mode})).toMatchObject({ok:false,code:'denied'});
+  expect(load(s.app.db)).toEqual(before);
+  expect(s.app.db.prepare("SELECT key FROM approvals_meta WHERE key LIKE 'local-standing-use:%'").all()).toEqual([]);
+});
