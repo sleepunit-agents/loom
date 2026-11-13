@@ -86,7 +86,7 @@ function agentOfDir(contextDir: string, selection?: ConversationSelection): stri
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export interface LoomServerConfig {
-  /** Vector-backed memory tools use the selected context store; omitted keeps legacy overrides. */
+  /** Memory tools and raw memory readers use the selected context store; omitted keeps legacy overrides. */
   memorySelection?: MemorySelection;
   /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
   peopleSelection?: PeopleSelection;
@@ -247,7 +247,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
       // From a house, the tape carries only the digests of the conversation it holds (t-2118).
       const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller),
-        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])], config.peopleSelection);
+        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])], config.peopleSelection, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -486,7 +486,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ hours }) => {
       // From a house, only the digests of the conversation it holds (t-2118); the episodes are the agent's own.
-      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000, onlyConversation: bodyHouseConversation(contextDir, config.caller) });
+      const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000, onlyConversation: bodyHouseConversation(contextDir, config.caller), memorySelection: config.memorySelection });
       return { content: [{ type: 'text' as const, text: tape ?? `No episodes in the last ${hours ?? 24}h.` }] };
     },
   );
@@ -556,7 +556,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async () => {
       const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
-      const n = recomputeSalienceForContext(contextDir, Date.now(), counts);
+      const n = recomputeSalienceForContext(contextDir, Date.now(), counts, config.memorySelection);
       return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories; invalid timestamps: ${counts.invalidTimestamps}; future timestamps: ${counts.futureTimestamps}` }] };
     },
   );
@@ -693,7 +693,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ category, title, content, project, ttl, metadata, source }) => {
-      const { id, uuid } = propose(contextDir, { category, title, content, project, ttl, metadata, source });
+      const { id, uuid } = propose(contextDir, { category, title, content, project, ttl, metadata, source }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: `Proposal staged: #${id} "${title}" (${uuid}) — pending ratification` }] };
     },
   );
@@ -711,7 +711,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => {
-      const rows = listProposals(contextDir);
+      const rows = listProposals(contextDir, config.memorySelection);
       if (rows.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No pending proposals.' }] };
       }
@@ -748,7 +748,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ id, title, content, category, project, ttl }) => {
       try {
-        const ref = await ratifyProposal(contextDir, id, { title, content, category, project, ttl });
+        const ref = await ratifyProposal(contextDir, id, { title, content, category, project, ttl }, config.memorySelection);
         return { content: [{ type: 'text' as const, text: `Proposal #${id} ratified → ${ref.ref}` }] };
       } catch (err) {
         if (err instanceof UnknownProposalError) {
@@ -773,7 +773,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ id }) => {
-      const removed = rejectProposal(contextDir, id);
+      const removed = rejectProposal(contextDir, id, config.memorySelection);
       return {
         content: [{
           type: 'text' as const,
