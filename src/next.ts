@@ -47,6 +47,7 @@ import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verif
 import { installTouched, type TouchSource } from './core/touched/index.js';
 import { listenForTouchSources } from './core/touched/group.js';
 import { prepareTouchSources } from './core/touched/prepare.js';
+import { installAttentionMaintenance } from './pieces/attention/daemon.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
@@ -145,6 +146,7 @@ export function installNext(app: Foundation, options: NextOptions) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
+  installAttentionMaintenance(app);
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
