@@ -4,6 +4,7 @@ import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type
 import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
+import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
@@ -17,6 +18,8 @@ const target = z.object({ thread: id });
 export interface Options {
  db: Db; operations: Operations; live: Live; clock: Clock; sharing(): Sharing; key: WordsKey;
  runtime: RuntimeDelivery; hold: Hold; attention: Attention; days?: number;
+ /** Authoritative new-side conversation metadata; absent means step reads are denied. */
+ conversation?(id: string): StepConversation | undefined;
 }
 export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const {db,operations,live,clock,key} = o;
@@ -114,6 +117,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },
  }));
  let closed=false;
+ installConversationSteps({...o,days,closed:()=>closed});
  const pending = new Map<string,Promise<void>>();
  type End = {thread:string;conversation:string;generation:number;action:'archive'|'delete'};
  const endKey=(place:string)=>`pending-end:${place}`;

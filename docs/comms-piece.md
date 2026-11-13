@@ -12,8 +12,8 @@ path. Neither running piece nor browser reads the old stores.
 
 ## Current operations and records
 
-All `comms.*` operations require a socket authenticated as a real page session
-and the thread's original member, who must still own the agent. Ownership of a
+All `comms.*` operations require a socket authenticated as a real page session.
+Private thread operations also require the thread's original member, who must still own the agent. Ownership of a
 project or the household never grants access to another member's thread.
 `Authentication.window` is a trusted server capability, never a token claim.
 
@@ -23,6 +23,7 @@ project or the household never grants access to another member's thread.
 | `comms.open` | Agent, client id, words, optional project; thread/sequence acknowledgement. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
+| `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
 | `comms.change` | Thread and title/project/pin/unpin/archive/unarchive/read/stop/delete action. |
 | `comms.resend` | Thread and sequence; retry an undelivered member message. |
 | `comms.answer` | Thread, attention reference, yes/no; encrypted answer record. Freeform words are refused pending the private attention seam. |
@@ -83,7 +84,7 @@ data does not remove the behavior it delivered.
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
 | Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; batch validation, run-scoped identity, timing/body limits, heartbeat and non-thread conversation steps missing. |
-| `conversationSteps` | Encrypted step records | Missing: viewer gate, private-thread fail-closed routing, pages of 100, cap of 1000, export exclusion and retention. Importer currently does not import this table. |
+| `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Runtime writes, the per-conversation cap of 1000, Live records, production lookup binding and conversation-page UI remain missing. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
@@ -327,3 +328,32 @@ source rather than treated as a completed import. No real home was imported.
 All 247 focused tests, TypeScript checking and diff checks pass. No web
 code changed and no local browser ran. The browser clock correction passed CI on `03e906e`; that result does not
 validate subsequent heads.
+
+Conversation-step page reads now use `comms.conversationSteps` with a trusted
+`Options.conversation` lookup. It supplies agent, venue and a version that changes
+on replacement, including deletion/recreation; it must read only the new side.
+Missing lookup or metadata denies access before crypto. The operation uses
+`maySee` for the ordinary agent viewer gate, requires a real member page session,
+and refuses private (`loom`/`comms`) and spawned venues even for household owners.
+A live private-thread row or deleted-thread tombstone also prevents fallback to
+an agent-wide page. Thread membership never grants this separate page access.
+
+Pages contain at most 100 retained labels, ordered by source sequence, with a
+before cursor. Only run/id/tool/state are decoded from the separate envelope;
+extra fields and body text cards are omitted. Crypto runs outside transactions.
+The commit phase checks session validity through core, current conversation
+identity/policy, exact selected rows and every retention deadline after all rows
+finish decrypting. A row expiring during crypto returns routing facts only.
+No read result enters operation retry storage.
+
+The first new page regression failed on the incoming head because the operation
+was absent. Seventeen focused cases now cover paging, denied doors and viewers,
+private venues/live/deleted threads, missing lookup, suspended-crypto revocation,
+conversation replacement/deletion, session invalidation, closure, changed rows,
+exact expiry without a sweep, generic crypto errors and body-text suppression.
+Both same-key and rekey importer tests now read their imported labels through
+this operation. All 299 affected tests and TypeScript checking pass. No web
+change or local browser run. Runtime writes, cap enforcement, Live updates,
+production metadata lookup and conversation-page UI remain unfinished. This new
+permission surface awaits the remaining aggregate security review before merge;
+review budgets stay backend/security 2/3 and importer 1/3.

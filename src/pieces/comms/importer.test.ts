@@ -121,8 +121,10 @@ for(const sameKey of [true,false])it(`preserves conversation steps without plain
  expect(await importComms(app.db,s.from,to)).toMatchObject({imported:false,steps:2});
  s.db.prepare("UPDATE conversation_steps SET state='failed' WHERE seq=17").run();
  await expect(importComms(app.db,s.from,to)).rejects.toThrow('different');
- const comms=installComms({...app,clock,key,days:1,sharing:()=>({members:{},projects:{},services:{}}),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),attention:{answer:()=>({ok:true,value:{}})}});
+ const comms=installComms({...app,clock,key,days:1,sharing:()=>({members:{jonathan:{owner:false,agents:['art']}},projects:{},services:{}}),conversation:id=>id==='cv-bridge'?{agent:'art',venue:'discord',version:'source-1'}:undefined,runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),attention:{answer:()=>({ok:true,value:{}})}});
  cleanup.push(()=>{void comms.close();});
+ const page=await app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.conversationSteps',{conversation:'cv-bridge'},undefined,true);
+ expect(page).toMatchObject({ok:true,value:{steps:[{seq:17,conversation:'cv-bridge',text:'private bridge step',run:'private-run',tool:'private-tool',state:'done'}]}});
  clock.advance(Date.parse('2026-11-13T01:03:00Z')-clock.now()-1);
  expect((app.db.prepare('SELECT words FROM comms_conversation_steps WHERE seq=17').get() as {words:Buffer|null}).words).not.toBeNull();
  clock.advance(1);
