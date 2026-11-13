@@ -54,6 +54,7 @@ it('resolves by digest with the old files absent and sees revocation on another 
     { ...record('duplicate'), revoked: 'before' }, record('duplicate', 'agent:art'),
   ] }, {}))();
   // Unrelated undecodable rows prove the request does not enumerate token or usage tables.
+  new HouseholdRows(f.db, 'token_use').put('valid-unrelated', 'original-usage');
   f.db.pragma('ignore_check_constraints = ON');
   f.db.prepare("INSERT INTO household_tokens VALUES ('unrelated', 'not-json')").run();
   f.db.prepare("INSERT INTO household_token_use VALUES ('unrelated', 'not-json')").run();
@@ -67,6 +68,8 @@ it('resolves by digest with the old files absent and sees revocation on another 
   expect(resolver.resolve('duplicate')).toMatchObject({ kind: 'agent', agent: 'art' });
   for (const token of ['gone', 'bad-review', 'expired', 'unknown']) expect(resolver.resolve(token)).toBeNull();
   expect(new HouseholdRows(f.db, 'token_use').get(digest('owner'))).toBe('2026-11-12T12:00:00.000Z');
+  expect(new HouseholdRows(f.db, 'token_use').get('valid-unrelated')).toBe('original-usage');
+  expect(f.db.prepare("SELECT body FROM household_token_use WHERE id = 'unrelated'").get()).toEqual({ body: 'not-json' });
   const second = new Database(join(f.home, 'loom.db'));
   try {
     new HouseholdRows(second, 'tokens').put(digest('owner'), [{ ...record('owner'), revoked: 'now' }]);
