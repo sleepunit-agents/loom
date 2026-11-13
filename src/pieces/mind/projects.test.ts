@@ -133,7 +133,13 @@ it('orders and deduplicates people as agent, People cards, feed authors, then co
 });
 it('refreshes checked/not-checked/stale wording at the exact field deadline',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond',where:{now:{value:'On track',verified_at:'2026-11-12T12:00:00Z',stale_after_days:2},next:{value:'Review'}}});const app=await fixture(a.database.name);
- const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'project.hub',scope:'art:pond'}));const before=JSON.parse((await initial)[0].toString()).records[0];expect(before.fields.find((f:{key:string})=>f.key==='now').state).toBe('checked 1 days ago');expect(before.fields.find((f:{key:string})=>f.key==='next').state).toBe('not checked');
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'project.hub',scope:'art:pond'}));const before=JSON.parse((await initial)[0].toString()).records[0];expect(before.fields.find((f:{key:string})=>f.key==='now').state).toBe('checked 1 day ago');expect(before.fields.find((f:{key:string})=>f.key==='next').state).toBe('not checked');
  (app.operations.clock as FakeClock).advance(86400000);expect(read(app,'art:pond').fields.find(f=>f.key==='now')?.state).toBe('checked 2 days ago');
  const stale=new Promise<void>(resolve=>{const changed=(raw:Buffer)=>{if(JSON.parse(raw.toString()).record?.fields.some((f:{state:string})=>f.state==='stale for 2 days')){ws.off('message',changed);resolve();}};ws.on('message',changed);});(app.operations.clock as FakeClock).advance(1);await stale;
+});
+
+it('passes only the new conversation owner’s filed ids to Tasks',async()=>{
+ const a=source();a.write({slug:'pond',name:'Pond'});const app=await fixture(a.database.name,undefined,{conversations:{read:()=>({available:true,conversationIds:['cv-123456789abc'],items:[]})}});
+ expect(app.operations.call('direct',owner,'tasks.create',{title:'Thread work',source:'conversation:cv-123456789abc',actor:'owner',at:'2026-11-13T10:00:00Z'},'filed')).toMatchObject({value:{result:{ok:true}}});
+ expect(read(app,'art:pond').sections[0].groups?.flatMap(g=>g.items).map(i=>i.title)).toEqual(['Thread work']);
 });

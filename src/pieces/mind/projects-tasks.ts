@@ -17,7 +17,7 @@ export function taskGroups(tasks:ScopedTask[],links:Link[],readyIds:Set<string>,
  const names=q.names.map(n=>new RegExp(`(^|[^a-z0-9-])${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}([^a-z0-9-]|$)`,'i'));
  const matches=(t:ScopedTask)=>q.names.includes(t.project??'')||names.some(re=>re.test([t.title,t.description].join('\n')));
  const groups:ProjectGroup[]=[{title:'Waiting on you',waiting:true,items:[]},{title:'Ready',items:[]},{title:'Blocked or in progress',items:[]},{title:'Done lately',items:[]}];
- const ordered=tasks.map((task,index)=>({task,index})).sort((a,b)=>a.task.status==='closed'&&b.task.status==='closed'?Date.parse(b.task.closedAt??'')-Date.parse(a.task.closedAt??'')||a.index-b.index:a.task.priority-b.task.priority||a.index-b.index);
+ const ordered=tasks.map((task,index)=>({task,index})).sort((a,b)=>(a.task.status==='closed'?1:0)-(b.task.status==='closed'?1:0)||(a.task.status==='closed'&&b.task.status==='closed'?Date.parse(b.task.closedAt??'')-Date.parse(a.task.closedAt??'')||a.index-b.index:a.task.priority-b.task.priority||a.index-b.index));
  for(const {task:t} of ordered){
   if(t.id===q.card.links.epic)continue;
   const inside=tree.has(t.id),closed=t.status==='closed';

@@ -11,7 +11,9 @@ export type {ProjectRecord} from './projects-model.js';
 const itemSchema=z.object({title:z.string(),ref:z.string().optional(),when:z.string().optional(),changed:z.string().optional(),status:z.string().optional(),body:z.string().optional(),href:z.string().optional(),who:z.array(z.string()).optional(),waiting:z.boolean().optional(),new:z.boolean().optional()}).strict();
 const sectionSchema=z.object({available:z.boolean(),error:z.string().optional(),items:z.array(itemSchema).optional(),groups:z.array(z.object({title:z.string(),waiting:z.boolean().optional(),items:z.array(itemSchema)}).strict()).optional(),total:z.number().int().nonnegative().optional(),counts:z.record(z.string(),z.number()).optional(),activity:z.string().optional(),expires:z.number().finite().optional(),conversationIds:z.array(z.string().regex(/^cv-[0-9a-f]{12}$/)).max(200).optional()}).strict();
 const sectionItems=(s:ProjectSection)=>[...(s.items??[]),...(s.groups??[]).flatMap(g=>g.items.map(i=>({...i,...(g.waiting?{waiting:true}:{})})))];
+const activeMemory='archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))';
 const day=86400000;
+const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
 export function installMindProjects(operations:Operations,live:Live,options:{agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:Mind;tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}){
@@ -23,7 +25,7 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
   if(!has(db,'memories'))return {key:'memories',label:'Memories',available:false};
   if(!maySee(v,{type:'memory',agent:q.agent},options.sharing()))return {key:'memories',label:'Memories',available:false};
   const cols=(db.pragma('table_info(memories)') as {name:string}[]).map(c=>c.name);
-  const where=`archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) AND project IN (${q.names.map(()=>'?').join(',')})`;
+  const where=`${activeMemory} AND project IN (${q.names.map(()=>'?').join(',')})`;
   const args=[new Date(q.now).toISOString(),...q.names];
   interface Row {ref:string;category:string;title:string;content:string;created:string;updated:string|null}
   const fields='ref,category,title,content,created,updated';
@@ -81,7 +83,7 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
   dated.sort((a,b)=>Date.parse(b.when!)-Date.parse(a.when!));
   const spark=Array.from({length:7},()=>0);for(const i of dated){const back=Math.floor((now-Date.parse(i.when!))/day);if(back>=0&&back<7)spark[6-back]++;}
   const activity=latest([row.updated,...sections.filter(s=>['memories','notes'].includes(s.key)&&s.available&&!s.error&&s.activity).map(s=>s.activity!)]);
-  return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':now>Date.parse(f.verified_at)+(f.stale_after_days??14)*day?`stale for ${Math.floor((now-Date.parse(f.verified_at))/day)} days`:`checked ${Math.floor(Math.max(0,now-Date.parse(f.verified_at))/day)} days ago`}))};
+  return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':now>Date.parse(f.verified_at)+(f.stale_after_days??14)*day?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
  // Live registers separate index/hub projections so paused cards never invoke roles just to list them.
  const hub=(id:string,v:Viewer)=>read(id,v,true);
@@ -90,7 +92,7 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
  const changed=(c:{type:string})=>['project','memory','person','task','change','core.access','household.sharing'].includes(c.type)||c.type==='note'||c.type.startsWith('notes.')||c.type.startsWith('comms.')||c.type.startsWith('attention.');
  const expires=(r:ProjectRecord)=>{
   const db=sources.get(r.agent),now=operations.clock.now(),deadlines=Object.values(r.card.where).flatMap(f=>f.verified_at?[Date.parse(f.verified_at)+(f.stale_after_days??14)*day+1,Date.parse(f.verified_at)+(Math.floor((now-Date.parse(f.verified_at))/day)+1)*day]:[]);
-  if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE archived=0 AND julianday(expires_at)>julianday(?) AND project IN (${names.map(()=>'?').join(',')})`).get(new Date(now).toISOString(),...names) as {at:string|null};if(row.at)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
+  if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE ${activeMemory} AND expires_at IS NOT NULL AND project IN (${names.map(()=>'?').join(',')})`).get(new Date(now).toISOString(),...names) as {at:string|null};if(row.at)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
   deadlines.push(...r.sections.flatMap(s=>[...(s.expires?[s.expires]:[]),...(s.activity?[Date.parse(s.activity)+7*day]:[])]));
   deadlines.push(...r.sections.flatMap(sectionItems).flatMap(i=>[...(i.when?Array.from({length:7},(_,n)=>Date.parse(i.when!)+(n+1)*day):[]),...(i.changed?[Date.parse(i.changed)+7*day]:[])]));
   return deadlines.filter(t=>t>now).sort((a,b)=>a-b)[0];
@@ -100,7 +102,7 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
  const memoryRead=(id:string,v:Viewer):ProjectMemory|undefined=>{
   const colon=id.indexOf(':');if(colon<1)return;const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
   if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories'))return;
-  const row=db.prepare('SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ref=? AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))').get(ref,new Date(operations.clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
+  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ref=? AND ${activeMemory}`).get(ref,new Date(operations.clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
  operations.register(operation({name:'mind.projectMemoryRead',input:z.object({id:z.string().min(3).max(300)}).strict(),output:z.unknown(),may:(v,i)=>maySee(v,{type:'memory',agent:i.id.split(':')[0]},options.sharing()),run:(ctx,i)=>memoryRead(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Memory not found'}}));

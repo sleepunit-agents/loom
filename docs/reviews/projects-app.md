@@ -76,3 +76,34 @@ between ready and blocked. Focused tests pin these decisions.
 
 GitHub then reported CONFLICTING with concurrent Clock/Changes/runner work. Rebase
 is permitted only for that reported conflict; the merged worktrees stay untouched.
+
+## Round 3 — BLOCKING / UNCONVERGED; bounded review ended
+
+TREE sha256:3f599d25373d9725115225ce5b9bd983df19ce71923f2a8a3af8b0879c820cd8.
+No fourth round. Author decides after folding real findings and green validation.
+
+- Combined-scope central policy: contract misread / out of scope. The standing
+  rule explicitly puts project before agent; this PR does not change policy.
+  Private readers call `maySee(v,{type:'memory',agent},sharing)` and never attach
+  project scope. Tests deny a project-only member and independently gate memory
+  from a project-only service type grant. Carrier: unchanged `src/policy.ts` and
+  the project brief's explicit project-before-agent ruling. Changing that rule
+  would break the intended policy for ordinary project-scoped records.
+- Browser fixture lacked memory metadata: actionable. Added the source-compatible
+  metadata column; the same hosted browser exercises real People projections.
+- Production People project callback untested: actionable. Added real next-mode
+  composition test reading the People destination and resolving its project;
+  the existing hosted browser now follows that actual People link into Projects.
+- Repeated active memory predicate: actionable. Shared between hub, upcoming
+  expiry selection and direct memory reads.
+
+Post-rebase author check caught that both branches removed opposite duplicate
+HouseholdDatabase imports, leaving none. Restored one; nine failing next-mode
+checks then passed. This fix was after the final freeze and is author-tested,
+not cold-clear. The new main base already fixed the duplicate import; removed
+our now-unneeded disposable-before repair so final before evidence is exact base.
+
+Final raw verdict stays BLOCKING / UNCONVERGED. Real findings are folded with
+checks; there is no known blocking defect in the authored final result. No
+permission rule, source content, host, systemd, installed piece or real import
+changed. Final exact-head CI and hosted screenshots are still required to merge.
