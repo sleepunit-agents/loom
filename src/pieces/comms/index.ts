@@ -295,7 +295,10 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   run(ctx,i) {const t=thread(db,i.thread)!;const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(t.id,i.seq) as MessageRow|undefined;
    if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    if(!row?.words)return fail('conflict','Message words are no longer kept');
-   return {thread:t.id,seq:i.seq};},after:(i,r)=>sendAfter(i,r),
+   return {thread:t.id,seq:i.seq};},
+  // A failed/sending receipt is uncertain even when a person asks again.
+  // Only an authoritative runtime fence may authorize another delivery.
+  after:(_i,r)=>{if(r.ok&&!closed)void reconcileDeliveries();},
  }));
  operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async (i,ctx)=>{

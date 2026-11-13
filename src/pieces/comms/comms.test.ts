@@ -817,6 +817,32 @@ for(const reason of ['archive','expiry','ownership'] as const)it(`settles stale 
   expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record).delivery).toBe('failed');
  }
 });
+for(const state of ['sending','failed'] as const)for(const receipt of ['accepted','not-accepted','unknown','error','absent'] as const)it(`checks receipts before a window resend (${state}, ${receipt})`,async()=>{
+ let released=false,decrypts=0,lookups=0;
+ const s=await setup({key:k=>({...k,open:async words=>{decrypts++;return k.open(words);}}),hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),
+  receipt:receipt==='absent'?undefined:async()=>{lookups++;if(receipt==='error')throw new Error('unavailable');return receipt;}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:state}),place);
+ const before=decrypts;released=true;
+ const sent=s.call('resend',{thread:place,seq:1}),recovery=s.comms.reconcileDeliveries();
+ expect((await sent).ok).toBe(true);await recovery;
+ expect(lookups).toBe(receipt==='absent'?0:1);
+ expect(s.deliveries).toHaveLength(receipt==='not-accepted'?1:0);
+ expect(decrypts-before).toBe(receipt==='not-accepted'?1:0);
+ expect(s.comms.trace('art',place).messages[0].delivery).toBe(receipt==='accepted'||receipt==='not-accepted'?'delivered':state);
+});
+it('coalesces window resends behind a receipt fence and resumes a held send',async()=>{
+ let released=false,lookups=0,resolve:(value:'not-accepted')=>void=()=>{};
+ const s=await setup({hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),receipt:async()=>{lookups++;return new Promise(r=>{resolve=r;});}});
+ const place=await s.open();await s.comms.deliver('art',place,1);released=true;
+ expect((await s.call('resend',{thread:place,seq:1})).ok).toBe(true);await s.comms.reconcileDeliveries();
+ expect(s.deliveries).toHaveLength(1);expect(lookups).toBe(0);
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'failed'}),place);
+ await Promise.all([s.call('resend',{thread:place,seq:1}),s.call('resend',{thread:place,seq:1})]);
+ expect(lookups).toBe(1);expect(s.deliveries).toHaveLength(1);
+ const recovery=s.comms.reconcileDeliveries();resolve('not-accepted');await recovery;
+ expect(s.deliveries).toHaveLength(2);
+});
 for(const result of ['accepted','not-accepted','unknown','error'] as const)it(`reconciles uncertain runtime receipts without blind replay (${result})`,async()=>{
  let released=false,decrypts=0;const receipts:unknown[]=[];
  const s=await setup({key:key=>({...key,open:async words=>{decrypts++;return key.open(words);}}),hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),receipt:async facts=>{receipts.push(facts);if(result==='error')throw new Error('runtime unavailable');return result;}});

@@ -238,3 +238,16 @@ plans and an overdue helper behind a newer child. The existing browser proof now
 checks timer-only quiet/stuck transitions and a step-limit alarm; it runs in CI.
 All 199 focused tests and TypeScript checking pass. Production runtime bindings,
 queued/busy timing and final-start resend lifecycle remain required.
+
+Window resend now uses the existing coalesced delivery recovery rather than
+calling delivery directly. Eleven new cases initially failed: accepted/unknown
+receipts were bypassed, absent receipt adapters still decrypted, and overlapping
+resends skipped the receipt fence. They now cover sending/failed states with
+accepted, not-accepted, unknown, failed or missing lookups, overlapping window
+resends and staging-held recovery. Accepted settles without crypto; only a
+fenced not-accepted retries; unknown/error/missing preserves uncertainty.
+All 210 focused tests and TypeScript checking pass. The recovery pass may also
+reconcile other outstanding sends, as startup recovery already does.
+This does not implement final-start retry. Duplicate open/send acknowledgements
+still use sendAfter and need the same uncertainty audit before release; the
+trusted direct deliver capability also requires disciplined callers.
