@@ -55,3 +55,31 @@ resources, identity-only extraction and a rolled-back card transaction.
 The mind reading-piece installer must bind each source directory and close its
 listeners with the daemon. The source-local types above map to its live record
 identities. No import or change to existing content is part of that move.
+
+## Knowledge read foundation
+
+`installMindKnowledge(operations, live, {path, sharing})` installs the read-only
+Knowledge projection. The composition root supplies the commons knowledge path
+from household database metadata (or a fixture); it closes the returned reader
+after stopping the daemon. It retains one read-only SQLite connection, uses a
+read transaction for each projection, and never creates a missing store. A store
+created after installation requires a daemon restart.
+
+| Old reader | New surface |
+| --- | --- |
+| `knowledgeView` list | `mind.knowledgeList` |
+| `knowledgeView` open page | `mind.knowledgeRead({slug})` |
+| Active pages and each page's own changes | `knowledge` live records, id = slug |
+| Freshness and recently verified aging | Live deadlines at 7, 20 and 30 days |
+
+This is an additive read foundation, not the complete Knowledge app. Existing
+30-day freshness, 7-day recent verification, stale outcome, author, citations,
+referring pages and display caps are preserved. Only central policy grants
+access; partial agent ownership does not grant the household Knowledge surface.
+There are no new content tables, migrations, importers, jobs or commands.
+
+The composition root still needs to register `core.touched` and bind/close its
+commons socket under the daemon home lock. It must refresh dependent knowledge
+records when a referring page changes, since `citedBy` is derived across pages.
+Verification actions, People, Projects, Activity, generated clients and all four
+apps remain subsequent units. This installer is not yet registered in next mode.
