@@ -1039,6 +1039,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 
+- Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
