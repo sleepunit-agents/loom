@@ -120,3 +120,19 @@ it('real Gateway resumes the durable cursor after restart and retries failed raw
  resumed.frame({op:0,t:'MESSAGE_CREATE',s:2,d:message().data});await until(()=>g.inbox.load()?.seq===2);expect(g.inbox.pending()).toHaveLength(1);
  await b.transport.close();
 });
+it.each([{bot:'201'},{workspace:'101'},{agent:'mark'},{id:'another-venue'},{tokenSecret:'replacement'}])('isolates a fresh receiving identity at unchanged credential generation %j',async patch=>{
+ const f=await fixture();await f.inbox.commit(ready(),cursor(1));await f.inbox.commit(message(),cursor(2));const [old]=f.inbox.pending();
+ const replacement={...venue,...patch};put(f.app.db,'venues',replacement);
+ const fresh=discordInbox(f.app.db,f.clock,{venue:replacement,credentialEpoch:'generation-one'},()=> 'generation-one');
+ expect(fresh.load()).toBeUndefined();expect(fresh.pending()).toEqual([]);expect(()=>fresh.consume(old.id)).toThrow('Unknown');
+ await fresh.commit({...ready(),data:{user:{id:replacement.bot},session_id:'SESSION_PRIVATE'}},cursor(1));await fresh.commit(message(),cursor(2));
+ const [next]=fresh.pending();expect(next.id).not.toBe(old.id);fresh.consume(next.id);
+ expect(f.app.db.prepare('SELECT state,event FROM bridges_discord_receipts WHERE id=?').get(old.id)).toEqual({state:'pending',event:JSON.stringify(message().data)});
+});
+it('enforces requested and maximum page sizes with more eligible candidates',async()=>{
+ const f=await fixture();await f.inbox.commit(ready(),cursor(1));
+ for(let seq=2;seq<=71;seq++)await f.inbox.commit(message(seq,String(300+seq)),cursor(seq));
+ expect(f.inbox.pending(1)).toHaveLength(1);expect(f.inbox.pending()).toHaveLength(32);
+ const first=f.inbox.pending(64);expect(first).toHaveLength(64);const last=f.inbox.pending(64,first[63]);expect(last).toHaveLength(6);
+ expect(new Set([...first,...last].map(row=>row.id)).size).toBe(70);
+});
