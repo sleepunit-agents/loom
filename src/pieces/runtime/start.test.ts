@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { fixture } from '../../fixture.js';
+import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
+import { fixture, fixtureSharing } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
 import { wake } from '../clock/store.js';
@@ -15,10 +15,10 @@ const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
 const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
-async function setup(staging=false){
+async function setup(staging=false,sharing?:()=>Sharing){
   const home=mkdtempSync(join(tmpdir(),'runtime-start-'));fixture(home);
   cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
-  const clock=new FakeClock();let app=await startLoom({home,clock,next:true,staging,stdout:()=>{}});
+  const clock=new FakeClock();let app=await startLoom({home,clock,next:true,staging,sharing,stdout:()=>{}});
   cleanups.push(()=>app.close());
   app.db.transaction(()=>{
     signin(app).tokens.replace({v:1,tokens:[]},{});
@@ -36,7 +36,7 @@ async function setup(staging=false){
   const jobOf=(r:ReturnType<typeof call>):string=>{expect(r.ok).toBe(true);return (r as {ok:true;value:{job:string}}).value.job;};
   const schedule=async()=>{const r=call('clock.in',{agent:'art',prompt:'PRIVATE wake words',note:'fixture',when:'1s'});expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;clock.advance(1000);await settle();return id;};
   return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,
-    get store(){return runtimeStore(app.db);},async restart(){await app.close();app=await startLoom({home,clock,next:true,staging,stdout:()=>{}});}};
+    get store(){return runtimeStore(app.db);},async restart(){await app.close();app=await startLoom({home,clock,next:true,staging,sharing,stdout:()=>{}});}};
 }
 it('offers real startBody over HTTP and preserves the source intent across new receipts and restart',async()=>{
   const f=await setup(),r=await f.post(f.member,'startBody',f.input),job=f.jobOf(r);
@@ -174,4 +174,27 @@ it('publishes only metadata for successful starts and emits no brief words',asyn
   }
   expect(f.store.read('job',job)).toMatchObject({state:'queued'});
   expect(JSON.stringify(changed.mock.calls)).not.toContain(f.input.brief);
+});
+it('keeps agent-scoped service starts denied with missing, partial, complete and revoked grants',async()=>{
+  const access=fixtureSharing(),f=await setup(false,()=>access),service:Viewer={kind:'service',id:'worker'};
+  for(const grants of [{types:[],operations:[]},{types:['runtime.job'],operations:[]},
+    {types:[],operations:['runtime.startBody']},{types:['runtime.job'],operations:['runtime.startBody']},
+    {types:[],operations:[]}]) {
+    access.services.worker=grants;
+    // Central mayCreate separately checks the agent scope; a service type grant
+    // does not confer that agent's authority, even with an operation grant.
+    expect(f.call('runtime.startBody',f.input,service)).toMatchObject({ok:false,code:'denied'});
+  }
+  expect(f.store.ids('job')).toEqual([]);
+});
+it('updates a late-confirmed job without unholding its wake or creating another start',async()=>{
+  const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+  f.clock.advance(START_CONFIRM_MS);await settle();
+  expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
+  expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+  expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+  expect(f.store.read('job',job)?.state).toBe('running');
+  expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
+  expect(f.call('clock.now',{id})).toMatchObject({ok:false,code:'invalid'});
+  expect(f.store.ids('job')).toEqual([job]);
 });

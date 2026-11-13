@@ -666,7 +666,8 @@ house configuration, and stores the brief in `runtime_inputs`. Its reply is
 `{job,state}`, never a claim that a body has started. It is available through
 the same registry doors as the runtime role. Members must own the requested
 agent; an agent may start its own work under central scope checks. Runners cannot
-create starts; services require explicit central type and operation grants.
+create starts. Service type/operation grants confer no agent authority: current
+central `mayCreate` also denies agent-scoped service starts with both grants.
 Private member work and model-account selection
 fail unavailable until their trusted delivery/account implementations land.
 An optional model request reaches the runner's one-time input payload.

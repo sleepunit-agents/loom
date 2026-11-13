@@ -22,7 +22,8 @@ export function installStartBody(db: Db, operations: Operations, sharing: () => 
       const scope={type:'runtime.job',agent:input.agent,project:input.project,member:input.member};
       const access=sharing();
       // Same creation rule as Clock: members must own the target, agents need
-      // independently visible agent/project scope, services need central grants.
+      // independently visible agent/project scope. Service grants alone confer
+      // no agent authority under central mayCreate.
       return mayCreate(viewer,scope,access,'runtime.startBody')
         && (viewer.kind!=='member' || mayAct(viewer,scope,access,'give-work'));
     },
