@@ -594,7 +594,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      ...(r.kind==='message'&&['sending','held','failed','delivered'].includes(delivery)?{delivery}:{}),
     };
    });
-   return {thread:t.id,conversation:t.conversation,archived:t.archived,working:t.working,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),messages};
+   return {thread:t.id,conversation:t.conversation,...(t.project?{project:t.project}:{}),archived:t.archived,working:t.working,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),messages};
   },
   reader(binding) {
    // Snapshot trusted routing facts so later caller mutation cannot widen this capability.

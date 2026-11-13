@@ -53,6 +53,9 @@ it('runs private conversation input/reply/status through actual next auth, socke
  expect(await f.post(body,'runtime.reply',{id:'reply-1',text:'PRIVATE outbound sentinel'})).toMatchObject({ok:true});
  const history=await f.socket('comms.messages',{thread});expect(JSON.stringify(history)).toContain('PRIVATE outbound sentinel');
  expect(await f.post(body,'runtime.conversationStatus',{state:'working'})).toMatchObject({ok:true,value:{stop:false}});
+ expect(await f.socket('comms.change',{thread,action:'stop'})).toMatchObject({ok:true});
+ expect(await f.post(body,'runtime.conversationStatus',{})).toMatchObject({ok:true,value:{stop:true}});
+ expect(await f.post(body,'runtime.conversationStatus',{})).toMatchObject({ok:true,value:{stop:false}});
  expect(await f.socket('comms.send',{thread,id:'bcdefghijklmnopq',text:'PRIVATE second message'})).toMatchObject({ok:true});
  expect(value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
  expect(await f.post(f.runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:true});
@@ -93,8 +96,10 @@ it('keeps authenticated job proof across restart, fences revoked bodies and neve
  const viewer=auth.token(hash(body))!.viewer;
  expect(await f.app.operations.callAsync('direct',{...viewer},'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
  const pending=f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'racing-revoke',text:'must not post after revoke'});
+ const pendingRead=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
  auth.tokens.change(tokens=>{for(const token of tokens)if(token.role===`agent:art@${job}`)token.revoked=new Date(f.clock.now()).toISOString();});
  expect(await pending).toMatchObject({ok:false});
+ expect(await pendingRead).toMatchObject({ok:false});
  expect(f.app.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE id='racing-revoke'").get()).toEqual({n:0});
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:false});
  expect(await f.post(body,'runtime.reply',{id:'late',text:'must not post'})).toMatchObject({ok:false});
@@ -151,7 +156,7 @@ it('resumes a staging-held archive end without restarting and revokes its body c
  expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('stopped');
  expect(signin(f.app).token(hash(body))).toBeUndefined();
 });
-it('rechecks hosting, house, linkage and ownership after reply crypto has begun',async()=>{
+it('rechecks hosting, house, linkage and ownership during read and reply crypto',async()=>{
  for(const drift of ['hosting','house','linkage','ownership'] as const){
   const f=await setup();await f.open();let jobs:string[]=[];
   for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
@@ -160,6 +165,7 @@ it('rechecks hosting, house, linkage and ownership after reply crypto has begun'
   await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
   const viewer=signin(f.app).token(hash(body))!.viewer;
   const pending=f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'drift-reply',text:'must not post after drift'});
+  const pendingRead=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
   f.app.db.transaction(()=>{const store=runtimeStore(f.app.db);
    if(drift==='hosting'){const {changedAt:_,...box}=store.read('box','a')!;store.put('box',{...box,mayHost:[]},f.clock.now());}
    else if(drift==='house'){const {changedAt:_,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
@@ -167,6 +173,22 @@ it('rechecks hosting, house, linkage and ownership after reply crypto has begun'
    else {const h=new HouseholdDatabase(f.app.db).household(f.home)!;new HouseholdDatabase(f.app.db).replace(f.home,{v:1,agents:h.agents,owner:'pollock',members:[{person:'pollock',role:'owner',agents:'*'},{person:'jonathan',role:'member',agents:[]}]});}
   })();
   expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(await pendingRead).toMatchObject({ok:false,code:'denied'});
   expect(f.app.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE id='drift-reply'").get()).toEqual({n:0});
  }
+});
+
+it('follows an authorized thread filing change without losing delivery or creating another active job',async()=>{
+ const f=await setup(),thread=await f.open();let jobs:string[]=[];
+ for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
+ const job=jobs[0];await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
+ expect(await f.socket('comms.send',{thread,id:'cdefghijklmnopqr',text:'PRIVATE after filing'})).toMatchObject({ok:true});
+ const read=await f.post(body,'runtime.readConversation',{});expect(read.ok).toBe(true);expect(JSON.stringify(read)).toContain('PRIVATE after filing');
+ expect(runtimeStore(f.app.db).read('job',job)?.project).toBe('pond');
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
+ const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ expect(runtimeStore(f.app.db).read('binding',cv)?.project).toBe('pond');
 });

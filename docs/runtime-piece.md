@@ -668,8 +668,9 @@ the same registry doors as the runtime role. Members must own the requested
 agent; an agent may start its own work under central scope checks. Runners cannot
 create starts. Service type/operation grants confer no agent authority: current
 central `mayCreate` also denies agent-scoped service starts with both grants.
-Private member work and model-account selection
-fail unavailable until their trusted delivery/account implementations land.
+Public member-scoped startBody requests and model-account selection fail unavailable.
+Private Comms work uses the trusted acceptance path below; caller-supplied
+conversation metadata alone never opens that path.
 An optional model request reaches the runner's one-time input payload.
 
 A source kind/id is scoped to the authenticated caller and agent, producing a
@@ -700,10 +701,10 @@ The runner still releases input through the staging gate described above.
 Tests run the actual next API with bearer-authenticated fake runners through
 start, queue, claim, held input, owner release, input, start confirmation and
 completion. Clock tests also cover definite refusal, staging, missing and lost
-confirmation, and restart without duplicate dispatch. Conversation delivery,
-trusted body proof, model accounts, remaining lifecycle, importer and screens
-are still required for the full runtime rebuild; this path does not unblock
-Comms or claim the whole task is complete.
+confirmation, and restart without duplicate dispatch. The private conversation path below adds authenticated reads and replies.
+Generation-aware failure/retry notices, model accounts, remaining lifecycle,
+importer and screens are still required for the full runtime rebuild; this
+does not claim the whole task is complete or unblock dependent tasks.
 
 
 ## Private conversation path in next mode
@@ -712,7 +713,9 @@ Next mode installs Comms with its private key and the real runtime delivery role
 Member messages remain encrypted in Comms; runtime stores only routing receipts,
 a private binding and a generic instruction to read the bound conversation.
 Acceptance and startBody enqueue share one registry transaction. Later messages
-reuse the active job. Queue, claim and input acknowledgements do not mark a
+reuse the active job. An authorized thread filing change moves its private job
+and binding together under central move policy; message words stay in Comms.
+Queue, claim and input acknowledgements do not mark a
 thread working; assigned runner running/waiting reports confirm its start.
 
 | Old path | Next path |

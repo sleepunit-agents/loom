@@ -30,7 +30,7 @@ export type StartNotice = {seq: number; generation?: number; attempt: number; re
  ({kind: 'start-retry'; retryAt: string} | {kind: 'start-failed'});
 export interface DeliveryTrace {
  alive?: BodyAlive;
- thread: string; conversation: string; archived: number | null; working: boolean;
+ thread: string; conversation: string; project?: string; archived: number | null; working: boolean;
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
 /** Supplied by the runtime, never by tool arguments. run is unique per body and
