@@ -13,11 +13,11 @@ import { draftKey } from '../../web/src/pieces/comms/drafts.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across two windows, retains a device draft, sanitises replies and captures both looks',async()=>{
- const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);let comms!:ReturnType<typeof installComms>;
+ const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);let comms!:ReturnType<typeof installComms>;let reply=true;
  const loom=await startLoom({home,clock,authenticate:()=>({viewer:{kind:'member',id:'jonathan'},window:true,valid:()=>true}),install:app=>{
   installFixture(app);
   comms=installComms({...app,clock,key,sharing:fixtureSharing,hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
-   deliver:async d=>{await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
+   deliver:async d=>{if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
  const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturefirstaaaa',text:'Comms fixture message'},'fixture-first',true);
@@ -52,8 +52,22 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Body activity').count()).toBe(0);
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now()+2,tokens:0});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('0 tokens');
+  // A queued start retry shows its encrypted time; Live progress removes the old promise.
+  comms.status('art',place,'done');reply=false;
+  const sentRetry=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retrystartaaaaaa',text:'A queued start'},'fixture-retry',true);
+  if(!sentRetry.ok)throw new Error('retry fixture failed');
+  const seq=(sentRetry.value as {seq:number}).seq;
+  const retryAt=new Date(clock.now()+60000).toISOString();
+  await comms.startNotice('art',place,{kind:'start-retry',seq,attempt:2,retryAt,reason:'private fixture host reason'});
+  await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
+  expect(await b.getByLabel('Start retry').locator('time').getAttribute('datetime')).toBe(retryAt);
+  expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
+  expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`comms-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
+  comms.status('art',place,'working');
+  await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
+  await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);
   await a.getByRole('button',{name:'Delete',exact:true}).click();await a.getByRole('button',{name:'Keep thread',exact:true}).click();expect(await a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60000);

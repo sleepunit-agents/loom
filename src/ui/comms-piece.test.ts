@@ -49,5 +49,17 @@ it('maps legacy nested cards and asks while preserving current runtime records',
  expect(messageView({...ask,answer:{verdict:'denied',by:'jonathan'}}).ask).toMatchObject({answer:'denied',answered:true,canAnswer:false});
  expect(messageView({...ask,ask:{ask:'Which?',answers:'words'}}).ask?.canAnswer).toBe(false);
  expect(messageView({...ask,ref:undefined}).ask?.canAnswer).toBe(false);
- expect(messageView({...base,text:null})).toEqual({text:null,tool:undefined,state:undefined,step:undefined,ask:undefined});
+ expect(messageView({...base,text:null})).toEqual({text:null,tool:undefined,state:undefined,step:undefined,ask:undefined,nextRetry:undefined});
+});
+
+it('shows a retained start retry time, hiding it after settlement, failure or expiry',()=>{
+ const m:Message={id:'th/2',thread:'th',seq:2,at:0,kind:'error',from:'art',text:"Art couldn't start; retrying.",step:{error:'start-retry',retry_at:'2026-11-13T05:30:00Z',reason:'private host reason'}};
+ expect(messageView(m)).toMatchObject({nextRetry:'2026-11-13T05:30:00.000Z'});
+ expect(messageView({...m,step:{...m.step as object,settled:true}}).nextRetry).toBeUndefined();
+ expect(messageView({...m,step:{error:'start-failed',retry_at:'2026-11-13T05:30:00Z'}}).nextRetry).toBeUndefined();
+ expect(messageView({...m,text:null}).nextRetry).toBeUndefined();
+ expect(messageView({...m,kind:'card'}).nextRetry).toBeUndefined();
+ for(const retry_at of ['not a date','',17,null])expect(messageView({...m,step:{error:'start-retry',retry_at}}).nextRetry).toBeUndefined();
+ // Imported error cards keep the retry metadata on card itself.
+ expect(messageView({...m,step:undefined,card:{error:'start-retry',retry_at:'2026-11-13T05:30:00Z'}}).nextRetry).toBe('2026-11-13T05:30:00.000Z');
 });
