@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add connection creation, editing and confirmed removal to the Bridges preview, with secret-name references and shared pending setup guards.
+
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 

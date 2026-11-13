@@ -61,7 +61,7 @@ export function RouteEditor({ route, fresh, request, busy, write }: {
     {confirm && !changed && <section className="grid gap-2"><p>Remove this route? Messages will use the remaining routes.</p>
       <Button type="button" disabled={disabled} onClick={() => { if (!disabled) { write('remove', { id: route.id }); setConfirm(false); } }}>Confirm removal</Button>
       <Button type="button" variant="outline" onClick={() => setConfirm(false)}>Keep route</Button></section>}
-    {busyAnswer.pending && !answer.pending && <Loading label="Another route change is pending…" />}
+    {busyAnswer.pending && !answer.pending && <Loading label="Another setup change is pending…" />}
     {answer.pending && <Loading label={request?.kind === 'remove' ? 'Removing route…' : 'Saving route…'} />}
     {answer.result?.ok === false && <Error title="Couldn’t change route" text={`${answer.result.code}: ${answer.result.message}`} />}
     {answer.result?.ok && <p role="status">{request?.kind === 'remove' ? 'Route removed' : 'Route saved'}</p>}

@@ -57,6 +57,29 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
     loom.live.changed([{ type: 'bridges.venue', id: venue.id }]);
     for (const p of [a, b]) await expect.poll(() => row(p, 'art · discord').textContent()).toContain('backoff');
     for (const p of [a, b]) {
+      await row(p, 'art · discord').click();
+      await expect.poll(() => p.getByRole('button', { name: 'Save connection', exact: true }).isEnabled()).toBe(true);
+    }
+    await a.getByRole('textbox', { name: 'Ignored channels', exact: true }).fill('999');
+    await a.getByRole('button', { name: 'Save connection', exact: true }).click();
+    await expect.poll(() => b.getByRole('button', { name: 'Save connection', exact: true }).isDisabled()).toBe(true);
+    await b.getByRole('button', { name: 'Try again', exact: true }).click();
+    await expect.poll(() => b.getByRole('textbox', { name: 'Ignored channels', exact: true }).inputValue()).toBe('999');
+    const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/bridges-preview'); mkdirSync(shots, { recursive: true });
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await b.setViewportSize({ width, height: 900 });
+      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
+      await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      await b.locator('.loom-split__reader').evaluate(el => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        for (let pane: HTMLElement | null = el as HTMLElement; pane; pane = pane.parentElement) pane.scrollTop = 0;
+      });
+      await b.screenshot({ path: join(shots, `bridges-connection-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+      const geometry = await b.locator('.loom-split').evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth }));
+      expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
+    }
+    await b.setViewportSize({ width: 1280, height: 900 });
+    for (const p of [a, b]) {
       await p.getByRole('button', { name: 'Routes', exact: false }).click();
       await row(p, '300').click();
       await expect.poll(() => p.getByRole('button', { name: 'Save route', exact: true }).isEnabled()).toBe(true);
@@ -68,7 +91,6 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
     await expect.poll(() => b.getByRole('button', { name: 'Save route', exact: true }).isDisabled()).toBe(true);
     await b.getByRole('button', { name: 'Try again', exact: true }).click();
     await expect.poll(() => b.getByRole('textbox', { name: 'Primary agent', exact: true }).inputValue()).toBe('mark');
-    const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/bridges-preview'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       await b.setViewportSize({ width, height: 900 });
       await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
