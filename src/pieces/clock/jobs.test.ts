@@ -123,12 +123,13 @@ describe('durable daemon clock', () => {
     expect(clockRole(app.operations).jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ text: 'x'.repeat(300) }] });
     expect(clockRole(app.operations).agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { text: 'x'.repeat(300) } } });
     // Construct an imported-format row without granting its opaque provenance.
-    const file: Wake = { ...long, id: 'w-imported', prompt: undefined, file: 'routines/upkeep.md', note: '', legacy: { for_in: 'cv-0123456789ab', continuation: 'untrusted' } };
+    const file: Wake = { ...long, id: 'w-imported', prompt: undefined, file: 'routines/upkeep.md', note: '', continuation: 'cont-private-handle', approval: 'a-private-receipt', slot: 'private-slot', legacy: { for_in: 'cv-0123456789ab', continuation: 'untrusted' } };
     app.db.prepare('DELETE FROM clock_wakes').run();
     app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(file.id, JSON.stringify(file), file.changedAt);
     expect(clockRole(app.operations).jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ text: file.file }] });
     expect(clockRole(app.operations).agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { text: file.file } } });
-    expect(JSON.stringify(clockRole(app.operations).jobs(owner, { agent: 'art' }))).not.toMatch(/cv-0123456789ab|untrusted|legacy|continuation/);
+    for (const result of [clockRole(app.operations).jobs(owner, { agent: 'art' }), clockRole(app.operations).agentNext(owner, { agent: 'art' })])
+      expect(JSON.stringify(result)).not.toMatch(/cv-0123456789ab|untrusted|legacy|continuation|cont-private-handle|a-private-receipt|private-slot|approval/);
     const a = { ...file, id: 'w-a' }, z = { ...file, id: 'w-z' };
     expect(deskJobs([z, a], false).map(w => w.id)).toEqual(['w-a', 'w-z']);
     expect(agentNext('art', [z, a], false).next?.id).toBe('w-a');
