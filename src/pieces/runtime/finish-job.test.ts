@@ -53,7 +53,7 @@ async function setup(options: { staging?: boolean; credentials?: 'missing' | 'as
   const resolve = (token: string) => auth.resolve({ headers: { authorization: `Bearer ${token}` } } as IncomingMessage);
   const call = (input: unknown, viewer: Viewer = { kind: 'runner', id: 'a' }, id = `op-${++seq}`) => app.operations.call('direct', viewer, 'runtime.finishJob', input, id);
   const post = (token: string, input: unknown, id = `http-${++seq}`) => fetch(`${app.url}/api/runtime/finishJob`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ input, id }) });
-  return { app, clock, store, auth, mint, resolve, call, post };
+  return { home, app, clock, store, auth, mint, resolve, call, post };
 }
 it('finishes through real bearer HTTP and invalidates only exact job credentials and existing auth handles', async () => {
   const revoke = vi.spyOn(centralRuntimeCredentials, 'revokeJob');
@@ -86,8 +86,13 @@ it('finishes through real bearer HTTP and invalidates only exact job credentials
 it('supports both completion states only from claimed states and preserves earlier revocations', async () => {
   const f = await setup();
   const old = f.mint('agent:art@starting'); f.auth.tokens.change(tokens => { tokens[0].revoked = '2020-01-01T00:00:00.000Z'; });
-  for (const [job, state] of [['starting', 'failed'], ['running', 'done'], ['waiting', 'failed']] as const)
+  const starting = f.mint('agent:art@starting'), waiting = f.mint('agent:art/bridge@waiting'), other = f.mint('agent:art@other'), runner = f.mint('runner:a');
+  for (const [job, state] of [['starting', 'failed'], ['running', 'done'], ['waiting', 'failed']] as const) {
     expect(f.call({ job, state })).toEqual({ ok: true, value: { job, state } });
+    expect(f.resolve(other)?.valid()).toBe(true); expect(f.resolve(runner)?.valid()).toBe(true);
+    if (job === 'starting') { expect(f.resolve(starting)).toBeUndefined(); expect(f.resolve(waiting)?.valid()).toBe(true); }
+    if (job === 'waiting') expect(f.resolve(waiting)).toBeUndefined();
+  }
   expect(f.auth.tokens.records(hash(old))[0].revoked).toBe('2020-01-01T00:00:00.000Z');
   for (const job of ['queued', 'done', 'failed', 'stopped', 'lost', 'uncertain']) {
     const before = f.store.read('job', job);
@@ -149,4 +154,19 @@ it('requires the caller transaction and permits empty-home completion and stagin
   expect(f.call({ job: 'running', state: 'done' })).toMatchObject({ ok: true });
   expect(f.store.read('job', 'running')).toMatchObject({ state: 'done', endedAt: f.clock.now() });
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+});
+
+it('durably replays the original acknowledgement across a daemon restart without revoking again', async () => {
+  const f = await setup(), runner = f.mint('runner:a'); f.mint('agent:art@running');
+  const input = { job: 'running', state: 'done' }, ack = { ok: true, value: input };
+  expect(await (await f.post(runner, input, 'restart-retry')).json()).toEqual(ack);
+  const before = f.store.read('job', 'running'), tokens = f.auth.tokens.document();
+  await f.app.close(); f.clock.advance(100);
+  const restarted = await startLoom({ home: f.home, clock: f.clock, next: true, stdout: () => {} }); cleanups.push(restarted.close);
+  const changed = vi.spyOn(restarted.live, 'changed'), revoke = vi.spyOn(centralRuntimeCredentials, 'revokeJob');
+  const response = await fetch(`${restarted.url}/api/runtime/finishJob`, { method: 'POST', headers: { authorization: `Bearer ${runner}`, 'content-type': 'application/json' }, body: JSON.stringify({ input, id: 'restart-retry' }) });
+  expect(response.status).toBe(200); expect(await response.json()).toEqual(ack);
+  expect(runtimeStore(restarted.db).read('job', 'running')).toEqual(before);
+  expect(signin(restarted).tokens.document()).toEqual(tokens);
+  expect(changed).not.toHaveBeenCalled(); expect(revoke).not.toHaveBeenCalled();
 });
