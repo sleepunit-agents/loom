@@ -430,7 +430,8 @@ it('automatic selection excludes unverified, steered, other-origin, people, priv
     {legacy:{...original.legacy,for_why:'none'},project:'pond'},
     {legacy:{...original.legacy,for_why:'none'},prompt:undefined,file:'../escape'},
   ]) {
-    s.change(ids[0],{...original,...patch});
+    s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(original),ids[0]);
+    s.change(ids[0],patch);
     s.clock.advance(60_000); await settle();
     expect(cards(s)).toEqual([]);
   }
@@ -449,9 +450,16 @@ it('retains explicitly asked nonautomatic ids while adding automatic candidates,
 it('rolls back replacement and audit if grouped filing cannot commit', async () => {
   const s = await setup(); automatic(s,ids[0]); s.clock.advance(0); await settle();
   const before = load(s.app.db); automatic(s,ids[1]);
-  s.app.db.exec("CREATE TRIGGER fail_group BEFORE INSERT ON approvals_approvals BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  const receipts = () => s.app.db.prepare("SELECT * FROM core_operations WHERE name='approvals.piece-group-vouch' ORDER BY id").all();
+  const beforeReceipts = receipts(), witnessed: string[] = [];
+  s.app.db.function('group_rollback_witness',(state: string)=>{witnessed.push(state);return 1;});
+  const first = before.approvals[0].id;
+  s.app.db.exec(`CREATE TRIGGER fail_group BEFORE INSERT ON approvals_approvals WHEN NEW.id <> '${first}' BEGIN
+    SELECT group_rollback_witness(json_extract((SELECT record FROM approvals_approvals WHERE id='${first}'),'$.state'));
+    SELECT RAISE(ABORT,'fixture after withdrawal'); END`);
   s.clock.advance(60_000); await settle();
-  expect(load(s.app.db)).toEqual(before);
+  expect(witnessed).toEqual(['withdrawn']);
+  expect(load(s.app.db)).toEqual(before); expect(receipts()).toEqual(beforeReceipts);
   s.app.db.exec('DROP TRIGGER fail_group');
   s.clock.advance(60_000); await settle();
   expect(cards(s).find(a=>a.state==='pending')?.target).toBe(`art:${ids.slice(0,2).join(',')}`);
