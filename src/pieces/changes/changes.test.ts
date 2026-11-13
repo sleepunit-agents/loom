@@ -2,6 +2,8 @@ import { afterEach, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
@@ -15,7 +17,7 @@ const dirs:string[]=[],closes:(()=>Promise<void>)[]=[];const owner:Viewer={kind:
 afterEach(async()=>{for(const c of closes.splice(0).reverse()) await c();for(const d of dirs.splice(0)) rmSync(d,{recursive:true,force:true});});
 async function setup(approvals?:Approvals){
  const home=mkdtempSync(join(tmpdir(),'changes-'));dirs.push(home);const clock=new FakeClock();
- const app=await startLoom({home,clock,sharing:fixtureSharing,authenticate:()=>({viewer:owner,valid:()=>true}),install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing,{approvals,attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]})})});closes.push(app.close);
+ const app=await startLoom({home,clock,sharing:fixtureSharing,authenticate:req=>({viewer:req.headers.authorization==='Bearer pollock'?pollock:owner,valid:()=>true}),install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing,{approvals,attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]})})});closes.push(app.close);
  let seq=0;return {...app,clock,call:(verb:string,input:unknown={},viewer=owner,id=`op-${++seq}`)=>app.operations.call('direct',viewer,`changes.${verb}`,input,id)};
 }
 it('ports the recorded GitHub adapter cases, including named reviewers and check failures',()=>{
@@ -92,4 +94,52 @@ it('resumes a pending refresh after closing and reopening the database, preservi
  const third=await open();closes.push(third.close);
  const future=startChangesJob(third,{clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read:resumedRead});
  try {await future.run();expect(resumedRead).toHaveBeenCalledOnce();}finally{future.close();}
+});
+
+async function changesSocket(app:{url:string}, member='jonathan') {
+ const ws=new WebSocket(`${app.url.replace('http:','ws:')}/live`,{headers:{authorization:`Bearer ${member}`}});
+ const queue:unknown[]=[],waiting:((value:any)=>void)[]=[];
+ ws.on('message',raw=>{const value=JSON.parse(raw.toString());const receive=waiting.shift();if(receive)receive(value);else queue.push(value);});
+ const next=():Promise<any>=>queue.length?Promise.resolve(queue.shift()):new Promise(resolve=>waiting.push(resolve));
+ await once(ws,'open');closes.push(async()=>{if(ws.readyState===WebSocket.CLOSED)return;const done=once(ws,'close');ws.terminate();await done;});
+ ws.send(JSON.stringify({kind:'subscribe',type:'change'}));
+ return {next};
+}
+it('publishes task and approval projections to two windows and expires a closed change exactly at one week',async()=>{
+ let allowed=false;
+ const app=await setup({rule:()=>({tier:allowed?'do':'ask'}),answer:()=>({ok:true,value:{}})});
+ const c=change({project:'pond'});replaceChanges(app.db,[c]);
+ const a=await changesSocket(app),b=await changesSocket(app,'pollock');
+ for(const socket of [a,b])expect(await socket.next()).toMatchObject({kind:'set',records:[{id:c.id,group:'you',tasks:[]}]});
+ const created=app.operations.call('direct',owner,'tasks.create',{title:'Shared citation',description:'acme/app#3',project:'pond',actor:'art',at:new Date(app.clock.now()).toISOString()},'socket-task');
+ expect(created).toMatchObject({ok:true});
+ for(const socket of [a,b])expect(await socket.next()).toMatchObject({kind:'put',record:{id:c.id,tasks:[{title:'Shared citation'}]}});
+ allowed=true;app.live.changed([{type:'approval-rule',id:'merge'}]);
+ for(const socket of [a,b])expect(await socket.next()).toMatchObject({kind:'put',record:{id:c.id,group:'agent'}});
+ allowed=false;app.live.changed([{type:'approval',id:'answer'}]);
+ for(const socket of [a,b])expect(await socket.next()).toMatchObject({kind:'put',record:{id:c.id,group:'you'}});
+ replaceChanges(app.db,[{...c,state:'merged',closed:new Date(app.clock.now()).toISOString()}]);app.live.changed([{type:'change',id:c.id}]);
+ for(const socket of [a,b])expect(await socket.next()).toMatchObject({kind:'put',record:{state:'merged'}});
+ app.clock.advance(7*86400_000-1);
+ const boundary=await changesSocket(app);
+ expect(await boundary.next()).toMatchObject({kind:'set',records:[{id:c.id}]});
+ app.clock.advance(1);
+ for(const socket of [a,b,boundary])expect(await socket.next()).toMatchObject({kind:'del',id:c.id});
+ expect(app.call('list')).toMatchObject({ok:true,value:[]});
+ expect(app.call('show',{id:c.id})).toMatchObject({ok:true,value:{state:'merged'}});
+});
+it('denies runner and ungranted service reads and prevents members and agents answering owner asks',async()=>{
+ const answer=vi.fn(()=>({ok:true as const,value:{}}));const app=await setup({rule:()=>({tier:'ask'}),answer});
+ const c=change({project:'pond'});replaceChanges(app.db,[c,change({id:'github:other/app#4',project:'other',agent:'mark'})]);
+ for(const viewer of [{kind:'runner',id:'art'},{kind:'service',id:'keyholder'},{kind:'service',id:'changes'},{kind:'member',id:'unknown'}] as Viewer[]){
+  expect(app.call('list',{},viewer)).toMatchObject({ok:viewer.kind!=='service',...(viewer.kind==='service'?{code:'denied'}:{value:[]})});
+  expect(app.call('show',{id:c.id},viewer)).toMatchObject({code:'denied'});
+ }
+ expect(app.call('list',{}, {kind:'agent',id:'pond-bot'})).toMatchObject({ok:true,value:[{id:c.id}]});
+ for(const viewer of [pollock,{kind:'agent',id:'art'},{kind:'agent',id:'pond-bot'},{kind:'runner',id:'art'},{kind:'service',id:'keyholder'}] as Viewer[]){
+  expect(app.call('confirm',{id:c.id,head:c.head.id},viewer)).toMatchObject({code:'denied'});
+  expect(app.call('answer',{id:c.id,head:c.head.id,action:'yes'},viewer)).toMatchObject({code:'denied'});
+  expect(app.call('refresh',{},viewer)).toMatchObject({code:'denied'});
+ }
+ expect(answer).not.toHaveBeenCalled();
 });
