@@ -9,7 +9,7 @@ import { addressed, isStop } from './routing.js';
 import { all, venueById, routeFor, personFor, setupRevision } from './store.js';
 import type { BridgeRuntime, BridgeSecrets, BridgesRole, VenueAdapter, VenueConnection } from './role.js';
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
-interface Inbox { id: string; venue: string; identity: string; message: string; state: 'pending'|'held'|'dropped'|'delivered' }
+interface Inbox { id: string; venue: string; identity: string; message: string; state: 'pending'|'held'|'dropped'|'delivered'; retry_since: number | null }
 interface Outbox { id: string; venue: string; identity: string; address: string; text: string; state: 'pending'|'held'|'sending'|'sent'|'uncertain'|'dismissed' }
 const identity = (v: Venue) => JSON.stringify([v.platform,v.workspace,v.agent,v.bot]);
 interface ConnectionState { signature: string; connection?: VenueConnection; cancel?: () => void; failures: number; generation: number }
@@ -26,7 +26,7 @@ export class Bridges implements BridgesRole {
     this.unsubscribeRelease = effects.onReleased(id => { if (id.startsWith('bridges:')) void this.flush(); });
     // A fixed runtime/adapter may accept a previously malformed delivery after restart.
     // Administrative and identity holds stay held; ordinary drains never retry a hold.
-    app.db.prepare("UPDATE bridges_inbox SET state='pending',reason=NULL WHERE state='held' AND reason='runtime delivery held'").run();
+    app.db.prepare("UPDATE bridges_inbox SET state='pending',reason=NULL,retry_since=NULL WHERE state='held' AND reason='runtime delivery held'").run();
     // A crash can happen after the venue accepted a send but before we recorded its receipt.
     app.db.prepare("UPDATE bridges_outbox SET state='uncertain' WHERE state='sending'").run();
   }
@@ -84,7 +84,7 @@ export class Bridges implements BridgesRole {
     if (!v) throw new Error('Unknown venue');
     message = {...message,...conversationKind(v,message)};
     const id = hash([v.platform,v.workspace,message.channel,message.id,v.agent]);
-    this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
+    this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox (id,venue,identity,message,state,reason,received,delivered) VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
     this.changed('bridges.venue',v.id);
     // Receipt is durable before the gateway ACK. Delivery can fail independently.
     void this.flush();
@@ -146,10 +146,26 @@ export class Bridges implements BridgesRole {
     }
     return 'allow';
   }
+  private expireIntake(id: string, since: number | null): boolean {
+    // Like the old waiting queue: exactly one hour is still eligible.
+    if (since === null || this.clock.now()-since <= 3_600_000) return false;
+    const row = this.app.db.prepare(`UPDATE bridges_inbox
+      SET state='dropped',reason='transient intake expired',message='{}',retry_since=NULL
+      WHERE id=? AND state='pending' RETURNING venue`).get(id) as {venue:string} | undefined;
+    if (row) this.changed('bridges.venue',row.venue);
+    return true;
+  }
+  private waitIntake(row: Inbox) {
+    // A duplicate receipt, another failed check or a restart never renews the hour.
+    const since = row.retry_since ?? this.clock.now();
+    const updated = this.app.db.prepare("UPDATE bridges_inbox SET retry_since=COALESCE(retry_since,?) WHERE id=? AND state='pending'").run(since,row.id);
+    if (updated.changes && !this.expireIntake(row.id,since)) this.retry();
+  }
   private async drain() {
     const db = this.app.db;
     for (const row of db.prepare("SELECT * FROM bridges_inbox WHERE state='pending' ORDER BY received,id").all() as Inbox[]) {
       if (this.closed) return;
+      if (this.expireIntake(row.id,row.retry_since)) continue;
       const v = venueById(db,row.venue), raw = JSON.parse(row.message) as Message;
       const message = v ? {...raw,...conversationKind(v,raw)} : raw;
       let state = 'dropped', reason: string | null = null;
@@ -169,15 +185,15 @@ export class Bridges implements BridgesRole {
               const {token} = await this.credentials(v);
               const admitted = await this.admit(v,message,route,adapter,token,person);
               const key = keyFor(v,message,person);
-              if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
-              if (admitted === 'wait') { this.retry(); continue; }
+              if (!this.setupUnchanged(v,message,route,revision)) { this.waitIntake(row); continue; }
+              if (admitted === 'wait') { this.waitIntake(row); continue; }
               if (admitted === 'allow') {
                 if (!message.bot && isStop(message.text)) {
                   await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
                   state='delivered';
                 } else {
                   const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
-                  if (outcome === 'retry') { this.retry(); continue; }
+                  if (outcome === 'retry') { this.waitIntake(row); continue; }
                   if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
                   else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
                   else {
@@ -189,8 +205,8 @@ export class Bridges implements BridgesRole {
             }
           } else reason='not addressed';
         }
-      } catch { this.retry(); continue; }
-      db.prepare('UPDATE bridges_inbox SET state=?,reason=?,delivered=? WHERE id=?').run(state,reason,state==='delivered' ? this.clock.now():null,row.id);
+      } catch { this.waitIntake(row); continue; }
+      db.prepare("UPDATE bridges_inbox SET state=?,reason=?,delivered=?,retry_since=NULL WHERE id=? AND state='pending'").run(state,reason,state==='delivered' ? this.clock.now():null,row.id);
       // A denied/unknown sender's words have no further purpose.
       if (state==='dropped') db.prepare("UPDATE bridges_inbox SET message='{}' WHERE id=?").run(row.id);
       this.changed('bridges.venue',row.venue);

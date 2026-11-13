@@ -3,9 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Sharing } from '../../core/index.js';
+import { FakeClock, migrate, openDb, type Sharing } from '../../core/index.js';
 import { installEffects } from '../../core/effects.js';
 import { installBridges } from './index.js';
+import { schema as foundationSchema } from './schema/001.js';
+import { schema as retrySchema } from './schema/002.js';
 import { Bridges } from './engine.js';
 import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
 import { z } from 'zod';
@@ -28,9 +30,9 @@ class FakeVenue implements VenueAdapter {
   async inspect() { return this.inspection; }
   async send(...args: Parameters<VenueAdapter['send']>) { this.posts.push(args); if (this.uncertain) throw new Error('token-value-do-not-store'); return {id:`post-${this.posts.length}`}; }
 }
-async function fixture(platform: Venue['platform']='discord', staging=false, existingHome?: string) {
+async function fixture(platform: Venue['platform']='discord', staging=false, existingHome?: string, now?: number) {
   const home=existingHome ?? mkdtempSync(join(tmpdir(),'bridges-')); if (!existingHome) roots.push(home);
-  const clock=new FakeClock();
+  const clock=new FakeClock(now);
   const types = new Map<string,RecordType>();
   let effects!: ReturnType<typeof installEffects>;
   const app=await startLoom({home,clock,install(app) { const register=app.live.register.bind(app.live); app.live.register=type=>{types.set(type.name,type); register(type);}; installBridges(app,()=>sharing); effects=installEffects(app,()=>sharing,staging); }});
@@ -137,6 +139,103 @@ describe('send disposition',()=>{
       expect(f.op('dismissSend',input)).toMatchObject({ok:false,code:'invalid'});
     expect(f.op('dismissSend',{id:'missing',state:'held'})).toMatchObject({ok:false,code:'not-found'});
     expect(f.op('dismissSend',{id:'reply',state:'uncertain'})).toEqual({ok:true,value:{id:'reply'}});
+  });
+});
+
+describe('transient intake expiry',()=>{
+  const hour=3_600_000;
+  it('upgrades foundation receipts with the original pending budget and preserves every other byte on repeat',async()=>{
+    const home=mkdtempSync(join(tmpdir(),'bridges-upgrade-')); roots.push(home); const lease=openDb(home);
+    try {
+      migrate(lease.db,'bridges',foundationSchema);
+      const states=['pending','held','dropped','delivered'];
+      for(const state of states) lease.db.prepare('INSERT INTO bridges_inbox VALUES (?,?,?,?,?,?,?,?)').run(
+        state,'art-discord','identity','original '+state,state,state==='held'?'runtime delivery held':null,10, state==='delivered'?20:null);
+      const before=lease.db.prepare('SELECT * FROM bridges_inbox ORDER BY id').all() as {id:string;state:string;received:number}[];
+      migrate(lease.db,'bridges',[...foundationSchema,...retrySchema]);
+      const after=lease.db.prepare('SELECT * FROM bridges_inbox ORDER BY id').all();
+      expect(after).toEqual(before.map(row=>({...row,retry_since:row.state==='pending'?row.received:null})));
+      migrate(lease.db,'bridges',[...foundationSchema,...retrySchema]);
+      expect(lease.db.prepare('SELECT * FROM bridges_inbox ORDER BY id').all()).toEqual(after);
+    } finally {lease.close();}
+  });
+  it('expires a foundation pending receipt using its backfilled budget before credentials or admission',async()=>{
+    const f=await fixture(); f.setGate('wait'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    // Reconstruct the pre-upgrade shape with a real pending payload, then reopen normally.
+    f.app.db.exec('ALTER TABLE bridges_inbox DROP COLUMN retry_since');
+    f.app.db.prepare("DELETE FROM core_migrations WHERE piece='bridges' AND number=2").run();
+    const now=f.clock.now()+hour+1; await f.close(); closes.pop();
+    const next=await fixture('discord',false,f.home,now); await next.engine.flush();
+    expect(next.secretGets).toEqual([]); expect(next.admitted).toEqual([]); expect(next.deliveries.size).toBe(0);
+    expect(next.app.db.prepare('SELECT state,reason,message FROM bridges_inbox').get()).toEqual({state:'dropped',reason:'transient intake expired',message:'{}'});
+  });
+
+  it.each(['discord','slack'] as const)('%s keeps the first wait budget through duplicates and restart, then erases without another attempt',async platform=>{
+    const f=await fixture(platform); f.setGate('wait');
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const original=f.app.db.prepare('SELECT * FROM bridges_inbox').get() as {id:string;received:number};
+    f.clock.advance(hour/2); await f.engine.flush();
+    await f.engine.receive(f.venue.id,f.message({text:'changed duplicate'})); await f.engine.flush();
+    const now=f.clock.now(); await f.close(); closes.pop();
+    const next=await fixture(platform,false,f.home,now); next.setGate('wait'); await next.engine.sync();
+    next.clock.advance(hour/2); await next.engine.flush();
+    expect(next.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+    const attempts=next.admitted.length, reads=next.secretGets.length;
+    next.setGate('allow'); next.clock.advance(1); await next.engine.flush();
+    expect(next.deliveries.size).toBe(0); expect(next.admitted).toHaveLength(attempts); expect(next.secretGets).toHaveLength(reads);
+    expect(next.app.db.prepare('SELECT id,state,reason,message,received FROM bridges_inbox').get()).toEqual({
+      id:original.id,state:'dropped',reason:'transient intake expired',message:'{}',received:original.received,
+    });
+    expect(next.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+    await next.engine.receive(next.venue.id,next.message()); await next.engine.flush(); expect(next.deliveries.size).toBe(0);
+    const end=next.clock.now(); await next.close(); closes.pop();
+    const again=await fixture(platform,false,f.home,end); await again.engine.sync(); expect(again.deliveries.size).toBe(0);
+  });
+  it.each(['credential','inspection','admission','runtime','exception','setup'] as const)('bounds %s transient failures and publishes expiry',async failure=>{
+    const f=await fixture();
+    if(failure==='credential') f.denySecret();
+    if(failure==='inspection') f.adapter.inspection='wait';
+    if(failure==='admission') f.setGate('wait');
+    if(failure==='runtime') f.runtime.deliver=async()=> 'retry';
+    if(failure==='exception') f.runtime.deliver=async()=>{throw Error('upstream token-value-do-not-store');};
+    if(failure==='setup') f.runtime.admit=async()=>{f.op('putVenues',f.venue);return 'allow';};
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const changes: unknown[]=[]; const stop=f.app.live.observe(batch=>changes.push(...batch));
+    f.clock.advance(hour+1); await f.engine.flush(); stop();
+    expect(f.app.db.prepare('SELECT state,reason,message FROM bridges_inbox').get()).toEqual({state:'dropped',reason:'transient intake expired',message:'{}'});
+    expect(changes).toContainEqual({type:'bridges.venue',id:f.venue.id});
+    expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+  });
+  it('starts the hour at the first transient result, not event or receipt time',async()=>{
+    const f=await fixture(); const entered=Promise.withResolvers<void>(), finish=Promise.withResolvers<DeliveryOutcome>();
+    f.runtime.deliver=async()=>{entered.resolve();return finish.promise;};
+    await f.engine.receive(f.venue.id,f.message({at:'2000-01-01T00:00:00Z'})); await entered.promise;
+    f.clock.advance(2*hour); finish.resolve('retry'); await f.engine.flush();
+    f.clock.advance(hour); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+    f.clock.advance(1); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'dropped'});
+  });
+  it('does not expire a successful attempt that began within its budget',async()=>{
+    const f=await fixture(); f.setGate('wait'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const entered=Promise.withResolvers<void>(), finish=Promise.withResolvers<DeliveryOutcome>();
+    f.setGate('allow'); f.runtime.deliver=async()=>{entered.resolve();return finish.promise;};
+    f.clock.advance(hour); const draining=f.engine.flush(); await entered.promise;
+    f.clock.advance(1); finish.resolve('delivered'); await draining;
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'delivered'});
+  });
+  it('exempts a held result, then starts a fresh transient budget after restart recovery',async()=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'retry';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.runtime.deliver=async()=> 'held'; f.clock.advance(hour/2); await f.engine.flush();
+    const before=f.app.db.prepare('SELECT * FROM bridges_inbox').get();
+    f.clock.advance(2*hour); await f.engine.flush(); expect(f.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
+    const now=f.clock.now(); await f.close(); closes.pop();
+    const next=await fixture('discord',false,f.home,now); next.setGate('wait'); await next.engine.sync();
+    next.clock.advance(hour); await next.engine.flush();
+    expect(next.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+    next.clock.advance(1); await next.engine.flush();
+    expect(next.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'dropped',reason:'transient intake expired'});
   });
 });
 
@@ -286,6 +385,19 @@ describe('in-process bridge delivery',()=>{
     await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
     expect(f.app.db.prepare("SELECT state FROM bridges_outbox WHERE id='second'").get()).toEqual({state:'held'});
   });
+  it('keeps transient outgoing replies eligible beyond the intake hour and sends exactly once after recovery',async()=>{
+    const f=await groupFixture(); await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    const incomingId=[...f.deliveries.keys()][0];
+    f.engine.reply({id:'late-reply',incomingId,text:'reply after a long outage'});
+    f.adapter.inspection='wait'; await f.engine.flush();
+    f.clock.advance(3_600_001); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state,text FROM bridges_outbox').get()).toEqual({state:'pending',text:'reply after a long outage'});
+    expect(f.adapter.posts).toEqual([]);
+    f.adapter.inspection={kind:'allow',members:['100','200','201']}; await f.engine.flush();
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply after a long outage');
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'sent'});
+    await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
+  });
   it('preserves event time and label through durable receipt, restart and duplicate receipt',async()=>{
     const f=await fixture(); f.setGate('wait');
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
@@ -392,8 +504,11 @@ describe('in-process bridge delivery',()=>{
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     f.app.db.prepare('UPDATE bridges_inbox SET reason=?').run(reason);
     const before=f.app.db.prepare('SELECT * FROM bridges_inbox').get();
-    await f.close(); closes.pop();
-    const restarted=await fixture('discord',false,f.home); await restarted.engine.sync();
+    f.clock.advance(3_600_001); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
+    const now=f.clock.now(); await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home,now); await restarted.engine.sync();
+    restarted.clock.advance(3_600_001); await restarted.engine.flush();
     expect(restarted.deliveries.size).toBe(0);
     expect(restarted.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
   });

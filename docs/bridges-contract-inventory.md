@@ -79,9 +79,12 @@ New-side runtime-delivery holds now requeue on engine restart, retaining the ori
 receipt and id and repeating current setup, credentials and admission checks.
 Same-process holds and administrative/identity/invalid-time holds stay held.
 Uncertain outgoing attempts are a separate case: human
-disposition must never automatically resend them. Legacy one-hour transient intake
-expiry likewise is not implemented by the current durable retry loop; choose and
-document its treatment before claiming full retry parity.
+disposition must never automatically resend them. The injected intake engine persists
+the first transient wait and drops/erases pending payloads after more than one hour,
+without renewing that budget for duplicates or restarts. Holds are exempt; a recovered
+hold that becomes transient gets a fresh hour. Existing foundation pending rows use
+receipt time at upgrade because their first wait time was not recorded. Real transport
+and authenticated runtime composition remain separate obligations.
 
 ## Shuttle responsibilities outside platform IO
 
