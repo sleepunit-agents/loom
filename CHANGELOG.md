@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
+- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 - Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 

@@ -4,6 +4,8 @@ import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
 import type { Ask } from './model';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
+import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
+import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
 }
@@ -22,6 +24,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const people = useRecords<AgentPerson>('person');
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
+  const wakes = useRecords<Wake>('wake');
+  const clocks = useRecords<Clock>('clock');
   const statuses = useRecords<AgentStatus>('attention.agent');
   const lock = useRef(false), [busy,setBusy] = useState(false);
   const guard: Guard = {lock,busy,setBusy};
@@ -43,11 +47,27 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
             const receipt = asks.status === 'live' ? asks.records.filter(ask=>ask.agent===agent.id && ask.answer).sort((a,b)=>b.answer!.at-a.answer!.at || a.id.localeCompare(b.id))[0] : undefined;
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
+            const clockStatus = wakes.status !== 'live' ? wakes.status : clocks.status;
+            const paused = clocks.records.some(c => c.id === agent.id && c.paused);
+            const work = clockStatus === 'live' ? wakes.records.filter(w => w.agent === agent.id && active(w)) : [];
+            const next = agentNext(agent.id, work, paused);
+            const jobs = deskJobs(work, paused);
             return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
               <header><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
+              <section aria-label={`${agent.name} clock`} className="grid min-w-0 gap-2">
+                <h3>Next</h3>
+                {clockStatus !== 'live' ? <Unavailable status={clockStatus} label="clock" /> : <>
+                  <p>{next.paused ? 'Clock paused' : next.next ? `${time(next.next.due)} · ${next.next.text}` : 'No wake scheduled'}</p>
+                  <h3>Clock jobs · {jobs.length}</h3>
+                  {!jobs.length ? <p>No clock jobs.</p> : <List label={`${agent.name} clock jobs`}>{jobs.map(job => {
+                    const wake = work.find(w => w.id === job.wake)!;
+                    return <Row key={job.id} title={job.text} status={state(wake, paused)} meta={job.status === 'scheduled' ? time(job.at) : undefined} onClick={()=>go(job.href)} />;
+                  })}</List>}
+                </>}
+              </section>
               <section aria-label={`${agent.name} reported work`} className="grid min-w-0 gap-3"><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <>
                 <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></p>
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />

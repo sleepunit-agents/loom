@@ -28,7 +28,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'person':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'person':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -146,4 +146,32 @@ it.each(['loading','offline','denied'] as const)('drops stale directory names an
 it('ignores person-kind and mismatched directory identities and blank names',async()=>{
   f.snapshots['person']=live([person('art','Wrong kind',{kind:'person'}),person('mark','Wrong id',{id:'commons:art'}),person('mark','   ')]);
   await draw();expect(text()).toContain('Art card');expect(text()).toContain('Mark card');expect(text()).not.toContain('Wrong');
+});
+
+const clockWake=(id:string,state='pending',extra:Record<string,unknown>={})=>({id,agent:'art',due:Date.parse('2026-11-13T12:31:00Z'),state,note:`Work ${id}`,failures:0,...extra});
+it('composes live Clock Next and all active jobs on owned cards without reported status or writes',async()=>{
+  f.snapshots['wake']=live([clockWake('later','pending',{due:Date.parse('2026-11-13T13:31:00Z')}),clockWake('first'),clockWake('park','parked'),clockWake('held','held',{hold:'uncertain'}),clockWake('running','firing'),clockWake('done','fired'),clockWake('failed','failed'),clockWake('cancelled','cancelled'),clockWake('foreign','pending',{agent:'other'})]);
+  const go=await draw();
+  const card=tree!.root.findByProps({'aria-label':'Art clock'});
+  expect(words(card)).toContain('Nov 13, 2026, 6:31 AM CT · Work first');
+  expect(words(card)).toContain('Clock jobs · 5');
+  for(const label of ['Work first','Work later','Work park','Work held','Work running','Parked · awaiting answer','Held · uncertain'])expect(words(card)).toContain(label);
+  for(const label of ['Work done','Work failed','Work cancelled','Work foreign'])expect(text()).not.toContain(label);
+  await click('Work firstNov 13, 2026, 6:31 AM CTpending');expect(go).toHaveBeenCalledWith('/p/clock-preview');expect(f.call).not.toHaveBeenCalled();
+  await publish('clock',live([{id:'art',paused:true}]));
+  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('Clock paused');
+  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).not.toContain('6:31 AM CT');
+  await publish('wake',live([clockWake('park','parked'),clockWake('held','held',{hold:'staging'})]));
+  await publish('clock',live([]));
+  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('No wake scheduled');
+  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('Clock jobs · 2');
+  await publish('wake',live([]));expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('No clock jobs.');
+});
+it.each(['loading','offline','denied'] as const)('clears stale Clock words and times when either stream is %s',async(status)=>{
+  const records=[clockWake('private')];f.snapshots['wake']=live(records);await draw();expect(text()).toContain('Work private');
+  await publish('wake',{records,status});expect(text()).not.toContain('Work private');expect(text()).not.toContain('No wake scheduled');
+  await publish('wake',live(records));await publish('clock',{records:[{id:'art',paused:true}],status});
+  expect(text()).not.toContain('Work private');expect(text()).not.toContain('Clock paused');expect(text()).toContain('Art card');
+  await publish('clock',live([]));expect(text()).toContain('Work private');
+  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Work private');expect(text()).not.toContain('Art clock');
 });
