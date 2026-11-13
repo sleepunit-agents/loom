@@ -791,3 +791,27 @@ agent tokens cannot call it. The scheduled row keeps the local marker and receip
 the runtime bridge continues to hold such work, so this unit grants no host dispatch.
 No legacy stores or installed pieces are read. Standing single-target/fire-time
 rechecks, app/client recovery and final authenticated local dispatch remain unfinished.
+
+
+### Owning standing-local approval seam
+
+`approvalsRole(operations, 'clock').localStanding(caller, {approval, mode,
+expected}, receipt)` validates a trusted Clock filing against the owning original
+receipt and its standing job. `expected` contains the exact target, entire SHA-256,
+displayed details and original Caller. Only the Clock service with an explicit
+central operation grant can call it; the authenticated assignee/project must also
+retain central approval-creation policy. Owner work without private people only.
+Original and current principal, project, agent and service must match exactly.
+The standing record must name that original receipt and retain its full digest,
+details, owner decision and caller. Turning it off or a later target Deny refuses.
+Standing authority survives the original one-shot expiry or consumption.
+
+Mode `use` calls direct-only `approvals.piece-standing-local`, increments use and
+audit atomically, and deduplicates the operation receipt. Mode `check` calls the
+separately granted read-only `approvals.piece-standing-local-check`: it always
+reads current authority even if an operation id is reused, and never increments
+use or audit. No original words or full standing record is returned. This is the
+owning seam for legacy standing consumption and fire-time rechecks; Clock's
+single-outstanding-target scheduling, private wake binding, dispatch-time call,
+public recovery and authenticated local runtime dispatch still require composition.
+The existing generic standing operation and one-shot recovery are unchanged.
