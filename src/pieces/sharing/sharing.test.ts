@@ -36,3 +36,25 @@ it('installs database sharing by default without fixture installation or an impo
   expect(app.operations.call('direct', owner, 'tasks.create', { title: 'Garden work', project: 'garden', cli: true }, 'task')).toMatchObject({ ok: true });
   expect(app.operations.call('direct', member, 'tasks.list', {})).toMatchObject({ ok: true, value: { result: { entries: expect.arrayContaining([expect.objectContaining({ title: 'Garden work' })]) } } });
 });
+
+it('keeps GitHub attribution owner-managed, unambiguous and durable without granting access', async () => {
+  const h = home(); fixture(h);
+  const app = await startLoom({ home: h, clock: new FakeClock() });
+  const input = { agent: 'art', accounts: { github: ['Art-Bot', 'art-bot'] } };
+  for (const viewer of [member, { kind: 'agent' as const, id: 'art' }, { kind: 'service' as const, id: 'sharing' }]) {
+    expect(app.operations.call('direct', viewer, 'household.setAgentAccounts', input, `deny-${viewer.kind}`)).toMatchObject({ code: 'denied' });
+  }
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', input, 'set')).toMatchObject({ ok: true, value: { github: ['art-bot'] } });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'mark', accounts: { github: ['ART-BOT'] } }, 'duplicate')).toMatchObject({ code: 'conflict' });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'unknown', accounts: { github: [] } }, 'unknown')).toMatchObject({ code: 'invalid' });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'art', accounts: { github: ['https://github.com/art'] } }, 'invalid')).toMatchObject({ ok: false });
+  expect(new SharingDatabase(app.db, h).sharing().members['art-bot']).toBeUndefined();
+  await app.close();
+  const reopened = await startLoom({ home: h, clock: new FakeClock() }); closes.push(reopened.close);
+  const { HouseholdAccounts } = await import('../../core/household/accounts.js');
+  const accounts = new HouseholdAccounts(reopened.db, h);
+  expect(accounts.get('art')).toEqual({ github: ['art-bot'] });
+  expect(accounts.get('mark')).toEqual({ github: [] });
+  expect(reopened.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'art', accounts: { github: [] } }, 'clear')).toMatchObject({ ok: true });
+  expect(accounts.get('art')).toEqual({ github: [] });
+});
