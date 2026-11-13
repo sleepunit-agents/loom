@@ -184,3 +184,23 @@ it.runIf(existsSync(resolve(import.meta.dirname,'../dist/web/next.html')))('defa
     for(const asset of assets){const res=await fetch(loom.url+asset);expect(res.status).toBe(200);expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0);}
   }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
 });
+
+it('next owns clock jobs, holds starts without a runtime and restores held work after restart', async () => {
+  const home = mkdtempSync(join(tmpdir(),'loom-next-clock-'));
+  const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+  const options = {home,next:true,clock,sharing:fixtureSharing};
+  let loom = await startLoom(options);
+  const viewer = {kind:'member' as const,id:'jonathan'};
+  try {
+    const created = loom.operations.call('direct',viewer,'clock.in',{agent:'art',prompt:'New work only',note:'Next clock',when:'1m'},'next-clock');
+    expect(created).toMatchObject({ok:true,value:{state:'pending'}});
+    const id = (created as {ok:true;value:{id:string}}).value.id;
+    clock.advance(60_000);
+    // Pump the role's known promise chain, without an elapsed-time sleep.
+    for(let n=0;n<5;n++) await Promise.resolve();
+    expect(loom.operations.call('direct',viewer,'clock.list',{})).toMatchObject({ok:true,value:[{id,state:'held',hold:'staging'}]});
+    await loom.close(); loom = await startLoom(options);
+    clock.advance(8*86400_000);
+    expect(loom.operations.call('direct',viewer,'clock.list',{})).toMatchObject({ok:true,value:[{id,state:'held',hold:'staging'}]});
+  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
+});
