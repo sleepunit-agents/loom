@@ -48,3 +48,8 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: str
 export function mayMove(v: Viewer, before: RecordScope, after: RecordScope, s: Sharing, operation?: string): boolean {
   return before.member === after.member && mayAct(v, before, s, 'act', operation) && mayCreate(v, after, s, operation);
 }
+
+/** Private Comms membership is independent of project and household-owner access. */
+export function mayUseThread(v: Viewer, r: { member: string; agent: string }, s: Sharing): boolean {
+  return v.kind === 'member' && v.id === r.member && !!entry(s.members, v.id)?.agents.includes(r.agent);
+}

@@ -112,9 +112,9 @@ it('denies other assignments, private and missing jobs, absent/revoked boxes, an
   expect(f.call({ job: 'running', state: 'done' })).toMatchObject({ ok: false, code: 'denied' });
   expect(f.auth.tokens.document()).toEqual(tokens);
 });
-it('refuses identity, timestamps, results and non-completion states, but accepts completion after hosting withdrawal', async () => {
+it('refuses identity, timestamps, unknown results and non-completion states, but accepts completion after hosting withdrawal', async () => {
   const f = await setup(), before = f.store.read('job', 'running');
-  for (const extra of [{ box: 'b' }, { runner: 'b' }, { agent: 'mark' }, { endedAt: 1 }, { changedAt: 1 }, { log: 'words' }, { result: 'words' }, { exit: 0 }])
+  for (const extra of [{ box: 'b' }, { runner: 'b' }, { agent: 'mark' }, { endedAt: 1 }, { changedAt: 1 }, { result: 'words' }])
     expect(f.call({ job: 'running', state: 'done', ...extra })).toMatchObject({ ok: false, code: 'invalid' });
   for (const state of ['queued', 'starting', 'running', 'waiting', 'stopped', 'lost', 'uncertain'])
     expect(f.call({ job: 'running', state })).toMatchObject({ ok: false, code: 'invalid' });

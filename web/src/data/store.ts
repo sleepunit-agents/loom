@@ -56,10 +56,16 @@ export class DataStore {
   getSnapshot = (type: string, scope?: string): Snapshot => this.subscription(type, scope).snapshot;
   subscribe = (type: string, scope: string | undefined, listener: () => void) => {
     const sub = this.subscription(type, scope);
-    sub.listeners.add(listener);
+    const wasEmpty = !sub.listeners.size; sub.listeners.add(listener);
+    if(wasEmpty && this.socket?.readyState===1)this.sendSubscription(sub);
     this.connect();
-    // The protocol has no unsubscribe. Retain subscriptions until this window closes.
-    return () => { sub.listeners.delete(listener); };
+    return () => {
+      sub.listeners.delete(listener);
+      if (!sub.listeners.size) {
+        if (this.socket?.readyState === 1) this.send(JSON.stringify({ kind:'unsubscribe', type:sub.type, scope:sub.scope }));
+        sub.ids.clear(); this.collect(sub.type); this.publish(sub, 'loading');
+      }
+    };
   };
   private publish(sub: Subscription, status = sub.snapshot.status, error?: Failure) {
     const map = this.records.get(sub.type);
@@ -83,7 +89,7 @@ export class DataStore {
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) return;
-      this.subscriptions.forEach(sub => this.sendSubscription(sub));
+      this.subscriptions.forEach(sub => { if(sub.listeners.size)this.sendSubscription(sub); });
       this.calls.forEach(call => { call.update({ pending: true, status: 'pending' }); this.send(call.wire); });
     };
     socket.onmessage = event => {
@@ -134,7 +140,7 @@ export class DataStore {
     }
     if (!['set', 'put', 'del'].includes(message.kind) || typeof message.type !== 'string') return;
     const sub = this.subscriptions.get(keyOf(message.type, message.scope));
-    if (!sub) return;
+    if (!sub || !sub.listeners.size) return;
     let map = this.records.get(sub.type);
     if (!map) { map = new Map(); this.records.set(sub.type, map); }
     if (message.kind === 'set') {

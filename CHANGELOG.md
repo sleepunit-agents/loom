@@ -12,8 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
+- Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
+
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
+- Keep bounded runtime job diagnostics outside live metadata, with scoped result reads and atomic completion.
+
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
@@ -45,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 - Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
 - Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
+- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 - Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
@@ -149,7 +153,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
   other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner
