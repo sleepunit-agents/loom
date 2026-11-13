@@ -285,3 +285,13 @@ it('does not mistake a spawn handle for an unrelated Comms thread id',()=>{
  db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('job-h-1862','cv-ffffffffffff','art','guest',null);db.close();
  expect(f.read().expected.binding).toEqual([{id:cv,agent:'art',member:'jonathan',venue:'spawn',place:'job-h-1862'}]);
 });
+
+for(const tombstoneId of ['actual-thread','th:actual-thread'])it.each([true,false])('refuses spawn live/deleted conflict at '+tombstoneId+' with conversation column %s',hasConversation=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place:'job-h-1862'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='th:actual-thread'");
+ db.exec('CREATE TABLE comms_deleted(id,agent,member'+(hasConversation?',conversation':'')+')');
+ if(hasConversation)db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?)').run(tombstoneId,'art','jonathan',null);
+ else db.prepare('INSERT INTO comms_deleted VALUES (?,?,?)').run(tombstoneId,'art','jonathan');
+ db.close();expect(f.read).toThrow('owning Comms source');
+});
