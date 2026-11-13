@@ -118,7 +118,7 @@ export class Signin {
     if (bearer) {
       const digest=hash(bearer[1]), t=this.token(digest); if (!t) return;
       const valid=()=>{const current=this.token(digest);return !!current && current.viewer.kind===t.viewer.kind && current.viewer.id===t.viewer.id;};
-      this.used(digest);
+      if (!req.headers.upgrade) this.used(digest);
       return {...t,valid,activity:()=>{if(valid())this.used(digest);}};
     }
     const id=cookieId(req); if (!id) return;
@@ -129,7 +129,7 @@ export class Signin {
     // Only this validated page-session branch confers the socket window capability.
     // Bearer callers never gain it, including when they also send a cookie.
     const valid=()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;};
-    this.used(s.s.secret,id);
+    if (!req.headers.upgrade) this.used(s.s.secret,id);
     return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid,activity:()=>{if(valid())this.used(s.s.secret,id);}};
   }
   createSession(secret: string, meta: { label?: string; signedInAt?: number; agent?: true; via?: 'link'|'passkey'; device?: string } = {}) {

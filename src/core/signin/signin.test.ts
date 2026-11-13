@@ -74,14 +74,19 @@ it('passkeys use one WebAuthn user per member, their own token, fresh CSRF regis
   const host=new URL(process.env.LOOM_PUBLIC_URL!).host,origin=process.env.LOOM_PUBLIC_URL!;
   const session=await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json();
   const headers={cookie:`loom_ui=${f.cookie}`,host,origin};
+  f.clock.advance(300_000);
   const options=await(await f.post('/passkeys/options',{_csrf:session.csrf},headers)).json();
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
   const options2=await(await f.post('/passkeys/options',{_csrf:session.csrf},headers)).json();expect(options.user.id).toBe(options2.user.id);
   const {privateKey,publicKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),id=randomBytes(32),rpHash=createHash('sha256').update('127.0.0.1').digest();
   const ad=Buffer.alloc(55+id.length);rpHash.copy(ad);ad[32]=0x45;ad.writeUInt32BE(0,33);ad.writeUInt16BE(id.length,53);id.copy(ad,55);
   const cd=(type:string,challenge:string)=>Buffer.from(JSON.stringify({type,challenge,origin}));
   const registration={_csrf:session.csrf,label:'Phone',id:id.toString('base64url'),clientDataJSON:cd('webauthn.create',options.challenge).toString('base64url'),authenticatorData:ad.toString('base64url'),publicKey:publicKey.export({type:'spki',format:'der'}).toString('base64url'),publicKeyAlgorithm:-7};
   expect((await f.post('/passkeys',registration,{...headers,origin:'https://evil.invalid'})).status).toBe(403);
+  f.clock.advance(60_000);
+  f.s.sessions.change(file=>{delete file.sessions[hash(f.cookie)].seenAt;});
   expect((await f.post('/passkeys',registration,headers)).status).toBe(200);
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
   expect((await f.post('/passkeys',registration,headers)).status).toBe(400);
   f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.revokeToken',{label:'owner'},'revoke-owner');
   const o=await(await f.post('/login/passkey/options',{}, {host,origin})).json();
@@ -246,10 +251,32 @@ it('tracks incoming open-socket activity and publishes usage without passive val
 });
 it('does not turn diagnostic write failures into authentication failures or partial session usage',async()=>{
   const f=await setup();
-  f.loom.db.exec("CREATE TRIGGER refuse_usage BEFORE INSERT ON household_token_use BEGIN SELECT RAISE(ABORT, 'fixture usage unavailable'); END");
+  f.loom.db.exec("CREATE TRIGGER refuse_usage BEFORE UPDATE ON household_sessions BEGIN SELECT RAISE(ABORT, 'fixture usage unavailable'); END");
   expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${f.agent}`})).status).toBe(200);
   expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer.id).toBe('jonathan');
-  expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
+  expect(f.s.tokens.used()).toEqual({[hash(f.agent)]:new Date(f.clock.now()).toISOString()});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
   f.loom.db.exec('DROP TRIGGER refuse_usage');
   await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+});
+
+it('preserves both usage throttles across a stopped instance and restart',async()=>{
+  const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`};
+  await f.get('/auth/session',cookie);
+  const before=f.s.tokens.used(),seen=f.s.sessions.get('sessions',hash(f.cookie))!.seenAt;
+  cleanups.pop();await f.loom.close();f.clock.advance(30_000);
+  const reopened=await startLoom({home:f.home,next:true,clock:f.clock});cleanups.push(()=>reopened.close());
+  expect((await(await fetch(reopened.url+'/auth/session',{headers:cookie})).json()).viewer.id).toBe('jonathan');
+  const s=signin(reopened);expect(s.tokens.used()).toEqual(before);expect(s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(seen);
+  f.clock.advance(30_000);await fetch(reopened.url+'/auth/session',{headers:cookie});
+  expect(s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(seen);
+  f.clock.advance(240_000);await fetch(reopened.url+'/auth/session',{headers:cookie});expect(s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(f.clock.now()/1000);
+});
+it('does not count malformed same-origin cookie upgrades and records accepted logout token use',async()=>{
+  const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`};
+  const malformed=await new Promise<number>((ok,fail)=>{
+    const req=request(f.loom.url+'/live',{headers:{...cookie,origin:f.loom.url,connection:'Upgrade',upgrade:'websocket','sec-websocket-version':'13','sec-websocket-key':'invalid'}},res=>{res.resume();ok(res.statusCode!);});req.on('error',fail);req.end();
+  });
+  expect(malformed).toBe(400);expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
+  expect((await f.post('/logout',{_csrf:f.s.csrf(f.cookie)},cookie)).status).toBe(200);
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))).toBeUndefined();
 });

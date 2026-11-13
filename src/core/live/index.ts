@@ -121,6 +121,7 @@ export class Live {
       const authenticated = auth;
       this.ws.handleUpgrade(req, socket, head, ws => {
         const auth = authenticated;
+        auth.activity?.();
         const stopExpiry = auth.expiresAt === undefined ? undefined : this.clock.at(auth.expiresAt, () => ws.close(1008, 'Session ended'));
         this.sockets.set(ws, auth);
         const c: Subscriber = { window: auth.window === true, valid: () => auth.valid(), viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
