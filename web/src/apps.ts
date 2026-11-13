@@ -1,4 +1,5 @@
 import { settingsApp } from './pieces/settings/registration';
+import { setupApp } from './pieces/household/registration';
 import { activityApp } from './pieces/activity/registration';
 import { homeApp, HomeSurface } from './pieces/attention/home-registration';
 import { projectsApp } from './pieces/projects/registration';
@@ -28,3 +29,4 @@ apps.push(projectsApp);
 apps.push(activityApp);
 
 apps.push(settingsApp);
+apps.push(setupApp);
