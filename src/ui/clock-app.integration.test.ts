@@ -29,12 +29,12 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     installFixture(app,sharing);
     importClock(app.db,source,clock.now());
     const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
-  },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},valid:()=>true})});
+  },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},window:true,valid:()=>true})});
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
   call('in',{agent:'art',prompt:'Review today’s work',note:'Morning review',when:'2h'});
   call('park',{agent:'art',prompt:'Continue after the answer',note:'Waiting for the owner',on:'a-fixture'});
-  call('in',{agent:'art',member:'jonathan',prompt:'Private words',note:'Private clock work',when:'3h'});
+  expect(await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'clock.in',{agent:'art',member:'jonathan',prompt:'Private words',note:'Private clock work',when:'3h'},`fixture:private:${++seq}`,true)).toMatchObject({ok:true});
   call('in',{agent:'pond-bot',project:'pond',prompt:'Check pond',note:'Pond check',when:'1h'},'pollock');
   call('laneSet',{name:'morning',agent:'art',text:'Look at the queue and choose useful work.',note:'Daily planning',at:'08:31',days:'Mon-Fri'});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -52,6 +52,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
     const row=(p:typeof a,text:string)=>p.locator('[data-split-row]').filter({hasText:text});
     await expect.poll(()=>row(b,'Morning review').count()).toBe(1);
+    await expect.poll(()=>row(b,'Private clock work').count()).toBe(1);
     await a.getByRole('button',{name:'Create wake',exact:true}).click();
     await a.getByRole('textbox',{name:'Note',exact:true}).fill('Shared follow-up');
     await a.getByRole('textbox',{name:'In',exact:true}).fill('4h');
