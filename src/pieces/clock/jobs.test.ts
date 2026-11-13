@@ -144,7 +144,7 @@ describe('durable daemon clock', () => {
     expect(app.call('scheduleSet', { id: s.id, agent: 'art', at: '08:00', prompt: 'Override', note: 'override' }, { kind: 'agent', id: 'art' })).toMatchObject({ ok: false, code: 'denied' });
     access.members.otherOwner = { owner: true, agents: [] };
     try {
-      for (const [verb, input] of [['laneRemove', { name: 'upkeep' }], ['scheduleRemove', { id: s.id }]] as const)
+      for (const [verb, input] of [['laneRemove', { name: 'upkeep' }], ['scheduleRemove', { id: s.id }], ['scheduleRun', { id: s.id }]] as const)
         expect(app.call(verb, input, { kind: 'member', id: 'otherOwner' })).toMatchObject({ ok: false, code: 'denied' });
     } finally { delete access.members.otherOwner; }
     const before = schedules(app.db);
@@ -186,6 +186,25 @@ describe('durable daemon clock', () => {
     result.resolve({ state: 'started', body: 'old-agent-body' }); await settled();
     expect(wake(app.db, firing.id)).toMatchObject({ state: 'fired', agent: 'art', by: owner, attempt: firing.attempt });
     expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject([{ agent: 'bo' }]);
+  });
+  it('cancels an immediate lane run when reassigned before dispatch and rolls back interrupted assignment', async () => {
+    const access = structuredClone(sharing); access.members.jonathan.agents.push('bo');
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
+    const app = await loom({ runtime: { startBody } }, home(), new FakeClock(), access);
+    const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '06:05', text: 'Tidy.' });
+    const immediate = app.value('scheduleRun', { id: s.id });
+    expect(immediate.schedule).toBe(s.id);
+    const beforeWakes = wakes(app.db), beforeSchedules = schedules(app.db);
+    app.db.exec(`CREATE TEMP TRIGGER fail_lane_move BEFORE INSERT ON clock_schedules
+      WHEN json_extract(NEW.record, '$.agent') = 'bo'
+      BEGIN SELECT RAISE(ABORT, 'injected lane failure'); END;`);
+    expect(app.call('laneAssign', { name: 'upkeep', agent: 'bo' })).toMatchObject({ ok: false });
+    expect(wakes(app.db)).toEqual(beforeWakes); expect(schedules(app.db)).toEqual(beforeSchedules);
+    app.db.exec('DROP TRIGGER fail_lane_move');
+    app.value('laneAssign', { name: 'upkeep', agent: 'bo' });
+    expect(wake(app.db, immediate.id)?.state).toBe('cancelled');
+    app.clock.advance(0); await settled(); expect(startBody).not.toHaveBeenCalled();
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject([{ agent: 'bo', schedule: s.id }]);
   });
   it('dispatches local and file-backed lanes only through the runtime without reading source files', async () => {
     const clock = new FakeClock(Date.parse('2026-03-07T09:00:00Z'));

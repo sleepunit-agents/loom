@@ -174,3 +174,9 @@ repeated. Lane removal through either operation also requires target
 create/give-work policy, in addition to household policy. Names and slots use the
 legacy lowercase-letter-first, 40-character format; the inline-text limit remains
 6,500 characters.
+
+Immediate runs of a household lane keep the schedule link, so reassignment also
+cancels a run-now occurrence that has not dispatched. Run-now requires the same
+target give-work policy as other lane administration. A database abort fixture
+interrupts reassignment after occurrence cancellation and verifies full rollback
+of both wake and schedule rows.

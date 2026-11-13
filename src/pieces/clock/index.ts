@@ -108,7 +108,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     for (const w of wakes(db).filter(w => w.schedule === s.id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; saveWake(ctx, w); }
     db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { id: s.id };
   });
-  register('scheduleRun', idInput, true, (v, i) => !!schedule(db, i.id) && act(v, schedule(db, i.id)!, true), (ctx, i) => make(ctx, schedule(db, i.id)!, ctx.now, { bypassPause: true }));
+  register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
+    const s = schedule(db, i.id)!;
+    return make(ctx, s, ctx.now, { bypassPause: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
+  });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const laneId = (name: string) => `lane/${name}`;
   const getLane = (name: string) => { const s = schedule(db, laneId(name)); if (!s?.laneDetails) throw new OperationError('not-found', 'Lane not found'); return s; };
