@@ -83,3 +83,23 @@ commons socket under the daemon home lock. It must refresh dependent knowledge
 records when a referring page changes, since `citedBy` is derived across pages.
 Verification actions, People, Projects, Activity, generated clients and all four
 apps remain subsequent units. This installer is not yet registered in next mode.
+
+## Synchronous verification primitive
+
+`verifyKnowledgePages(db, input, now)` in `src/backends/knowledge-verification.ts`
+contains the existing verification SQL and its immediate transaction/retry boundary.
+It receives an already-open store and the operation clock; it neither opens a
+path nor creates schema. The existing Promise backend delegates to it and keeps
+its outside-write notification wrapper. `deriveSlaClass` remains exported from
+the backend for existing callers.
+
+Confirmed and corrected checks advance the successful stamp; a stale check only
+adds its audit record. Explicit `verified_at` controls the check time; a note's
+content update uses `now`. Batch refusal, body caps, anchors and audit attribution
+retain their existing semantics. Tests run this primitive inside a synchronous
+operation on `startLoom`, with a fake clock.
+
+This is a prerequisite for the two Knowledge actions, not their registration.
+The helper alone supplies no receipt spanning the content store and loom.db.
+The action integration must avoid repeating a committed verification when saving
+the core retry receipt fails, and publish live changes after a successful commit.
