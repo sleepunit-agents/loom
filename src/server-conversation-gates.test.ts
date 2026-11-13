@@ -98,12 +98,48 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
       ] as const) {
         const result = await call(name, args);
         expect(result.isError, name).toBe(true);
-        if (name === 'comms_title') expect(JSON.stringify(result.content)).toContain('holds no conversation the runtime named');
-        if (name === 'comms_thread') expect(JSON.stringify(result.content)).toContain('reads only the thread of the conversation it holds');
+        if (name === 'comms_title') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
+        if (name === 'comms_thread') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
         expect(binding, name).not.toHaveBeenCalled();
       }
       expect(binding).not.toHaveBeenCalled();
     } finally { await client.close(); await server.close(); }
   }
   expect(readFileSync(join(home, 'household.db'))).toEqual(before);
+}, 30_000);
+
+it('offline app tools and local digest never discover or mutate legacy app state', async () => {
+  const { home, household, contextDir } = fixture();
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Art');
+  const { conversation } = recordTurn(contextDir, 'art', {
+    venue: 'session', place: 'offline', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
+  }, 'test');
+  // A corrupt legacy registry makes accidental app access fail loudly.
+  writeFileSync(join(home, 'household.db'), 'must never open this');
+  const legacy = readFileSync(join(home, 'household.db'));
+  const discovery = vi.spyOn(households, 'householdOf');
+  const appHome = vi.spyOn(conversations, 'homeFor');
+  for (const selection of [{ household, agent: 'art' }, null] satisfies ConversationSelection[]) {
+    const { server } = createLoomServer({ contextDir, conversationSelection: selection, memorySelection: { agent: 'art' }, peopleSelection: null });
+    const client = new Client({ name: 'offline-apps', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a); await client.connect(b);
+    try {
+      const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      await call('identity', { client: 'claude-code', piece: 'last-24h', conversation, run: 'run-offline' });
+      discovery.mockClear(); appHome.mockClear();
+      for (const [name, args] of [['describe_self', { text: 'Offline description.' }], ['comms_title', { title: 'Offline' }], ['comms_thread', {}], ['comms_thread', { thread: 'th:unknown' }]] as const) {
+        const result = await call(name, args);
+        expect(result.isError, name).toBe(true);
+        expect(JSON.stringify(result.content), name).toContain('unavailable over offline stdio');
+      }
+      const digest = await call('conversation_digest', { summary: 'Offline work recorded', needs_owner: null });
+      expect(digest.isError).not.toBe(true);
+      expect(JSON.stringify(digest.content)).toContain('Offline work recorded');
+      expect(discovery).not.toHaveBeenCalled();
+      expect(appHome).not.toHaveBeenCalled();
+    } finally { await client.close(); await server.close(); }
+  }
+  expect(readFileSync(join(home, 'household.db'))).toEqual(legacy);
+  expect(existsSync(join(home, 'loom.db'))).toBe(false);
 }, 30_000);

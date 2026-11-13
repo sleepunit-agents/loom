@@ -30,7 +30,6 @@ import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
 import { installMindPeople } from './pieces/mind/people.js';
 import { installMindPeopleActions } from './pieces/mind/people-actions.js';
 import { createPersonHalf } from './backends/people-creation.js';
-import { HouseholdDatabase } from './core/household/document.js';
 import { installMindKnowledge } from './pieces/mind/index.js';
 import { installMindKnowledgeActions } from './pieces/mind/actions.js';
 import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
