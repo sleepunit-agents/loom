@@ -36,7 +36,7 @@ function fixture(overrides: Partial<SlackSocketOptions> = {}) {
   cleanups.push(transport.close);
   return {clock,sockets,request,receive,withValue,socket,beforeConnect,transport};
 }
-const payload = {team_id:'T123',event:{type:'message',channel:'D123',user:'U123',ts:'1793828004.242749',text:'hello'}};
+const payload = {event_id:'Ev123',team_id:'T123',event:{type:'message',channel:'D123',user:'U123',ts:'1793828004.242749',text:'hello'}};
 const envelope = (id='env-1') => ({type:'events_api',envelope_id:id,payload});
 describe('Slack Socket Mode transport', () => {
   it('uses app withValue and bounded fixed-origin POST before dialing the private ticket', async () => {
@@ -185,9 +185,9 @@ describe('Slack Socket Mode transport', () => {
     expect(clock.active.size).toBeGreaterThan(0); f.transport.close();
     expect(clock.active.size).toBe(0);
   });
-  it('handles ACK failure and consumes unsupported interactions without delivery', async () => {
+  it.each(['interactive','slash_commands'])('handles ACK failure and consumes unsupported %s without delivery', async type => {
     const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
-    s.frame({type:'interactive',envelope_id:'i'}); await settled(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).toHaveBeenCalledOnce();
+    s.frame({type,envelope_id:'i'}); await settled(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).toHaveBeenCalledOnce();
     s.send.mockImplementationOnce((_text, callback)=>callback(Error('ticket'))); s.frame(envelope()); await settled(); expect(s.terminate).toHaveBeenCalledOnce();
   });
   it('proves durable commit before ACK and dedup after a daemon/socket restart', async () => {
@@ -200,8 +200,8 @@ describe('Slack Socket Mode transport', () => {
       const receive = vi.fn(async (p: Record<string,unknown>) => {
         await gate;
         const event = p.event;
-        if (!event || typeof event !== 'object' || !('ts' in event) || typeof event.ts !== 'string') throw Error('Invalid fixture event');
-        app.db.transaction(() => app.db.prepare('INSERT OR IGNORE INTO socket_fixture VALUES (?,?)').run(event.ts,JSON.stringify(p)))();
+        if (!event || typeof event !== 'object' || !('ts' in event) || typeof event.ts !== 'string' || typeof p.event_id !== 'string') throw Error('Invalid fixture event');
+        app.db.transaction(() => app.db.prepare('INSERT OR IGNORE INTO socket_fixture VALUES (?,?)').run(p.event_id,JSON.stringify(p)))();
       });
       const f = fixture({receive}); await settled(); const s = f.sockets[0]; s.hello();
       s.send.mockImplementation((_text, callback) => { expect(app.db.inTransaction).toBe(false); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:1}); callback(); });
@@ -210,7 +210,11 @@ describe('Slack Socket Mode transport', () => {
       commit(); await settled(); expect(receive).toHaveBeenCalledWith(payload); expect(s.send).toHaveBeenCalledOnce();
       f.transport.close(); await app.close(); app = await startLoom({home});
       const g = fixture({receive}); await settled(); g.sockets[0].hello(); g.sockets[0].frame(envelope('new-envelope-id')); await settled();
-      expect(g.sockets[0].send).toHaveBeenCalledOnce(); expect(app.db.prepare('SELECT * FROM socket_fixture').all()).toEqual([{id:payload.event.ts,content:JSON.stringify(payload)}]);
+      expect(g.sockets[0].send).toHaveBeenCalledOnce(); expect(app.db.prepare('SELECT * FROM socket_fixture').all()).toEqual([{id:payload.event_id,content:JSON.stringify(payload)}]);
+      const other = {...payload,event_id:'Ev456'};
+      g.sockets[0].frame({...envelope('different-event'),payload:other}); await settled();
+      expect(g.sockets[0].send).toHaveBeenCalledTimes(2);
+      expect(app.db.prepare('SELECT * FROM socket_fixture ORDER BY id').all()).toEqual([{id:payload.event_id,content:JSON.stringify(payload)},{id:other.event_id,content:JSON.stringify(other)}]);
     } finally { await app.close(); rmSync(home,{recursive:true,force:true}); }
   });
 });
