@@ -147,7 +147,7 @@ flowchart TB
   G --> H2["# Harness · # Model<br/>blocks/harness.ts · blocks/model.ts<br/>client from param › MCP peer › LOOM_CLIENT"]
   H2 --> I["# Memories<br/>memories/INDEX.md summary, legacy"]
   I --> J["Runtime adapter<br/>clients.ts"]
-  J --> K["Recorder warning, last<br/>recorder-health.ts, only when episode writes keep failing"]
+  J --> K["Recorder warning(s), last<br/>recorder-health.ts, one per component (episodes, cards) that keeps failing"]
 ```
 
 `dossier` is the worker-body version. It returns preferences and
@@ -259,7 +259,7 @@ have fallen behind.
 | `src/backends/glob.ts` | Title patterns for bulk forget |
 | `src/backends/retry.ts` | Retry on SQLITE_BUSY |
 | `src/backends/recall-log.ts` | Local recall observation log |
-| `src/backends/recorder-health.ts` | Episode-write failure ledger |
+| `src/backends/recorder-health.ts` | Per-component failure ledger (episodes, cards) |
 | `src/backends/conversations.ts` | Conversations as core records: turns (metadata only, `seq` and `latency_ms` by core), digests, the retention fold, the hub's section and the tape's digests |
 | `src/backends/needs.ts` | A digest's Needs you ask: the object (ask, why, if_yes, if_no, href, refs, waits_on) or a plain string, and the lint that refuses an ask naming internal ids or lane words |
 | `src/needs-resolve.ts` | Needs you that clear themselves: each minute, what an open ask waits on (an approval, a task), read through the approvals and tasks pieces' own APIs |

@@ -22,7 +22,7 @@ import { PeopleStore, roomBlock } from '../backends/people.js';
 import { projectBlock } from '../backends/projects.js';
 import { commonsPeoplePath } from '../backends/people-household.js';
 import { householdOf } from '../household.js';
-import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
+import { RECORDER_COMPONENTS, readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
 async function readOptional(path: string): Promise<string | null> {
   try {
@@ -153,7 +153,7 @@ export async function loadIdentity(
           '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' + tape : null;
       } catch (error) {
         console.error('[loom:identity] tape read failed:', error);
-        recordFailure(contextDir, error);
+        recordFailure(contextDir, 'episodes', error);
         return null;
       }
     },
@@ -181,18 +181,18 @@ export async function loadIdentity(
   for (const section of IDENTITY_SECTIONS) {
     if (core && section.name === 'top-of-mind') {
       try {
-        const block = projectBlock(contextDir, project, { onFailure: e => recordFailure(contextDir, e) });
+        const block = projectBlock(contextDir, project, { onFailure: e => recordFailure(contextDir, 'projects', e) });
         if (block) parts.push(block);
       } catch (error) {
         console.error('[loom:identity] project block failed:', error);
-        recordFailure(contextDir, error);
+        recordFailure(contextDir, 'projects', error);
       }
       try {
-        const block = roomBlock(contextDir, people, { onFailure: e => recordFailure(contextDir, e) });
+        const block = roomBlock(contextDir, people, { onFailure: e => recordFailure(contextDir, 'cards', e) });
         if (block) parts.push(block);
       } catch (error) {
         console.error('[loom:identity] room block failed:', error);
-        recordFailure(contextDir, error);
+        recordFailure(contextDir, 'cards', error);
       }
     }
     if (core && section.name === 'harness') {
@@ -226,8 +226,10 @@ export async function loadIdentity(
 
   if (core) {
     try {
-      const warning = warningBlock(readHealth(contextDir));
-      if (warning) parts.push(warning);
+      const warnings = RECORDER_COMPONENTS
+        .map(component => warningBlock(component, readHealth(contextDir, component)))
+        .filter((warning): warning is string => warning !== null);
+      parts.push(...warnings);
     } catch { /* Recorder health must never block identity. */ }
   }
   return parts.join('\n\n---\n\n');

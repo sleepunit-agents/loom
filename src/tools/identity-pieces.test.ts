@@ -129,10 +129,10 @@ describe('identity core and pieces', () => {
   });
 
   it('keeps recorder health warnings in default core and full, after the index', async () => {
-    await writeFile(join(dir, 'recorder-health.json'), JSON.stringify({
+    await writeFile(join(dir, 'recorder-health.json'), JSON.stringify({ episodes: {
       consecutiveFailures: FAILURE_THRESHOLD, failingSince: '2026-11-11T10:00:00.000Z',
       lastError: 'disk full', lastSuccess: null,
-    }));
+    } }));
     const core = await load();
     expect(core).toContain('⚠️ Recorder Health Warning');
     expect(core).toContain('disk full');
