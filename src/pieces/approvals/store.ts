@@ -1,4 +1,4 @@
-import type { Db } from '../../core/index.js';
+import { registerExportFilter, privateExportCopy, type Db } from '../../core/index.js';
 import { empty, type State, type Approval, type Rule, type Standing } from './model.js';
 export const ruleId = (r: Rule | Standing) => 'id' in r ? r.id : `${r.person ? `grant:${r.person}:` : 'rule:'}${r.kind}:${r.scope}`;
 export function load(db: Db): State {
@@ -10,6 +10,7 @@ export function load(db: Db): State {
 /** Registry and offline importer own the transaction. Receipt history is never trimmed. */
 export function persist(db: Db, s: State, now: number): {type:string;id:string}[] {
   const changes: {type:string;id:string}[] = [];
+  for(const a of [...s.approvals,...s.standing])if(a.member)db.prepare("INSERT OR IGNORE INTO approvals_meta(key,value) VALUES (?,?)").run('private-id:'+a.id,JSON.stringify({member:a.member}));
   const sync = (table: string, records: {id:string;record: unknown}[], type: string) => {
     const old = new Map((db.prepare(`SELECT id,record FROM approvals_${table}`).all() as {id:string;record:string}[]).map(r => [r.id,r.record]));
     for (const r of records) {
@@ -40,3 +41,13 @@ export function persist(db: Db, s: State, now: number): {type:string;id:string}[
   return changes;
 }
 export function readApproval(db: Db, id: string): Approval | undefined { const row = db.prepare('SELECT record FROM approvals_approvals WHERE id=?').get(id) as {record:string}|undefined; return row ? JSON.parse(row.record) : undefined; }
+
+/** Private ids outlive standing-history trimming and retain audit/receipt exclusions. */
+export function installPrivateExport(db:Db) {
+ registerExportFilter(db,'approvals',(table,row)=>{
+  if(!table.startsWith('approvals_') && table!=='core_operations')return true;
+  const ids=new Set((db.prepare("SELECT key FROM approvals_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
+  for(const a of [...load(db).approvals,...load(db).standing])if(a.member)ids.add(a.id);
+  return !(table==='core_operations' && row.name==='approvals.command') && !privateExportCopy(row,ids);
+ });
+}

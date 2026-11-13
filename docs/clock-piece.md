@@ -20,6 +20,11 @@ features (lane files, continuations, slots, approvals, local wakes) remain held;
 private body delivery and account selection are refused. Conversation delivery
 and authenticated continuation resolution remain blocked on t-2209.
 
+Runtime dispatch must also replace the existing ordinary-wake background use of
+`w.by` with the piece's service authority, retaining requester scope as data.
+That pre-existing path is not used for newly supported private local dispatch;
+private local wakes are explicitly held before intent and before Runtime.
+
 Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
@@ -846,3 +851,30 @@ changed words/scope or revoked policy holds the wake without invoking runtime.
 These checks never increment standing use. No public Caller, client command or
 app is connected, and the real runtime still holds local work. Trusted fakes
 exercise this boundary; authenticated local host dispatch remains unfinished.
+
+## Private owner-conversation local requests
+
+The authenticated Runtime Caller carries an explicit member from its current
+Comms binding. Trusted local filing, one-shot recovery and standing recovery
+retain that member, whole saved prompt/note, project and service. The member must
+still be a household owner; a non-owner's private local request refuses without
+creating an owner-visible card. Existing owner/no-people requests remain supported.
+No agent credential, job string or caller input supplies member provenance.
+
+Private cards, wakes and standing jobs follow policy rule 1. Only their member's
+signed-in window reads or answers them; other household owners, project members,
+agents, services and CLI/MCP tokens cannot read them. The caller receives only a
+request acknowledgement. Conditional window checks run before receipt replay;
+mixed Live types omit private rows from token subscriptions. Trusted Clock roles
+process authority as the Clock service and never run a job as a member. Actual
+private wake delivery is still held pending the Runtime integration below.
+
+Export/backup use the table-by-table snapshot and **omit** these private rows,
+as they omit Comms tables. Owning pieces register their filters; the new generic
+`core_export_required` migration records required filters, so reopening a database
+without composing them refuses export. Audit, events, immutable filings, standing
+bindings, private-id markers and receipt copies are omitted too. Private-id
+markers outlive standing-history trimming. Rendered Clock/Approvals command retry
+receipts are omitted because text output may lose structured scope; public work
+records remain. Restoring a snapshot does not restore private local authority.
+No old row is promoted or widened, and no real import or rollout runs here.

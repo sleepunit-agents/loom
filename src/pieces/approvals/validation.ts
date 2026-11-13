@@ -9,7 +9,7 @@ const people = z.array(slug).max(200).refine(p=>new Set(p).size===p.length,'Dupl
 export const callerSchema = z.object({
   who:whoSchema,for:principal,people:people.optional(),
   conversation:z.string().regex(/^cv-[0-9a-f]{12}$/).optional(),
-  project:slug.optional(),
+  project:slug.optional(),member:slug.optional(),
 }).passthrough();
 export const approvalSchema = z.object({
   id:z.string().regex(/^a-[0-9a-f]{8}$/),kind:agent,target:z.string().min(1).max(200).regex(/^[\x21-\x7e]+( [\x21-\x7e]+)*$/),
@@ -34,7 +34,7 @@ export const approvalSchema = z.object({
 export const standingSchema = z.object({
   id:z.string().regex(/^s-[0-9a-f]{8}$/),kind:z.literal('local-wake'),agent,
   target:z.string(),digest:z.string().regex(/^[0-9a-f]{64}$/),who:whoSchema,
-  for:principal,people:people.optional(),from:z.string().regex(/^a-[0-9a-f]{8}$/),
+  for:principal,people:people.optional(),member:slug.optional(),project:slug.optional(),from:z.string().regex(/^a-[0-9a-f]{8}$/),
   what:z.string(),details:z.string().optional(),at:timestamp,by:slug.optional(),
   uses:z.number().int().nonnegative().safe(),used:timestamp.optional(),
   off:z.object({at:timestamp,by:slug.optional()}).passthrough().optional(),
