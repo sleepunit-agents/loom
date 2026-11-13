@@ -40,7 +40,8 @@ export function threadActivity(o:Options) {
    const prior=old?await o.decode(old):undefined;
    if(old&&old.at+retention<=clock.now())return;
    const legacy=prior?.card as Record<string,unknown>|undefined;
-   const was=(prior?.step??legacy??{}) as Record<string,unknown>;
+   // Imported cards keep timing in their metadata envelope and details in step.
+   const was={...legacy,...prior?.step as Record<string,unknown>|undefined};
    const tool=typeof prior?.tool==='string'?prior.tool:typeof legacy?.tool==='string'?legacy.tool:c.tool;
    const previousState=prior?.state??legacy?.state;
    const start=typeof was.t0==='string'?was.t0:iso.safeParse(c.at).success?c.at as string:undefined;

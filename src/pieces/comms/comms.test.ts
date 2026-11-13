@@ -1281,3 +1281,15 @@ it('rejects unavailable private activity capabilities before decrypting or encry
  await expect(s.comms.activityCards('art',place,batch)).rejects.toThrow();
  expect(crypto).toBe(0);
 });
+
+it('preserves imported card timing when its sealed metadata and step words use separate envelopes',async()=>{
+ let key:WordsKey;const s=await setup({key:k=>{key=k;return k;}}),place=await s.open();await s.comms.deliver('art',place,1);
+ const at=s.clock.now(),start=new Date(at-5000).toISOString(),end=new Date(at-1000).toISOString();
+ await s.comms.post('art',place,{id:'imported',kind:'card',text:'Old',tool:'Edit',state:'done'});
+ const words=await key!.seal('Imported label');
+ const privateCipher=(await key!.seal(JSON.stringify({card:{tool:'Edit',state:'done',t0:start,t1:end}}))).toString('base64');
+ const stepCipher=(await key!.seal(JSON.stringify({body:'Old diff'}))).toString('base64');
+ s.app.db.prepare("UPDATE comms_messages SET words=?,record=? WHERE thread=? AND kind='card'").run(words,JSON.stringify({encoding:'text',privateCipher,stepCipher}),place);
+ await s.comms.activityCards('art',place,{run:'new-body',cards:[{id:'imported',tool:'Edit',summary:'Updated',state:'done',body:'New diff'}]});
+ expect(await s.call('messages',{thread:place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({text:'Updated',tool:'Edit',state:'done',step:{body:'New diff',t0:start,t1:end}})])});
+});

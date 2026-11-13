@@ -550,10 +550,10 @@ or concurrent batch conflicts, and expiry cannot renew or resurrect words.
 Running cards start a working spell; batches keep an existing spell's beat,
 while finished late cards and alive-only updates never restart it. Alive samples
 use the existing monotonic/future/token rules. The first regression failed with
-`activityCards is not a function`; fifteen new cases now cover private storage,
+`activityCards is not a function`; sixteen new cases now cover private storage,
 whole-batch validation/rollback, original-tool body suppression, timing,
 heartbeat/alive, unavailable capabilities, eight crypto races and exact expiry.
-All 339 affected tests and TypeScript checking pass. No web files changed.
+All 340 affected tests and TypeScript checking pass. No web files changed.
 
 The visual-keyboard browser extension passed on `570f8b8be57b0512ebc50f32e35f79f9515a3905`:
 [Comms evidence run](https://github.com/sleepunit-agents/loom/actions/runs/43387911743),
@@ -561,3 +561,7 @@ The visual-keyboard browser extension passed on `570f8b8be57b0512ebc50f32e35f79f
 It proves the Chromium keyboard simulation and the retained scroll/retention
 assertions on that head, not physical iOS behavior or later heads. Aggregate
 review budgets remain backend/security 2/3 and importer 1/3.
+
+A final imported-envelope regression reproduced lost original timing when card
+metadata and step details were sealed separately. Batch updates now combine
+those authorized envelopes before preserving timing; the added regression passes.
