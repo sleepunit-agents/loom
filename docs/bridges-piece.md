@@ -97,10 +97,21 @@ still required before production file support.
 This pure helper is unregistered and grants no admission. Conversation metadata must
 come from the authenticated bot's API, with human names resolved through unambiguous
 People links. Real Slack integration must still check users.info (same team, not guest,
-stranger, deleted or bot), inspect every member and admit each with runtime, and check
-fresh group membership/admission before EVERY post. The existing engine's boolean
-inspect seam and group recipient selection still need reconciliation. Socket durable
-ACK, outbound threads/splitting, stop/presence and named secret sinks remain unfinished.
+stranger, deleted or bot), inspect every member and admit each with runtime, and return the full checked member set as `{kind:'allow', members}`. For a group,
+that includes the receiving bot and the sender, with at least two distinct humans;
+every human must resolve unambiguously to a different People link and pass runtime
+admission. A bare `allow` cannot authorize a Slack group. Groups route to their
+receiving bot without needing a primary route or mention, as DMs do.
+
+The engine repeats inspection and all-member admission before EVERY group post,
+including after staging release; the adapter must fetch fresh conversations.info
+(still MPIM), conversations.members and users.info, never reuse intake membership.
+A temporary failure keeps the reply pending; a definite denial holds it for human
+disposition. Link, route or venue edits during admission invalidate that attempt.
+Injected fake tests cover these boundaries; no real Web API inspection exists yet.
+Socket durable ACK, outbound threads/splitting, stop/presence and service-based
+secrets.withValue credential wiring remain unfinished. The foundation get seam is
+not a production secret path; adapters will run as the bridges service, not an agent.
 
 | Old Slack case | This slice / remaining owner |
 | --- | --- |
@@ -109,7 +120,7 @@ ACK, outbound threads/splitting, stop/presence and named secret sinks remain unf
 | Markup/escape order, readable mentions/links | slackMessage/slackText tests |
 | Human-only short labels with whole group names | slackMessage label tests |
 | File name descriptions | Pure text only; secure runtime-bound fetch pending |
-| users.info, all-member admission, fresh pre-post checks | Pending real adapter/runtime integration; never inferred here |
+| users.info, all-member admission, fresh pre-post checks | Engine requires checked member IDs, admits all humans and repeats before posts; actual platform checks and runtime composition pending |
 | Socket ACK after durable receipt, send/presence staging | Pending transport integration |
 | Poll/lookback/shadow compare/check-gone | Retired on the new side: staged sockets replace concurrent shadow polling; preserve live thread/dedup semantics in adapter tests |
 

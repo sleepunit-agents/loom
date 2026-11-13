@@ -7,7 +7,7 @@ import { FakeClock, type Sharing } from '../../core/index.js';
 import { installEffects } from '../../core/effects.js';
 import { installBridges } from './index.js';
 import { Bridges } from './engine.js';
-import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome } from './role.js';
+import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
 import { z } from 'zod';
 import type { RecordType } from '../../core/live/index.js';
 import { OperationError } from '../../core/index.js';
@@ -20,7 +20,7 @@ const roots: string[] = [], closes: (()=>Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true}); });
 class FakeVenue implements VenueAdapter {
   platform: Venue['platform'];
-  callbacks?: Parameters<VenueAdapter['connect']>[2]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: 'allow'|'drop'|'wait'='allow';
+  callbacks?: Parameters<VenueAdapter['connect']>[2]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
   constructor(platform: Venue['platform']) {this.platform=platform;}
   async connect(_v: Venue,_c: unknown,callbacks: Parameters<VenueAdapter['connect']>[2]) { this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
   async inspect() { return this.inspection; }
@@ -50,6 +50,85 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   return {runtime,admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
+  async function groupFixture(staging=false) {
+    const f=await fixture('slack',staging);
+    expect(f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'mark'}).ok).toBe(true);
+    f.adapter.inspection={kind:'allow',members:['100','200','201']};
+    // MPIMs route to their own bot, even without a route or summons.
+    const message=f.message({channel:'G300',group:true});
+    return {...f,groupMessage:message};
+  }
+  it('routes Slack groups to the receiving bot and admits every human before delivery',async()=>{
+    const f=await groupFixture();
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    expect(f.admitted).toEqual(['jonathan','mark']); expect(f.deliveries.size).toBe(1);
+    expect([...f.deliveries.values()][0].key.venue).toBe('slack:house:group:G300');
+  });
+  it.each([
+    ['legacy boolean','allow'],
+    ['missing sender',{kind:'allow',members:['100','201','202']}],
+    ['missing receiving bot',{kind:'allow',members:['200','201']}],
+    ['duplicate member',{kind:'allow',members:['100','200','200']}],
+    ['unknown member',{kind:'allow',members:['100','200','201','stranger']}],
+    ['too few humans',{kind:'allow',members:['100','200']}],
+    ['malformed member',{kind:'allow',members:['100','200',null]}],
+  ])('drops Slack group inspection with %s',async(_name,inspection)=>{
+    const f=await groupFixture(); f.adapter.inspection=inspection as Inspection;
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0); expect(f.admitted).toEqual([]);
+    expect(f.app.db.prepare('SELECT state,message FROM bridges_inbox').get()).toEqual({state:'dropped',message:'{}'});
+  });
+  it.each(['drop','wait'] as const)('honors a non-sender group member admission %s',async verdict=>{
+    const f=await groupFixture(); f.runtime.admit=async input=>input.person==='mark'?verdict:'allow';
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0);
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:verdict==='drop'?'dropped':'pending'});
+    if(verdict==='wait') { f.runtime.admit=async()=> 'allow'; f.clock.advance(5000); await f.engine.flush(); expect(f.deliveries.size).toBe(1); }
+  });
+  it('refuses two Slack accounts claiming the same human',async()=>{
+    const f=await groupFixture();
+    expect(f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'jonathan'}).ok).toBe(true);
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0); expect(f.admitted).toEqual([]);
+  });
+  it('rechecks member links after asynchronous admission',async()=>{
+    const f=await groupFixture(); let changed=false;
+    f.runtime.admit=async input=>{
+      if(input.person==='mark' && !changed) { changed=true; f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'stranger'}); }
+      return input.person==='stranger'?'drop':'allow';
+    };
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    expect(changed).toBe(true); expect(f.deliveries.size).toBe(0);
+    f.clock.advance(5000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+  });
+  it.each(['platform','runtime','unknown-member'] as const)('freshly refuses an outgoing group reply after %s changes',async change=>{
+    const f=await groupFixture(); const inspect=vi.spyOn(f.adapter,'inspect');
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    if(change==='platform') f.adapter.inspection='drop';
+    if(change==='unknown-member') f.adapter.inspection={kind:'allow',members:['100','200','201','stranger']};
+    if(change==='runtime') f.runtime.admit=async input=>input.person==='mark'?'drop':'allow';
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'private reply'}); await f.engine.flush();
+    expect(inspect).toHaveBeenCalledTimes(2); expect(f.adapter.posts).toEqual([]);
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'held'});
+  });
+  it('rechecks groups on every reply and on staging release, retaining a temporary failure',async()=>{
+    const f=await groupFixture(true); const inspect=vi.spyOn(f.adapter,'inspect');
+    await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    const incomingId=[...f.deliveries.keys()][0];
+    f.engine.reply({id:'reply',incomingId,text:'hello'}); await f.engine.flush();
+    expect(f.adapter.posts).toEqual([]); expect(inspect).toHaveBeenCalledTimes(2);
+    f.adapter.inspection='wait';
+    expect(f.app.operations.call('direct',owner,'core.releaseEffect',{id:'bridges:reply'},'release').ok).toBe(true);
+    await f.engine.flush(); expect(f.adapter.posts).toEqual([]);
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'pending'});
+    f.adapter.inspection={kind:'allow',members:['100','200','201']}; f.clock.advance(5000); await f.engine.flush();
+    expect(f.adapter.posts).toHaveLength(1);
+    f.engine.reply({id:'second',incomingId,text:'another'}); await f.engine.flush();
+    f.adapter.inspection='drop';
+    expect(f.app.operations.call('direct',owner,'core.releaseEffect',{id:'bridges:second'},'release-second').ok).toBe(true);
+    await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
+    expect(f.app.db.prepare("SELECT state FROM bridges_outbox WHERE id='second'").get()).toEqual({state:'held'});
+  });
   it('preserves event time and label through durable receipt, restart and duplicate receipt',async()=>{
     const f=await fixture(); f.setGate('wait');
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
