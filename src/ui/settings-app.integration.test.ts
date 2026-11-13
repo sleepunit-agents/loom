@@ -45,6 +45,11 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   await a.getByRole('button',{name:'Allow once',exact:true}).click();
   await b.goto(`${app.url}/p/settings-preview/grants/mark`);await expect.poll(()=>b.getByRole('button',{name:'Revoke API',exact:true}).count()).toBe(1);
   expect(await b.getByText('h-22',{exact:true}).count()).toBe(1);
+  // Put the historical boundary 31 minutes ahead rather than advancing every
+  // unrelated next-mode job through a year of fake time.
+  const history=app.db.prepare('SELECT id,record FROM secrets_changes').all() as {id:string;record:string}[];
+  for(const row of history)app.db.prepare('UPDATE secrets_changes SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),at:clock.now()-365*86400_000+31*60_000}),row.id);
+  app.live.changed(history.map(row=>({type:'secret.change',id:row.id})));
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/settings-app');mkdirSync(shots,{recursive:true});
   await b.goto(`${app.url}/p/settings-preview/secrets/API`);await expect.poll(()=>b.getByRole('heading',{name:'Who may use it',exact:true}).count()).toBe(1);
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
@@ -57,7 +62,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.policy',{default:'ask',secrets:{}},randomUUID()).ok).toBe(true);
   clock.advance(30*60_000);
   await expect.poll(()=>b.locator('body').textContent()).toContain('Expired');
-  clock.advance(365*86400_000-30*60_000);
+  clock.advance(60_000);
   await expect.poll(()=>row(b,'API').textContent()).toContain('Not changed in a year');
   expect(await b.locator('body').textContent()).not.toContain(sentinel);
   expect(await b.locator('body').innerHTML()).not.toContain(sentinel);
