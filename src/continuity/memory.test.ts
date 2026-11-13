@@ -44,6 +44,8 @@ async function connect(contextDir: string, memorySelection: LoomServerConfig['me
     return (result.content as { text: string }[]).map(c => c.text).join('\n');
   };
 }
+// Three MCP clients exercise complete lifecycles on real SQLite stores;
+// the five-second unit-test default is too short on a loaded CI runner.
 it('routes concurrent MCP memory reads and writes to each selected context despite a global legacy override', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-memory-context-')); homes.push(home);
   const dirs = ['art', 'mark', 'solo'].map(agent => {
@@ -90,7 +92,7 @@ it('routes concurrent MCP memory reads and writes to each selected context despi
   expect((await createBackend(dirs[1]).list({})).map(row => row.title)).toEqual(['Legacy only']);
   expect(createBackend(dirs[0], null)).not.toBe(createBackend(dirs[1], { agent: 'mark' }));
   expect(createBackend(dirs[0], null)).toBe(createBackend(dirs[0], { agent: 'art' }));
-});
+}, 30_000);
 
 it('isolates raw tape, identity, salience and proposal operations for two agents and standalone beside a legacy override', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-memory-readers-')); homes.push(home);
@@ -162,4 +164,4 @@ it('isolates raw tape, identity, salience and proposal operations for two agents
   expect(tapeForContext(dirs[0])).toContain('Digest 3');
   expect(digestForContext(dirs[0])).toContain('Canon 3');
   expect(listProposals(dirs[0]).map(r => r.title)).toEqual(['Draft 3']);
-});
+}, 30_000);
