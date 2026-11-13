@@ -56,7 +56,7 @@ export function bindSecretRetryKey(db: Db, material: SecretRetryKeyMaterial): re
  * The installer copies the key; this function erases its file buffer on exit. */
 export interface SecretRetryKeyFiles { active: string; previous: readonly string[] }
 export function installAsyncSecretValuesFromFile(db: Db, operations: Operations, sharing: () => Sharing,
-  holder: AsyncSecretMutations, keyFile: string | SecretRetryKeyFiles, attention?: GrantAttention): void {
+  holder: AsyncSecretMutations, keyFile: string | SecretRetryKeyFiles, attention?: GrantAttention) {
   const buffers: Buffer[] = [];
   function read(path: string): Uint8Array {
     let fd: number|undefined;
@@ -76,7 +76,7 @@ export function installAsyncSecretValuesFromFile(db: Db, operations: Operations,
   try {
     const paths = typeof keyFile === 'string' ? {active:keyFile,previous:[]} : keyFile;
     const active = read(paths.active), previous = paths.previous.map(read);
-    installAsyncSecretValues(db,operations,sharing,holder,{active,previous},attention);
+    return installAsyncSecretValues(db,operations,sharing,holder,{active,previous},attention);
   } catch { throw unavailable(); }
   finally { for (const bytes of buffers) bytes.fill(0); }
 }

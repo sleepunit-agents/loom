@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
 
+- Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
 - Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
 
@@ -29,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next Runtime retries definitively unstarted nonconversation manual/spawn jobs at most three times, retaining original intent, deadlines and current-policy checks across restarts.
 
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+- Exclude source-owned Runtime repository mirrors under a named cache rule while retaining durable delivery and house working data.
 
 ### Fixed
 
