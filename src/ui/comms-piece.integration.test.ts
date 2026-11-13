@@ -136,7 +136,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);
   await a.goto(`${loom.url}/p/comms-preview/thread/${place.replace(/^th:/,'')}`);
   await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
-  await b.clock.pauseAt(await b.evaluate(()=>Date.now()));
+  await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
   await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(0);
   await b.clock.fastForward(250);
@@ -202,12 +202,18 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>starts.length).toBe(beforeKeyboardSend+1);
   expect(await composer.evaluate(el=>document.activeElement===el)).toBe(true);
   expect(await composer.inputValue()).toBe('');
+  // Start the scroll-away proof only after the actual own-message Live record,
+  // not merely its operation acknowledgement or optimistic preview.
+  await expect.poll(()=>messages.getByText('Sent above the keyboard',{exact:true}).count()).toBe(1);
   await expect.poll(composerBottom).toBeLessThanOrEqual(470);
   await b.evaluate(()=>{
    for(const key of ['height','offsetTop','scale'])Reflect.deleteProperty(window.visualViewport!,key);
    window.visualViewport!.dispatchEvent(new Event('resize'));
   });
   await expect.poll(()=>b.locator('.loom-comms').getAttribute('data-comms-keyboard')).toBe(null);
+  // Let the existing resize observer adopt restored geometry before testing a
+  // separate deliberate scroll. No wall-clock sleep or extra browser is used.
+  await messages.evaluate(el=>new Promise<void>(resolve=>{const observer=new ResizeObserver(()=>{observer.disconnect();resolve();});observer.observe(el);}));
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
   expect(await gap()).toBeGreaterThan(80);
