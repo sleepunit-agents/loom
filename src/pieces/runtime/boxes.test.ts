@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { boxAlwaysOn } from './boxes.js';
+import { HouseholdDatabase } from '../../core/household/document.js';
+import { SharingDatabase } from '../../core/household/sharing.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
@@ -40,6 +42,7 @@ it('limits household controls to household owners even with explicit service gra
     expect(call('configureBox', { box: 'one', set: { mayHost: [] } }, viewer)).toMatchObject({ ok: false, code: 'denied' });
   }
   expect(store.read('box', 'r1')?.mayHost).toBe('*');
+  expect(call('setBoxes', { agent: 'art', boxes: [] }, { kind: 'service', id: 'svc' })).toMatchObject({ ok: false, code: 'denied' });
 });
 it('resolves exact ids first, rejects ambiguous live names and ignores revoked names', async () => {
   const { app, call, store } = await setup();
@@ -121,4 +124,29 @@ it('publishes committed metadata changes and stays silent for no-ops and rejecte
   expect(call('setBoxes', { agent: 'art', boxes: ['one'] }).ok).toBe(true);
   expect(call('setBoxes', { agent: 'art', boxes: ['missing'] }).ok).toBe(false);
   expect(changed).not.toHaveBeenCalled();
+});
+
+it('enforces eight distinct preferred boxes and accepts exactly eight', async () => {
+  const { app, call, store } = await setup();
+  const ids = Array.from({ length: 9 }, (_, i) => `eligible-${i}`);
+  app.db.transaction(() => { for (const id of ids) store.put('box', box(id), 1); })();
+  expect(call('setBoxes', { agent: 'art', boxes: ids.slice(0, 8) }).ok).toBe(true);
+  expect(call('setBoxes', { agent: 'art', boxes: ids })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(store.read('settings', 'art')?.boxes).toEqual(ids.slice(0, 8));
+});
+it('uses specific member ownership before expanded household ownership from the real sharing database', async () => {
+  let sharingDb: SharingDatabase | undefined;
+  const { app, call } = await setup(() => sharingDb?.sharing() ?? fixtureSharing());
+  const household = new HouseholdDatabase(app.db);
+  app.db.transaction(() => household.replace('unused', { v: 1, agents: ['art', 'pond-bot'], members: [
+    { person: 'jonathan', role: 'owner', agents: '*' }, { person: 'pollock', role: 'member', agents: ['pond-bot'] },
+  ] }))();
+  sharingDb = new SharingDatabase(app.db, 'unused');
+  expect(sharingDb.sharing().members.jonathan.agents).toContain('pond-bot');
+  const pollock: Viewer = { kind: 'member', id: 'pollock' };
+  expect(call('setBoxes', { agent: 'pond-bot', boxes: ['one'] }, pollock)).toMatchObject({ ok: false, code: 'conflict' });
+  expect(call('setBoxes', { agent: 'pond-bot', boxes: ['pond'] }, pollock).ok).toBe(true);
+  expect(call('setBoxes', { agent: 'art', boxes: ['one'] }).ok).toBe(true);
+  expect(call('configureBox', { box: 'one', set: { lentTo: ['pond-bot'] } }).ok).toBe(true);
+  expect(call('setBoxes', { agent: 'pond-bot', boxes: ['one'] }, pollock).ok).toBe(true);
 });

@@ -23,7 +23,7 @@ function withoutTimestamp<T extends { changedAt: number }>(record: T): Omit<T, '
 export const boxAlwaysOn = (box: Box): boolean => box.local || box.reportOnly || box.alwaysOn;
 /** Placement eligibility is domain state, not caller authorization (which stays in policy.ts). */
 export function canHost(box: Box, agent: string, sharing: Sharing): boolean {
-  const named = Object.entries(sharing.members).filter(([, m]) => m.agents.includes(agent));
+  const named = Object.entries(sharing.members).filter(([, m]) => !m.owner && m.agents.includes(agent));
   const owners = named.length ? named : Object.entries(sharing.members).filter(([, m]) => m.owner);
   return box.revokedAt === undefined && !box.reportOnly
     && (box.mayHost === '*' || box.mayHost.includes(agent))
