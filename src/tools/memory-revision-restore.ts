@@ -4,6 +4,7 @@
  * Snapshots the current body first, so restore is never destructive.
  * Use memory_history to list revision IDs before calling this.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 
 export interface MemoryRevisionRestoreToolInput {
@@ -14,6 +15,7 @@ export interface MemoryRevisionRestoreToolInput {
 export async function memoryRevisionRestore(
   contextDir: string,
   input: MemoryRevisionRestoreToolInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   if (!input.ref) {
     return 'Error: ref is required.';
@@ -22,7 +24,7 @@ export async function memoryRevisionRestore(
     return 'Error: revision_id is required — list revisions with memory_history first.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   try {
     const result = await backend.restoreRevision({
       ref: input.ref,

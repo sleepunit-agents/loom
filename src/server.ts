@@ -1,4 +1,4 @@
-import type { KnowledgeSelection } from './config.js';
+import type { KnowledgeSelection, MemorySelection } from './config.js';
 import type { PeopleSelection } from './tools/person.js';
 import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
@@ -86,6 +86,8 @@ function agentOfDir(contextDir: string, selection?: ConversationSelection): stri
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export interface LoomServerConfig {
+  /** Vector-backed memory tools use the selected context store; omitted keeps legacy overrides. */
+  memorySelection?: MemorySelection;
   /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
   peopleSelection?: PeopleSelection;
   /** Explicit conversation readers use generic core renders without installed-piece discovery. */
@@ -335,7 +337,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ category, title, content, project, metadata, ttl, sourcing, provenance, scope }) => {
-      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance, scope });
+      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance, scope }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: `Memory stored: "${ref.title}" → ${ref.ref}` }] };
     },
   );
@@ -368,7 +370,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ query, category, project, limit, diversity }) => {
-      const result = await recall(contextDir, { query, category, project, limit, diversity });
+      const result = await recall(contextDir, { query, category, project, limit, diversity }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -397,7 +399,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ ref, category, title, content, metadata, observation }) => {
-      const result = await update(contextDir, { ref, category, title, content, metadata, observation });
+      const result = await update(contextDir, { ref, category, title, content, metadata, observation }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -425,7 +427,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ ref, category, title, project, title_pattern, confirm }) => {
-      const result = await forget(contextDir, { ref, category, title, project, title_pattern, confirm });
+      const result = await forget(contextDir, { ref, category, title, project, title_pattern, confirm }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -443,7 +445,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ dry_run, stale_days }) => {
-      const result = await prune(contextDir, { dryRun: dry_run, staleDays: stale_days });
+      const result = await prune(contextDir, { dryRun: dry_run, staleDays: stale_days }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -463,7 +465,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ category, project, limit }) => {
-      const result = await memoryList(contextDir, { category, project, limit });
+      const result = await memoryList(contextDir, { category, project, limit }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -511,7 +513,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async ({ ref, text, limit, category, project, min_relevance }) => {
       const result = await findSimilar(contextDir, {
         ref, text, limit, category, project, minRelevance: min_relevance,
-      });
+      }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -537,7 +539,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         staleDays: stale_days,
         similarityThreshold: similarity_threshold,
         maxDuplicates: max_duplicates,
-      });
+      }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -595,7 +597,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ ref, category, title, note }) => {
-      const result = await archive(contextDir, { ref, category, title, note });
+      const result = await archive(contextDir, { ref, category, title, note }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -616,7 +618,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ ref, category, title }) => {
-      const result = await restore(contextDir, { ref, category, title });
+      const result = await restore(contextDir, { ref, category, title }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -655,7 +657,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async ({ source_refs, target_ref, note, hard_delete_losers, append_loser_bodies }) => {
       const result = await memoryMerge(contextDir, {
         source_refs, target_ref, note, hard_delete_losers, append_loser_bodies,
-      });
+      }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -964,7 +966,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ ref, revision_id }) => {
-      const result = await memoryHistory(contextDir, { ref, revision_id });
+      const result = await memoryHistory(contextDir, { ref, revision_id }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -986,7 +988,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ ref, revision_id }) => {
-      const result = await memoryRevisionRestore(contextDir, { ref, revision_id });
+      const result = await memoryRevisionRestore(contextDir, { ref, revision_id }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

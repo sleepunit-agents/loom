@@ -3,6 +3,7 @@
  * Surfaces counts, stale memories, near-duplicate pairs, and expired refs.
  * Read-only: never deletes. Pair with `forget` / `update` to act on findings.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { AuditOptions, AuditReport } from '../backends/types.js';
 
@@ -51,8 +52,9 @@ export function formatAuditReport(report: AuditReport): string {
 export async function memoryAudit(
   contextDir: string,
   options?: AuditOptions,
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const report = await backend.audit(options);
   return formatAuditReport(report);
 }
