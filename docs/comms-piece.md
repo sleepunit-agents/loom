@@ -10,6 +10,12 @@ runtime role. `web/src/pieces/comms` renders records through the shared data
 client and kit. The importer is an offline command, not a second running data
 path. Neither running piece nor browser reads the old stores.
 
+Runtime integration update: main now includes the runtime owner's
+[private Comms/body composition](https://github.com/sleepunit-agents/loom/pull/1043).
+Its current contract is in [runtime-piece.md](runtime-piece.md). Earlier missing-binding
+statements below record prior checkpoints; final integration/parity acceptance
+is still required before this whole rebuild is complete.
+
 ## Current operations and records
 
 All `comms.*` operations require a socket authenticated as a real page session.
@@ -917,7 +923,6 @@ from an idle subscription. Archive keeps the panel; deletion and lost ownership
 remove it. A disconnected page hides cached work until its subscription is live.
 
 This completes the made-here portion only. References cited in words, note refs,
-ref chip resolution and reverse “From” links remain required. Runtime private
-input/control and production Comms composition also remain unfinished. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
+ref chip resolution and reverse “From” links remain required. The current runtime binding is documented in runtime-piece.md; its remaining parity and final integration acceptance still need checking. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
 
 Cold review for this work-panel unit stopped at the three-round bound, raw final BLOCKING. All reported defects were folded with component/socket/browser regressions afterward; these final fixes are author-tested and CI-verified, not cold-clear. Exact raw results and reconciliation are in loom note `loom/2026-11-13-comms-work-review`. No fourth round.
