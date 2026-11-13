@@ -133,6 +133,22 @@ describe('durable daemon clock', () => {
     expect(deskJobs([z, a], false).map(w => w.id)).toEqual(['w-a', 'w-z']);
     expect(agentNext('art', [z, a], false).next?.id).toBe('w-a');
   });
+  it('excludes other agents and every terminal state from desk selection and counts', async () => {
+    const access = structuredClone(sharing);
+    access.members.jonathan.agents.push('mark');
+    const app = await loom({}, home(), new FakeClock(), access);
+    const art = app.set('2h');
+    const mark = app.value('in', { agent: 'mark', prompt: 'Other agent', note: 'Other agent', when: '1m' });
+    const held: Wake = { ...mark, id: 'w-other-held', state: 'held', hold: 'permission' };
+    const terminal: Wake[] = (['fired', 'failed', 'cancelled'] as const).map(state => ({ ...art, id: `w-${state}`, due: mark.due, state }));
+    for (const w of [held, ...terminal]) app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(w.id, JSON.stringify(w), w.changedAt);
+    const role = clockRole(app.operations);
+    expect(role.jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [{ id: art.id }] });
+    const jobs = role.jobs(owner, { agent: 'art' });
+    expect(jobs.ok && (jobs.value as unknown[])).toHaveLength(1);
+    expect(role.agentNext(owner, { agent: 'art' })).toEqual({ ok: true, value: { agent: 'art', paused: false, held: 0, next: { id: art.id, due: art.due, text: art.note } } });
+    expect(role.agentNext(owner, { agent: 'mark' })).toMatchObject({ ok: true, value: { held: 1, next: { id: mark.id } } });
+  });
   it('answers a file lane self-rearm within six hours without creating another wake, even at capacity', async () => {
     const app = await loom();
     const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: 'routines/upkeep.md' });
