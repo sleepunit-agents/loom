@@ -27,9 +27,9 @@ export function LocalScheduling({ approval, snapshot }: { approval: Approval; sn
     <p>Scheduling keeps those words and the original note. Local delivery is still held; a saved wake does not mean a body has started.</p>
     {eligible ? <form aria-label="Local work timing" onSubmit={submit} className="grid gap-3">
       <fieldset disabled={!enabled} className="grid gap-3">
-        <label>Timing <select name="mode" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="in">In</option><option value="at">At (CT)</option></select></label>
+        <label>Timing <select aria-label="Timing" name="mode" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="in">In</option><option value="at">At (CT)</option></select></label>
         <label>When<Input name="when" required placeholder="30m, or 2026-11-14 08:31 for At" /></label>
-        <label>Use approval <select name="authority" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="once">One-time Allow</option><option value="standing">Existing Allow every time</option></select></label>
+        <label>Use approval <select aria-label="Use approval" name="authority" required defaultValue=""><option value="" disabled>Choose explicitly</option><option value="once">One-time Allow</option><option value="standing">Existing Allow every time</option></select></label>
         <p>One-time Allow can be spent once before expiry. Every-time requires an existing active rule for these exact words and permits one outstanding wake.</p>
         <Button variant="outline" type="submit">Review timing</Button>
       </fieldset>
