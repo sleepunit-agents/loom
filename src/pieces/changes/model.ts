@@ -29,7 +29,7 @@ export const short = (c: Change) => `${c.repo.split('/').at(-1)}#${c.number}`;
 export const groups = ['you','agent','ci','reviewer','author','done'] as const;
 export function attribute(c: Change, settings: Attribution) {
   const mine = settings.ownerLogins.includes(c.author.login);
-  const agent = Object.entries(settings.agents).find(([, how]) => how.logins.includes(c.author.login) || (mine && how.branches.some(p => p && c.head.ref.startsWith(p))))?.[0];
+  const agent = Object.entries(settings.agents).find(([, how]) => how.logins.some(login=>login.toLowerCase()===c.author.login.toLowerCase()) || (mine && how.branches.some(p => p && c.head.ref.startsWith(p))))?.[0];
   const value = { ...c }; delete value.agent;
   return { ...value, mine, ...(agent ? { agent } : {}) };
 }
