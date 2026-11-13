@@ -129,7 +129,9 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const approvals = [...files].filter(p => basename(p) === 'approvals.json').map(p => posix.dirname(p)).sort();
   const changes = [...files].filter(p => basename(p) === 'changes.json' || /(?:^|\/)changes\/.*\.json$/.test(p)).filter(p => {
     const value = json(p);
-    return value?.v === 1 && Array.isArray(value.changes);
+    const valid = value?.v === 1 && Array.isArray(value.changes);
+    if (p === 'changes/changes.json' && !valid) throw Error('Invalid explicit Changes snapshot');
+    return valid;
   }).sort();
   const commsDirectories = new Set([...files].filter(p => basename(p) === 'comms.db' || basename(p) === 'comms.salt').map(p => posix.dirname(p)));
   // Missing words DB must not hide retained threads/tombstones in household.db.
