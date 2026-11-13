@@ -68,6 +68,6 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
   }
  }));
  live.register({name:'change',ids:()=>loadChanges(db).map(c=>c.id),read(id,v){const c=loadChanges(db).find(c=>c.id===id);return c&&see(v,c)?decorate(c,v):undefined;},inScope:(r,parent,now)=>(parent===undefined||r.project===parent)&&active(r as unknown as Change,now),expires:r=>r.state==='open'?undefined:Date.parse(String(r.closed))+week});
- live.observe(changes=>{if(changes.some(c=>c.type==='task'||c.type==='approval')) live.changed(loadChanges(db).map(c=>({type:'change',id:c.id})));});
+ live.observe(changes=>{if(changes.some(c=>c.type==='task'||c.type==='approval'||c.type==='approval-rule')) live.changed(loadChanges(db).map(c=>({type:'change',id:c.id})));});
  return { decorate };
 }
