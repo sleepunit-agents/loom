@@ -7,7 +7,10 @@ the all/verify commands follow in t-2213. Existing individual commands are uncha
 An importer declares a unique lowercase `name`, `dependencies` (registration
 names), `reads` (a human-readable snapshot input inventory), `sourceReads`
 (machine-readable file globs relative to the old home), and an in-process
-`run(context, input)`. Register it in `createMigrationRegistry`; never spawn a
+`run(context, input)`, returning a value or promise. The coordinator awaits each
+importer before publishing completion or starting its dependents, and keeps the
+destination database and stopped-home lock open through settlement. An importer
+must await all its work before returning. Register it in `createMigrationRegistry`; never spawn a
 piece program. The context supplies the open destination database, destination
 home, one timestamp and the validated snapshot root/manifest. The input supplies
 snapshot-relative paths and typed options. Use `snapshotPath` for every path;

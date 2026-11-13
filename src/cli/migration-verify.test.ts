@@ -78,25 +78,25 @@ async function fixture(full = false, matchingChange = false) {
   return {dir,old,root,home,plan:prepareMigrationPlan(root).plan};
 }
 it('independently verifies all six pieces on every invocation without any importer or filesystem writes',async()=>{
-  const f=await fixture(true,true);runMigrationAll(f.root,f.home,undefined,{now:()=>12345});
+  const f=await fixture(true,true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
   const before=bytes(f.home),source=bytes(f.root);
   for(const [module,name] of [[taskImporter,'importTasks'],[attentionImporter,'importAttention'],[clockImporter,'importClock'],[approvalsImporter,'importApprovals'],[changesImporter,'importChanges'],[householdImporter,'importHousehold']] as const) vi.spyOn(module,name as never).mockImplementation(()=>{throw Error('writer called');});
   for(const _ of [1,2]) expect(verifyMigration(f.root,f.home)).toMatchObject({status:'verified',missing:[],differences:[],pieces:['household','tasks','attention','clock','approvals','changes']});
   expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
 });
 it('detects altered content behind unchanged coordinator and importer receipts, including repeat after all skips',async()=>{
-  const f=await fixture(true,true);runMigrationAll(f.root,f.home,undefined,{now:()=>12345});
+  const f=await fixture(true,true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
   const db=new Database(join(f.home,'loom.db'));
   db.prepare("UPDATE tasks_tasks SET record=json_set(record,'$.title','WRONG_PRIVATE_CANARY')").run();
   db.prepare("UPDATE attention_conversations SET record=json_set(record,'$.label','wrong')").run();
   db.prepare("UPDATE changes_changes SET record=json_set(record,'$.title','wrong')").run();db.close();
-  expect(runMigrationAll(f.root,f.home).pieces.every(p=>p.status==='completed')).toBe(true);
+  expect((await runMigrationAll(f.root,f.home)).pieces.every(p=>p.status==='completed')).toBe(true);
   for(const _ of [1,2]) {
     const r=verifyMigration(f.root,f.home);expect(r.status).toBe('different');expect(r.differences.map(d=>d.table)).toEqual(expect.arrayContaining(['tasks_tasks','attention_conversations','changes_changes']));expect(JSON.stringify(r)).not.toContain('WRONG_PRIVATE_CANARY');
   }
 });
 it('detects missing rows, hidden household rows, altered physical IDs, timestamps, cookie bytes and absent tables',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home,undefined,{now:()=>12345});
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
   const db=new Database(join(f.home,'loom.db'));db.exec("DELETE FROM tasks_tasks; INSERT INTO household_sessions VALUES ('hidden','{}'); UPDATE household_agents SET id='hidden'; DROP TABLE clock_wakes; INSERT INTO approvals_audit VALUES (77,'{}')");db.close();
   writeFileSync(join(f.home,'ui-cookie.key'),Buffer.alloc(32,7));
   const r=verifyMigration(f.root,f.home);expect(r.status).toBe('different');expect(r.differences.map(d=>d.table)).toEqual(expect.arrayContaining(['tasks_tasks','household_sessions','household_agents','clock_wakes','approvals_audit','cookie-key']));
@@ -104,37 +104,37 @@ it('detects missing rows, hidden household rows, altered physical IDs, timestamp
 it('detects uncompleted migration after both transaction rollback and commit-before-marker interruption, then verifies resumed data',async()=>{
   for(const committed of [false,true]) {
     const f=await fixture(true);const registry=createMigrationRegistry();
-    if(committed) expect(()=>runMigrationAll(f.root,f.home,undefined,{now:()=>12345,afterPiece:name=>{if(name==='tasks')throw Error('death');}})).toThrow();
+    if(committed) await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345,afterPiece:name=>{if(name==='tasks')throw Error('death');}}))).rejects.toThrow();
     else {
       const failing=new MigrationRegistry();for(const entry of registry.order().importers)failing.register(entry.name==='tasks'?{...entry,run:()=>{throw Error('death');}}:entry);
-      expect(()=>runMigrationAll(f.root,f.home,undefined,{registry:failing,now:()=>12345})).toThrow();
+      await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{registry:failing,now:()=>12345}))).rejects.toThrow();
     }
-    expect(verifyMigration(f.root,f.home).status).toBe('different');runMigrationAll(f.root,f.home);expect(verifyMigration(f.root,f.home).status).toBe('verified');
+    expect(verifyMigration(f.root,f.home).status).toBe('different');(await runMigrationAll(f.root,f.home));expect(verifyMigration(f.root,f.home).status).toBe('verified');
   }
 });
 it('refuses a held daemon lock without changes, rejects uncheckpointed WAL, and never creates a missing home',async()=>{
-  const f=await fixture();runMigrationAll(f.root,f.home);const unlock=acquireHttpLock(f.home);
+  const f=await fixture();(await runMigrationAll(f.root,f.home));const unlock=acquireHttpLock(f.home);
   try {const before=bytes(f.home);expect(()=>verifyMigration(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);}finally{unlock();}
   const db=new Database(join(f.home,'loom.db'));db.pragma('journal_mode = WAL');db.exec("INSERT INTO household_sessions VALUES ('pending','{}')");
   try {const before=bytes(f.home);expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');expect(bytes(f.home)).toEqual(before);}finally{db.close();}
   expect(()=>verifyMigration(f.root,join(f.dir,'absent'))).toThrow();expect(fs.existsSync(join(f.dir,'absent'))).toBe(false);
 });
 it('reports unknown registrations as incomplete; CLI has safe exit statuses and exactly one report',async()=>{
-  const f=await fixture();f.plan.importers.future={paths:['home'],options:{}};runMigrationAll(f.root,f.home,f.plan);
+  const f=await fixture();f.plan.importers.future={paths:['home'],options:{}};(await runMigrationAll(f.root,f.home,f.plan));
   const path=join(f.dir,'plan.json');writeFileSync(path,JSON.stringify(f.plan));
   const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
   expect(await run(['verify','--snapshot',f.root,'--home',f.home,'--plan',path],io)).toBe(3);expect(io.stdout).toHaveBeenCalledOnce();expect(JSON.parse(io.stdout.mock.calls[0][0])).toMatchObject({status:'incomplete',missing:['future']});
-  const other=await fixture();runMigrationAll(other.root,other.home);io.stdout.mockClear();expect(await run(['verify','--snapshot',other.root,'--home',other.home],io)).toBe(0);expect(io.stdout).toHaveBeenCalledOnce();
+  const other=await fixture();(await runMigrationAll(other.root,other.home));io.stdout.mockClear();expect(await run(['verify','--snapshot',other.root,'--home',other.home],io)).toBe(0);expect(io.stdout).toHaveBeenCalledOnce();
   writeFileSync(path,'PRIVATE_CREDENTIAL_CANARY');expect(await run(['verify','--snapshot',f.root,'--home',f.home,'--plan',path],io)).toBe(1);expect(await run(['verify','--PRIVATE_CREDENTIAL_CANARY'],io)).toBe(2);expect(io.stderr.mock.calls.flat().join('')).not.toContain('PRIVATE_CREDENTIAL_CANARY');
 });
 it('rejects plan/snapshot tampering, aliases and overlaps without modifying either tree',async()=>{
-  const f=await fixture();runMigrationAll(f.root,f.home);const before=bytes(f.home);
+  const f=await fixture();(await runMigrationAll(f.root,f.home));const before=bytes(f.home);
   const plan=structuredClone(f.plan);plan.importers.future={paths:['home'],options:{}};expect(()=>verifyMigration(f.root,f.home,plan)).toThrow();
   const alias=join(f.dir,'alias');symlinkSync(f.home,alias);expect(()=>verifyMigration(f.root,alias)).toThrow();expect(()=>verifyMigration(f.root,f.root)).toThrow();
   writeFileSync(join(f.root,'home/ui-cookie.key'),Buffer.alloc(32,44));expect(()=>verifyMigration(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);
 });
 it('holds the daemon gate throughout source projection and releases it on projection failure',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const original=taskImporter.readTasksImport;
   vi.spyOn(taskImporter,'readTasksImport').mockImplementation((...args)=>{expect(()=>acquireHttpLock(f.home)).toThrow('already running');return original(...args);});
   expect(verifyMigration(f.root,f.home).status).toBe('verified');
@@ -142,7 +142,7 @@ it('holds the daemon gate throughout source projection and releases it on projec
   expect(()=>verifyMigration(f.root,f.home)).toThrow('projection failure');const release=acquireHttpLock(f.home);release();
 });
 it('detects same-count content changes in clock and approvals and extra token records hidden by their envelope',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home,undefined,{now:()=>12345});
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
   expect(verifyMigration(f.root,f.home).status).toBe('verified');
   const db=new Database(join(f.home,'loom.db'));db.exec("UPDATE clock_wakes SET record=json_set(record,'$.prompt','changed'); UPDATE approvals_approvals SET record=json_set(record,'$.what','changed'); UPDATE household_tokens SET body=json_insert(body,'$[#]',json('{\"hidden\":true}'))");db.close();
   expect(verifyMigration(f.root,f.home).differences.map(d=>d.table)).toEqual(expect.arrayContaining(['clock_wakes','approvals_approvals','household_tokens']));
@@ -152,23 +152,23 @@ it('verifies explicit audiences and attribution and detects changed indexes inde
   f.plan.importers.attention.options={[id]:{project:'pond',member:'jonathan'}};
   f.plan.importers.approvals.options={projects:{'a-01234567':'pond'}};
   f.plan.importers.changes.options={attribution:{agents:{art:{logins:['alice'],branches:[]}},ownerLogins:[]}};
-  runMigrationAll(f.root,f.home,f.plan,{now:()=>12345});expect(verifyMigration(f.root,f.home,f.plan).status).toBe('verified');
+  (await runMigrationAll(f.root,f.home,f.plan,{now:()=>12345}));expect(verifyMigration(f.root,f.home,f.plan).status).toBe('verified');
   const db=new Database(join(f.home,'loom.db'));db.exec("UPDATE attention_turns SET seq=99; UPDATE changes_changes SET repo='wrong/repo'; UPDATE clock_wakes SET changed_at=999; UPDATE tasks_tasks SET ord=99");db.close();
   expect(verifyMigration(f.root,f.home,f.plan).differences.map(d=>d.table)).toEqual(expect.arrayContaining(['attention_turns','changes_changes','clock_wakes','tasks_tasks']));
 });
 it('never opens a WAL-mode daemon gate that could create coordination files',async()=>{
-  const f=await fixture();runMigrationAll(f.root,f.home);const path=join(f.home,'http-daemon-lock.db');
+  const f=await fixture();(await runMigrationAll(f.root,f.home));const path=join(f.home,'http-daemon-lock.db');
   const db=new Database(path);db.pragma('journal_mode = WAL');db.exec('CREATE TABLE fixture(id INTEGER)');db.close();
   const before=bytes(f.home);expect(()=>verifyMigration(f.root,f.home)).toThrow('Unsafe daemon gate');expect(bytes(f.home)).toEqual(before);
 });
 it('refuses a nonempty rollback journal without opening or changing its data',async()=>{
-  const f=await fixture();runMigrationAll(f.root,f.home);
+  const f=await fixture();(await runMigrationAll(f.root,f.home));
   writeFileSync(join(f.home,'loom.db-journal'),Buffer.from('uncheckpointed fixture'));
   const before=bytes(f.home),source=bytes(f.root);
   expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
 });
 it('never opens a foundation or writable database or migrates schema, including an absent destination table',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const db=new Database(join(f.home,'loom.db'));db.exec('DROP TABLE tasks_tasks');db.close();
   const forbidden=()=>{throw Error('forbidden writer');};
   const spies=[vi.spyOn(foundation,'createFoundation').mockImplementation(forbidden),vi.spyOn(database,'openDb').mockImplementation(forbidden),vi.spyOn(core,'migrate').mockImplementation(forbidden),vi.spyOn(database,'migrate').mockImplementation(forbidden),vi.spyOn(householdSchema,'migrateHouseholdTables').mockImplementation(forbidden)];
@@ -177,7 +177,7 @@ it('never opens a foundation or writable database or migrates schema, including 
   for(const spy of spies)expect(spy).not.toHaveBeenCalled();expect(bytes(f.home)).toEqual(before);
 });
 it('returns CLI exit 3 for content differences with equal row counts and never echoes changed values',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const db=new Database(join(f.home,'loom.db'));db.exec("UPDATE tasks_tasks SET record=json_set(record,'$.title','PRIVATE_DIFFERENCE_CANARY')");db.close();
   const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
   expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(3);expect(io.stdout).toHaveBeenCalledOnce();
@@ -185,13 +185,13 @@ it('returns CLI exit 3 for content differences with equal row counts and never e
   expect(io.stdout.mock.calls.flat().join('')).not.toContain('PRIVATE_DIFFERENCE_CANARY');expect(io.stderr).not.toHaveBeenCalled();
 });
 it('detects changes solely to approval or rule SQLite row ordering',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const db=new Database(join(f.home,'loom.db'));
   db.exec("UPDATE approvals_approvals SET rowid=100; UPDATE approvals_rules SET rowid=-rowid; UPDATE approvals_rules SET rowid=4+rowid");db.close();
   expect(verifyMigration(f.root,f.home).differences.map(d=>d.table)).toEqual(expect.arrayContaining(['approvals_approvals','approvals_rules']));
 });
 it.each(['wal','journal'])('refuses a direct writer creating a nonempty %s during source projection',async kind=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const original=taskImporter.readTasksImport;let writer:Database.Database|undefined;
   vi.spyOn(taskImporter,'readTasksImport').mockImplementation((...args)=>{
     writer=new Database(join(f.home,'loom.db'));
@@ -203,7 +203,7 @@ it.each(['wal','journal'])('refuses a direct writer creating a nonempty %s durin
   try {expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');}finally{writer?.close();}
 });
 it('compares every credential/settings concern on changed same-count content and redacts all values',async()=>{
-  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const f=await fixture(true);(await runMigrationAll(f.root,f.home));
   const tables=['settings','sessions','links','challenges','passkeys','push','readers','piece_settings','token_use','tokens'].map(name=>`household_${name}`);
   const db=new Database(join(f.home,'loom.db'));
   for(const table of tables) db.prepare(`UPDATE ${table} SET body=?`).run(JSON.stringify({credential:'PRIVATE_CREDENTIAL_CONTENT_CANARY'}));

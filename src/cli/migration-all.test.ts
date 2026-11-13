@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as migrationRegistry from './migration-registry.js';
 import { randomUUID } from 'node:crypto';
 import { SharingDatabase } from '../core/household/sharing.js';
 import { change } from '../pieces/changes/fixture.js';
@@ -51,14 +52,14 @@ async function fixture(full = false, matchingChange = false) {
 }
 it('imports all six pieces in dependency order, repeats without import writes, and never changes snapshot bytes or entries', async () => {
   const f = await fixture(true), before = bytes(f.root);
-  const first = runMigrationAll(f.root,f.home,undefined,{now:()=>12345});
+  const first = (await runMigrationAll(f.root,f.home,undefined,{now:()=>12345}));
   expect(first).toMatchObject({status:'complete',missing:[],blocked:[]});
   expect(first.pieces.map(p=>p.name)).toEqual(['household','tasks','attention','clock','approvals','changes']);
   const db = new Database(join(f.home,'loom.db'),{readonly:true});
   expect(db.prepare('SELECT count(*) AS n FROM tasks_tasks').get()).toEqual({n:1}); db.close();
   const receipt = readFileSync(join(f.home,'.migration-all.json'),'utf8');
   const destinationBefore = bytes(f.home);
-  const again = runMigrationAll(f.root,f.home,undefined,{now:()=>99999});
+  const again = (await runMigrationAll(f.root,f.home,undefined,{now:()=>99999}));
   expect(again.pieces.every(p=>p.status==='completed')).toBe(true);
   expect(readFileSync(join(f.home,'.migration-all.json'),'utf8')).toBe(receipt);
   expect(bytes(f.home)).toEqual(destinationBefore);
@@ -67,47 +68,47 @@ it('imports all six pieces in dependency order, repeats without import writes, a
 });
 it('resumes the crash window after importer commit with stable time and keeps earlier completion markers', async () => {
   const f = await fixture(true);
-  expect(()=>runMigrationAll(f.root,f.home,undefined,{now:()=>12345,afterPiece:name=>{if(name==='tasks')throw Error('power loss');}})).toThrow('power loss');
+  await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{now:()=>12345,afterPiece:name=>{if(name==='tasks')throw Error('power loss');}}))).rejects.toThrow('power loss');
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8'))).toMatchObject({now:12345,completed:['household']});
-  const report = runMigrationAll(f.root,f.home,undefined,{now:()=>99999});
+  const report = (await runMigrationAll(f.root,f.home,undefined,{now:()=>99999}));
   expect(report.pieces[0]).toEqual({name:'household',status:'completed'});
   expect(report.status).toBe('complete');
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).now).toBe(12345);
 });
 it('rejects different plan, including Changes attribution, and different snapshots before destination changes', async () => {
-  const f = await fixture(true); runMigrationAll(f.root,f.home); const before = bytes(f.home);
+  const f = await fixture(true); (await runMigrationAll(f.root,f.home)); const before = bytes(f.home);
   const plan = structuredClone(f.plan); (plan.importers.changes.options as { attribution: { ownerLogins: string[] } }).attribution.ownerLogins.push('another');
-  expect(()=>runMigrationAll(f.root,f.home,plan)).toThrow('another migration');
-  const other = await fixture(); expect(()=>runMigrationAll(other.root,f.home)).toThrow('another migration');
+  await expect(async()=>(await runMigrationAll(f.root,f.home,plan))).rejects.toThrow('another migration');
+  const other = await fixture(); await expect(async()=>(await runMigrationAll(other.root,f.home))).rejects.toThrow('another migration');
   expect(bytes(f.home)).toEqual(before);
 });
 it('refuses arbitrary populated destinations and overlap in either direction before creating lock or database', async () => {
   const f = await fixture(); mkdirSync(f.home); writeFileSync(join(f.home,'keep'),'safe');
-  for(const dest of [f.home, f.root, join(f.root,'child'), f.dir]) expect(()=>runMigrationAll(f.root,dest)).toThrow();
+  for(const dest of [f.home, f.root, join(f.root,'child'), f.dir]) await expect(async()=>(await runMigrationAll(f.root,dest))).rejects.toThrow();
   expect(readdirSync(f.home)).toEqual(['keep']); expect(readdirSync(f.root)).toEqual(['home','manifest.json']);
-  const alias=join(f.dir,'alias');symlinkSync(f.root,alias);expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow();
+  const alias=join(f.dir,'alias');symlinkSync(f.root,alias);await expect(async()=>(await runMigrationAll(f.root,join(alias,'child')))).rejects.toThrow();
   const linked=join(f.dir,'linked');mkdirSync(linked);linkSync(join(f.root,'home/ui-cookie.key'),join(linked,'ui-cookie.key'));
-  expect(()=>runMigrationAll(f.root,linked)).toThrow('Hard-linked'); expect(readdirSync(linked)).toEqual(['ui-cookie.key']);
+  await expect(async()=>(await runMigrationAll(f.root,linked))).rejects.toThrow('Hard-linked'); expect(readdirSync(linked)).toEqual(['ui-cookie.key']);
 });
 it('refuses a held daemon lock and releases ownership after importer failure', async () => {
   const f=await fixture(); const release=acquireHttpLock(f.home);
   const before=bytes(f.home);
-  try {expect(()=>runMigrationAll(f.root,f.home)).toThrow('already running'); expect(bytes(f.home)).toEqual(before);} finally {release();}
-  expect(()=>runMigrationAll(f.root,f.home,undefined,{afterPiece:()=>{throw Error('interrupted');}})).toThrow();
-  const unlock=acquireHttpLock(f.home);unlock();expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+  try {await expect(async()=>(await runMigrationAll(f.root,f.home))).rejects.toThrow('already running'); expect(bytes(f.home)).toEqual(before);} finally {release();}
+  await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{afterPiece:()=>{throw Error('interrupted');}}))).rejects.toThrow();
+  const unlock=acquireHttpLock(f.home);unlock();expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
 });
 it('reports missing pieces as incomplete, then runs a newly available supported registration despite an existing receipt', async () => {
   const f=await fixture(true), registry=new MigrationRegistry();
   for(const entry of createMigrationRegistry().order().importers)if(entry.name!=='tasks')registry.register(entry);
-  const first=runMigrationAll(f.root,f.home,undefined,{registry}); expect(first).toMatchObject({status:'incomplete',missing:['tasks']});
-  const second=runMigrationAll(f.root,f.home);expect(second.status).toBe('complete');expect(second.pieces.find(p=>p.name==='tasks')?.status).toBe('imported');
+  const first=(await runMigrationAll(f.root,f.home,undefined,{registry})); expect(first).toMatchObject({status:'incomplete',missing:['tasks']});
+  const second=(await runMigrationAll(f.root,f.home));expect(second.status).toBe('complete');expect(second.pieces.find(p=>p.name==='tasks')?.status).toBe('imported');
 });
 it('never executes a registered name without a discovery/schema contract and blocks its dependents', async()=>{
   const f=await fixture(); const plan=structuredClone(f.plan);plan.importers.future={paths:['home'],options:{secret:'private'}};
   const registry=new MigrationRegistry(), unexpected=vi.fn();
   registry.register({name:'future',dependencies:[],reads:[],run:unexpected});
   registry.register({name:'household',dependencies:['future'],reads:[],run:unexpected});
-  expect(runMigrationAll(f.root,f.home,plan,{registry})).toMatchObject({status:'incomplete',missing:['future'],blocked:['household'],pieces:[]}); expect(unexpected).not.toHaveBeenCalled();
+  expect((await runMigrationAll(f.root,f.home,plan,{registry}))).toMatchObject({status:'incomplete',missing:['future'],blocked:['household'],pieces:[]}); expect(unexpected).not.toHaveBeenCalled();
 });
 it('exposes a raw editable plan and one safe CLI report; refusals never echo arguments or source credentials', async()=>{
   const f=await fixture(), io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
@@ -121,21 +122,21 @@ it('exposes a raw editable plan and one safe CLI report; refusals never echo arg
 it('rolls back an interrupted importer transaction while preserving completed pieces for retry', async()=>{
   const f=await fixture(true), registry=new MigrationRegistry();
   for(const entry of createMigrationRegistry().order().importers) registry.register(entry.name==='tasks'?{...entry,run:(context,input)=>importTasks(context.db,join(context.snapshot.root,input.paths[0]),context.now,{...(input.options as object),interrupt:()=>{throw Error('transaction interrupted');}},openSnapshotSqlite)}:entry);
-  expect(()=>runMigrationAll(f.root,f.home,undefined,{registry})).toThrow('transaction interrupted');
+  await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{registry}))).rejects.toThrow('transaction interrupted');
   const db=new Database(join(f.home,'loom.db'),{readonly:true});
   expect(db.prepare("SELECT name FROM sqlite_master WHERE name='tasks_tasks'").get()).toBeUndefined();db.close();
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual(['household']);
-  expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+  expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
 });
 it('rejects tampered snapshots before touching an existing destination, even on completed repeat',async()=>{
-  const f=await fixture();runMigrationAll(f.root,f.home);const before=bytes(f.home);
+  const f=await fixture();(await runMigrationAll(f.root,f.home));const before=bytes(f.home);
   writeFileSync(join(f.root,'home/ui-cookie.key'),Buffer.alloc(32,19));
-  expect(()=>runMigrationAll(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);
+  await expect(async()=>(await runMigrationAll(f.root,f.home))).rejects.toThrow();expect(bytes(f.home)).toEqual(before);
 });
 
 it('recovers an unpublished receipt without widening home or receipt permissions',async()=>{
   const f=await fixture();mkdirSync(f.home,{mode:0o755});writeFileSync(join(f.home,'.migration-all.pending'),'partial',{mode:0o644});
-  expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+  expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
   expect(statSync(f.home).mode&0o777).toBe(0o700);
   expect(statSync(join(f.home,'.migration-all.json')).mode&0o777).toBe(0o600);
 });
@@ -143,25 +144,25 @@ it('recovers an unpublished receipt without widening home or receipt permissions
 it('recovers exactly the household key publication hardlink pair after process death',async()=>{
   const f=await fixture();
   const registry=new MigrationRegistry();registry.register({name:'household',dependencies:[],reads:[],run:()=>{throw Error('death');}});
-  expect(()=>runMigrationAll(f.root,f.home,undefined,{registry})).toThrow();
+  await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{registry}))).rejects.toThrow();
   // Reproduce death after key link publication but before household transaction commit.
   writeFileSync(join(f.home,'ui-cookie.key'),readFileSync(join(f.root,'home/ui-cookie.key')),{mode:0o600});
   const temp=join(f.home,`.ui-cookie.key-import-${randomUUID()}`);linkSync(join(f.home,'ui-cookie.key'),temp);
-  expect(runMigrationAll(f.root,f.home).status).toBe('complete');expect(readdirSync(f.home)).not.toContain(temp.split('/').at(-1));
+  expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');expect(readdirSync(f.home)).not.toContain(temp.split('/').at(-1));
   expect(statSync(join(f.home,'ui-cookie.key')).nlink).toBe(1);
 });
 it('refuses a key publication pair with another external alias, wrong bytes, or no matching receipt',async()=>{
   for(const kind of ['external','bytes','receipt']) {
-    const f=await fixture();runMigrationAll(f.root,f.home);const temp=join(f.home,`.ui-cookie.key-import-${randomUUID()}`);linkSync(join(f.home,'ui-cookie.key'),temp);
+    const f=await fixture();(await runMigrationAll(f.root,f.home));const temp=join(f.home,`.ui-cookie.key-import-${randomUUID()}`);linkSync(join(f.home,'ui-cookie.key'),temp);
     if(kind==='external')linkSync(temp,join(f.dir,'outside'));
     if(kind==='bytes')writeFileSync(temp,Buffer.alloc(32,18));
     if(kind==='receipt')rmSync(join(f.home,'.migration-all.json'));
-    const before=bytes(f.home);expect(()=>runMigrationAll(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);
+    const before=bytes(f.home);await expect(async()=>(await runMigrationAll(f.root,f.home))).rejects.toThrow();expect(bytes(f.home)).toEqual(before);
   }
 });
 it('refuses symlink homes and symlink parent components unrelated to the source',async()=>{
   const f=await fixture();mkdirSync(f.home);const alias=join(f.dir,'alias');symlinkSync(f.home,alias);
-  expect(()=>runMigrationAll(f.root,alias)).toThrow('Symlink');expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow('Symlink');expect(readdirSync(f.home)).toEqual([]);
+  await expect(async()=>(await runMigrationAll(f.root,alias))).rejects.toThrow('Symlink');await expect(async()=>(await runMigrationAll(f.root,join(alias,'child')))).rejects.toThrow('Symlink');expect(readdirSync(f.home)).toEqual([]);
 });
 it('derives Changes projects from sharing and holds the daemon lock through import, receipt fsync and close',async()=>{
   const f=await fixture(true,true), registry=new MigrationRegistry();
@@ -176,15 +177,15 @@ it('derives Changes projects from sharing and holds the daemon lock through impo
     expect((input.options as ()=>{projects:unknown[]})().projects).toEqual([{slug:'pond',name:'Pond',repos:['acme/app']}]);
     return entry.run(context,input);
   }}:entry);
-  expect(runMigrationAll(f.root,f.home,undefined,{registry,publication}).status).toBe('complete');expect(steps).toEqual(Array.from({length:7},()=>['file','rename','directory']).flat());
+  expect((await runMigrationAll(f.root,f.home,undefined,{registry,publication})).status).toBe('complete');expect(steps).toEqual(Array.from({length:7},()=>['file','rename','directory']).flat());
   const db=new Database(join(f.home,'loom.db'),{readonly:true});try{expect(loadChanges(db)).toMatchObject([{project:'pond'}]);}finally{db.close();}
 });
 it('retries safely when receipt publication fails before rename or directory fsync',async()=>{
   for(const stage of ['file','rename','directory']) {
     const f=await fixture();let sync=0;const actual=fs.fsyncSync;
     const publication={sync:(fd:number)=>{sync++;if(stage!=='rename'&&sync===(stage==='file'?1:2))throw Error('power loss');actual(fd);},rename:(from:fs.PathLike,to:fs.PathLike)=>{if(stage==='rename')throw Error('power loss');fs.renameSync(from,to);}};
-    expect(()=>runMigrationAll(f.root,f.home,undefined,{publication})).toThrow('power loss');
-    expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+    await expect(async()=>(await runMigrationAll(f.root,f.home,undefined,{publication}))).rejects.toThrow('power loss');
+    expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
   }
 });
 
@@ -199,7 +200,7 @@ it('returns exit 3 and one incomplete report for a missing CLI registration, inc
 });
 it('refuses dangling symlink destinations and parents before creating their missing targets',async()=>{
   const f=await fixture();const target=join(f.dir,'absent'),alias=join(f.dir,'alias');symlinkSync(target,alias);
-  expect(()=>runMigrationAll(f.root,alias)).toThrow('Symlink');expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow('Symlink');expect(fs.existsSync(target)).toBe(false);
+  await expect(async()=>(await runMigrationAll(f.root,alias))).rejects.toThrow('Symlink');await expect(async()=>(await runMigrationAll(f.root,join(alias,'child')))).rejects.toThrow('Symlink');expect(fs.existsSync(target)).toBe(false);
 });
 
 it('snapshots the real-home layout with 28 aliases, installed programs and a live socket, then runs all importers', async () => {
@@ -231,7 +232,7 @@ it('snapshots the real-home layout with 28 aliases, installed programs and a liv
       expect.objectContaining({path:'pieces/program-0/current'}),
     ]));
     expect(manifest.files.filter(file=>file.path.endsWith('memories.db')).map(file=>file.path)).toEqual(['home/agents/art/memories.db']);
-    const report = runMigrationAll(snapshot, join(f.dir, 'real-shape-new'));
+    const report = (await runMigrationAll(snapshot, join(f.dir, 'real-shape-new')));
     expect(report.status).toBe('complete');
     expect(report.pieces.map(p=>p.name)).toEqual(['household','tasks','attention','clock','approvals','changes']);
   } finally { await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
@@ -248,7 +249,59 @@ it('preserves importer-visible file aliases as regular bytes without duplicate d
   const root=join(f.dir,'alias-snapshot');const manifest=await createSnapshot(f.old,root,join(f.dir,'tasks.db'));
   expect(manifest.followed).toContainEqual({path:'household.json',realPath:'private/household-data'});
   expect(prepareMigrationPlan(root).plan.importers.attention.paths).toEqual(['home/agents/art/memories.db']);
-  expect(runMigrationAll(root,join(f.dir,'alias-new')).status).toBe('complete');
+  expect((await runMigrationAll(root,join(f.dir,'alias-new'))).status).toBe('complete');
   expect(verifyMigration(root,join(f.dir,'alias-new')).status).toBe('verified');
   expect(readFileSync(join(f.dir,'alias-new/ui-cookie.key'))).toEqual(Buffer.alloc(32,17));
+});
+
+
+it('keeps the database and daemon gate until an asynchronous importer settles, then publishes completion', async () => {
+  const f=await fixture(true), registry=new MigrationRegistry();
+  let resume!:()=>void, entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{resume=resolve;});
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const order:string[]=[];
+  for(const entry of createMigrationRegistry().order().importers) registry.register({...entry,run:async(context,input)=>{
+    if(entry.name==='household') { entered(); await gate; }
+    order.push(entry.name);
+    return entry.run(context,input);
+  }});
+  const pending=runMigrationAll(f.root,f.home,undefined,{registry});
+  await started;
+  try {
+    expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual([]);
+    expect(order).toEqual([]);
+    expect(()=>acquireHttpLock(f.home)).toThrow('already running');
+  } finally { resume(); await pending; }
+  expect(await pending).toMatchObject({status:'complete'});
+  expect(order).toEqual(['household','tasks','attention','clock','approvals','changes']);
+  expect(verifyMigration(f.root,f.home).status).toBe('verified');
+});
+
+it('does not mark an asynchronously rejected importer complete and releases its gate for retry', async () => {
+  const f=await fixture(true), registry=new MigrationRegistry();
+  for(const entry of createMigrationRegistry().order().importers) registry.register(entry.name==='tasks'?{...entry,run:async()=>{
+    await Promise.resolve(); throw Error('private asynchronous failure');
+  }}:entry);
+  await expect(runMigrationAll(f.root,f.home,undefined,{registry})).rejects.toThrow('private asynchronous failure');
+  expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual(['household']);
+  const unlock=acquireHttpLock(f.home); unlock();
+  expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
+});
+
+
+it('returns the generic CLI refusal for an asynchronous importer rejection without leaking its private error', async () => {
+  const f=await fixture(), registry=new MigrationRegistry();
+  const secret='PRIVATE_ASYNC_IMPORT_CANARY';
+  registry.register({name:'household',dependencies:[],reads:[],run:async()=>{
+    await Promise.resolve(); throw Error(secret);
+  }});
+  vi.spyOn(migrationRegistry,'createMigrationRegistry').mockReturnValue(registry);
+  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await run(['all','--snapshot',f.root,'--home',f.home],io)).toBe(1);
+  expect(io.stdout).not.toHaveBeenCalled();
+  expect(io.stderr).toHaveBeenCalledExactlyOnceWith('Migration refused; verify snapshot, plan and destination ownership, and stop the destination daemon.\n');
+  expect(io.stderr.mock.calls.flat().join('')).not.toContain(secret);
+  expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual([]);
+  const unlock=acquireHttpLock(f.home); unlock();
 });
