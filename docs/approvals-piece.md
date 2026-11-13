@@ -90,6 +90,13 @@ answers an existing conversation card. An already allowed pregrant can satisfy a
 later identical request for its same authenticated principal; its provenance is
 kept, rather than rewritten to claim it was asked in that conversation.
 
+Wake-vouch targets accept both imported compact wake ids (`w-` plus six lowercase
+hex digits) and the new clock's lowercase UUID ids. Sets remain sorted, unique
+and limited to twelve ids, within the existing 200-character raw target limit;
+callers must split larger batches before filing cards. Denial overlap compares
+complete ids for either format. Accepting an id does not establish its provenance:
+the clock application must still verify every target against its current rows.
+
 ## Import and final move
 
 `loom migrate approvals --home <stopped-next-home> --from <old-directory>`
