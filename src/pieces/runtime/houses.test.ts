@@ -1,5 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
@@ -8,16 +10,16 @@ import { fixture, fixtureSharing } from '../../fixture.js';
 import { runtimeStore } from './store.js';
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-async function setup(staging = false) {
+async function setup(staging = false, viewer: Viewer = { kind: 'agent', id: 'art' }) {
   const home = mkdtempSync(join(tmpdir(), 'runtime-houses-')); fixture(home);
   cleanup.push(() => rmSync(home, { recursive: true, force: true }));
   const clock = new FakeClock(), sharing = fixtureSharing();
-  let app = await startLoom({ home, next: true, staging, clock, sharing: () => sharing }); cleanup.push(() => app.close());
+  let app = await startLoom({ home, next: true, staging, clock, authenticate: () => ({ viewer, valid: () => true }), sharing: () => sharing }); cleanup.push(() => app.close());
   let seq = 0;
   const input = { agent: 'art', house: { repo: 'https://github.com/sleepunit-agents/art' } };
   const call = (value: unknown = input, viewer: Viewer = { kind: 'member', id: 'jonathan' }, id = `house-${++seq}`) => app.operations.call('direct', viewer, 'runtime.configureHouse', value, id);
   return { get app() { return app; }, get store() { return runtimeStore(app.db); }, clock, sharing, call, input,
-    restart: async () => { await app.close(); app = await startLoom({ home, next: true, staging, clock, sharing: () => sharing }); } };
+    restart: async () => { await app.close(); app = await startLoom({ home, next: true, staging, clock, authenticate: () => ({ viewer, valid: () => true }), sharing: () => sharing }); } };
 }
 it('persists build identity, defaults the house path and preserves box/model settings in both directions', async () => {
   const f = await setup();
@@ -86,4 +88,24 @@ it('exposes only centrally scoped configuration metadata and creates no jobs or 
     expect(list(viewer)).toEqual({ ok: true, value: { records: [] } });
   expect(f.store.ids('job')).toEqual([]); expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual([]);
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+});
+
+it('publishes house configuration through live settings and removes it when central access is lost', async () => {
+  const f = await setup(false, { kind: 'member', id: 'pollock' });
+  expect(f.call().ok).toBe(true); // Art settings must be hidden from Pollock.
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live');
+  cleanup.push(() => { ws.terminate(); });
+  const queue: unknown[] = [], waiters: Array<(v: unknown) => void> = [];
+  ws.on('message', raw => { const value: unknown = JSON.parse(raw.toString()); const waiter = waiters.shift(); if (waiter) waiter(value); else queue.push(value); });
+  const next = () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiters.push(resolve));
+  await once(ws, 'open');
+  const subscribe = () => ws.send(JSON.stringify({ kind: 'subscribe', type: 'runtime.settings' }));
+  subscribe(); expect(await next()).toEqual({ kind: 'set', type: 'runtime.settings', records: [] });
+  const house = { repo: 'https://github.com/fixture/pond', houseFile: 'house/house.json', branch: 'next' };
+  expect(f.call({ agent: 'pond-bot', house }, { kind: 'member', id: 'pollock' }).ok).toBe(true);
+  expect(await next()).toMatchObject({ kind: 'put', type: 'runtime.settings', record: { id: 'pond-bot', house } });
+  subscribe(); expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'pond-bot', house }] });
+  f.sharing.members.pollock.agents = [];
+  f.app.live.refreshAccess();
+  expect(await next()).toEqual({ kind: 'set', type: 'runtime.settings', records: [] });
 });
