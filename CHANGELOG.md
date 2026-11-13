@@ -959,6 +959,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
 
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

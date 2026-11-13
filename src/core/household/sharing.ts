@@ -60,6 +60,25 @@ export class SharingDatabase {
   setMembers(slug: string, members: string[]): HouseholdProject { return this.change(slug, { members }); }
   setAgents(slug: string, agents: string[]): HouseholdProject { return this.change(slug, { agents }); }
 
+  /** Change a member's scoped ownership without changing household-owner authority. */
+  setOwnedAgents(person: string, agents: string[]): string[] {
+    this.requireTransaction();
+    const household = new HouseholdDatabase(this.db);
+    const h = household.household(this.home);
+    if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+    const member = h.members.find(m => m.person === person);
+    if (!member) throw new OperationError('not-found', 'Member does not exist');
+    if (member.agents === '*') throw new OperationError('invalid', 'Household owners already own every agent');
+    if (agents.some(id => !h.agents.includes(id))) throw new OperationError('invalid', 'Unknown household agent');
+    const next = [...new Set(agents)];
+    if (member.role === 'owner' && !next.length) throw new OperationError('invalid', 'A scoped owner must own an agent');
+    household.change(this.home, raw => {
+      const members = raw.members as Array<Record<string, unknown>>;
+      raw.members = members.map(m => m.person === person ? { ...m, agents: next } : m);
+    });
+    return next;
+  }
+
   private change(slug: string, values: Partial<HouseholdProject>): HouseholdProject {
     this.requireTransaction();
     const before = this.project(slug);
