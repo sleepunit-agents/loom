@@ -7,10 +7,15 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture } from '../fixture.js';
+import { PeopleStore } from '../backends/people.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live across windows and fit both looks at three widths', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-setup-browser-')); fixture(home);
+  // Membership fixtures do not create the People directory required by setMember.
+  mkdirSync(join(home, 'commons'), { recursive: true });
+  const people = new PeopleStore({ dbPath: join(home, 'commons', 'people.db') });
+  try { people.write({ slug: 'pollock', name: 'Pollock' }); } finally { people.close(); }
   const loom = await startLoom({ home, next: true, staging: true, clock: new FakeClock(Date.parse('2026-11-12T12:00:00Z')), webRoot: root });
   const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   try {
