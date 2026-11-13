@@ -49,8 +49,10 @@ they are not app tables and are not imported here.
 | pieces/*/settings.json | household_piece_settings |
 | ui-cookie.key | byte-identical key file |
 
-The command/route/job replacement table, next-mode authentication, owner operations,
-generated clients, offline continuity and Setup screen remain tracked by t-2203.
+The [command/route/job inventory](household-contract-inventory.md) maps each old
+household command and page action to its implemented replacement or explicit
+gap, including sign-in and offline continuity. Full Setup, credential
+administration and settings coverage remain tracked by t-2203.
 
 ## Stdio metadata composition (new side)
 
