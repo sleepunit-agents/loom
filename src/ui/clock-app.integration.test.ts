@@ -9,6 +9,10 @@ import { FakeClock } from '../core/clock.js';
 import { fixture, installFixture, fixtureSharing } from '../fixture.js';
 import { importClock } from '../pieces/clock/importer.js';
 import { wake } from '../pieces/clock/store.js';
+import { installApprovals } from '../pieces/approvals/index.js';
+import { load } from '../pieces/approvals/store.js';
+import { clockVouchFiling } from '../pieces/clock/dependencies/filing.js';
+import { clockVouchApplication } from '../pieces/clock/role.js';
 import { installClock } from '../pieces/clock/index.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
@@ -17,10 +21,14 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const source = join(home,'old'); mkdirSync(join(source,'art'),{recursive:true});
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+  const access = fixtureSharing();
+  access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
+  const sharing = () => access;
   const loom = await startLoom({home,clock,install(app) {
-    installFixture(app);
+    installApprovals(app.db,app.operations,app.live,sharing,{applications:{clock:clockVouchApplication(app.operations)}});
+    installFixture(app,sharing);
     importClock(app.db,source,clock.now());
-    const jobs = installClock(app.db,app.operations,app.live,fixtureSharing, {approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
+    const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
   },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},valid:()=>true})});
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
@@ -79,14 +87,23 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(1);
     expect(await b.getByRole('button',{name:'Run now',exact:true}).count()).toBe(0);
     const original = wake(loom.db,'w-aaaaaa')!;
-    await b.getByRole('button',{name:'Count as my work',exact:true}).click();
-    await expect.poll(()=>b.getByText('Count this imported wake as your work?',{exact:false}).count()).toBe(1);
+    await b.getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
+    await expect.poll(()=>b.getByText('Ask the household owner to count this imported wake as their work?',{exact:false}).count()).toBe(1);
+    expect(await b.getByText('Review these exact imported words',{exact:true}).count()).toBe(1);
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/clock-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
       await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
+    await expect.poll(()=>b.getByText(/Owner request a-[0-9a-f]+: pending. Work stays held until allowed./).count()).toBe(1);
+    expect(wake(loom.db,'w-aaaaaa')).toEqual(original);
+    const cards = load(loom.db).approvals.filter(card=>card.kind==='vouch-wake');
+    expect(cards).toHaveLength(1); expect(cards[0]).toMatchObject({target:'art:w-aaaaaa',state:'pending'});
+    expect(cards[0].details).toContain('w-aaaaaa fires '+new Date(original.due).toISOString());
+    // Explicit filing changes no work; the existing direct owner action still works.
+    await b.getByRole('button',{name:'Count as my work',exact:true}).click();
     await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Count as my work',exact:true}).click();
     await expect.poll(()=>b.getByText('Counted 1 as your work; 0 unchanged',{exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(0);

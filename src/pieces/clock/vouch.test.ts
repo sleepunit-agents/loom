@@ -192,16 +192,39 @@ it('offers the live adoption hint only to the current owner for executable eligi
       await once(ws,'open');
       const initial = once(ws,'message'); ws.send(JSON.stringify({kind:'subscribe',type:'wake'}));
       const [raw] = await initial;
-      const records = JSON.parse(raw.toString()).records as Array<{id:string;canVouch:boolean}>;
+      const records = JSON.parse(raw.toString()).records as Array<{id:string;canVouch:boolean;canAskVouch:boolean}>;
       expect(records.find(w=>w.id===ids[0])?.canVouch).toBe(!agent);
+      expect(records.find(w=>w.id===ids[0])?.canAskVouch).toBe(true);
       expect(records.filter(w=>w.id!==ids[0]).every(w=>w.canVouch===false)).toBe(true);
     }
     const changed = once(sockets[0],'message');
     s.access.members.jonathan.owner = false; s.app.live.refreshAccess();
     const [raw] = await changed;
     expect(JSON.parse(raw.toString()).records.every((w:{canVouch:boolean})=>!w.canVouch)).toBe(true);
+    expect(JSON.parse(raw.toString()).records.every((w:{canAskVouch:boolean})=>!w.canAskVouch)).toBe(true);
     expect(s.call('clock.vouch',{target:`art:${ids[0]}`}).ok).toBe(false);
   } finally { for (const ws of sockets) { const closed = once(ws,'close'); ws.terminate(); await closed; } }
+});
+
+it('offers a live ask hint only for eligible executable unscoped work under current filing authority', async () => {
+  const s = await setup();
+  s.change(ids[1],{legacy:{...wake(s.app.db,ids[1])!.legacy,for_why:'steered'}});
+  s.change(ids[2],{project:'pond'});
+  const ws = new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-fixture-agent':'art'}});
+  try {
+    await once(ws,'open'); const initial = once(ws,'message');
+    ws.send(JSON.stringify({kind:'subscribe',type:'wake'}));
+    const [raw] = await initial;
+    const records = JSON.parse(raw.toString()).records;
+    expect(records.find((w:{id:string})=>w.id===ids[0])?.canAskVouch).toBe(true);
+    expect(records.filter((w:{id:string})=>w.id!==ids[0]).every((w:{canAskVouch:boolean})=>w.canAskVouch===false)).toBe(true);
+    const changed = once(ws,'message');
+    // Malformed executable words remove the hint and the mutation refuses them.
+    s.change(ids[0],{prompt:undefined,file:'../outside'}); s.app.live.refreshAccess();
+    const [updated] = await changed;
+    expect(JSON.parse(updated.toString()).records.every((w:{canAskVouch:boolean})=>!w.canAskVouch)).toBe(true);
+    expect(s.call('clock.askVouch',{target:`art:${ids[0]}`},{kind:'agent',id:'art'}).ok).toBe(false);
+  } finally { const closed = once(ws,'close'); ws.terminate(); await closed; }
 });
 
 it('files an exact owning request, deduplicates retries and overlapping sets, and applies only on owner Allow', async () => {
