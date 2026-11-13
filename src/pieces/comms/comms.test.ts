@@ -455,6 +455,36 @@ it('refuses an ask that expires while answer encryption waits, before calling at
  expect(answers).toBe(0);
  expect(s.app.db.prepare("SELECT * FROM comms_messages WHERE kind='answer'").all()).toEqual([]);
 });
+for(const change of ['agent','conversation','project','ask-words','ask-record','ask-delete','closed'] as const)it(`refuses an answer snapshot replaced during encryption (${change})`,async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};let answers=0;
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}}),attention:{answer:()=>{answers++;return {ok:true,value:{}};}}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'ask',kind:'ask',ref:'attention',text:'original private question'});
+ // Both agents are owned, so a generic permission recheck cannot bind the answer.
+ s.getSharing().members.jonathan.agents.push('other-agent');
+ pause=true;const answer=s.call('answer',{thread:place,ref:'attention',verdict:'yes'});await began;
+ if(change==='closed')await s.comms.close();
+ else if(change==='ask-delete')s.app.db.prepare("DELETE FROM comms_messages WHERE kind='ask'").run();
+ else if(change==='ask-words')s.app.db.prepare("UPDATE comms_messages SET words=? WHERE kind='ask'").run(Buffer.from('replacement question'));
+ else if(change==='ask-record')s.app.db.prepare("UPDATE comms_messages SET record=json_set(record,'$.seen',1) WHERE kind='ask'").run();
+ else s.app.db.prepare(`UPDATE comms_threads SET record=json_set(record,'$.${change}',?) WHERE id=?`).run(change==='agent'?'other-agent':'replacement',place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ release();expect(await answer).toMatchObject({ok:false,code:'denied'});
+ expect(answers).toBe(0);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+});
+it('allows unrelated thread title and read changes while encrypting an answer',async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};let answers=0;
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}}),attention:{answer:()=>{answers++;return {ok:true,value:{}};}}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'ask',kind:'ask',ref:'attention',text:'private question'});
+ pause=true;const answer=s.call('answer',{thread:place,ref:'attention',verdict:'yes'});await began;
+ await s.call('change',{thread:place,action:'title',title:'A new title'});
+ await s.call('change',{thread:place,action:'read',seq:2});
+ release();expect((await answer).ok).toBe(true);expect(answers).toBe(1);
+});
 it('summarizes only owned open threads, counting unread threads and folding the first unread line',async()=>{
  const s=await setup();const first=await s.open();
  await s.comms.post('art',first,{id:'r1',kind:'reply',text:'  first\n unread  '});

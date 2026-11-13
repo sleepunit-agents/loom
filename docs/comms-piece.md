@@ -49,7 +49,7 @@ The key file is read per crypto operation; no age executable is required.
 Retention is 1–14 days, defaults to 14, and arms the clock for the earliest
 expiry. Page reads recheck every row at return after all decryption completes,
 stripping expired words and work fields even before the sweep callback runs.
-Answers recheck the ask deadline at commit before calling attention. Expired words cannot be read or delivered. Deletion cascades message
+Answers snapshot the original member/agent/conversation/project and exact ask row before encryption, then recheck them, the ask deadline and instance availability at commit before calling attention. Unrelated thread title/read updates remain allowed. Expired words cannot be read or delivered. Deletion cascades message
 rows and retains a wordless tombstone. `secure_delete` is enabled.
 
 `exportDatabase` omits all Comms tables and their migrations. Production export

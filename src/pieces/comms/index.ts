@@ -284,16 +284,26 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return {thread:t.id,seq:i.seq};},after:(i,r)=>sendAfter(i,r),
  }));
  operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
-  prepare:async i=>key.seal(JSON.stringify({text:i.words ?? '',ref:i.ref,verdict:i.verdict})),
+  prepare:async (i,ctx)=>{
+   const original=thread(db,i.thread);
+   const ask=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL AND at > ?").get(i.thread,i.ref,i.ref,clock.now()-days*day) as MessageRow|undefined;
+   if(closed||!original||!see(ctx.viewer,original)||!ask)return fail('denied','Ask unavailable');
+   const words=await key.seal(JSON.stringify({text:i.words ?? '',ref:i.ref,verdict:i.verdict}));
+   return {original,ask,words};
+  },
   run(ctx,i,raw) {
+   const {original,ask,words}=raw as {original:Thread;ask:MessageRow;words:Buffer};
    const t=thread(db,i.thread)!;
-   const ask=db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL AND at > ?").get(t.id,i.ref,i.ref,clock.now()-days*day);
-   if(!ask)return fail('denied','Ask unavailable');
+   const current=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(i.thread,ask.seq);
+   // Permission alone cannot bind an answer to the question and routing the
+   // member saw: another owned agent or replacement ask could still pass it.
+   if(closed||t.member!==original.member||t.agent!==original.agent||t.conversation!==original.conversation||t.project!==original.project||
+    JSON.stringify(current)!==JSON.stringify(ask)||ask.at+days*day<=clock.now())return fail('denied','Ask unavailable');
    if(i.words)return fail('unavailable','Private word answers need the private attention role');
    // Attention is an in-process role, so its policy and answer participate in this transaction.
    const answered=o.attention.answer(ctx.viewer,{id:i.ref,answer:i.words?{kind:'words',text:i.words}:{kind:i.verdict}},`comms-answer:${key.hash(JSON.stringify(i))}`);
    if(!answered.ok)return fail(answered.code==='denied'?'denied':'conflict',answered.message);
-   const result=append(db,t,{id:`answer:${i.ref}`,kind:'answer',at:ctx.now,sender:t.member,words:raw as Buffer,hash:key.hash(JSON.stringify(i)),record:'{}'});
+   const result=append(db,t,{id:`answer:${i.ref}`,kind:'answer',at:ctx.now,sender:t.member,words,hash:key.hash(JSON.stringify(i)),record:'{}'});
    ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};
   },
  }));
