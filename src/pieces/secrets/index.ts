@@ -63,6 +63,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       const current = readSecretPolicy(db);
       const policy = withAlways(current, input.name, input.agent, input.on);
       if (!policy) return failure('conflict', 'Policy never gives this secret out');
+      if (!secretPolicy.safeParse(policy).success) return failure('invalid', 'Standing policy exceeds capacity');
       savePolicy(ctx, policy); return policy;
     },
   }));
@@ -148,6 +149,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       if (input.always) {
         const policy = withAlways(readSecretPolicy(db), record.target, record.agent, true);
         if (!policy) return failure('conflict', 'Policy never gives this secret out');
+        if (!secretPolicy.safeParse(policy).success) return failure('invalid', 'Standing policy exceeds capacity');
         savePolicy(ctx, policy); record.always = true; record.minutes = 480;
       }
       record.state = input.allow ? 'allowed' : 'denied'; record.by = ctx.viewer.id; record.answeredAt = ctx.now; saveRequest(record);

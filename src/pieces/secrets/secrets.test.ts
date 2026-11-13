@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -291,4 +291,45 @@ it('standing toggles preserve other agents and never cannot be bypassed by a tog
   expect(call(owner, 'answer', { id, allow: true, always: true })).toMatchObject({ ok: false, code: 'conflict' });
   expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
   expect(call(owner, 'answer', { id, allow: false }).ok).toBe(true);
+});
+
+
+it('rejects standing policy overflow and rolls back every Always write when grant storage fails', async () => {
+  const { app, call } = await setup();
+  call(owner, 'describe', { name: 'api-key', description: '' });
+  const pending = call(agent, 'requestHouse', { agent: agent.id, target: 'api-key', scope: { house: 'h-25' }, why: 'x'.repeat(400) });
+  expect(pending).toMatchObject({ ok: true, value: { why: 'x'.repeat(300) } });
+  const id = pending.ok ? (pending.value as GrantRequest).id : '';
+  expect(JSON.parse((app.db.prepare('SELECT record FROM secrets_requests WHERE id=?').get(id) as { record: string }).record).why).toBe('x'.repeat(300));
+  const full = { secrets: { 'api-key': { grant: 'auto', agents: Array.from({ length: 1000 }, (_, i) => `agent-${i}`) } } };
+  expect(call(owner, 'policy', full).ok).toBe(true);
+  const rows = () => ['secrets_meta', 'secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t}`).all());
+  const baseline = rows();
+  for (const [operation, input] of [
+    ['always', { name: 'api-key', agent: agent.id, on: true }],
+    ['answer', { id, allow: true, always: true }],
+  ] as const) expect(call(owner, operation, input)).toMatchObject({ ok: false, code: 'invalid' });
+  expect(rows()).toEqual(baseline);
+  expect(call(owner, 'policy', {}).ok).toBe(true);
+  const before = rows();
+  const changed = vi.spyOn(app.live, 'changed');
+  app.db.exec("CREATE TRIGGER reject_always_grant BEFORE INSERT ON secrets_grants BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+  const answer = { id, allow: true, always: true };
+  expect(call(owner, 'answer', answer, 'atomic-always')).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(rows()).toEqual(before);
+  expect(changed).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER reject_always_grant');
+  expect(call(owner, 'answer', answer, 'atomic-always')).toMatchObject({ ok: true, value: { always: true, state: 'allowed' } });
+  changed.mockRestore();
+});
+
+it('Stop leaves nonstanding ask and inherited-default policy content unchanged', async () => {
+  const { app, call } = await setup();
+  call(owner, 'describe', { name: 'api-key', description: '' });
+  for (const rule of [{ grant: 'ask', minutes: 30, houses: ['art'] }, { minutes: 45, houses: ['art'] }]) {
+    expect(call(owner, 'policy', { default: 'auto', secrets: { 'api-key': rule } }).ok).toBe(true);
+    const before = app.db.prepare('SELECT * FROM secrets_meta').all();
+    expect(call(owner, 'always', { name: 'api-key', agent: agent.id, on: false }).ok).toBe(true);
+    expect(app.db.prepare('SELECT * FROM secrets_meta').all()).toEqual(before);
+  }
 });
