@@ -19,8 +19,13 @@ export function registerBuiltinService(operations: Operations, id: string, types
 }
 
 export function builtinServices(db: Db): Sharing['services'] {
-  return Object.fromEntries([...(installed.get(db) ?? [])].map(([id, service]) => [id, {
-    types: [...service.types],
-    operations: service.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(service.namespace + '.')),
-  }]));
+  const snapshot = Object.fromEntries([...(installed.get(db) ?? [])].map(([id, service]) => {
+    const entry = {
+      types: [...service.types],
+      operations: service.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(service.namespace + '.')),
+    };
+    Object.freeze(entry.types); Object.freeze(entry.operations); Object.freeze(entry);
+    return [id, entry];
+  }));
+  return Object.freeze(snapshot);
 }

@@ -33,7 +33,7 @@ export function grantsRole(db: Db): Grants {
   } };
 }
 export function installSecrets(db: Db, operations: Operations, live: Live, sharing: () => Sharing, attention?: GrantAttention) {
-  registerBuiltinService(operations, 'secrets', ['secret.name', 'secret.grant', 'secret.request']);
+  registerBuiltinService(operations, 'secrets', ['secret.name', 'secret.grant', 'secret.request', 'secret.policy']);
   migrate(db, 'secrets', schema);
   const owner = (v: Viewer, op: string) => mayAct(v, { type: 'secret.grant' }, sharing(), 'household', op);
   const canAsk = (v: Viewer, a: string) => v.kind === 'agent' ? v.id === a && maySee(v, { agent: a }, sharing()) : owner(v, 'secrets.request') || mayAct(v, { agent: a }, sharing(), 'agent-setup', 'secrets.request');
