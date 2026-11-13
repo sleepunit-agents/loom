@@ -113,7 +113,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await expect.poll(()=>p.getByRole('heading',{name:'Needs you · 2',exact:true}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you',{exact:true}).count()).toBe(0);
     expect(await p.getByText('Connecting the next Home panels',{exact:true}).count()).toBe(0);
-    expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T08:00:00Z'}).ok).toBe(true);
+    expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T08:00:00Z'},'home-close-wait-task').ok).toBe(true);
     raise({id:'home-task-wait',ask:'Check the finished household work?',waits_on:{task:'t-1'}});
     await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:'home-task-wait'})).toMatchObject({ok:true,value:{state:'resolved',resolution:'t-1 is closed'}});
     await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);

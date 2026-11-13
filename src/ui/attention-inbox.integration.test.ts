@@ -66,7 +66,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     expect(await p.getByText('Private conversation needs you').count()).toBe(0);
     expect(await p.getByText('Continue the Attention rebuild?').count()).toBe(0);
     // Arriving live waits reconcile through the signed-in member, in both windows.
-    expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T06:00:00Z'}).ok).toBe(true);
+    expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T06:00:00Z'},'inbox-close-wait-task').ok).toBe(true);
     raise({id:'closed-task',ask:'Check the completed work?',waits_on:{task:'t-1'}});
     await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:'closed-task'})).toMatchObject({ok:true,value:{state:'resolved',resolution:'t-1 is closed'}});
     for(const page of [a,b]) {
