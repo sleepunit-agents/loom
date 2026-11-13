@@ -1,14 +1,10 @@
+import { attentionMigrations } from './schema/index.js';
 /** Offline only. No operation or daemon path imports this module. */
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { statSync } from 'node:fs';
 import { migrate, type Db } from '../../core/index.js';
-import { importSchema } from './schema/005.js';
-import { schema } from './schema/001.js';
-import { conversationSchema } from './schema/002.js';
-import { digestSchema } from './schema/003.js';
-import { retentionSchema } from './schema/004.js';
 import { conversationId, recordTurnInput, type Conversation } from './conversations.js';
 import { digestId } from './digests.js';
 import { findingId } from './retention.js';
@@ -19,7 +15,7 @@ const slug = z.string().max(80).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const audience = z.object({ project: slug.optional(), member: slug.optional() }).strict();
 const scopesSchema = z.record(z.string().regex(/^cv-[0-9a-f]{12}$/), audience);
 export type ImportScopes = z.infer<typeof scopesSchema>;
-const iso = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/).refine(s => Number.isFinite(Date.parse(s)));
+const iso = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/).refine(s => Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,19) === s.slice(0,19));
 const integer = z.number().int().nonnegative();
 const day = z.string().regex(/^\d{4}-\d\d-\d\d$/).refine(s => !Number.isNaN(Date.parse(s)) && new Date(s).toISOString().slice(0,10) === s);
 const canonical = (v: unknown): string => Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : v && typeof v === 'object' ? `{${Object.entries(v).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}` : JSON.stringify(v);
@@ -33,14 +29,22 @@ const check = (ok: unknown, message: string): void => { if (!ok) throw Error(`In
 const storedNeeds = z.object({ ask: z.string().min(1), why: z.string().optional(), if_yes: z.string().optional(), if_no: z.string().optional(), href: z.string().optional(), refs: z.array(z.string()), answers: z.enum(['yes-no','words']).optional(), legacy: z.literal(true).optional(), waits_on: z.union([z.object({approval:z.string()}).strict(),z.object({task:z.string()}).strict()]).optional() }).strict();
 const legacyAnswer = z.object({ digest: z.string(), conversation: z.string(), verdict: z.enum(['done','dismissed','replied','yes','no','resolved']), by: z.string().min(1), at: iso, reason: z.string().nullable().optional() }).strict();
 
+/** Run before any writable destination open, including createFoundation. */
+export function assertSeparateAttentionSources(from: string[], destination: string): void {
+  let target;
+  try { target = statSync(destination); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  for (const path of from) {
+    const source = statSync(path);
+    check(!target || source.dev !== target.dev || source.ino !== target.ino, 'source and destination must differ');
+  }
+}
+
 /** A whole migration batch (one or more per-agent memories.db copies). Caller owns stopped-home lock. */
 export function importAttention(db: Db, from: string[], scopesInput: ImportScopes, options: { interrupt?: () => void; afterSourceConversations?: () => void } = {}) {
   check(from.length > 0, 'at least one source required');
   const scopes = scopesSchema.parse(scopesInput);
-  if (db.name && db.name !== ':memory:') {
-    const target = statSync(db.name);
-    for (const path of from) { const source = statSync(path); check(source.dev !== target.dev || source.ino !== target.ino, 'source and destination must differ'); }
-  }
+  if (db.name && db.name !== ':memory:') assertSeparateAttentionSources(from,db.name);
   const snapshots = from.map(path => {
     const source = new Database(path, { readonly: true, fileMustExist: true });
     try {
@@ -76,7 +80,7 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   for (const r of rows('conversation_turns')) {
     const c = parent(r), seq = integer.min(1).parse(r.seq);
     check(seq <= c.turns, 'turn exceeds sequence high-water mark');
-    const raw: Row = { venue: c.venue, place: c.place, at: r.at, kind: r.kind, from: json(r,'from_json') };
+    const raw: Row = { venue: c.venue, place: c.place, at: time(r.at), kind: r.kind, from: json(r,'from_json') };
     for (const k of ['run','model','harness','outcome']) if (r[k] !== null && r[k] !== undefined) raw[k] = r[k];
     const { turn } = recordTurnInput.parse({ agent: c.agent, turn: raw });
     const writer = z.string().min(1).parse(r.writer);
@@ -88,7 +92,10 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   for (const r of rows('conversation_days')) {
     const c = parent(r), d = day.parse(r.day), id = `${c.id}:${d}`;
     const counts = z.partialRecord(z.enum(['message','reply','action','wake','note','refused']), integer).parse(json(r,'counts_json'));
-    const outcomes = z.record(z.string(), z.partialRecord(z.enum(['answered','progressed','deferred','failed','none']), integer)).parse(json(r,'outcomes_json'));
+    const rawOutcomes = json(r,'outcomes_json');
+    check(rawOutcomes && typeof rawOutcomes === 'object' && !Array.isArray(rawOutcomes), 'model outcomes object');
+    // Model labels are arbitrary printable strings; retain prototype-like own keys too.
+    const outcomes = Object.fromEntries(Object.entries(rawOutcomes as Row).map(([model,counts]) => [model,z.partialRecord(z.enum(['answered','progressed','deferred','failed','none']), integer).parse(counts)]));
     const record = { ...scope(c), id, conversation: c.id, day: d, counts, median_latency_ms: r.median_latency_ms === null ? null : integer.parse(r.median_latency_ms), outcomes };
     folded.add(id); expected.attention_days.push({ id, conversation: c.id, day: d, record: JSON.stringify(record) });
   }
@@ -110,9 +117,10 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   for (const r of digests) {
     const c = parent(r), run = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/).parse(r.run), id = digestId(c.id,run), at = time(r.at);
     check(id === r.id, 'digest identity');
+    const stored = r.needs_owner_json == null ? null : storedNeeds.parse(JSON.parse(z.string().parse(r.needs_owner_json)));
     let needs: NeedsOwner | null = null;
     if (r.needs_owner !== null) {
-      if (r.needs_owner_json) needs = storedNeeds.parse(JSON.parse(z.string().parse(r.needs_owner_json)));
+      if (stored) needs = stored;
       else {
         const ask = z.string().min(1).parse(r.needs_owner), refs = refsIn(ask), approvals = refs.filter(s => /^a-[0-9a-f]{8}$/.test(s));
         needs = { ask, refs, legacy: true, ...(r.needs_owner_href ? { href: z.string().parse(r.needs_owner_href) } : {}), ...(approvals.length === 1 ? { waits_on: { approval: approvals[0] } } : {}) };
@@ -150,7 +158,7 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   for (const c of conversations.values()) expected.attention_conversations.push({ id: c.id, record: JSON.stringify(c) });
   const counts = Object.fromEntries(destinations.map(t => [t,expected[t].length]));
   return db.transaction(() => {
-    migrate(db,'attention',[...schema,conversationSchema,digestSchema,retentionSchema,importSchema]);
+    migrate(db,'attention',attentionMigrations);
     const marker = db.prepare("SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
     if (marker) { if (marker.checksum !== checksum) throw Error('A different attention source was already imported'); return { ok: true, imported: false, checksum, counts }; }
     for (const t of [...destinations,'attention_statuses']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');

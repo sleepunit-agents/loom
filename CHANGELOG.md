@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
+
 - Keep long approval details and exact targets within the phone reader, with wrapping answer buttons.
 
 - Add `loom migrate household --home <new-home> --from <old-home>`: a verified offline import of household, sign-in and piece settings into the new database, preserving credentials and leaving the old home untouched.

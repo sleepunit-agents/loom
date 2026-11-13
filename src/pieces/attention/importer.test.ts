@@ -145,3 +145,26 @@ it('retains answers written before reason was added',async()=>{
   importAttention(f.app.db,[f.path],f.scopes);
   expect(f.load('attention_asks').find(a=>a.id===`${f.latest}:1`)).toMatchObject({state:'answered',answer:{kind:'done'}});
 });
+it('preserves prototype-like model labels in folded outcomes',async()=>{
+  const f=await setup();
+  const outcomes=JSON.parse('{"__proto__":{"answered":1},"constructor":{"answered":1}}');
+  f.source.prepare('UPDATE conversation_days SET outcomes_json=?').run(JSON.stringify(outcomes));
+  importAttention(f.app.db,[f.path],f.scopes);
+  expect(f.load('attention_days')[0].outcomes).toEqual(outcomes);
+});
+it.each([
+  "UPDATE conversations SET id='cv-000000000000'",
+  "UPDATE conversation_digests SET id='dg-000000000000' WHERE run='r1'",
+  "UPDATE findings SET id='fd-000000000000'",
+  "UPDATE conversation_days SET day='2026-11-01'",
+  'UPDATE conversations SET last_seq=7',
+  "UPDATE conversation_digests SET at='2026-02-30T00:00:00Z'",
+  "UPDATE conversation_turns SET at='2026-02-30T00:00:00Z'",
+  "UPDATE conversations SET started='2026-02-30T00:00:00Z'",
+  "UPDATE findings SET at='2026-02-30T00:00:00Z'",
+  "UPDATE conversation_digests SET needs_owner=NULL, needs_owner_json='{'",
+])('rejects malformed source before any schema/record changes: %s',async sql=>{
+  const f=await setup();f.source.exec(sql);
+  expect(()=>importAttention(f.app.db,[f.path],f.scopes)).toThrow();
+  expect(f.app.db.prepare("SELECT * FROM core_migrations WHERE piece='attention'").all()).toEqual([]);
+});

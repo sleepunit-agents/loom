@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { createFoundation } from '../core/app.js';
-import { importAttention } from '../pieces/attention/importer.js';
+import { importAttention, assertSeparateAttentionSources } from '../pieces/attention/importer.js';
 import type { ImportScopes } from '../pieces/attention/importer.js';
 import type { IOStreams } from './io.js';
 export async function migrateAttention(argv: string[], io: IOStreams): Promise<number> {
@@ -16,6 +17,7 @@ export async function migrateAttention(argv: string[], io: IOStreams): Promise<n
   try {
     release = acquireHttpLock(args.values.home);
     const scopes = JSON.parse(await readFile(args.values.scopes,'utf8')) as ImportScopes;
+    assertSeparateAttentionSources(args.values.from,join(args.values.home,'loom.db'));
     const app = createFoundation({ home: args.values.home });
     try { io.stdout(JSON.stringify(importAttention(app.db,args.values.from,scopes),null,2) + '\n'); return 0; }
     finally { app.close(); }
