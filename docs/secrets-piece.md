@@ -240,7 +240,8 @@ importer's work. This plan does not activate a runtime permission or import data
 ## Offline destination request/grant records
 
 `planLegacySecretRecords` builds on the combined policy/request plan without IO,
-DB writes or implicit time. It supplies runtime `GrantRequest` and `Grant` shapes,
+DB writes or implicit time. A dedicated entry-point test forbids filesystem and
+subprocess calls, database dependencies and implicit clock access. It supplies runtime `GrantRequest` and `Grant` shapes,
 retaining the full validated original metadata separately. Grant IDs use the same
 pure helper as runtime writes. A live carried grant includes a moved-original
 record at the original scope: it never authorizes use, but lets revocation from
