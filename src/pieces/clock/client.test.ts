@@ -76,7 +76,7 @@ it('shows already-scheduled output without duplicate work, respects global agent
   expect(a.run(['--agent','other','schedule','set','care','--at','11:31','-f','routines/care.md']).exit).toBe(0);
   const due=wakes(a.db)[0].due;
   const answer=a.run(['--agent=other','at','11:31','-f','routines/care.md'],{kind:'agent',id:'other'});
-  expect(answer).toEqual({exit:0,stdout:`already scheduled: other/care, next at ${clockTime(due)} (nothing armed)\n`,stderr:''});
+  expect(answer).toEqual({exit:0,stdout:`already scheduled: care, next at ${clockTime(due)} (nothing armed)\n`,stderr:''});
   expect(wakes(a.db)).toHaveLength(1);
   expect(a.run(['schedule','list']).stdout).toBe('art has no schedules\n');
 });
@@ -152,4 +152,22 @@ it('renders lane list, rearm and duration-filtered bounded logs',async()=>{
   expect(lines[0]).toContain('event-3');expect(lines.at(-1)).toContain('event-2002');expect(log.stdout).not.toContain(' old');
   expect(a.run(['log','--since','1s']).stdout).toBe('\n');
   expect(a.run(['log','--since','broken']).exit).toBe(1);
+});
+
+it('runs and lists household lanes through schedule commands and joins absolute time tokens',async()=>{
+  const a=await setup();
+  expect(a.run(['lane','set','care','--agent','art','--at','08:31','-p','Words']).exit).toBe(0);
+  expect(a.run(['schedule','list']).stdout).toContain('care');
+  expect(a.run(['schedule','run','care']).exit).toBe(0);
+  const run=wakes(a.db).find(w=>w.runNow)!;expect(run).toMatchObject({schedule:'lane/care',note:'care run now'});
+  expect(a.run(['list']).stdout).toContain('[schedule]  schedule care: loom lane');
+  expect(a.run(['at','tomorrow','11:31','-pWords']).stdout).toMatch(/will wake at 2026-11-14 11:31:00\n$/);
+  expect(a.run(['at','2026-11-15','08:31:20','-pWords']).stdout).toMatch(/will wake at 2026-11-15 08:31:20\n$/);
+});
+it('refuses ambiguous same-agent schedule names instead of choosing different work',async()=>{
+  const a=await setup();
+  a.run(['lane','set','care','--agent','art','--at','08:31','-pWords']);
+  a.operations.call('direct',owner,'clock.scheduleSet',{id:'art/care',agent:'art',at:'09:31',prompt:'Other words',note:''},randomUUID());
+  expect(a.run(['schedule','run','care'])).toMatchObject({exit:1,stderr:'wake: schedule name is ambiguous; use its exact id in the Clock app\n'});
+  expect(wakes(a.db).filter(w=>w.runNow)).toHaveLength(0);
 });

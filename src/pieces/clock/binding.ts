@@ -8,6 +8,7 @@ export interface ClockCommandInput { argv: string[]; agent?: string; laneFile?: 
 export interface CommandAnswer { exit: number; stdout: string; stderr: string }
 const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' });
 export function clockTime(epoch: number) { const p = Object.fromEntries(formatter.formatToParts(epoch).map(p => [p.type,p.value])); return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`; }
+const scheduleName = (id: string, agent: string) => id.startsWith(`${agent}/`) ? id.slice(agent.length+1) : id.startsWith('lane/') ? id.slice(5) : id;
 const when = (s: Schedule) => {
   const at = s.at.map(t => { const [h,m] = t.split(':').map(Number); return `${h%12 || 12}:${String(m).padStart(2,'0')} ${h>=12 ? 'PM' : 'AM'}`; }).join(', ');
   const named: Record<string,string> = {'mon-fri':'Weekdays','sat,sun':'Weekends','sat-sun':'Weekends'};
@@ -67,7 +68,9 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     const found = ops.call('direct',viewer,'clock.schedules',{});
     if (!found.ok) return fail(found.message);
     const rows = found.value as Schedule[];
-    input.id = rows.find(s => s.agent === agent && (s.id === `${agent}/${positional[0]}` || s.id === positional[0]))?.id ?? `${agent}/${positional[0]}`;
+    const candidates=rows.filter(s => s.agent===agent && scheduleName(s.id,agent!)===positional[0]);
+    if (candidates.length>1) return fail('schedule name is ambiguous; use its exact id in the Clock app');
+    input.id = candidates[0]?.id ?? `${agent}/${positional[0]}`;
   }
   if (name?.startsWith('lane ') && positional.length) input.name = positional[0];
   if (name === 'lane set' || name === 'lane assign') {
@@ -96,7 +99,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   const value = result.value;
   if (timed) {
     const w = value as Wake & { alreadyScheduled?: boolean; schedule: string };
-    return success(w.alreadyScheduled ? `already scheduled: ${w.schedule}, next at ${clockTime(w.due)} (nothing armed)` : `${w.id} will wake at ${clockTime(w.due)}`);
+    return success(w.alreadyScheduled ? `already scheduled: ${scheduleName(w.schedule,agent!)}, next at ${clockTime(w.due)} (nothing armed)` : `${w.id} will wake at ${clockTime(w.due)}`);
   }
   if (name === 'park') { const w = value as Wake; return success(`${w.id} parked on ${w.wait!.id}: it wakes when the owner answers (checked every 5 minutes; 24h at most). End this session now.`); }
   if (name === 'cancel') { const w = value as Wake; return success(w.state === 'cancelled' ? `cancelled ${w.id}` : `${w.id}: ${w.outcome ?? w.state}`); }
@@ -106,7 +109,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'list') {
     const rows = (value as Wake[]).filter(active).sort((a,b) => a.due-b.due || a.id.localeCompare(b.id));
     if (!rows.length) return success('no pending wakes');
-    return success(rows.map(w => { const m = Math.floor((w.due-ops.clock.now())/60000); const rel = m>=1440 ? `${Math.floor(m/1440)}d${Math.floor(m%1440/60)}h` : m>=60 ? `${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}m` : `${m}m`; return `${w.id}  ${clockTime(w.due)}  (in ${rel})  [${w.state === 'pending' ? w.schedule ? 'schedule' : 'wake' : w.state}]  ${w.note || w.file || w.prompt?.slice(0,50) || ''}`; }).join('\n'));
+    return success(rows.map(w => { const m = Math.floor((w.due-ops.clock.now())/60000); const rel = m>=1440 ? `${Math.floor(m/1440)}d${Math.floor(m%1440/60)}h` : m>=60 ? `${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}m` : `${m}m`; return `${w.id}  ${clockTime(w.due)}  (in ${rel})  [${w.state === 'pending' ? w.schedule ? 'schedule' : 'wake' : w.state}]  ${w.schedule ? `schedule ${scheduleName(w.schedule,w.agent)}${w.schedule.startsWith('lane/') ? ': loom lane' : ''}${w.note ? `: ${w.note}` : ''}` : w.note || w.file || w.prompt?.slice(0,50) || ''}`; }).join('\n'));
   }
   if (name === 'log') return success((value as Array<{at:number;kind:string;note:string;outcome?:string;agent:string}>).filter(r => r.agent === agent).map(r => `${clockTime(r.at)} ${r.kind} ${r.outcome ?? r.note}`).filter(line => !flags.grep || line.includes(String(flags.grep))).slice(-2000).join('\n'));
   if (name === 'schedule rm') return success(`removed schedule ${positional[0]}`);
@@ -115,9 +118,9 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'lane text') return success((value as {text:string}).text);
   if (name === 'lane list') { const rows = value as Schedule[]; return success(rows.length ? rows.sort((a,b)=>a.id.localeCompare(b.id)).map(s => `${s.lane!.padEnd(22)} ${s.agent.padEnd(8)} ${when(s).padEnd(18)} ${[...s.laneDetails!.text].length} chars${s.laneDetails!.local ? ' local' : ''}${s.note ? `  — ${s.note}` : ''}`).join('\n') : 'no loom lanes'); }
   if (name === 'schedule list') {
-    const rows = (value as Schedule[]).filter(s => s.agent === agent && !s.laneDetails);
+    const rows = (value as Schedule[]).filter(s => s.agent === agent);
     const pending = read('list',{agent}); if (!pending.ok) return fail(pending.message);
-    return success(rows.length ? rows.sort((a,b)=>a.id.localeCompare(b.id)).map(s => { const next = (pending.value as Wake[]).filter(w=>w.schedule===s.id && w.state==='pending').sort((a,b)=>a.due-b.due)[0]; return `${s.id.replace(`${agent}/`,'').padEnd(22)} ${when(s).padEnd(18)} next ${next ? clockTime(next.due) : '(none armed)'}  ${s.file || s.prompt?.slice(0,50) || ''}${s.note ? `  — ${s.note}` : ''}`; }).join('\n') : `${agent} has no schedules`);
+    return success(rows.length ? rows.sort((a,b)=>a.id.localeCompare(b.id)).map(s => { const next = (pending.value as Wake[]).filter(w=>w.schedule===s.id && w.state==='pending').sort((a,b)=>a.due-b.due)[0]; return `${scheduleName(s.id,agent!).padEnd(22)} ${when(s).padEnd(18)} next ${next ? clockTime(next.due) : '(none armed)'}  ${s.file || s.prompt?.slice(0,50) || ''}${s.note ? `  — ${s.note}` : ''}`; }).join('\n') : `${agent} has no schedules`);
   }
   const confirmation = (s: Schedule, label: string) => {
     const pending = read('list',{agent:s.agent});

@@ -458,3 +458,14 @@ lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
 refused in favor of the daemon, runtime, Clock app and core migration. This client
 slice does not claim completion of provenance, local approvals, runtime dispatch
 or importer-all registration; those remain on t-2201.
+
+
+| Old client detail | New client choice and reason |
+| --- | --- |
+| Full argparse usage/error paragraphs | Concise `wake:` diagnostics; usage errors exit 2, operation/connection refusals exit 1. Interpreter-specific usage wrapping is not retained. |
+| Implicit local agent/model from installed configuration | Agent token identity or explicit clock selection; runtime chooses an omitted model. New clients read no old configuration. |
+| Raw per-agent schedule names | Namespaced internal ids, names shown in confirmations. Legacy raw ids and household lanes remain addressable on their own agent's clock. An ambiguous new-side name refuses instead of choosing work. |
+| Old empty-spool warning, systemd armed flag and boot counts | Truthful empty/held/firing states and daemon rearm confirmation; no transient unit exists. |
+| Subprocess-dependent log messages | New structured event time, kind and outcome/note, filtered as displayed, with the legacy duration and last-2000 rule. |
+| A separate lane registry surviving removal of its schedule | One owning schedule row. Removing it through either command removes the lane; no orphaned registry is kept. |
+| Caller-supplied principal statement | Refused; only the authenticated viewer and future runtime resolver can establish provenance. |
