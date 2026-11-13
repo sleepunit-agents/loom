@@ -1,3 +1,7 @@
+import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
+import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
+import { startSecretReconciliation } from './pieces/secrets/reconciliation.js';
+import { heldSecretMutations } from './pieces/secrets/staging.js';
 import { bridgeRuntime } from './pieces/runtime/bridges.js';
 import { randomUUID } from 'node:crypto';
 import { installStartRetries } from './pieces/runtime/start-retries.js';
@@ -94,31 +98,41 @@ export interface NextChangesOptions {
   interval?: number;
 }
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets' | 'credentialEpoch' | 'observeCredentials' | 'name' | 'receive'> { name?: SlackDaemonOptions['name']; receive?: SlackDaemonOptions['receive']; runtime?: BridgeRuntime; source: SecretValueSource & HolderGeneration; discordSocket?: DiscordDaemonOptions['socket'] }
+const secretMutationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
-  try { await bridgeDaemons.get(app)?.close(); }
-  finally { try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); } finally { await runtimeClosers.get(app)?.(); } }
+  try { await secretMutationClosers.get(app)?.(); }
+  finally {
+    try { await bridgeDaemons.get(app)?.close(); }
+    finally {
+      try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
+      finally { await runtimeClosers.get(app)?.(); }
+    }
+  }
 }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
   changes?: NextChangesOptions;
   secretAuthority?: AuthorityServerConfig;
+  /** Trusted authenticated holder only; no discovery or automatic grants. */
+  secretWrites?: {holder: AsyncSecretMutations; retryKeys: string | SecretRetryKeyFiles};
   bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
   clockDeadmanAgents?: readonly string[];
 }
 export async function installNext(app: Foundation, options: NextOptions) {
+  if (options.secretWrites && !options.secretAuthority) throw new Error('Secret writes require holder authority');
   migrateHouseholdTables(app.db);
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)), threadProject: attentionThreadProject(app.operations) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
-  if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing,
-    attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
+  const secretAttention = (!app.operations.has('secrets.list') || options.secretWrites) && attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined;
+  if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing, secretAttention);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
@@ -245,6 +259,14 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const current = () => new SharingDatabase(app.db, options.home).sharing();
     secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>
       mayAct({kind:'member',id:member},{type:'secret.name'},current(),'household','secrets.set')));
+  }
+  if (options.secretWrites) {
+    const holder = heldSecretMutations(options.secretWrites.holder, effects);
+    app.onClose(()=>{void holder.close();});
+    const recovery = installAsyncSecretValuesFromFile(app.db, app.operations, sharing, holder,
+      options.secretWrites.retryKeys, secretAttention);
+    const job = startSecretReconciliation(app, recovery);
+    secretMutationClosers.set(app,async()=>{job.close();await holder.close();});
   }
   return effects;
 }

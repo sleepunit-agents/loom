@@ -1,5 +1,6 @@
 /** Async holder-only mutation channel, never a synchronous KeyHolder adapter. */
 import https from 'node:https';
+import type {ClientRequest} from 'node:http';
 import { chmodSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import type { TLSSocket } from 'node:tls';
@@ -22,10 +23,13 @@ export type HolderMutationAuthority = (peerFingerprint: string, assertedMember: 
 
 export function localHolderMutations(config: LocalHolderConfig) {
   const material = tlsMaterial(config);
+  let closed = false;
+  const requests = new Set<ClientRequest>();
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
   async function send(who: HolderWrite, name: string | undefined, mode: 'add' | 'replace' | 'remove' | 'receipt', value?: Uint8Array) {
     let bytes: Buffer | undefined;
     try {
+      if (closed) throw failed();
       who = whoSchema.parse(who); if (mode !== 'receipt') secretName.parse(name);
       if (!['add','replace','remove','receipt'].includes(mode)) throw failed();
       if (mode !== 'remove' && mode !== 'receipt') {
@@ -50,6 +54,8 @@ export function localHolderMutations(config: LocalHolderConfig) {
           response.on('error',fail);response.on('aborted',fail);
           response.on('end',()=>{if (!settled) {settled=true;resolve(response.statusCode===204);}});
         });
+        requests.add(request);
+        request.once('close',()=>requests.delete(request));
         const deadline=setTimeout(()=>{fail();request.destroy();},5000);
         request.on('error',fail);request.on('close',()=>clearTimeout(deadline));
         request.end(bytes);
@@ -58,6 +64,10 @@ export function localHolderMutations(config: LocalHolderConfig) {
     finally { bytes?.fill(0); }
   }
   return {
+    async close() {
+      closed = true;
+      await Promise.all([...requests].map(request=>new Promise<void>(resolve=>{request.once('close',resolve);request.destroy();})));
+    },
     set:async(who:HolderWrite,name:string,value:Uint8Array,mode:'add'|'replace')=>{await send(who,name,mode,value);},
     remove:async(who:HolderWrite,name:string)=>{await send(who,name,'remove');},
     /** A positive answer confirms a committed member/id, not the caller's input.
