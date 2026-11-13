@@ -155,6 +155,9 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Local requests/}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
+    await b.getByRole('searchbox',{name:'Search clock',exact:true}).fill('no-such-local-request');
+    await expect.poll(()=>b.getByText('Nothing matches “no-such-local-request”',{exact:true}).count()).toBe(1);
+    await b.getByRole('searchbox',{name:'Search clock',exact:true}).fill('');
     const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
     await row(b,'Allow once').click();
     await expect.poll(()=>!!releaseOpen).toBe(true);
@@ -183,7 +186,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     expect(decisions()).toBe(0);
     openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
-    await expect.poll(()=>b.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(1);
+    const exactDetails=load(loom.db).approvals.find(card=>card.id===localCards[0])!.details;
+    await expect.poll(()=>b.locator('section').filter({has:b.getByRole('heading',{name:'Details',exact:true})}).locator('p').textContent()).toBe(exactDetails);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
