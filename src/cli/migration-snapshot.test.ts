@@ -438,3 +438,16 @@ test('explicit Secrets input refuses missing, wrong-type and overlapping sources
   await expect(createSnapshot(home,join(secrets,'snapshot'),undefined,{secrets})).rejects.toThrow('separate');
   expect(readdirSync(secrets)).toEqual([]);
 });
+
+
+test('all explicitly empty external roots refuse instead of silently dropping coverage',async()=>{
+  const {home,to}=fixture();
+  for(const name of ['clock','wake','approvals','changes','secrets']) {
+    for(const mode of [[],['--dry-run']]) {
+      const out:string[]=[],io={stdout:(s:string)=>out.push(s),stderr:(s:string)=>out.push(s),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+      expect(await migrateSnapshot(['--from',home,'--to',to,'--'+name,'',...mode],io)).toBe(1);
+      expect(out).toEqual([`Snapshot refused: "<${name}>": source root must not be empty\n`]);
+      expect(existsSync(to)).toBe(false);
+    }
+  }
+});
