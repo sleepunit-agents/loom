@@ -10,7 +10,7 @@ import { conversationId } from './conversations.js';
 import { schema } from './schema/001.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: {}, services: {} });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['alice'], agents: ['art'] }, other: { members: ['alice'], agents: ['art'] } }, services: {} });
 const alice: Viewer = { kind: 'member', id: 'alice' };
 const art: Viewer = { kind: 'agent', id: 'art' };
 const turn = { venue: 'relay', place: 'test', at: '2026-11-12T00:00:00Z', from: { kind: 'person', slug: 'alice' }, kind: 'message' };
@@ -21,6 +21,7 @@ async function setup() {
     // Exercise upgrade from the already-shipped ask/status schema, preserving its data.
     migrate(app.db, 'attention', schema);
     app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('existing', '{"id":"existing"}');
+    app.db.prepare('INSERT INTO attention_statuses VALUES (?,?)').run('existing-status', '{"id":"existing-status"}');
     const register = app.live.register.bind(app.live);
     app.live.register = t => { types.set(t.name, t); register(t); };
     installAttention(app.db, app.operations, app.live, sharing);
@@ -34,7 +35,8 @@ it('upgrades without losing asks; preserves ids, sequence, participants, bounds 
   const { app, call, write } = await setup();
   expect(app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([{ id: 'existing', record: '{"id":"existing"}' }]);
   const id = conversationId('art', 'relay', 'test');
-  expect(id).toMatch(/^cv-[a-f0-9]{12}$/);
+  expect(id).toBe('cv-b28ed6ba6479');
+  expect(app.db.prepare('SELECT * FROM attention_statuses').all()).toEqual([{ id: 'existing-status', record: '{"id":"existing-status"}' }]);
   const first = write({ ...turn, label: 'Test' }, art, 'delivery');
   expect(first).toEqual({ ok: true, value: { conversation: id, seq: 1 } });
   expect(write({ ...turn, label: 'Test' }, art, 'delivery')).toEqual(first);
@@ -105,4 +107,31 @@ it('rolls back nested metadata writes and only publishes changes after the outer
   changed.mockImplementation(() => { expect(app.db.inTransaction).toBe(false); });
   expect(app.operations.call('direct', alice, 'test.turn', false, 'commit')).toMatchObject({ ok: true });
   expect(changed).toHaveBeenCalledExactlyOnceWith([{ type: 'attention.conversation', id: conversationId('art', 'relay', 'test') }, { type: 'attention.turn', id: `${conversationId('art', 'relay', 'test')}:1` }]);
+});
+
+it('only times messages after the previous reply and clamps a clock-skewed reply to zero', async () => {
+  const { write } = await setup();
+  const reply = { ...turn, from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'run-1', outcome: 'answered' };
+  write(turn);
+  expect(write({ ...reply, at: '2026-11-12T00:00:10Z' })).toMatchObject({ value: { latency_ms: 10000 } });
+  write({ ...turn, at: '2026-11-12T00:00:20Z' });
+  write({ ...turn, at: '2026-11-12T00:00:21Z' });
+  expect(write({ ...reply, at: '2026-11-12T00:00:23Z' })).toMatchObject({ value: { latency_ms: 3000 } });
+  write({ ...turn, at: '2026-11-12T00:01:00Z' });
+  expect(write({ ...reply, at: '2026-11-12T00:00:59Z' })).toMatchObject({ value: { latency_ms: 0 } });
+});
+it('persists project scope on both records and refuses changing or removing it', async () => {
+  const { call, types } = await setup();
+  const id = conversationId('art', 'relay', 'test');
+  const input = { agent: 'art', project: 'shared', turn };
+  expect(call('recordTurn', input, art)).toMatchObject({ ok: true });
+  expect(call('recordTurn', { ...input, project: 'other' })).toMatchObject({ code: 'denied' });
+  expect(call('recordTurn', { agent: 'art', turn })).toMatchObject({ code: 'denied' });
+  expect(call('recordTurn', { ...input, member: 'alice' })).toMatchObject({ code: 'denied' });
+  expect(call('conversation', { id })).toMatchObject({ value: { project: 'shared', agent: 'art' } });
+  expect(call('turns', { conversation: id })).toMatchObject({ value: [{ project: 'shared', agent: 'art' }] });
+  for (const [name, recordId] of [['attention.conversation', id], ['attention.turn', `${id}:1`]]) {
+    expect(types.get(name)!.read(recordId, art)).toMatchObject({ project: 'shared', agent: 'art' });
+    expect(types.get(name)!.read(recordId, { kind: 'member', id: 'carol' })).toBeUndefined();
+  }
 });
