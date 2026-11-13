@@ -1183,7 +1183,9 @@ unsafe refuses the whole preparation. Each file is at most 20,000 bytes; the
 complete brief is at most 1 MiB across at most 40 sections. Nothing is truncated.
 
 The Linux worker pins directory descriptors and opens every component with
-`O_NOFOLLOW`, including the checkout root. All symlinks are refused, including
+`O_NOFOLLOW`, including every ancestor of the absolute checkout path. Empty and dot path
+components (including trailing slashes) are refused before opening. All symlinks
+are refused, including
 links within the checkout. This deliberately stricter choice prevents a
 check-then-read path race. Other operating systems refuse file sections until
 they have equivalent safe descriptor-relative reads. Inline-only briefs need

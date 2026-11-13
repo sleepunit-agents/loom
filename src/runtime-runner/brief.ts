@@ -19,6 +19,22 @@ const input = z.object({key:z.string().regex(/^[a-f0-9]{64}$/),
 });
 export class RunnerBriefError extends Error {}
 
+function openCheckout(repo:string):number {
+  // Do not normalize away a trailing slash or dot component before checking:
+  // either can alter the kernel's symlink-following semantics.
+  const parts=repo.split('/');
+  if(parts.shift()!==''||!parts.length||parts.some(p=>!p||p==='.'||p==='..'))
+    throw new RunnerBriefError('Worker checkout needs an absolute path without empty or dot components');
+  let dir=openSync('/',F.O_RDONLY|F.O_DIRECTORY|F.O_NOFOLLOW);
+  try {
+    for(const part of parts) {
+      const child=openSync(`/proc/self/fd/${dir}/${part}`,F.O_RDONLY|F.O_DIRECTORY|F.O_NOFOLLOW);
+      closeSync(dir);dir=child;
+    }
+    return dir;
+  } catch(error) {closeSync(dir);throw error;}
+}
+
 /** Pin every directory descriptor, refusing symlinks at every component.
  * Linux /proc is required; other workers fail closed until given an equivalent
  * descriptor-relative implementation. Never fall back to realpath + path read.
@@ -78,7 +94,7 @@ export function prepareRunnerBrief(raw:unknown,repo?:string):PreparedRunnerBrief
   try {
     if(rules.sections.some(s=>'file' in s)) {
       if(process.platform!=='linux'||!repo)throw new RunnerBriefError('Required brief files need a Linux worker checkout');
-      root=openSync(repo,F.O_RDONLY|F.O_DIRECTORY|F.O_NOFOLLOW);
+      root=openCheckout(repo);
     }
     let size=0;
     const resolved=rules.sections.map(s=>{

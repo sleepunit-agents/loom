@@ -22,6 +22,8 @@ describe('runner-local compiled brief',()=>{
    about:{kind:'dm',venue:'room',members:['guest']},messages:[{from:{kind:'person',slug:'guest'}}],
    gates:{people:{guest:{tier:1},owner:{tier:3}}},policy:{deny:['mcp__private'],guest_deny:['Bash(rm *)'],briefs:{guest:'briefs/guest.md',venues:{discord:'briefs/conduct.md'}}}},async()=> 'Guest card');
   const prepared=prepareRunnerBrief(compiled,root);
+  const files:Record<string,string>={'briefs/guest.md':'GUEST FLOOR\n','briefs/conduct.md':'CONDUCT\n'};
+  expect(prepared.brief).toBe(compiled.sections.map(s=>'text' in s?s.text:files[s.file]).join(''));
   expect(prepared.brief).toContain('GUEST FLOOR\n');expect(prepared.brief).toContain('Guest card');
   expect(prepared.brief.indexOf('GUEST FLOOR')).toBeLessThan(prepared.brief.indexOf('CONDUCT'));
   expect(prepared.deny).toEqual(compiled.deny);expect(prepared.policyKey).toBe(compiled.key);
@@ -61,6 +63,12 @@ describe('runner-local compiled brief',()=>{
   symlinkSync(join(root,'real'),join(root,'internal'));symlinkSync(root,join(outside,'root'));
   for(const file of ['file','dir/floor','internal'])expect(()=>prepareRunnerBrief(rules([{file,what:'floor'}]),root)).toThrow(RunnerBriefError);
   expect(()=>prepareRunnerBrief(rules([{file:'real',what:'floor'}]),join(outside,'root'))).toThrow(RunnerBriefError);
+  expect(()=>prepareRunnerBrief(rules([{file:'real',what:'floor'}]),join(outside,'root')+'/')).toThrow(RunnerBriefError);
+  mkdirSync(join(root,'nested'));writeFileSync(join(root,'nested/floor'),'inside');
+  expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),join(outside,'root/nested'))).toThrow(RunnerBriefError);
+ });
+ it.each(['relative/path','/tmp/../tmp','/tmp/./repo','/tmp//repo','/'])('rejects ambiguous checkout path %s',repo=>{
+  expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),repo)).toThrow(RunnerBriefError);
  });
  it('pins opened directories across a replacement with an escaping symlink',()=>{
   const root=temp(),outside=temp();mkdirSync(join(root,'dir'));writeFileSync(join(root,'dir/floor'),'SAFE');writeFileSync(join(outside,'floor'),'PRIVATE');
@@ -80,7 +88,19 @@ describe('runner-local compiled brief',()=>{
    return original(...args);
   }) as typeof fs.readSync);
   expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),root)).toThrow(RunnerBriefError);
-  expect(close).toHaveBeenCalledTimes(2);
+  expect(close.mock.calls.length).toBeGreaterThanOrEqual(2);
+ });
+ it.each(['success','nested failure','checkout failure'])('closes every opened descriptor on %s',kind=>{
+  const root=temp();mkdirSync(join(root,'dir'));writeFileSync(join(root,'dir/floor'),'safe');
+  const originalOpen=fs.openSync,originalClose=fs.closeSync;
+  const live=new Set<number>();
+  vi.spyOn(fs,'openSync').mockImplementation(((...args:Parameters<typeof fs.openSync>)=>{
+   const fd=originalOpen(...args);expect(live.has(fd)).toBe(false);live.add(fd);return fd;
+  }) as typeof fs.openSync);
+  vi.spyOn(fs,'closeSync').mockImplementation(fd=>{expect(live.delete(fd)).toBe(true);originalClose(fd);});
+  const prepare=()=>prepareRunnerBrief(rules([{file:kind==='nested failure'?'dir/missing/floor':'dir/floor',what:'floor'}]),kind==='checkout failure'?join(root,'missing/nested'):root);
+  if(kind==='success')expect(prepare().brief).toBe('safe');else expect(prepare).toThrow(RunnerBriefError);
+  expect(live.size).toBe(0);
  });
  it('rejects absent checkout, ambiguous sections, oversized arrays and malformed policy identity',()=>{
   for(const raw of [rules([{file:'floor',what:'floor'}]),rules([{text:'hi',file:'floor'}]),rules([]),rules(Array.from({length:41},()=>({text:'a'}))),{...rules([{text:'a'}]),key:'body-chosen'}])
