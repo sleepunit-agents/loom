@@ -117,11 +117,12 @@ implementation body performs none of these host steps.
 
 `loom migrate clock --home <stopped-new-home> --from <old-WAKE_DATA-directory>`
 reads agent subdirectories (`spool.jsonl`, `schedules.json`, `paused`, `wake.log`,
-`filed.json`, `sessions.json`) plus household `lanes.json`. Stop the old writer
+`filed.json`, `sessions.json`, `vouch.json`, `places.json`) plus household
+`lanes.json` and legacy `fire` configuration (archived, never applied). Stop the old writer
 before copying the source. The CLI holds the new home's daemon lock for the
 whole import. It never starts timers or reads prompt files.
 
-The import transaction includes migrations, records, exact source bytes and the
+The import transaction includes migrations, records, base64-encoded exact source bytes and the
 SHA-256 marker. It compares sorted ids, counts and content before committing.
 An identical byte snapshot is a no-op; a different snapshot or populated unmarked
 destination is refused. Two source reads detect concurrent source changes; this
