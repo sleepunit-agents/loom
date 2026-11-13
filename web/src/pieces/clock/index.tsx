@@ -5,6 +5,7 @@ import { useRecords } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
 import { active, time, title, state, type Wake, type Schedule, type Clock } from './model';
 import { WorkForm } from './forms';
+import { LocalScheduling } from './local-scheduling';
 import { send, useRequest } from './request';
 const isWake = (w: Wake | Schedule): w is Wake => typeof w.due === 'number';
 type Action = { operation: string; input: object; label: string; why: string };
@@ -41,7 +42,7 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
   const ask = (operation: string, input: object, label: string, why: string) => setConfirm({operation,input,label,why});
   const action = (operation: string, input: object, label: string, why: string) => <Button variant="outline" size="sm" disabled={!enabled} onClick={() => ask(operation,input,label,why)}>{label}</Button>;
   let reader = null;
-  if (approval) reader = <><div className="grid gap-2 p-5 pb-0"><p>This decision starts nothing. Your agent still needs to schedule the saved words after you allow them.</p><a href="/p/approvals-preview">Manage standing jobs in Approvals → Rules</a></div><ApprovalReader key={approval.id} approval={approval} snapshot={approvals} /></>;
+  if (approval) reader = <><div className="grid gap-2 p-5 pb-0"><p>This decision starts nothing. After allowing, choose timing below to schedule the saved words.</p><a href="/p/approvals-preview">Manage standing jobs in Approvals → Rules</a></div><ApprovalReader key={approval.id} approval={approval} snapshot={approvals} /><LocalScheduling key={`timing:${approval.id}`} approval={approval} snapshot={approvals} /></>;
   else if (form) reader = <WorkForm key={`${form}:${editing ? id : 'new'}`} kind={form} schedule={editing ? schedule : undefined} enabled={enabled} back={back} />;
   else if (wake) reader = <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{title(wake)}</h1><p>{state(wake,isPaused(wake.agent))} · {wake.agent}</p></header>
