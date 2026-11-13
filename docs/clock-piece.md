@@ -572,3 +572,5 @@ Safety-wake fixtures inject a replacement-insert abort and compare the original
 row and events, run quota deferral plus all six definite failures across restart,
 and guard legacy file access and subprocesses during creation/restart/dispatch.
 The required prompt and note are asserted as literals independently of constants.
+A deferred runtime fixture inserts real work while a default is firing, compares
+its unchanged intent, then restarts and confirms the held intent is never replayed.

@@ -203,3 +203,25 @@ it('guards legacy stores and installed commands during configured creation, rest
   for (const process of processes) expect(process).not.toHaveBeenCalled();
   expect(reads.every(path => !forbidden.test(path))).toBe(true);
 });
+it('preserves a firing default while real work arrives and holds its intent across restart without replay', async () => {
+  let confirm!: (result: StartResult) => void;
+  const startBody = vi.fn(() => new Promise<StartResult>(resolve => { confirm = resolve; }));
+  const app = await loom({ deadmanAgents: ['art'], runtime: { startBody } }); app.clock.advance(0);
+  const safety = wakes(app.db)[0]; app.clock.advance(day); await settle();
+  expect(startBody).toHaveBeenCalledTimes(1);
+  const intent = wake(app.db, safety.id)!;
+  expect(intent).toMatchObject({ state: 'firing', deadman: true }); expect(intent.attempt).toEqual(expect.any(String));
+  const real = app.value('in', { agent: 'art', prompt: 'Independent work', note: '', when: '2d' });
+  expect(wake(app.db, safety.id)).toEqual(intent);
+  expect(wakes(app.db).filter(w => w.deadman && active(w))).toEqual([intent]);
+  await app.close();
+  const replay = vi.fn(async (): Promise<StartResult> => ({ state: 'started', body: 'must-not-replay' }));
+  const restarted = await loom({ deadmanAgents: ['art'], runtime: { startBody: replay } }, app.dir, app.clock);
+  const held = wake(restarted.db, safety.id)!;
+  expect(held).toMatchObject({ id: intent.id, attempt: intent.attempt, by: intent.by, state: 'held', hold: 'uncertain', deadman: true });
+  confirm({ state: 'started', body: 'late-confirmation' }); await settle(); app.clock.advance(0);
+  expect(wake(restarted.db, safety.id)).toEqual(held);
+  restarted.value('cancel', { id: real.id });
+  expect(wakes(restarted.db).filter(active)).toEqual([held]);
+  expect(replay).not.toHaveBeenCalled(); expect(startBody).toHaveBeenCalledTimes(1);
+});
