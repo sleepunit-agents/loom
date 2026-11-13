@@ -15,6 +15,6 @@
 
 .next-status-start{display:flex;align-items:center;gap:12px;min-width:0}
 .next-system-clock{flex:none}
-[data-shell=phone] .next-system-clock,[data-shell=phone] .next-system-icons{display:none}
+:root[data-look] [data-shell=phone] .next-system-clock,:root[data-look] [data-shell=phone] .next-system-icons{display:none}
 [data-shell=phone] .next-status-start{max-width:28%}
 :root[data-look] [data-shell=phone] .next-status-start .loom-pbar__name{max-width:100%}
