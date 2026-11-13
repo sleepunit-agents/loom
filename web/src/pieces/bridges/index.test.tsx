@@ -313,3 +313,39 @@ it.each([false, true])('clears an evicted saved person link on its creation URL 
   expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view'); expect(text()).not.toContain('Person ID');
   expect(f.call).toHaveBeenCalledTimes(1);
 });
+it.each([
+  ['links/link', 'bridges.link', 'person', 'mark', 'Save person link'],
+  ['routes/route', 'bridges.route', 'primary', 'mark', 'Save route'],
+  ['venues/art-discord', 'bridges.venue', 'bot', 'replacement', 'Save connection'],
+])('keeps the stale latch across navigation for %s', async (item, type, field, value, save) => {
+  pendingWrite(); await draw(`/p/bridges-preview/item/${item}`); const original = f.snapshots[type].records[0];
+  await publish(type, [{ ...original, [field]: value }]); await publish(type, [original]);
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/sends/reply' })); });
+  await act(async () => { tree!.update(h(BridgesApp, { path: `/p/bridges-preview/item/${item}` })); });
+  expect(button(save).props.disabled).toBe(true); await submit(); expect(f.call).not.toHaveBeenCalled();
+  await click('Try again'); expect(button(save).props.disabled).toBe(false); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+});
+it.each([
+  ['new-link/link', 'bridges.link', 'Save person link'],
+  ['new-route/route', 'bridges.route', 'Save route'],
+  ['new-venue/art-discord', 'bridges.venue', 'Save connection'],
+])('does not resurrect an evicted saved creation while another view was open: %s', async (item, type, save) => {
+  await draw('/p/bridges-preview/item/sends/reply'); await publish(type, []);
+  await act(async () => { tree!.update(h(BridgesApp, { path: `/p/bridges-preview/item/${item}` })); });
+  expect(button(save)).toBeUndefined(); expect(text()).toContain('no longer in view'); expect(f.call).not.toHaveBeenCalled();
+});
+it('remembers a successful link creation even if no saved record arrived before navigation', async () => {
+  const answer = pendingWrite(); await draw('/p/bridges-preview/item/new-link/new-id');
+  await change('Workspace ID', 'house'); await change('Platform user ID', '201'); await change('Person ID', 'mark'); await submit();
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/sends/reply' })); });
+  await answer({ ok: true, value: { id: 'new-id' } });
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-link/new-id' })); });
+  expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view'); expect(f.call).toHaveBeenCalledTimes(1);
+});
+it('observes a newly saved link arriving only after its creation editor unmounted', async () => {
+  pendingWrite(); await draw('/p/bridges-preview/item/new-link/new-id');
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/sends/reply' })); });
+  await publish('bridges.link', [{ id: 'new-id', platform: 'slack', workspace: 'T1', user: 'U1', person: 'mark' }]); await publish('bridges.link', []);
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-link/new-id' })); });
+  expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view');
+});

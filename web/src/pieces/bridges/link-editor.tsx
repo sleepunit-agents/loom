@@ -7,19 +7,16 @@ import type { RouteWrite } from './route-editor';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
 
-export function LinkEditor({ link, fresh, request, busy, write }: {
-  link: LinkInput; fresh: boolean; request?: RouteWrite; busy?: Call<{ id: string }>;
+export function LinkEditor({ link, fresh, request, busy, stale, reload, write }: {
+  link: LinkInput; fresh: boolean; stale: boolean; reload: () => void; request?: RouteWrite; busy?: Call<{ id: string }>;
   write: (kind: RouteWrite['kind'], input: LinkInput | { id: string }) => void;
 }) {
   const [draft, setDraft] = useState(link);
-  const current = JSON.stringify(link);
-  const [observed, setObserved] = useState({ signature: current, stale: false });
-  if (observed.signature !== current) setObserved({ signature: current, stale: true });
   const [confirm, setConfirm] = useState(false);
   const answer = useSyncExternalStore(request?.call.subscribe ?? noop, request?.call.getSnapshot ?? (() => idle));
   const busyAnswer = useSyncExternalStore(busy?.subscribe ?? noop, busy?.getSnapshot ?? (() => idle));
   const pending = answer.pending || busyAnswer.pending;
-  const changed = observed.stale || observed.signature !== current;
+  const changed = stale;
   const disabled = pending || changed;
   const complete = !!draft.workspace && !!draft.user && !!draft.person;
   const field = (key: 'workspace' | 'user' | 'person', label: string) =>
@@ -39,7 +36,7 @@ export function LinkEditor({ link, fresh, request, busy, write }: {
     </div>
     {field('workspace', 'Workspace ID')}{field('user', 'Platform user ID')}{field('person', 'Person ID')}
     {changed && <Error title="This person link changed" text="Reload the current person link before saving your changes." retry={() => {
-      setDraft(link); setObserved({ signature: current, stale: false }); setConfirm(false);
+      setDraft(link); reload(); setConfirm(false);
     }} />}
     <div className="flex flex-wrap gap-2"><Button type="submit" disabled={disabled || !complete}>Save person link</Button>
       {!fresh && <Button type="button" variant="outline" disabled={disabled} onClick={() => { if (!disabled) setConfirm(true); }}>Remove person link</Button>}</div>

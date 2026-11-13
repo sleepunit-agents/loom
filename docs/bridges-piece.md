@@ -198,7 +198,7 @@ The Person links folder creates, edits and confirms removal through existing
 workspace, platform user ID and People person ID. This is an authority mapping,
 not a descriptive People handle; runtime still decides admission. Identifiers
 are preserved exactly. New links have stable random ids. An observed link change
-latches a reload requirement until explicitly reloaded, including edit-and-restore.
+latches an app-owned reload requirement until explicitly reloaded, including edit-and-restore and navigation away and back. Saved creations are remembered across navigation and cleared on eviction, including their creation URLs.
 The existing operations remain last-write-wins; this is not atomic revision checking.
 
 The Routes folder creates, edits and removes routes using the existing
@@ -206,7 +206,7 @@ The Routes folder creates, edits and removes routes using the existing
 workspace/channel, parent, primary agent, paired webhook, peers, guests, reader agents
 and note references. Reader and note lists use one reference per line; blank lines
 are omitted when editing a list; untouched strings and lists retain their exact values. New routes receive a stable random id. Removal requires confirmation.
-A pending setup write blocks other connection, route and person-link writes across in-app navigation, and refusal stays inline.
+Observed stale changes and saved-creation eviction tracking live in the app for all three setup forms, so editor unmounts do not reset them. A pending setup write blocks other connection, route and person-link writes across in-app navigation, and refusal stays inline.
 If the window observes a live route change while a draft is open, saving and removal
 stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
