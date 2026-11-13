@@ -34,11 +34,12 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.finishJob', write: true,
-    input: input.extend({ state: z.enum(['done', 'failed']), ...resultFields }).strict(), output,
+    input: input.extend({ state: z.enum(['done', 'failed']), startFailure: z.literal('not-started').optional(), ...resultFields }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state, exit, log }) {
+    run(ctx, { job: id, state, startFailure, exit, log }) {
       const { changedAt: _, ...job } = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      if (startFailure && (state !== 'failed' || job.state !== 'starting')) throw new OperationError('conflict', 'Final start failure requires an unconfirmed failed claim');
       if (!credentials) throw new OperationError('unavailable', 'Central credential revocation is not installed');
       const result = credentials.revokeJob(db, { job: id, now: ctx.now });
       if ((result as unknown) instanceof Promise) {
@@ -48,7 +49,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       }
       results.put(id, { exit, log });
       ctx.changed('core.access', 'credentials');
-      if (store.put('job', { ...job, state, endedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
+      if (store.put('job', { ...job, state, endedAt: ctx.now, ...(startFailure ? { startFailed: true as const } : {}) }, ctx.now)) ctx.changed('runtime.job', id);
       return { job: id, state };
     },
   }));

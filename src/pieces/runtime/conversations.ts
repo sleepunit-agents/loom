@@ -65,7 +65,14 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    if(before)refile(ctx,m);
    store.put('binding',{id:m.conversation,agent:m.agent,member:m.member,project:m.project,venue:'loom',place:m.thread,...(before?.job?{job:before.job}:{})},ctx.now);
    const previous=before?.job?store.read('job',before.job):undefined;
-   let job=previous&&active.has(previous.state)?previous.id:undefined;
+   // A failed binding stays held. Only retry of a previously accepted message
+   // with its next generation can replace an authoritatively fenced claim.
+   const retry=previous?.state==='failed'&&previous.startFailed&&
+    (db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(previous.id) as {id:string}[]).some(row=>{
+     const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
+     return agent===m.agent&&member===m.member&&thread===m.thread&&conversation===m.conversation&&seq===m.seq&&(m.generation??0)===generation+1;
+    });
+   let job=previous&&(active.has(previous.state)||(previous.state==='failed'&&!retry))?previous.id:undefined;
 
    if(!job){
     accepting=true;
@@ -123,16 +130,39 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    if(available({agent,member,thread,conversation,seq,generation,project:job.project}))comms.confirmStart(agent,thread,seq,generation);
   }
  };
+ // A terminal failed claim is authoritative: reportJob cannot resurrect it.
+ // Reconcile from durable routing on startup and committed changes. Comms owns
+ // encrypted deduplication and checks generation again after asynchronous crypto.
+ let notices:Promise<void>|undefined,noticesDirty=false;
+ const failedStarts=()=>{
+  noticesDirty=true;
+  if(notices||closed||!comms)return;
+  notices=(async()=>{
+   while(noticesDirty&&!closed&&comms){
+    noticesDirty=false;
+    const rows=db.prepare('SELECT id,job FROM runtime_deliveries').all() as {id:string;job:string}[];
+    for(const row of rows){
+     if(closed)return;
+     const job=store.read('job',row.job);
+     if(!job?.startFailed||job.state!=='failed')continue;
+     const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
+     if(job.agent!==agent||job.member!==member||job.conversation!==conversation||!available({agent,member,thread,conversation,seq,generation,project:job.project}))continue;
+     try {await comms.startNotice(agent,thread,{kind:'start-failed',seq,generation,attempt:1,run:job.id});}
+     catch { /* Concurrent crypto/scope changes remain durable for next reconciliation. */ }
+    }
+   }
+  })().finally(()=>{notices=undefined;});
+ };
  let reconciling=false;
  const unobserve=live.observe(changes=>{
   if(closed)return;
-  if(changes.some(c=>c.type==='runtime.job'))confirmed();
+  if(changes.some(c=>c.type==='runtime.job')){confirmed();failedStarts();}
   if(!reconciling&&changes.some(c=>c.type==='core.effect')){
    reconciling=true;void Promise.resolve().then(()=>Promise.all([comms?.reconcileDeliveries(),comms?.reconcileEnds()])).finally(()=>{reconciling=false;});
   }
  });
- return {delivery,privateStart,refile,connect(role:Comms){comms=role;confirmed();void comms.reconcileDeliveries();},
+ return {delivery,privateStart,refile,connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
-  close(){closed=true;unobserve();},
+  async close(){closed=true;unobserve();await notices;},
  };
 }
