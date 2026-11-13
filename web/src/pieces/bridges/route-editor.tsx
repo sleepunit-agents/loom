@@ -6,25 +6,21 @@ import type { RouteInput } from './model';
 export interface RouteWrite { kind: 'save' | 'remove'; call: Call<{ id: string }> }
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
-const signature = (route: RouteInput) => JSON.stringify(route);
 const lines = (text: string) => text.split('\n').filter(s => s.length > 0);
 
 /** Writes stay owned by the app, so navigation cannot release the pending lock. */
-export function RouteEditor({ route, fresh, request, busy, write }: {
-  route: RouteInput; fresh: boolean; request?: RouteWrite; busy?: Call<{ id: string }>;
+export function RouteEditor({ route, fresh, request, busy, stale, reload, write }: {
+  route: RouteInput; fresh: boolean; stale: boolean; reload: () => void; request?: RouteWrite; busy?: Call<{ id: string }>;
   write: (kind: RouteWrite['kind'], input: RouteInput | { id: string }) => void;
 }) {
   const [draft, setDraft] = useState(route);
-  const current = signature(route);
-  const [observed, setObserved] = useState({ signature: current, stale: false });
-  if (observed.signature !== current) setObserved({ signature: current, stale: true });
   const [readers, setReaders] = useState(route.readers.join('\n'));
   const [notes, setNotes] = useState(route.notes.join('\n'));
   const [editedLists, setEditedLists] = useState({ readers: false, notes: false });
   const [confirm, setConfirm] = useState(false);
   const answer = useSyncExternalStore(request?.call.subscribe ?? noop, request?.call.getSnapshot ?? (() => idle));
   const busyAnswer = useSyncExternalStore(busy?.subscribe ?? noop, busy?.getSnapshot ?? (() => idle));
-  const changed = observed.stale || observed.signature !== current;
+  const changed = stale;
   const pending = answer.pending || busyAnswer.pending;
   const disabled = pending || changed;
   const field = (key: 'workspace' | 'channel' | 'parent' | 'primary' | 'pair', label: string, required = false) =>
@@ -55,7 +51,7 @@ export function RouteEditor({ route, fresh, request, busy, write }: {
     <label className="grid min-w-0 gap-1">Reader agents (one per line)<Textarea aria-label="Reader agents" value={readers} disabled={pending} onChange={e => { setReaders(e.target.value); setEditedLists({ ...editedLists, readers: true }); setConfirm(false); }} /></label>
     <label className="grid min-w-0 gap-1">Note references (one per line)<Textarea aria-label="Note references" value={notes} disabled={pending} onChange={e => { setNotes(e.target.value); setEditedLists({ ...editedLists, notes: true }); setConfirm(false); }} /></label>
     {changed && <Error title="This route changed" text="Reload the current route before saving your changes." retry={() => {
-      setDraft(route); setEditedLists({ readers: false, notes: false }); setObserved({ signature: current, stale: false }); setReaders(route.readers.join('\n')); setNotes(route.notes.join('\n')); setConfirm(false);
+      setDraft(route); setEditedLists({ readers: false, notes: false }); reload(); setReaders(route.readers.join('\n')); setNotes(route.notes.join('\n')); setConfirm(false);
     }} />}
     <div className="flex flex-wrap gap-2"><Button type="submit" disabled={disabled || !draft.workspace || !draft.channel}>Save route</Button>
       {!fresh && <Button type="button" variant="outline" disabled={disabled} onClick={() => { if (!disabled) setConfirm(true); }}>Remove route</Button>}</div>

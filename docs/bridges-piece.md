@@ -170,7 +170,7 @@ platform membership checks remain required integration work.
 ## Bridges preview
 
 The registered `/p/bridges-preview` app uses Kit `Split`, `List`, `Row` and state
-components. It reads `bridges.venue`, `bridges.route`, `bridges.send` and `core.effect`
+components. It reads `bridges.venue`, `bridges.route`, `bridges.link`, `bridges.send` and `core.effect`
 through the shared `useRecords` socket. Connections show saved status and receipt,
 delivery and hold counts for the last 24 hours. Routes show primary, parent, peer,
 guest and reader metadata. Sends show receipt ids and state, never message words.
@@ -193,31 +193,40 @@ pending intake/replies through the existing operation. Setup changes observed wh
 editing latch a reload requirement, including edit-and-restore. Traffic-only updates
 do not invalidate the draft. This is an observed-change guard, not atomic compare-and-swap.
 
+The Person links folder creates, edits and confirms removal through existing
+`bridges.putLinks`/`bridges.removeLinks`. All fields are included: platform,
+workspace, platform user ID and People person ID. This is an authority mapping,
+not a descriptive People handle; runtime still decides admission. Identifiers
+are preserved exactly. New links have stable random ids. An observed link change
+latches an app-owned reload requirement until explicitly reloaded, including edit-and-restore and navigation away and back. Saved creations are remembered across navigation and cleared on eviction, including their creation URLs.
+The existing operations remain last-write-wins; this is not atomic revision checking.
+
 The Routes folder creates, edits and removes routes using the existing
 `bridges.putRoutes` and `bridges.removeRoutes` operations. Fields cover platform,
 workspace/channel, parent, primary agent, paired webhook, peers, guests, reader agents
 and note references. Reader and note lists use one reference per line; blank lines
 are omitted when editing a list; untouched strings and lists retain their exact values. New routes receive a stable random id. Removal requires confirmation.
-A pending setup write blocks other connection and route writes across in-app navigation, and refusal stays inline.
+Observed stale changes and saved-creation eviction tracking live in the app for all three setup forms, so editor unmounts do not reset them. A pending setup write blocks other connection, route and person-link writes across in-app navigation, and refusal stays inline.
 If the window observes a live route change while a draft is open, saving and removal
 stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
 the existing put operation remains last-write-wins, without an atomic revision check.
 The daemon continues to enforce the existing household-owner policy for every write.
-Person-link editing, uncertain-send disposition and held intake
+Uncertain-send disposition and held intake
 repair remain required work before the full rebuild is complete. No live
 connections start merely by opening this app or installing next-mode metadata.
 
 The CI-only `bridges-preview.integration.test.ts` uses two windows and fake venue IO
 on a disposable staged `startLoom --next` home. It verifies shared status, route and
 send reads, reload/deep-link selection, one release reaching one uncertain attempt,
-and both windows losing the release action afterward. Its eighteen screenshots cover connection editing, route editing and staged sends at
+and both windows losing the release action afterward. Its twenty-four screenshots cover person-link editing, connection editing, route editing and staged sends at
 390/1280/1920 widths in Neon Noir and Daylight. The dedicated Bridges preview
 evidence workflow uploads them with the exact PR head in the artifact name.
 
 | Existing surface | Preview replacement / remaining work |
 | --- | --- |
 | Bridge connection setup and traffic metadata | Connections form with create/edit/confirmed removal, saved state and daily counts |
+| Platform account to People identity mapping | Person links form with create/edit/confirmed removal |
 | Channel/thread route configuration | Routes form with create/edit/confirmed removal |
 | Staging-held reply | Pending sends and staged effects, one-item release |
 | Partial or interrupted send | Uncertain state, review guidance and no replay control; explicit disposition pending |
