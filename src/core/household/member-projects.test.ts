@@ -21,7 +21,7 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' }, member: Viewer = { kin
 function home() { const h = mkdtempSync(join(tmpdir(), 'member-projects-')); homes.push(h); fixture(h); return h; }
 async function setup() {
   const h = home(), clock = new FakeClock();
-  const app = await startLoom({ home: h, clock, install: installFixture }); closes.push(app.close);
+  const app = await startLoom({ next: true, home: h, clock, install: installFixture }); closes.push(app.close);
   return { h, clock, app, store: new SharingDatabase(app.db, h) };
 }
 
@@ -30,7 +30,7 @@ it('replaces a member project list through owner policy on every door, preservin
   const household = new HouseholdDatabase(app.db).document();
   const rows = new HouseholdRows<Record<string, unknown>>(app.db, 'projects');
   rows.put('other', { ...store.project('other'), name: 'Other retained name', repositories: ['sleepunit-agents/other'], extra: { retain: true }, members: ['jonathan'] });
-  rows.put('pond', { ...store.project('pond'), name: 'Pond retained name', repositories: ['sleepunit-agents/pond'], extra: { retain: 'pond' } });
+  rows.put('pond', { ...store.project('pond'), name: 'Pond retained name', repositories: ['sleepunit-agents/pond'], members: ['pollock', 'jonathan'], extra: { retain: 'pond' } });
   const before = rows.entries();
   const input = { person: 'pollock', projects: ['other', 'other'] };
   for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
@@ -45,7 +45,7 @@ it('replaces a member project list through owner policy on every door, preservin
   expect(rows.entries()).toEqual(before);
   expect(() => store.setMemberProjects('pollock', [])).toThrow('transaction');
   expect(app.operations.call('http', owner, 'household.setMemberProjects', input, 'assign')).toEqual({ ok: true, value: ['other'] });
-  expect(rows.entries()).toEqual(before.map(([id, row]) => [id, { ...row, members: id === 'pond' ? [] : ['jonathan', 'pollock'] }]));
+  expect(rows.entries()).toEqual(before.map(([id, row]) => [id, { ...row, members: id === 'pond' ? ['jonathan'] : ['jonathan', 'pollock'] }]));
   expect(new HouseholdDatabase(app.db).document()).toEqual(household);
   expect(store.sharing().members.pollock).toEqual({ owner: false, agents: ['pond-bot'] });
   expect(app.operations.call('mcp', owner, 'household.setMemberProjects', { person: 'pollock', projects: [] }, 'clear')).toEqual({ ok: true, value: [] });
@@ -57,7 +57,7 @@ it('replaces a member project list through owner policy on every door, preservin
 
 it('rolls back all project rows, retry receipts and events on failure, and replays after restart without reverting newer lists', async () => {
   const h = home(), clock = new FakeClock();
-  const app = await startLoom({ home: h, clock, install: installFixture });
+  const app = await startLoom({ next: true, home: h, clock, install: installFixture });
   const rows = new HouseholdRows(app.db, 'projects'), before = rows.entries();
   const events: unknown[] = [];
   app.live.observe(changes => { if (changes.length) events.push({ changes, inTransaction: app.db.inTransaction }); });
@@ -79,7 +79,7 @@ it('rolls back all project rows, retry receipts and events on failure, and repla
     { type: 'household.project', id: 'other' }, { type: 'household.project', id: 'pond' }, { type: 'core.access', id: 'household' },
   ] }]);
   await app.close();
-  const reopened = await startLoom({ home: h, clock, install: installFixture }); closes.push(reopened.close);
+  const reopened = await startLoom({ next: true, home: h, clock, install: installFixture }); closes.push(reopened.close);
   const store = new SharingDatabase(reopened.db, h);
   expect(store.project('other')?.members).toContain('pollock');
   expect(store.project('pond')?.members).toEqual([]);
@@ -93,7 +93,7 @@ it('rolls back all project rows, retry receipts and events on failure, and repla
 
 it('refreshes subscribed project records synchronously after commit when a member moves projects', async () => {
   const h = home();
-  const app = await startLoom({ home: h, clock: new FakeClock(), install: installFixture, authenticate: () => ({ viewer: member, valid: () => true }) }); closes.push(app.close);
+  const app = await startLoom({ next: true, home: h, clock: new FakeClock(), install: installFixture, authenticate: () => ({ viewer: member, valid: () => true }) }); closes.push(app.close);
   const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live'); closes.push(() => ws.terminate());
   const messages: unknown[] = [], pending: ((v: unknown) => void)[] = [];
   ws.on('message', raw => { const v: unknown = JSON.parse(raw.toString()); const receive = pending.shift(); if (receive) receive(v); else messages.push(v); });
