@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add `loom migrate household --home <new-home> --from <old-home>`: a verified offline import of household, sign-in and piece settings into the new database, preserving credentials and leaving the old home untouched.
+
 - Keep agent-created unscoped foundation tasks in their own queue; let the offline tasks importer assign projectless tasks with `--agent`.
 
 - Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.

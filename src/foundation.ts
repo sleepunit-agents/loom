@@ -4,6 +4,8 @@ import { createFoundation, httpDoor, type Foundation } from './core/app.js';
 import type { Clock } from './core/clock.js';
 import type { Authentication } from './core/live/index.js';
 import type { IncomingMessage } from 'node:http';
+import { installSharing } from './pieces/sharing/index.js';
+import { SharingDatabase } from './core/household/sharing.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import type { Sharing } from './core/index.js';
@@ -19,7 +21,8 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   try {
     install?.(app);
     if (!listen) {
-      const access = sharing ?? (() => ({ members: {}, projects: {}, services: {} }));
+      if (!app.operations.has('household.createProject')) installSharing(app, home);
+      const access = sharing ?? (() => new SharingDatabase(app.db, home).sharing());
       if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, access);
       if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, access);
     }
