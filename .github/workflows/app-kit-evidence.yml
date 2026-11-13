@@ -43,6 +43,24 @@ jobs:
         run: |
           git fetch origin "$BASE"
           git checkout --detach "$BASE"
+      - name: Repair duplicate import in the frozen before base
+        if: matrix.version == 'before'
+        run: |
+          python3 - <<'PYBASE'
+          from pathlib import Path
+          p = Path('src/next.ts')
+          needle = "import { HouseholdDatabase } from './core/household/document.js';"
+          lines = p.read_text().splitlines()
+          seen = False
+          result = []
+          for line in lines:
+              if line == needle:
+                  if seen:
+                      continue
+                  seen = True
+              result.append(line)
+          p.write_text('\n'.join(result) + '\n')
+          PYBASE
       - name: Install and build
         env:
           ONNXRUNTIME_NODE_INSTALL_CUDA: skip

@@ -38,7 +38,7 @@ The Tasks role retains the legacy `jonathan` assignee as the household owner's
 queue, as well as a task addressed to the viewer's canonical id. Only an actual
 household owner gets that legacy queue. Readiness comes from Tasks before visibility
 filtering, preserving hidden blockers. Links open the new Tasks/Changes/People apps;
-memories and note metadata have no invented destination before their owners supply one.
+memories open a scoped full-body reader inside Projects, using a separate memory policy check. Note metadata has no invented destination before its owner supplies one.
 
 Notes roles must select `card.links.notes` prefixes (default the slug), deduplicate,
 exclude expired notes, return newest twenty and total, plus latest activity and
