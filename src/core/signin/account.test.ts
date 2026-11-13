@@ -41,9 +41,9 @@ it('removes a passkey and revokes its own token, keeps descendants unless select
 });
 it('removes a legacy shared-token key without revoking its links token and refuses stale replacement refs',async()=>{
   const f=await setup();f.s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'links',sha256:hash('links'),created:'2026-01-01'}));
-  const key={id:'legacy',secret:hash('links'),publicKey:'key',counter:0,alg:-7,label:'legacy',created:0};f.s.sessions.change(x=>{x.passkeys!.legacy=key;});
+  const key={id:'legacy',secret:hash('links'),publicKey:'key',counter:0,alg:-7,label:'legacy',created:0};f.s.sessions.change(x=>{x.passkeys!.legacy=key;x.passkeys!.sibling={...key,id:'sibling',label:'Sibling'};});
   const before=f.read().passkeys.find(k=>k.label==='legacy')!;
-  expect(f.call('removePasskey',{ref:before.ref},'legacy')).toEqual({ok:true,value:{removed:1,revoked:0}});expect(f.s.token(hash('links'))).toBeDefined();
+  expect(f.call('removePasskey',{ref:before.ref,withMade:true},'legacy')).toEqual({ok:true,value:{removed:1,revoked:0}});expect(f.s.token(hash('links'))).toBeDefined();expect(f.s.sessions.read().passkeys!.sibling).toEqual({...key,id:'sibling',label:'Sibling'});
   f.s.sessions.change(x=>{x.passkeys!.legacy={...key,secret:hash('jonathanchild')};});
   expect(f.call('removePasskey',{ref:before.ref},'stale')).toMatchObject({ok:false,code:'not-found'});expect(f.s.sessions.read().passkeys!.legacy).toBeDefined();
 });
@@ -56,9 +56,9 @@ it('rolls back credentials and receipts together, then retries after failure wit
   expect(f.call('removePasskey',{ref:root.ref,withMade:true},'retry')).toEqual({ok:true,value:{removed:3,revoked:3}});
 });
 it('ends exactly the selected own session and stops only its devices atomically',async()=>{
-  const f=await setup();f.s.sessions.change(x=>{x.push={subs:{mine:{session:hash(f.jonathan),at:0,sub:{endpoint:'mine',keys:{auth:'private',p256dh:'private'}}},other:{session:hash(f.other),at:0,sub:{endpoint:'other',keys:{auth:'private',p256dh:'private'}}}}};});
-  const ref=f.read().sessions[0].ref;
-  expect(f.call('revokeSession',{ref},'end')).toEqual({ok:true,value:{revoked:true,devices:1}});expect(f.s.session(f.jonathan)).toBeUndefined();expect(f.s.session(f.other)).toBeDefined();expect(Object.keys(f.s.sessions.read().push!.subs!)).toEqual(['other']);
+  const f=await setup(),sibling=f.s.createSession(hash('jonathanroot'),{device:'Same-token sibling'});f.s.sessions.change(x=>{x.push={subs:{sibling:{session:hash(sibling),at:0,sub:{endpoint:'sibling',keys:{auth:'a',p256dh:'p'}}},mine:{session:hash(f.jonathan),at:0,sub:{endpoint:'mine',keys:{auth:'private',p256dh:'private'}}},other:{session:hash(f.other),at:0,sub:{endpoint:'other',keys:{auth:'private',p256dh:'private'}}}}};});
+  const ref=f.read().sessions.find(x=>x.device==='Phone')!.ref;
+  expect(f.call('revokeSession',{ref},'end')).toEqual({ok:true,value:{revoked:true,devices:1}});expect(f.s.session(f.jonathan)).toBeUndefined();expect(f.s.session(f.other)).toBeDefined();expect(Object.keys(f.s.sessions.read().push!.subs!).sort()).toEqual(['other','sibling']);expect(f.s.session(sibling)).toBeDefined();
   expect(f.s.token(hash('jonathanroot'))).toBeDefined();expect(f.call('revokeSession',{ref},'end')).toEqual({ok:true,value:{revoked:true,devices:1}});
 });
 it('serves safe private Live records, refreshes usage/expiry and evicts removed members',async()=>{
@@ -98,4 +98,13 @@ it('rolls back session/device removal and its receipt if the last device write f
   const ref=f.read().sessions[0].ref,before=f.s.sessions.read();f.app.db.exec("CREATE TEMP TRIGGER fail_push_remove BEFORE DELETE ON household_push BEGIN SELECT RAISE(ABORT,'fixture'); END");
   expect(f.call('revokeSession',{ref},'rollback-session')).toMatchObject({ok:false,code:'unavailable'});expect(f.s.sessions.read()).toEqual(before);expect(f.app.db.prepare("SELECT count(*) AS n FROM core_operations WHERE id='rollback-session'").get()).toEqual({n:0});
   f.app.db.exec('DROP TRIGGER fail_push_remove');expect(f.call('revokeSession',{ref},'rollback-session')).toEqual({ok:true,value:{revoked:true,devices:1}});
+});
+it('refreshes Account browser usage through signin.admin without core.access churn',async()=>{
+  const {WebSocket}=await import('ws'),{once}=await import('node:events');const f=await setup();
+  f.s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'usage-socket',sha256:hash('usage-socket'),created:'2026-01-01'}));
+  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer usage-socket'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+  ws.send(JSON.stringify({kind:'subscribe',type:'account.self'}));const first=JSON.parse((await once(ws,'message'))[0].toString());const ref=f.read().sessions[0].ref;
+  expect(first.records[0].sessions.find((x:{ref:string})=>x.ref===ref).seenAt).toBeUndefined();
+  const updated=new Promise<Record<string,unknown>>(resolve=>{const listener=(data:Buffer)=>{const event=JSON.parse(data.toString());const record=event.record??event.records?.[0];if(record?.sessions?.some((x:{ref:string;seenAt?:number})=>x.ref===ref&&x.seenAt===f.s.now())){ws.off('message',listener);resolve(record);}};ws.on('message',listener);});
+  const changes:string[]=[];const stop=f.app.live.observe(cs=>changes.push(...cs.map(c=>c.type)));expect(f.s.session(f.jonathan,true)).toBeDefined();await updated;stop();expect(changes).toContain('signin.admin');expect(changes).not.toContain('core.access');
 });

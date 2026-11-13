@@ -20,25 +20,26 @@ export function installAccount(app:Foundation){
     while(grew){grew=false;for(const t of s.tokens.list())if(t.passkey&&t.from_sha256&&seen.has(t.from_sha256)&&!seen.has(t.sha256)&&belongs(t.sha256,member)){seen.add(t.sha256);grew=true;}}
     return seen;
   }
+  const sessionExpires=(x:{issuedAt:number;agent?:true;device?:string})=>(x.issuedAt+(x.agent||/^HeadlessChrome\b/.test(x.device??'')?6*3600:30*86400))*1000;
   function read(member:string){
     const f=s.sessions.read();
-    return {member,passkeys:Object.values(f.passkeys??{}).filter(k=>belongs(k.secret,member)).map(k=>({ref:keyRef(k.id,k.secret),label:k.label,created:k.created,...(k.lastUsed!==undefined?{lastUsed:k.lastUsed}:{}),ended:!s.token(k.secret),made:Object.values(f.passkeys??{}).filter(child=>child.id!==k.id&&belongs(child.secret,member)&&descendants(k.secret,member).has(child.secret)).length})),
+    return {member,passkeys:Object.values(f.passkeys??{}).filter(k=>belongs(k.secret,member)).map(k=>({ref:keyRef(k.id,k.secret),label:k.label,created:k.created,...(k.lastUsed!==undefined?{lastUsed:k.lastUsed}:{}),ended:!s.token(k.secret),made:Object.values(f.passkeys??{}).filter(child=>child.secret!==k.secret&&belongs(child.secret,member)&&descendants(k.secret,member).has(child.secret)).length})),
       sessions:Object.entries(f.sessions).filter(([,x])=>belongs(x.secret,member)).map(([id,x])=>{
-        const agent=x.agent||/^HeadlessChrome\b/.test(x.device??'');
-        return {ref:sessionRef(id),issuedAt:x.issuedAt,...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.label?{label:x.label}:{}),...(x.device?{device:x.device}:{}),...(x.via?{via:x.via}:{}),ended:!s.token(x.secret)||s.now()>=x.issuedAt+(agent?6*3600:30*86400)};
+        return {ref:sessionRef(id),issuedAt:x.issuedAt,...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.label?{label:x.label}:{}),...(x.device?{device:x.device}:{}),...(x.via?{via:x.via}:{}),ended:!s.token(x.secret)||app.operations.clock.now()>=sessionExpires(x)};
       }).sort((a,b)=>(b.seenAt??b.issuedAt)-(a.seenAt??a.issuedAt))};
   }
   app.operations.register(operation({name:'account.read',input:z.object({}).strict(),output:accountResponses.read,cli:accountCommands()[0],may:allowed,run:ctx=>read(ctx.viewer.id)}));
   app.operations.register(operation({name:'account.removePasskey',write:true,input:z.object({ref,withMade:z.boolean().optional()}).strict(),output:accountResponses.removePasskey,cli:accountCommands()[1],may:allowed,run:(ctx,i)=>{
     const member=ctx.viewer.id,f=s.sessions.read(),key=Object.values(f.passkeys??{}).find(k=>keyRef(k.id,k.secret)===i.ref&&belongs(k.secret,member));
     if(!key)throw new OperationError('not-found','No matching passkey');
-    const affected=i.withMade?descendants(key.secret,member):new Set([key.secret]);let removed=0,revoked=0;
+    const cascade=!!i.withMade&&s.tokens.records(key.secret).some(t=>t.passkey===hash(key.id));
+    const affected=cascade?descendants(key.secret,member):new Set([key.secret]);let removed=0,revoked=0;
     // Old passkeys without a dedicated token lose the credential only, matching
     // removePasskey's legacy !tokenLabel case. Never revoke a shared links token.
     const ownKeys=new Set(Object.values(f.passkeys??{}).filter(k=>belongs(k.secret,member)).map(k=>k.id));
     const dedicated=new Set(s.tokens.list().filter(t=>affected.has(t.sha256)&&belongs(t.sha256,member)&&t.passkey&&(t.sha256!==key.secret||t.passkey===hash(key.id))).map(t=>t.sha256));
     s.tokens.change(tokens=>{for(const t of tokens)if(dedicated.has(t.sha256)&&!t.revoked){t.revoked=new Date(ctx.now).toISOString();revoked++;}});
-    s.sessions.change(file=>{for(const [id,k]of Object.entries(file.passkeys??{}))if((id===key.id||i.withMade&&affected.has(k.secret))&&ownKeys.has(k.id)){delete file.passkeys![id];removed++;}});
+    s.sessions.change(file=>{for(const [id,k]of Object.entries(file.passkeys??{}))if((id===key.id||cascade&&k.secret!==key.secret&&affected.has(k.secret))&&ownKeys.has(k.id)){delete file.passkeys![id];removed++;}});
     ctx.changed('core.access','credentials');ctx.changed('signin.admin','household');ctx.changed('account.self',member);return {removed,revoked};
   }}));
   app.operations.register(operation({name:'account.revokeSession',write:true,input:z.object({ref}).strict(),output:accountResponses.revokeSession,cli:accountCommands()[2],may:allowed,run:(ctx,i)=>{
@@ -53,7 +54,7 @@ export function installAccount(app:Foundation){
   }}));
   function live(member:string){
     const record=read(member),now=app.operations.clock.now(),f=s.sessions.read();
-    const deadlines=[...s.tokens.list().filter(t=>belongs(t.sha256,member)&&!t.revoked&&t.expires).map(t=>Date.parse(t.expires!)),...Object.values(f.sessions).filter(x=>belongs(x.secret,member)).map(x=>(x.issuedAt+(x.agent||/^HeadlessChrome\b/.test(x.device??'')?6*3600:30*86400))*1000)].filter(x=>x>now);
+    const deadlines=[...s.tokens.list().filter(t=>belongs(t.sha256,member)&&!t.revoked&&t.expires).map(t=>Date.parse(t.expires!)),...Object.values(f.sessions).filter(x=>belongs(x.secret,member)).map(sessionExpires)].filter(x=>x>now);
     return {id:member,...record,...(deadlines.length?{nextExpiry:Math.min(...deadlines)}:{})};
   }
   app.live.register({name:'account.self',ids:()=>Object.keys(sharing.sharing().members),read:(id,v)=>maySee(v,{member:id},sharing.sharing())?live(id):undefined,inScope:(_r,scope)=>scope===undefined,expires:r=>typeof r.nextExpiry==='number'?r.nextExpiry:undefined,refreshOn:c=>c.type==='core.access'||c.type==='signin.admin'});

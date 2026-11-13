@@ -23,6 +23,8 @@ it('sends exact opaque target and cascade choice once, clears confirmation, reta
   await act(async()=>{tree=create(h(Account));});const reset=vi.fn(),e={preventDefault:vi.fn(),currentTarget:{reset}};
   await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit(e));expect(f.call).toHaveBeenCalledExactlyOnceWith('account.removePasskey',{ref:'a'.repeat(64),withMade:true});expect(reset).toHaveBeenCalledOnce();
   await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit(e));expect(f.call).toHaveBeenCalledOnce();
-  await r.finish({ok:false,code:'unavailable',message:'Uncertain'});await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account));});
+  await r.finish({ok:false,code:'unavailable',message:'Uncertain'});await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account,{active:false}));});
+  const inactive=tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change');expect(inactive.props.disabled).toBe(true);await act(async()=>inactive.props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>tree.update(h(Account,{active:true})));
   await act(async()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change').props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledOnce();
 });
