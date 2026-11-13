@@ -788,3 +788,52 @@ strand its acknowledgement. The internal accept operation owns its permanent
 private receipt in the registry transaction, with no second core retry cache over
 fresh routing metadata. Guest, pair and peer-route flags reach admission before
 delivery or stop and are checked again by the trusted runtime delivery seam.
+
+## Offline source inventory (importer prerequisite)
+
+`readBridgeInventory` in `src/pieces/bridges/import-source.ts` is an offline
+explicit-file reader. It is not registered with migrate-all and does not import
+anything into the database. Normal daemon paths never call it. Every future
+registry adapter must resolve **each** selected file with `snapshotPath` before
+passing it to this reader; the reader rejects leaf symlinks and special files,
+but snapshot confinement of parent directories belongs to that adapter.
+
+Required source inventory:
+
+| Input | Retained configuration |
+| --- | --- |
+| Each instance's `shuttle.json` | Agent slug, explicitly present Discord/Slack secret references, channel-note references |
+| Co-located `people.json` | Exact person and peer account claims, Slack workspace IDs; no tier, scope or grants |
+| Co-located `routes.json` | Guild/bot/managed-role IDs, channel/thread claims, peer/pair/guest flags, People reader slugs, only/ignore, webhook-peer, notify and budget metadata |
+| `pieces/discord/settings.json` | `DISCORD_BOTS` agent → secret-name map |
+| `pieces/slack/settings.json` | `SLACK_BOTS` agent → **bundle** secret-name map |
+
+The future snapshot collector must accept explicit external instance roots when
+these files are outside the old home; it must not infer `~/Art`, run old exports,
+follow paths in the JSON or modify the source home to stage files. Authoritative
+shuttle-store documents may supersede the instance files. Those need a separate
+source inventory and comparison before full migration coverage can be claimed.
+This reader makes no current-authority or completeness claim for the files.
+
+The inventory retains conflicts between sources and between person/peer account
+claims. The importer must resolve or refuse them, never choose a file-order winner.
+Readers retain their **People** provenance; they are not agent grants. Absent, null and empty platform sections do not invent a connection or default
+secret reference; only explicitly supplied references survive. Slack's bundle reference
+cannot supply workspace/bot IDs or separate token/app secret names without reviewed
+mapping. A later importer must require those inputs rather than open the bundle or
+fabricate names. Other source settings are not imported by this reader.
+
+Each selected file contributes its stable snapshot-relative name, kind, byte count
+and SHA-256 to the source checksum, including bytes of ignored legacy fields.
+Reads are capped at 8 MiB per file even if it grows after the initial stat. Output
+contains selected configuration references, never raw source documents, commands,
+credential values or parser/filesystem exception details. Configured `secrets`,
+`secret_cmd`, `ext`, `commands`, token files and env bundles are never opened or
+executed. Synthetic fixtures cover both old JSON-text settings and object settings,
+exact account IDs (numeric spellings must be canonical safe nonnegative integers;
+use strings for other IDs; numeric zero is preserved for later importer validation), conflict retention, unchanged sources, sanitized failures and
+file-boundary refusals. No real data is used.
+
+The remaining importer still owes one transaction, receipt/checksum, repeat no-op,
+different-source refusal, interruption rollback, independent IDs/counts/content
+verification, migrate-all discovery/registration, and final move coverage.
