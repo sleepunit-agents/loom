@@ -11,6 +11,7 @@ const fail = (code: 'denied'|'conflict'|'invalid'|'unavailable', message: string
 const text = z.string().min(1).max(40_000).refine(s => !!s.trim());
 const title = z.string().min(1).max(60).refine(s => !!s.trim() && !/[\r\n]/.test(s));
 const id = z.string().min(1).max(200);
+const clientId = z.string().regex(/^[a-z2-7]{16}$/);
 const target = z.object({ thread: id });
 export interface Options {
  db: Db; operations: Operations; live: Live; clock: Clock; sharing(): Sharing; key: WordsKey;
@@ -96,7 +97,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,
-  input:z.object({agent:id,id,text,project:id.optional()}),output:ack,
+  input:z.object({agent:id,id:clientId,text,project:id.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
   prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
   run(ctx,i,raw) {
@@ -114,7 +115,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },after:(i,r)=>sendAfter(i,r),
  }));
  operations.register(operation({name:'comms.send',doors:['socket'],windowOnly:true,write:true,
-  input:target.extend({id,text}),output:ack,may:(v,i)=>writable(v,i),
+  input:target.extend({id:clientId,text}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
   run(ctx,i,raw) {
    const t=thread(db,i.thread)!; if(t.archived!==null)return fail('conflict','Unarchive this thread first');

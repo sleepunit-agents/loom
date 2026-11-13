@@ -20,7 +20,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    deliver:async d=>{await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
- const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixture-first',text:'Comms fixture message'},'fixture-first',true);
+ const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturefirstaaaa',text:'Comms fixture message'},'fixture-first',true);
  if(!first.ok)throw new Error('fixture failed');const place=(first.value as {thread:string}).thread;await comms.deliver('art',place,1);
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{

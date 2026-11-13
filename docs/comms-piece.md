@@ -56,7 +56,7 @@ data does not remove the behavior it delivered.
 | Old surface | New home | State / remaining behavior |
 | --- | --- | --- |
 | `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list and pins work; background jobs, stale working state and aggregate unread still missing. |
-| `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend input validation still needs to enforce the same format. |
+| `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend rejects ids outside that format before encryption or writes. |
 | `/comms/agents`, `agentsComms` | `comms.agents` | Partial: owned ids only; last thread, unread reply count and first unread line missing. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
 | `/send`, `addMemberMessage`, `resendMessage`, delivery receipts | `comms.send`, `comms.resend`, runtime role | Partial: encrypted row and dedupe work; durable delivery/restart reconciliation, stale sends, busy and precise runtime errors missing. |

@@ -22,7 +22,7 @@ async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Ho
  });cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
- const open=async()=>{const r=await call('open',{agent:'art',id:`first-${n}`,text:'secret member words',project:'pond'});expect(r.ok).toBe(true);return (r as {ok:true;value:{thread:string;seq:number}}).value.thread;};
+ const open=async()=>{const r=await call('open',{agent:'art',id:n.toString(2).replaceAll('0','a').replaceAll('1','b').padStart(16,'a'),text:'secret member words',project:'pond'});expect(r.ok).toBe(true);return (r as {ok:true;value:{thread:string;seq:number}}).value.thread;};
  return {app,clock,home,call,open,deliveries,ends,get comms(){return comms;},setSharing:(value:Sharing)=>{sharing=value;app.live.refreshAccess();},getSharing:()=>sharing};
 }
 it('encrypts rows with age; only acknowledgements enter retry storage, and runtime receives the words',async()=>{
@@ -47,7 +47,7 @@ it('household ownership and a shared project never widen private thread access',
  const s=await setup();const place=await s.open();
  expect(await s.call('messages',{thread:place},{kind:'member',id:'other'})).toMatchObject({code:'denied'});
  expect(await s.call('messages',{thread:'missing'},{kind:'member',id:'other'})).toMatchObject({code:'denied'});
- expect(await s.call('send',{thread:place,id:'evil',text:'hello'},{kind:'member',id:'other'})).toMatchObject({code:'denied'});
+ expect(await s.call('send',{thread:place,id:'evilaaaaaaaaaaaa',text:'hello'},{kind:'member',id:'other'})).toMatchObject({code:'denied'});
  await expect(s.comms.post('pond-bot',place,{id:'r',kind:'reply',text:'wrong'})).rejects.toMatchObject({code:'denied'});
  const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);
  expect(await s.call('messages',{thread:place})).toMatchObject({code:'denied'});
@@ -56,22 +56,22 @@ it('rechecks ownership after asynchronous encryption, before storing anything',a
  let resume:()=>void=()=>{};let started:()=>void=()=>{};
  const beginning=new Promise<void>(r=>{started=r;});const paused=new Promise<void>(r=>{resume=r;});
  const s=await setup({key:key=>({...key,seal:async text=>{started();await paused;return key.seal(text);}})});
- const send=s.call('open',{agent:'art',id:'first',text:'lost access'});await beginning;expect(s.app.db.inTransaction).toBe(false);
+ const send=s.call('open',{agent:'art',id:'firstaaaaaaaaaaa',text:'lost access'});await beginning;expect(s.app.db.inTransaction).toBe(false);
  const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);resume();
  expect(await send).toMatchObject({code:'denied'});expect(s.app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);
 });
 it('keeps retries stable, rejects changed text, marks reads forward, respects member titles and archived sends',async()=>{
  const s=await setup();const place=await s.open();
- const a=await s.call('send',{thread:place,id:'m',text:'one'});expect(await s.call('send',{thread:place,id:'m',text:'one'})).toEqual(a);
- expect(await s.call('send',{thread:place,id:'m',text:'two'})).toMatchObject({code:'conflict'});
+ const a=await s.call('send',{thread:place,id:'maaaaaaaaaaaaaaa',text:'one'});expect(await s.call('send',{thread:place,id:'maaaaaaaaaaaaaaa',text:'one'})).toEqual(a);
+ expect(await s.call('send',{thread:place,id:'maaaaaaaaaaaaaaa',text:'two'})).toMatchObject({code:'conflict'});
  await s.comms.post('art',place,{id:'r',kind:'reply',text:'reply'});
  await s.call('change',{thread:place,action:'read',seq:3});await s.call('change',{thread:place,action:'read',seq:0});
  expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record).readSeq).toBe(3);
  await s.call('change',{thread:place,action:'title',title:'Mine'});
  expect(()=>s.comms.title('art',place,'Theirs')).toThrow('member');
  await s.call('change',{thread:place,action:'archive'});
- expect(await s.call('send',{thread:place,id:'later',text:'no'})).toMatchObject({code:'conflict'});
- await s.call('change',{thread:place,action:'unarchive'});expect((await s.call('send',{thread:place,id:'later',text:'yes'})).ok).toBe(true);
+ expect(await s.call('send',{thread:place,id:'lateraaaaaaaaaaa',text:'no'})).toMatchObject({code:'conflict'});
+ await s.call('change',{thread:place,action:'unarchive'});expect((await s.call('send',{thread:place,id:'lateraaaaaaaaaaa',text:'yes'})).ok).toBe(true);
 });
 it('sweeps all encrypted message and step words at fourteen days; deletes rows and keeps a wordless tombstone',async()=>{
  const s=await setup();const place=await s.open();
@@ -147,7 +147,7 @@ it('a page session invalidated while encryption awaits never commits or delivers
  let valid=true,resume:()=>void=()=>{},started:()=>void=()=>{};const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
  const s=await setup({valid:()=>valid,key:key=>({...key,seal:async words=>{started();await wait;return key.seal(words);}})});
  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
- ws.send(JSON.stringify({kind:'call',request:'open',name:'comms.open',input:{agent:'art',id:'first',text:'never stored'},id:'first'}));await begin;
+ ws.send(JSON.stringify({kind:'call',request:'open',name:'comms.open',input:{agent:'art',id:'firstaaaaaaaaaaa',text:'never stored'},id:'firstaaaaaaaaaaa'}));await begin;
  valid=false;const closed=once(ws,'close');resume();await closed;
  expect(s.app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);expect(s.deliveries).toEqual([]);
 });
@@ -177,4 +177,30 @@ it('staging holds delivery and end; releasing a stable effect permits one runtim
  expect(s.deliveries).toEqual([]);expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE seq=1').get() as {record:string}).record).delivery).toBe('held');
  await s.call('change',{thread:place,action:'archive'});expect(s.ends).toEqual([]);
  await s.call('change',{thread:place,action:'unarchive'});released=true;await s.comms.deliver('art',place,1);expect(s.deliveries).toHaveLength(1);await s.comms.deliver('art',place,1);expect(s.deliveries).toHaveLength(1);expect(finished).toContain(`comms-deliver:${place}:1`);
+});
+
+it('rejects malformed client ids before encryption, persistence or runtime delivery',async()=>{
+ let seals=0;
+ const s=await setup({key:key=>({...key,seal:async words=>{seals++;return key.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const before={seals,deliveries:s.deliveries.length,messages:s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get(),threads:s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()};
+ for(const id of ['', 'a'.repeat(15), 'a'.repeat(17), 'A'.repeat(16), 'a'.repeat(15)+'0', 'a'.repeat(15)+'1', 'a'.repeat(15)+'8', 'a'.repeat(15)+'9', 'a'.repeat(15)+'-', 'a'.repeat(16)+'\n']) {
+  expect(await s.call('open',{agent:'art',id,text:'invalid open'})).toMatchObject({ok:false,code:'invalid'});
+  expect(await s.call('send',{thread:place,id,text:'invalid send'})).toMatchObject({ok:false,code:'invalid'});
+ }
+ expect(seals).toBe(before.seals);expect(s.deliveries).toHaveLength(before.deliveries);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual(before.messages);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual(before.threads);
+});
+it('accepts the base32 alphabet and deduplicates first sends and later sends',async()=>{
+ const s=await setup();const first={agent:'art',id:'abcdefghijklmnop',text:'first'};
+ const opened=await s.call('open',first);expect(opened.ok).toBe(true);
+ expect(await s.call('open',first)).toEqual(opened);
+ expect(await s.call('open',{...first,text:'changed'})).toMatchObject({code:'conflict'});
+ const thread=(opened as {ok:true;value:{thread:string}}).value.thread;
+ const next={thread,id:'qrstuvwxyz234567',text:'next'};
+ const sent=await s.call('send',next);expect(sent.ok).toBe(true);
+ expect(await s.call('send',next)).toEqual(sent);
+ expect(await s.call('send',{...next,text:'changed'})).toMatchObject({code:'conflict'});
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:2});
 });
