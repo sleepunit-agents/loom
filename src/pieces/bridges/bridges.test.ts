@@ -359,14 +359,33 @@ describe('in-process bridge delivery',()=>{
     expect(restarted.deliveries.size).toBe(0);
     expect(restarted.app.db.prepare('SELECT state,reason,message FROM bridges_inbox').get()).toEqual({state:'dropped',reason:'not admitted',message:'{}'});
   });
-  it('holds a still-broken runtime delivery once again for the new process',async()=>{
+  it.each(['held',undefined,'unexpected'])('holds a still-broken runtime outcome %s once again for the new process',async outcome=>{
     const f=await fixture(); f.runtime.deliver=async()=> 'held';
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     await f.close(); closes.pop();
-    const restarted=await fixture('discord',false,f.home); const deliver=vi.fn(async()=> 'held' as const); restarted.runtime.deliver=deliver;
+    const restarted=await fixture('discord',false,f.home); const deliver=vi.fn(async()=> outcome as unknown as DeliveryOutcome); restarted.runtime.deliver=deliver;
     await restarted.engine.sync(); restarted.clock.advance(10_000); await restarted.engine.sync();
     expect(deliver).toHaveBeenCalledTimes(1);
     expect(restarted.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'runtime delivery held'});
+  });
+  it('waits for current credential grants before draining recovered intake',async()=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'held';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); restarted.denySecret(); await restarted.engine.sync();
+    expect(restarted.secretGets).toEqual([]); expect(restarted.admitted).toEqual([]); expect(restarted.deliveries.size).toBe(0);
+    expect(restarted.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+  });
+  it('uses changed person links and routes when draining recovered intake',async()=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'held';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home);
+    expect(restarted.op('putLinks',{id:'person',platform:'discord',workspace:'house',user:'200',person:'mark'}).ok).toBe(true);
+    expect(restarted.op('putRoutes',{id:'channel',platform:'discord',workspace:'house',channel:'300',primary:'art',readers:['mark']}).ok).toBe(true);
+    await restarted.engine.sync();
+    expect(restarted.admitted).toEqual(['mark']);
+    expect([...restarted.deliveries.values()]).toEqual([expect.objectContaining({person:'mark',route:expect.objectContaining({readers:['mark']})})]);
   });
   it.each(['venue removed','venue identity changed','invalid event time'])('leaves %s intake holds untouched on restart',async reason=>{
     const f=await fixture(); f.runtime.deliver=async()=> 'held';
