@@ -101,3 +101,7 @@ follow the brand, with names and tooltips. The iOS home-screen app also keeps it
 under their own status bar. Connection means the bar's source feeds are live;
 agent counts use the owned roster and latest reports. Boxes and backup remain
 explicit follow-ups, pending proper owning sources. No tiling behavior changes.
+
+The former 640–1023 two-line tablet status bar is omitted: the new shell treats
+all widths below 1024 as phone composition, keeping its compact single bar.
+Desktop separators/order match the present clock/title and brand/glyphs/count.

@@ -19,3 +19,6 @@
 [data-shell=phone] .next-status-start{max-width:28%}
 :root[data-look] [data-shell=phone] .next-status-start .loom-pbar__name{max-width:100%}
 html.loom-ios-app:root[data-look] .next-status-line :is(.next-system-clock,.next-system-icons){display:none}
+
+.next-system-separator{color:var(--v-text-3);flex:none}
+:root[data-look] [data-shell=phone] .next-system-separator,html.loom-ios-app:root[data-look] .next-system-separator{display:none}
