@@ -40,7 +40,7 @@ files are temporary role contracts pending the other pieces' implementations.
 The current tests exercise these transitions on `startLoom`/`FakeClock`, including
 pause release order, a parked answer and timeout, changed dispatch permission,
 live-record aging, and the next occurrence across Chicago daylight saving.
-CLI parity, lane assignment, vouch/approval workflows, importer, app and final
+CLI parity, lane assignment, vouch/approval workflows, app and final
 new-side composition remain unfinished; the migration still needs cold review
 before any merge.
 
@@ -112,3 +112,30 @@ API client. Check pending/parked/schedule counts, one due fire, one cancellation
 pause/resume, and offline identity. Keep the untouched old stores for rollback;
 retire the old piece only after the coordinator verifies the move. This
 implementation body performs none of these host steps.
+
+## Offline import unit
+
+`loom migrate clock --home <stopped-new-home> --from <old-WAKE_DATA-directory>`
+reads agent subdirectories (`spool.jsonl`, `schedules.json`, `paused`, `wake.log`,
+`filed.json`, `sessions.json`) plus household `lanes.json`. Stop the old writer
+before copying the source. The CLI holds the new home's daemon lock for the
+whole import. It never starts timers or reads prompt files.
+
+The import transaction includes migrations, records, exact source bytes and the
+SHA-256 marker. It compares sorted ids, counts and content before committing.
+An identical byte snapshot is a no-op; a different snapshot or populated unmarked
+destination is refused. Two source reads detect concurrent source changes; this
+is a check, not a substitute for stopping the old writer. Schedule ids become
+`<agent>/<legacy-name>` to preserve equal names in separate agents' clocks;
+wake ids remain unchanged, and duplicates are refused.
+
+Legacy principal strings and continuation metadata confer no new authority.
+Imported wakes are held for provenance review and schedules disabled. Their
+`by` is an inert runner viewer: central policy cannot dispatch clock work as a
+runner, even if a household member happens to use the same id. In-flight and old
+runtime watch records are held uncertain and cannot use fire-now. All original
+wake fields are retained in `legacy`; the exact source archive retains schedules,
+logs, filed approvals and lane text. Restoration of lane operations and explicit
+owner provenance adoption are unfinished. Importing alone intentionally does not
+authorize or start any work. The coordinator's final cutover must review held
+work and reconcile uncertain bodies before enabling any schedule.
