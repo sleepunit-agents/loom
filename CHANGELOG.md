@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
+
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
 - Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
 
