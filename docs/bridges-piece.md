@@ -140,6 +140,11 @@ src/policy.ts, preventing bodies from changing person links or connections.
 
 ## Final move
 
+The [replacement inventory](bridges-contract-inventory.md) pins the legacy source
+revisions and lists command/job ownership, existing fake coverage and outstanding
+production cases, including first outbound DMs, attributed relays and held-delivery
+repair. Pending rows remain completion requirements for t-2210.
+
 Do not deploy, import real data, or retire old adapters from this slice. The whole
 new side is assembled beside the old one; the coordinator runs and verifies the
 final import/cutover with Jonathan when every bridge slice is complete.

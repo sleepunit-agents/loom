@@ -48,10 +48,18 @@ export async function listenForTouches(operations: Operations, source: TouchSour
   mkdirSync(privateDir, { recursive: true, mode: 0o700 });
   chmodSync(privateDir, 0o700);
   const path = touchSocketPath(source.directory);
-  // Never steal an existing listener. A stale endpoint is handled by daemon startup's home lock.
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
-  chmodSync(path, 0o600);
-  return async () => { for (const client of clients) client.destroy(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); };
+  const stop = async () => { for (const client of clients) client.destroy(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); };
+  // Once binding succeeds, this function owns cleanup even if endpoint setup fails
+  // before the group can receive our stop function.
+  try {
+    // Never steal an existing listener. Stale cleanup belongs to the home lock.
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
+    chmodSync(path, 0o600);
+    return stop;
+  } catch (error) {
+    if (server.listening) await stop();
+    throw error;
+  }
 }
 /** Absent daemon: one existence check, no connection, timer, promise or waiting. Errors never undo a write. */
 export function touched(directory: string, type: string, id: string, clock: Clock = realClock): void {
