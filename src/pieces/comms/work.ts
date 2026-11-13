@@ -40,7 +40,7 @@ export function installCommsWork(o:Options) {
    }
   } catch {failed.push('Changes');}
   const rank=(tone:WorkItem['tone'])=>tone==='bad'?0:tone==='warn'?1:2;
-  items.sort((a,b)=>rank(a.tone)-rank(b.tone)||(b.when??'').localeCompare(a.when??'')||a.ref.localeCompare(b.ref));
+  items.sort((a,b)=>rank(a.tone)-rank(b.tone)||(Date.parse(b.when??'')||0)-(Date.parse(a.when??'')||0)||a.ref.localeCompare(b.ref));
   return {id,items:items.slice(0,100),failed,...(expiresAt===undefined?{}:{expiresAt})};
  };
  o.operations.register(operation({name:'comms.work',doors:['socket'],windowOnly:true,

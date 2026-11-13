@@ -31,8 +31,8 @@ async function setup() {
  const thread=(opened.value as {thread:string}).thread;
  const row=app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string};
  const conversation=(JSON.parse(row.record) as {conversation:string}).conversation;
- const task=(id:string,source=conversation,project='pond',status='open',description?:string)=>{
-  const record=({id,description,title:`Work ${id}`,type:'task',status,priority:1,createdAt:'2026-11-01T00:00:00Z',createdBy:'other',comments:[],source:`conversation:${source}`,project});
+ const task=(id:string,source=conversation,project='pond',status='open',description?:string,createdAt='2026-11-01T00:00:00Z')=>{
+  const record=({id,description,title:`Work ${id}`,type:'task',status,priority:1,createdAt,createdBy:'other',comments:[],source:`conversation:${source}`,project});
   const result=app.operations.call('direct',{kind:'member',id:'other'},'tasks.import',{tasks:[record],links:[],actor:'other',at:'2026-11-01T00:00:00Z'},`task-${++seq}`);
   expect(result).toMatchObject({ok:true,value:{result:{ok:true}}});
  };
@@ -102,4 +102,9 @@ it('orders blocked work first and rechecks task project visibility on every read
  expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2',status:'Blocked',tone:'bad'},{ref:'t-1'}]}});
  s.sharing.projects.pond.members=[];
  expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[],failed:[]}});
+});
+
+it('sorts equivalent RFC3339 offset timestamps by instant rather than spelling',async()=>{
+ const s=await setup();s.task('t-1',s.conversation,'pond','open',undefined,'2026-11-01T12:00:00+12:00');s.task('t-2',s.conversation,'pond','open',undefined,'2026-11-01T01:00:00Z');
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2'},{ref:'t-1'}]}});
 });
