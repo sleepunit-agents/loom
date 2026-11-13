@@ -87,3 +87,10 @@ it('updates two windows after outside project writes, and removes expired memory
  next=windows.map(w=>once(w,'message'));(app.operations.clock as FakeClock).advance(86400000);
  for(const p of next){const frame=JSON.parse((await p)[0].toString());expect(frame.record.sections.find((s:{key:string})=>s.key==='memories').total).toBe(0);}
 });
+it('passes note selectors and original viewer through the new role, preserving bounded metadata and deadlines',async()=>{
+ const a=source();a.write({slug:'pond',name:'Pond',links:{notes:['pond','field/research']}});let asked:unknown;
+ const all=Array.from({length:25},(_,i)=>({path:`pond/n-${i}`,updated:new Date(Date.parse('2026-11-13T00:00:00Z')+i*1000).toISOString(),expires:Date.parse('2026-11-14T12:00:00Z')}));all.push({...all[0],path:'pond-other/no-match'});
+ const app=await fixture(a.database.name,undefined,{notes:{read(v,q){asked={viewer:v,prefixes:q.card.links.notes};const prefixes=q.card.links.notes??[q.card.slug];const rows=all.filter(n=>n.expires>q.now&&prefixes.some(p=>n.path===p||n.path.startsWith(p+'/'))).sort((a,b)=>Date.parse(b.updated)-Date.parse(a.updated));return {available:true,total:rows.length,activity:rows[0]?.updated,expires:rows[0]?.expires,items:rows.slice(0,20).map(n=>({title:n.path,when:n.updated}))};}}});
+ const p=read(app,'art:pond',partial);expect(asked).toEqual({viewer:partial,prefixes:['pond','field/research']});expect(p.sections.find(s=>s.key==='notes')).toMatchObject({total:25,items:expect.any(Array)});expect(p.sections.find(s=>s.key==='notes')?.items).toHaveLength(20);expect(p.activity).toBe(all[24].updated);
+ (app.operations.clock as FakeClock).advance(86400000);expect(read(app,'art:pond').sections.find(s=>s.key==='notes')).toMatchObject({total:0,items:[]});
+});

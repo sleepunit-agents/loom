@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
+- Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 

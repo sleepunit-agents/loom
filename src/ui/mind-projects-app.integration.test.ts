@@ -1,0 +1,57 @@
+/** One hosted CI test, two windows, six screenshots; never launches on loom's machine. */
+import {expect,it} from 'vitest';
+import {existsSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {chromium} from 'playwright-core';
+import {startLoom} from '../foundation.js';
+import {createFoundation} from '../core/app.js';
+import {FakeClock} from '../core/clock.js';
+import {migrateHouseholdTables} from '../core/household/schema.js';
+import {TokenDatabase} from '../core/household/tokens.js';
+import {HouseholdDatabase} from '../core/household/document.js';
+import {ProjectsStore} from '../backends/projects.js';
+import {PeopleStore} from '../backends/people.js';
+const root=resolve(import.meta.dirname,'../../dist/web');
+const chrome=[process.env.LOOM_TEST_CHROME,chromium.executablePath()].find(p=>p&&existsSync(p));
+const enabled=!!process.env.CI&&process.env.LOOM_PROJECTS_EVIDENCE==='1';
+if(enabled&&process.env.RUNNER_ENVIRONMENT==='self-hosted')throw Error('Projects browser evidence requires a hosted runner');
+if(enabled&&(!chrome||!existsSync(join(root,'next.html'))))throw Error('Projects evidence requires Chrome and built next app in CI');
+it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-first hub, filters, quiet projects and outside writes in two windows',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'projects-app-')),clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+ const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
+ metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
+ metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
+ for(const d of ['commons','agents/art','agents/other'])mkdirSync(join(home,d),{recursive:true});
+ const cards=new ProjectsStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()}),other=new ProjectsStore({dbPath:join(home,'agents/other/memories.db'),now:()=>clock.now()});
+ cards.write({slug:'pond',name:'Pond',summary:'Environmental response work. Keeping the work together.',goal:'Every field team connected',where:{now:{value:'Reviewing the next release'}},links:{aliases:['on-pond'],epic:'t-1',repos:['sleepunit-agents/pond']}});
+ cards.write({slug:'hocket',name:'Hocket',status:'paused',summary:'A music sketchbook.'});other.write({slug:'workshop',name:'Workshop',summary:'Builds for the house.'});
+ const people=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});people.write({slug:'casey',name:'Casey Smith',where:{on_pond:{value:'Field coordinator'}}});
+ const app=await startLoom({home,next:true,clock,webRoot:root});
+ const owner={kind:'member' as const,id:'owner'};
+ const task=(title:string,input={})=>app.operations.call('direct',owner,'tasks.create',{title,actor:'owner',at:'2026-11-13T10:00:00Z',...input},`fixture-${title}`);
+ expect(task('Pond rollout',{type:'epic'})).toMatchObject({ok:true});expect(task('Confirm the release',{parent:'t-1'})).toMatchObject({ok:true});
+ expect(app.operations.call('direct',owner,'tasks.update',{id:'t-2',actor:'owner',at:'2026-11-13T10:00:00Z',set:{assignee:'owner',ask:'Ship the release?'}},'fixture-ask')).toMatchObject({ok:true});
+ const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ try{
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}}),a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+  const link=app.operations.call('direct',owner,'signin.link',{member:'owner'});if(!link.ok)throw Error('Fixture sign-in failed');await a.goto(app.url+(link.value as {path:string}).path);
+  const signed=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signed).status()).toBe(303);
+  await Promise.all([a.goto(`${app.url}/p/projects-preview`),b.goto(`${app.url}/p/projects-preview`)]);
+  const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({has:p.getByText(name,{exact:true})});
+  await expect.poll(()=>row(b,'Pond').count()).toBe(1);expect(await row(a,'Workshop').count()).toBe(1);
+  await a.getByRole('combobox',{name:'Agent',exact:true}).selectOption('art');await expect.poll(()=>row(a,'Workshop').count()).toBe(0);
+  await row(a,'Pond').click();await row(b,'Pond').click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Pond',exact:true}).count()).toBe(1);
+  expect(await b.getByRole('heading',{name:'Tasks',exact:true}).count()).toBe(1);expect(await b.getByText('Field coordinator',{exact:false}).count()).toBe(1);
+  const headings=await b.locator('article h2').allTextContents();expect(headings.indexOf('Tasks')).toBeLessThan(headings.indexOf('People'));
+  expect(await b.locator('article a[href="/p/tasks-preview/task/t-2"]').count()).toBe(1);
+  expect(await b.getByText('Conversations service is not available yet.',{exact:true}).count()).toBe(1);
+  const shots=resolve('artifacts/projects-app');mkdirSync(shots,{recursive:true});
+  for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){const page=width<640?b:a;await page.setViewportSize({width,height:900});await page.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>page.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await page.screenshot({path:join(shots,`projects-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
+  cards.write({slug:'pond',goal:'Updated outside the app'});await expect.poll(()=>b.getByText('Updated outside the app',{exact:true}).count()).toBe(1);await b.reload();await expect.poll(()=>b.getByText('Updated outside the app',{exact:true}).count()).toBe(1);
+  await b.getByRole('button',{name:'Projects',exact:true}).last().click();await b.getByRole('searchbox',{name:'Search projects',exact:true}).fill('Workshop');await expect.poll(()=>row(b,'Pond').count()).toBe(0);expect(await row(b,'Workshop').count()).toBe(1);
+  await b.getByRole('searchbox',{name:'Search projects',exact:true}).fill('');await b.getByRole('button',{name:/^Paused and done/}).click();await expect.poll(()=>row(b,'Hocket').count()).toBe(1);await row(b,'Hocket').click();await expect.poll(()=>b.getByRole('heading',{name:'Hocket',exact:true}).count()).toBe(1);
+  cards.archive({slug:'pond',actor:'owner',reason:'Fixture complete'});await expect.poll(()=>row(a,'Pond').count()).toBe(0);
+ }finally{await browser.close();await app.close();people.close();cards.close();other.close();rmSync(home,{recursive:true,force:true});}
+},60000);
