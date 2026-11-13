@@ -4,17 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { bodyHouseConversation, createLoomServer, houseWriteProblem, type LoomServerConfig } from '../server.js';
-import { bindHouseConversation } from '../household-store.js';
-import { recordTurn, writeDigest, writeFinding } from '../backends/conversations.js';
-import { closeAllBackends } from '../backends/index.js';
-import { openProjectsStore } from '../backends/projects.js';
-import type { ConversationSelection } from '../conversations.js';
-import * as conversations from '../conversations.js';
-import * as households from '../household.js';
-import * as registry from '../household-store.js';
+import { bodyHouseConversation, createLoomServer, houseWriteProblem, type LoomServerConfig } from './server.js';
+import { bindHouseConversation } from './household-store.js';
+import { recordTurn, writeDigest, writeFinding } from './backends/conversations.js';
+import { closeAllBackends } from './backends/index.js';
+import { openProjectsStore } from './backends/projects.js';
+import type { ConversationSelection } from './conversations.js';
+import * as conversations from './conversations.js';
+import * as households from './household.js';
+import * as registry from './household-store.js';
 
-vi.mock('../backends/fastembed.js', () => ({ FastEmbedProvider: class {
+vi.mock('./backends/fastembed.js', () => ({ FastEmbedProvider: class {
   readonly dimensions = 384;
   async embed() { return new Array(384).fill(0); }
   async embedBatch(texts: string[]) { return Promise.all(texts.map(() => this.embed())); }
@@ -96,7 +96,10 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
         ['conversation', { id: conversation }], ['conversation_digest', { summary: 'should never be written' }],
         ['comms_title', { title: 'should never be written' }], ['comms_thread', {}],
       ] as const) {
-        expect((await call(name, args)).isError, name).toBe(true);
+        const result = await call(name, args);
+        expect(result.isError, name).toBe(true);
+        if (name === 'comms_title') expect(JSON.stringify(result.content)).toContain('holds no conversation the runtime named');
+        if (name === 'comms_thread') expect(JSON.stringify(result.content)).toContain('reads only the thread of the conversation it holds');
         expect(binding, name).not.toHaveBeenCalled();
       }
       expect(binding).not.toHaveBeenCalled();
