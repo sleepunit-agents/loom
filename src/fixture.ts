@@ -9,6 +9,7 @@ import { installChanges } from './pieces/changes/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installExample } from './pieces/example/index.js';
+import { installBridges } from './pieces/bridges/index.js';
 export const fixtureSharing = (): Sharing => ({
   members: { jonathan: { owner: true, agents: ['art', 'mark'] }, pollock: { owner: false, agents: ['pond-bot'] } },
   projects: { pond: { members: ['pollock'], agents: ['pond-bot', 'art'] }, other: { members: [], agents: ['art'] } },
@@ -36,6 +37,7 @@ export function installFixture(app: Foundation, sharing: () => Sharing = fixture
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing);
   installExample(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
 }
 /** A fresh, disposable staging/test home; never overwrite an existing home. */
 export function fixture(home: string) {

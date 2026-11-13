@@ -1,3 +1,7 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { HouseholdDatabase } from '../../core/household/document.js';
+import { HouseholdRows } from '../../core/household/rows.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,4 +39,53 @@ it('installs database sharing by default without fixture installation or an impo
   expect(app.operations.call('direct', owner, 'household.createProject', { slug: 'garden', name: 'Garden', repositories: [], members: ['pollock'], agents: ['mark'] }, 'create')).toMatchObject({ ok: true });
   expect(app.operations.call('direct', owner, 'tasks.create', { title: 'Garden work', project: 'garden', cli: true }, 'task')).toMatchObject({ ok: true });
   expect(app.operations.call('direct', member, 'tasks.list', {})).toMatchObject({ ok: true, value: { result: { entries: expect.arrayContaining([expect.objectContaining({ title: 'Garden work' })]) } } });
+});
+
+it('keeps GitHub attribution owner-managed, unambiguous and durable without granting access', async () => {
+  const h = home(); fixture(h);
+  const app = await startLoom({ home: h, clock: new FakeClock() });
+  const document = new HouseholdDatabase(app.db).document();
+  const agentRows = new HouseholdRows(app.db, 'agents').entries();
+  const input = { agent: 'art', accounts: { github: ['Art-Bot', 'art-bot'] } };
+  for (const viewer of [member, { kind: 'agent' as const, id: 'art' }, { kind: 'service' as const, id: 'sharing' }]) {
+    expect(app.operations.call('direct', viewer, 'household.setAgentAccounts', input, `deny-${viewer.kind}`)).toMatchObject({ code: 'denied' });
+  }
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', input, 'set')).toMatchObject({ ok: true, value: { github: ['art-bot'] } });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'mark', accounts: { github: ['ART-BOT'] } }, 'duplicate')).toMatchObject({ code: 'conflict' });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'unknown', accounts: { github: [] } }, 'unknown')).toMatchObject({ code: 'invalid' });
+  expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'art', accounts: { github: ['https://github.com/art'] } }, 'invalid')).toMatchObject({ ok: false });
+  expect(new SharingDatabase(app.db, h).sharing().members['art-bot']).toBeUndefined();
+  expect(new HouseholdDatabase(app.db).document()).toEqual(document);
+  expect(new HouseholdRows(app.db, 'agents').entries()).toEqual(agentRows);
+  await app.close();
+  const reopened = await startLoom({ home: h, clock: new FakeClock() }); closes.push(reopened.close);
+  const { HouseholdAccounts } = await import('../../core/household/accounts.js');
+  const accounts = new HouseholdAccounts(reopened.db, h);
+  expect(accounts.get('art')).toEqual({ github: ['art-bot'] });
+  expect(accounts.get('mark')).toEqual({ github: [] });
+  expect(reopened.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'art', accounts: { github: [] } }, 'clear')).toMatchObject({ ok: true });
+  expect(accounts.get('art')).toEqual({ github: [] });
+  expect(new HouseholdDatabase(reopened.db).document()).toEqual(document);
+  expect(new HouseholdRows(reopened.db, 'agents').entries()).toEqual(agentRows);
+});
+
+
+it('publishes account assignment and clearing to a subscribed owner after commit', async () => {
+  const h = home(); fixture(h);
+  const app = await startLoom({ home: h, clock: new FakeClock(), authenticate: () => ({ viewer: owner, valid: () => true }) }); closes.push(app.close);
+  const socket = new WebSocket(app.url.replace('http', 'ws') + '/live');
+  await once(socket, 'open');
+  const next = () => once(socket, 'message').then(([raw]) => JSON.parse(raw.toString()));
+  try {
+    const initial = next(); socket.send(JSON.stringify({ kind: 'subscribe', type: 'household.sharing' }));
+    expect(await initial).toMatchObject({ kind: 'set', records: [{ agentAccounts: { art: { github: [] } } }] });
+    const document = new HouseholdDatabase(app.db).document();
+    for (const [id, github] of [['assign', ['art-bot']], ['clear', []]] as const) {
+      const update = next();
+      expect(app.operations.call('direct', owner, 'household.setAgentAccounts', { agent: 'art', accounts: { github: [...github] } }, id)).toMatchObject({ ok: true });
+      expect(await update).toMatchObject({ kind: 'put', type: 'household.sharing', record: { agentAccounts: { art: { github: [...github] } } } });
+      expect(app.db.inTransaction).toBe(false);
+      expect(new HouseholdDatabase(app.db).document()).toEqual(document);
+    }
+  } finally { socket.terminate(); }
 });
