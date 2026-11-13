@@ -1,0 +1,11 @@
+import { lazy, Suspense, createElement } from 'react';
+import { Loading } from '../../kit';
+const Home = lazy(() => import('./home'));
+export function HomeSurface(props: { go?: (path:string)=>void }) {
+  return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening Home…'})},createElement<{go?:(path:string)=>void}>(Home,props));
+}
+export const homeApp = {
+  id: 'home-preview', title: 'Home', icon: 'home', path: '/p/home-preview',
+  fit: { min: [520,320] as [number,number], ideal:1040, max:null, big:true, why:'owned agents and their current questions' },
+  Screen: Home,
+};
