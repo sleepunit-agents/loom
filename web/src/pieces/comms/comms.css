@@ -29,3 +29,6 @@
 .comms-work [data-tone="bad"] { color: var(--status-danger-ink, var(--v-pink)); background: var(--status-danger-bg, transparent); }
 .comms-work [data-tone="warn"] { color: var(--status-warn-ink, var(--v-yellow)); background: var(--status-warn-bg, transparent); }
 .comms-work [data-tone="ok"] { color: var(--status-ok-ink, var(--v-olive)); background: var(--status-ok-bg, transparent); }
+
+/* Lists use a letter; the reader's portrait remains a separate surface. */
+.comms-agent-letter { display: inline-grid; place-items: center; width: 32px; height: 32px; flex: none; border: 1px solid var(--v-border); border-radius: 8px; background: var(--v-beige); color: var(--v-text); font-family: var(--loom-font-data, monospace); font-weight: 600; }

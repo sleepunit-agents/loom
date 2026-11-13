@@ -970,3 +970,14 @@ stays the thread's last activity; a heartbeat does not invent a new message time
 The existing single browser proof checks the semantic timestamp, working/done
 updates and six list screenshots. Newest digest summaries, agent portraits,
 row gestures and dock unread counts remain unfinished.
+
+
+## Thread list letters
+
+Each row now uses the kit Row icon slot for the agent's uppercase initial, from
+its existing authorized thread record. The adjacent agent id remains visible;
+the decorative letter is hidden from assistive technology to avoid a repeated
+name. It requires no display registry, portrait request or additional record.
+The single browser proof checks the letter and absence of horizontal page
+overflow in all six list captures. Reader pixel portraits and channel treatment,
+newest digest summaries, gestures and dock unread counts remain unfinished.
