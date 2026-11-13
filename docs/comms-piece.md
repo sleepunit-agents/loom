@@ -449,3 +449,20 @@ browser proof now exercises 103 labels, earlier loading, browser-only exact expi
 and a private metadata transition; it captures this screen in both looks at
 390/1280/1920. No local browser ran; current-head CI must prove that extension.
 Review budgets remain backend/security 2/3 and importer 1/3.
+
+Private-thread earlier pages now follow the same replacement fence as ordinary
+conversation activity. Any authoritative message Live replacement clears older
+pages and pending reads; rendering gates them by the original records identity
+before effect cleanup. Delayed responses must match both that identity and the
+cache generation. Page Calls stay local, leaving only pending/error state in the
+component. Disconnect and unmount clear the cache and fence outstanding reads.
+Choice: a person reloads earlier pages after any Live change, so an updated or
+revoked older row cannot remain visible from a stale page.
+
+The existing browser proof now loads an older message, updates a recent card,
+checks that the cached older words disappear, reloads them and repeats the exact
+retention deadline checks. The incoming app lacks this replacement fence.
+The 13 app helper tests, TypeScript and web production build pass locally;
+the browser proof is CI-only and must pass on the current head before claiming
+this behavior proven. Aggregate review budgets and remaining integration/parity
+obligations are unchanged.

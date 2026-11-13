@@ -105,12 +105,18 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
   await b.getByRole('button',{name:'Load earlier messages',exact:true}).click();
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
+  // Any authoritative Live replacement fences older pages, even before cleanup.
+  await comms.post('art',place,{id:'page-filler-100',kind:'card',text:'Updated recent card 100'});
+  await expect.poll(()=>b.getByText('Updated recent card 100',{exact:true}).count()).toBe(1);
+  expect(await b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
+  await b.getByRole('button',{name:'Load earlier messages',exact:true}).click();
+  await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
   expect(await b.evaluate(()=>Date.now())).toBe(clock.now());
   await b.clock.fastForward(999);
   expect(await b.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
   await b.clock.fastForward(1);
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
-  expect(await b.getByText('Retained recent card 100',{exact:true}).count()).toBe(1);
+  expect(await b.getByText('Updated recent card 100',{exact:true}).count()).toBe(1);
   // Ordinary-conversation labels use a separate scoped Live page, with no body text.
   const writer=comms.conversationWriter({agent:'art',conversation:'cv-label-fixture',run:'fixture-label-run',startedAt:clock.now(),valid:()=>true});
   await writer.write([{id:'earliest',tool:'Shell',summary:'Earlier conversation label',state:'done'}]);
