@@ -31,7 +31,7 @@ export function waitChecks(check: (id: string) => Promise<unknown>) {
     stop() { stopped = true; snapshot = { records: [], status: 'loading' }; checked.clear(); },
   };
 }
-/** The HTTP operation keeps the authenticated member; there is no service or owner impersonation. */
+/** The socket operation keeps the authenticated member; there is no service or owner impersonation. */
 export function useWaitChecks(snapshot: Snapshot<Ask>): void {
   const latest = useRef(snapshot); latest.current = snapshot;
   const worker = useRef<ReturnType<typeof waitChecks> | undefined>(undefined);
