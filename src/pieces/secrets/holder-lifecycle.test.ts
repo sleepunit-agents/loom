@@ -146,18 +146,18 @@ it('failed daemon authority startup preserves an occupied socket and releases th
   await expect(authorize(s.daemonFingerprint,'jonathan')).resolves.toBe('jonathan');
 });
 
-it('closes its owned store only after both sockets on failed startup and normal shutdown',async()=>{
+it('opens storage only after binding sockets and closes it after sockets on shutdown',async()=>{
   const s=await setup(),actual=storage.openHolderStore;const closed=vi.fn();
   vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
     const store=await actual(...args);
     return {...store,close(){expect(existsSync(s.config.read.socket)).toBe(false);expect(existsSync(s.config.mutation.socket)).toBe(false);closed();store.close();}};
   });
-  // Missing listener parent fails after the reader and store have started.
+  // Missing listener parent fails before storage opens or key history commits.
   const broken={...s.config,mutation:{...s.config.mutation,socket:join(s.home,'missing','mutation.sock')}};
   writeFileSync(s.file,JSON.stringify(broken),{mode:0o600});
-  await expect(startPersistentHolder(s.file)).rejects.toThrow();expect(closed).toHaveBeenCalledOnce();
+  await expect(startPersistentHolder(s.file)).rejects.toThrow();expect(closed).not.toHaveBeenCalled();expect(storage.openHolderStore).not.toHaveBeenCalled();
   writeFileSync(s.file,JSON.stringify(s.config),{mode:0o600});
-  const holder=await startPersistentHolder(s.file);await holder.close();await holder.close();expect(closed).toHaveBeenCalledTimes(2);
+  const holder=await startPersistentHolder(s.file);await holder.close();await holder.close();expect(closed).toHaveBeenCalledOnce();
 });
 it('closes the authority socket when public listener startup fails after its bind',async()=>{
   const s=await setup(),occupied=createServer();await new Promise<void>(resolve=>occupied.listen(0,'127.0.0.1',resolve));
@@ -322,4 +322,53 @@ it('runs durable bridge inspection and split sends on the persistent holder, hou
     await engine.receive(venue.id,{id:'601',channel:'400',user:'300',dm:false,at:'2026-11-13T18:01:00Z',text:'do not deliver after expiry',mentions:[]});await engine.flush();expect(deliveries).toHaveLength(1);expect(app.db.prepare("SELECT count(*) AS n FROM bridges_inbox WHERE state='pending'").get()).toEqual({n:1});
     for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(sentinel);
   } finally {await engine.close();}
+});
+
+it('loads explicit retained holder identities and receipt keys through the persistent executable config',async()=>{
+ const f=await setup();const app=await startLoom({home:f.appHome,next:true,staging:true,clock:new FakeClock(),secretAuthority:f.authority,stdout:()=>{}});closes.push(app.close);
+ let holder=await startPersistentHolder(f.file);closes.push(async()=>holder.close());
+ const client=localHolderMutations(f.client),source=localSecretSource({...f.client,socket:f.config.read.socket});
+ const add={member:'jonathan',writeId:randomUUID()},remove={member:'jonathan',writeId:randomUUID()};
+ await client.set(add,'API',Buffer.from('CONFIG-ROTATION-SYNTHETIC'),'add');const generation=await source.generation();await holder.close();
+ const identity=join(f.home,'rotated-identity'),fingerprintKey=join(f.home,'rotated-receipt-key');
+ writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(fingerprintKey,randomBytes(32),{mode:0o600});
+ writeFileSync(f.file,JSON.stringify({...f.config,identity,fingerprintKey}),{mode:0o600});
+ await expect(startPersistentHolder(f.file)).rejects.toThrow(/^Persistent secret holder could not start$/);
+ writeFileSync(f.file,JSON.stringify({...f.config,identity,fingerprintKey,previousIdentities:[f.config.identity],previousFingerprintKeys:[f.config.fingerprintKey]}),{mode:0o600});
+ holder=await startPersistentHolder(f.file);expect(await source.generation()).toBe(generation);
+ const old=await source.read('API');expect(Buffer.from(old).toString()).toBe('CONFIG-ROTATION-SYNTHETIC');old.fill(0);
+ await client.set({...add,writeId:randomUUID()},'API',Buffer.from('REPLACED'),'replace');
+ await client.set(add,'API',Buffer.from('CONFIG-ROTATION-SYNTHETIC'),'add');
+ const newer=await source.read('API');expect(Buffer.from(newer).toString()).toBe('REPLACED');newer.fill(0);
+ await client.remove(remove,'API');await client.set({...add,writeId:randomUUID()},'API',Buffer.from('RE-ADDED'),'add');
+ await holder.close();holder=await startPersistentHolder(f.file);await client.remove(remove,'API');
+ expect(await client.hasReceipt(add)).toBe(true);expect(await client.hasReceipt(remove)).toBe(true);
+ const latest=await source.read('API');expect(Buffer.from(latest).toString()).toBe('RE-ADDED');latest.fill(0);
+});
+it('keeps rotation history unchanged on listener failure and refuses real requests before storage is ready',async()=>{
+ const f=await setup(),app=await startLoom({home:f.appHome,next:true,staging:true,clock:new FakeClock(),secretAuthority:f.authority,stdout:()=>{}});closes.push(app.close);
+ let holder=await startPersistentHolder(f.file);const client=localHolderMutations(f.client),source=localSecretSource({...f.client,socket:f.config.read.socket});
+ const id={member:'jonathan',writeId:randomUUID()};await client.set(id,'API',Buffer.from('STARTUP-ROTATION-SYNTHETIC'),'add');await holder.close();
+ const oldDatabase=readFileSync(join(f.config.directory,'holder.db'));
+ const identity=join(f.home,'next-identity'),fingerprintKey=join(f.home,'next-receipt');writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(fingerprintKey,randomBytes(32),{mode:0o600});
+ writeFileSync(f.file,JSON.stringify({...f.config,identity,fingerprintKey,previousIdentities:[f.config.identity],previousFingerprintKeys:[f.config.fingerprintKey]}),{mode:0o600});
+ for(const socket of [f.config.read.socket,f.config.mutation.socket]){
+  writeFileSync(socket,'occupied',{mode:0o600});await expect(startPersistentHolder(f.file)).rejects.toThrow(/^Persistent secret holder could not start$/);rmSync(socket);
+  expect(readFileSync(join(f.config.directory,'holder.db'))).toEqual(oldDatabase);
+ }
+ // A refused rotation never requires the replacement material on old-config restart.
+ writeFileSync(f.file,JSON.stringify(f.config),{mode:0o600});holder=await startPersistentHolder(f.file);await holder.close();
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ const actual=storage.openHolderStore,open=vi.spyOn(storage,'openHolderStore').mockImplementationOnce(async(...args)=>{await gate;return actual(...args);});
+ const starting=startPersistentHolder(f.file);
+ try{
+  await vi.waitFor(()=>expect(open).toHaveBeenCalledOnce());
+  await expect(source.read('API')).rejects.toThrow(/^Local secret holder unavailable$/);
+  await expect(source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  await expect(client.hasReceipt(id)).rejects.toThrow();
+  await expect(client.set({...id,writeId:randomUUID()},'OTHER',Buffer.from('NOT-ADMITTED'),'add')).rejects.toThrow();
+  await expect(client.remove({...id,writeId:randomUUID()},'API')).rejects.toThrow();
+  expect(readFileSync(join(f.config.directory,'holder.db'))).toEqual(oldDatabase);
+ }finally{release();holder=await starting;closes.push(holder.close);}
+ const bytes=await source.read('API');expect(Buffer.from(bytes).toString()).toBe('STARTUP-ROTATION-SYNTHETIC');bytes.fill(0);expect(await client.hasReceipt(id)).toBe(true);
 });

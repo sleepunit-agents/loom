@@ -909,13 +909,21 @@ and Allow/Deny/Allow-every-time actions; decisions create no wake. Private words
 still require the owning member's signed-in window. Standing jobs can be turned
 off in Approvals → Rules. The folder keeps Approvals feed readiness separate
 from ordinary Clock controls and their request state, preserving the existing
-Clock layout rather than unifying these independent feeds. CI screenshots cover this decision reader at all six
+Clock layout rather than unifying these independent feeds. CI screenshots cover the saved-word timing confirmation at all six
 required widths/looks, with real Signin sessions and cross-window answers.
 
-Remaining in this workflow: owner-facing local filing/recovery scheduling controls.
-A member window never manufactures a body Caller. New requestLocal/recoverLocal
-writes remain exclusive to an authentically bound agent body. The Clock decision
-reader does not claim to schedule or dispatch local work.
+The reader now offers explicit In/At (CT) timing after Allow, with a required
+one-time/every-time selection and a second confirmation repeating the saved
+details. Changing the approval snapshot invalidates that confirmation. Pending
+Clock writes lock scheduling, while approval decisions retain their independent
+request state. Results belong to the exact card and operation and say delivery
+is still held; unrelated Saved feedback is not reused here.
+
+New filing remains through the authenticated bound agent body in the private
+conversation, as the reader explains. A member window never manufactures a body
+Caller: Runtime conversations.approvalCaller accepts only its exact authenticated
+agent Viewer and current private binding. A new owner-facing filing interaction
+through that body remains unfinished; this form schedules existing filings only.
 
 ### Owning-window recovery seam
 
@@ -937,5 +945,6 @@ words, expiry, Deny, standing Off, capacity and outstanding-target checks remain
 in the existing owning recovery roles. Window wrapper receipts are omitted from
 export. No migration or Runtime launch is added.
 
-This is a backend seam only. Clock app filing and recovery scheduling controls
-remain unfinished, and actual private Runtime delivery remains held.
+The Clock app uses this seam for recovery scheduling. It sends no saved words,
+Caller or scope. It does not file new work or launch Runtime; owner-facing filing
+through the bound body and actual private Runtime delivery remain unfinished.
