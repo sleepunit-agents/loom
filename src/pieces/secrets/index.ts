@@ -5,8 +5,7 @@ import { schema } from './schema/001.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
 import { readSecretPolicy, requestDecision, secretPolicy } from './policy.js';
-import { secretName as name } from './input.js';
-const agent = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
+import { secretName as name, secretAgent as agent } from './input.js';
 const grantScope = z.object({ house: z.string().regex(/^h-[0-9]{1,9}$/), service: agent.optional() }).strict();
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and

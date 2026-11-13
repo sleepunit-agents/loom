@@ -1,7 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
@@ -15,7 +17,8 @@ afterEach(async () => { for (const close of closes.splice(0)) await close(); for
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'loom-secret-policy-')); homes.push(home);
   const clock = new FakeClock(); const raised: GrantRequest[] = [];
-  const app = await startLoom({ home, clock, sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise: r => { raised.push(r); return { raised: true }; } }) });
+  const viewers: Record<string, Viewer> = { owner, agent, agentOwner: { kind: 'member', id: 'pollock' }, runner: { kind: 'runner', id: 'one' }, service: { kind: 'service', id: 'holder' } };
+  const app = await startLoom({ home, clock, authenticate: req => ({ viewer: viewers[String(req.headers['x-viewer'] ?? 'owner')], valid: () => true }), sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise: r => { raised.push(r); return { raised: true }; } }) });
   closes.push(app.close); let seq = 0;
   const call = (viewer: Viewer, op: string, input: unknown) => app.operations.call('direct', viewer, `secrets.${op}`, input, `p-${++seq}`);
   expect(call(owner, 'describe', { name: 'api-key', description: '' }).ok).toBe(true);
@@ -67,4 +70,49 @@ it('start permission is independent of automatic request permission and only own
   expect(request('h-3')).toMatchObject({ ok: true, value: { state: 'denied' } });
   expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('ask');
   for (const invalid of [{ default: 'yes' }, { secrets: { 'api-key': { minutes: 481 } } }, { secrets: { 'api-key': { value: 'sentinel' } } }]) expect(call(owner, 'policy', invalid)).toMatchObject({ ok: false, code: 'invalid' });
+});
+it('delivers policy only to household owners and sends committed edits through Live', async () => {
+  const { app, call } = await setup();
+  const sockets: WebSocket[] = [];
+  interface Message { kind: string; records?: unknown[]; record?: unknown }
+  const next = (ws: WebSocket, kind: string) => new Promise<Message>(resolve => {
+    const listener = (raw: Buffer) => { const m = JSON.parse(raw.toString()); if (m.kind === kind) { ws.off('message', listener); resolve(m); } }; ws.on('message', listener);
+  });
+  try {
+    for (const viewer of ['owner', 'agent', 'agentOwner', 'runner', 'service']) {
+      const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live', { headers: { 'x-viewer': viewer } }); sockets.push(ws); await once(ws, 'open');
+      const initial = next(ws, 'set'); ws.send(JSON.stringify({ kind: 'subscribe', type: 'secret.policy' }));
+      expect((await initial).records).toEqual(viewer === 'owner' ? [{ id: 'policy', default: 'ask', secrets: {} }] : []);
+    }
+    const unauthorized: Message[] = []; sockets.slice(1).forEach(ws => ws.on('message', raw => unauthorized.push(JSON.parse(raw.toString()))));
+    const edited = next(sockets[0], 'put');
+    expect(call(owner, 'policy', { default: 'never' }).ok).toBe(true);
+    expect((await edited).record).toEqual({ id: 'policy', default: 'never', secrets: {} });
+    // A same-socket result is a delivery barrier for all earlier broadcasts.
+    for (const ws of sockets.slice(1)) {
+      const barrier = next(ws, 'result'); ws.send(JSON.stringify({ kind: 'call', request: 'barrier', name: 'secrets.may', input: { agent: 'art', kind: 'piece', target: 'tasks' } })); await barrier;
+    }
+    expect(unauthorized.filter(m => m.kind === 'put')).toEqual([]);
+  } finally { sockets.forEach(ws => ws.terminate()); }
+});
+it('retries neither restore an old policy nor extend an automatic grant, and a failed grant insert rolls everything back', async () => {
+  const { app, call, request, clock } = await setup();
+  const auto = { default: 'auto' };
+  const first = app.operations.call('direct', owner, 'secrets.policy', auto, 'old-policy'); expect(first.ok).toBe(true);
+  expect(call(owner, 'policy', { default: 'never' }).ok).toBe(true);
+  expect(app.operations.call('direct', owner, 'secrets.policy', auto, 'old-policy')).toEqual(first);
+  expect(request('h-1')).toMatchObject({ ok: true, value: { state: 'denied' } });
+  expect(call(owner, 'policy', auto).ok).toBe(true);
+  const input = { agent: 'art', scope: { house: 'h-2' }, target: 'api-key', why: 'use', minutes: 1 };
+  const allowed = app.operations.call('direct', agent, 'secrets.requestHouse', input, 'auto-once'); expect(allowed.ok).toBe(true);
+  const before = app.db.prepare('SELECT * FROM secrets_grants').all(); clock.advance(1000);
+  expect(app.operations.call('direct', agent, 'secrets.requestHouse', input, 'auto-once')).toEqual(allowed);
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual(before);
+  const changed = vi.spyOn(app.live, 'changed');
+  app.db.exec("CREATE TRIGGER reject_auto_grant BEFORE INSERT ON secrets_grants BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+  const counts = () => ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT count(*) AS n FROM ${t}`).get());
+  const baseline = counts();
+  expect(request('h-3')).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(counts()).toEqual(baseline); expect(changed).not.toHaveBeenCalled();
+  changed.mockRestore();
 });

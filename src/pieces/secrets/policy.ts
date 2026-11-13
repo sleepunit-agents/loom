@@ -1,9 +1,9 @@
 /** Metadata only. Request policy and at-start permission are deliberately separate. */
 import { z } from 'zod';
 import type { Db } from '../../core/index.js';
-import { secretName } from './input.js';
+import { secretName, secretAgent } from './input.js';
 
-const agents = z.array(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100)).max(1000);
+const agents = z.array(secretAgent).max(1000);
 export const secretPolicy = z.object({
   default: z.enum(['ask', 'auto', 'never']).default('ask'),
   secrets: z.record(secretName, z.object({
