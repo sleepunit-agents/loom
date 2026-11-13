@@ -205,7 +205,7 @@ it('erases original incoming chunks as well as concatenated input on success and
 });
 
 it('queries durable commit evidence without replaying a mutation, using actual resolved membership',async()=>{
-  const {home,client,server,authority,who}=setup();
+  const {home,client,server,authority,who}=await receiptSetup();
   const identity=join(home,'identity'),key=join(home,'receipt-key');writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(key,randomBytes(32),{mode:0o600});
   let store=await openHolderStore(home,identity,key),holder=await listenHolderMutations(server,store,authority);
   closes.push(async()=>{await holder.close();store.close();});const api=localHolderMutations(client);
@@ -223,7 +223,7 @@ it('queries durable commit evidence without replaying a mutation, using actual r
   expect(authority.mock.calls.every(c=>c[1]==='asserted-owner')).toBe(true);
 });
 it('denies receipt evidence to wrong peers, false members and changed authority before and after lookup',async()=>{
-  const {home,client,server,authority,who}=setup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const {home,client,server,authority,who}=await receiptSetup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
   const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
   const api=localHolderMutations(client);
   await expect(localHolderMutations({...client,cert:join(home,'stranger.pem'),key:join(home,'stranger.key')}).hasReceipt(who)).rejects.toThrow();
@@ -238,7 +238,7 @@ it('denies receipt evidence to wrong peers, false members and changed authority 
   expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
 });
 it('rejects malformed receipt requests before lookup and normalizes provider failure',async()=>{
-  const {client,server,authority,who,raw}=setup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const {client,server,authority,who,raw}=await receiptSetup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
   const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
   for(const [path,body,headers] of [
     ['/v1/receipt',Buffer.from('UNEXPECTED'),{}],['/v1/receipt?name=github',Buffer.alloc(0),{}],
@@ -262,19 +262,17 @@ it.each([
   {label:'unexpected empty200',status:200,headers:{'content-length':'0'},body:''},
   {label:'missing length204',status:204,headers:{},body:''},
 ])('requires exact empty receipt framing: $label',async({status,headers,body})=>{
-  const {home,client,server,who}=setup();
+  const {client,server,who}=await receiptSetup();
   const peer=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
     req.resume();req.on('end',()=>{res.writeHead(status,headers);res.end(body);});
   });
-  const appHome=join(home,'app');fixture(appHome);
-  const app=await startLoom({home:appHome,clock:new FakeClock(),listen:async()=>{
-    await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
-    return {url:'https://holder.test',async close(){peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));}};
-  }});closes.push(app.close);
+  // The outside holder peer is faked in-process beside the next fixture daemon.
+  await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
+  closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
   await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
 });
 it('bounds receipt authority before disclosure and never returns late evidence',async()=>{
-  const {client,server,authority,who}=setup();let finish!:(member:string)=>void;
+  const {client,server,authority,who}=await receiptSetup();let finish!:(member:string)=>void;
   authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('actual-owner').mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
   const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
   const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
@@ -285,3 +283,11 @@ it('bounds receipt authority before disclosure and never returns late evidence',
     expect(hasReceipt).toHaveBeenCalledOnce();expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
   }finally{vi.useRealTimers();}
 });
+
+/** Private holder peers are outside-process roles, faked in the test process.
+ * All new receipt server cases run beside the real next-mode fixture daemon. */
+async function receiptSetup(){
+  const s=setup(),appHome=join(s.home,'app');fixture(appHome);
+  const app=await startLoom({home:appHome,next:true,staging:true,clock:new FakeClock(),stdout:()=>{}});
+  closes.push(app.close);return s;
+}
