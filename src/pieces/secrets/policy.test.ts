@@ -18,7 +18,7 @@ async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'loom-secret-policy-')); homes.push(home);
   const clock = new FakeClock(); const raised: GrantRequest[] = [];
   const viewers: Record<string, Viewer> = { owner, agent, agentOwner: { kind: 'member', id: 'pollock' }, runner: { kind: 'runner', id: 'one' }, service: { kind: 'service', id: 'holder' } };
-  const sharing = () => ({ ...fixtureSharing(), services: { holder: { types: ['secret.policy'], operations: ['secrets.policy'] } } });
+  const sharing = () => ({ ...fixtureSharing(), services: { holder: { types: ['secret.policy', 'secret.grant'], operations: ['secrets.policy', 'secrets.startup'] } } });
   const app = await startLoom({ home, clock, authenticate: req => ({ viewer: viewers[String(req.headers['x-viewer'] ?? 'owner')], valid: () => true }), sharing, install: a => installSecrets(a.db, a.operations, a.live, sharing, { raise: r => { raised.push(r); return { raised: true }; } }) });
   closes.push(app.close); let seq = 0;
   const call = (viewer: Viewer, op: string, input: unknown) => app.operations.call('direct', viewer, `secrets.${op}`, input, `p-${++seq}`);
@@ -120,4 +120,48 @@ it('retries neither restore an old policy nor extend an automatic grant, and a f
   expect(request('h-3')).toMatchObject({ ok: false, code: 'unavailable' });
   expect(counts()).toEqual(baseline); expect(changed).not.toHaveBeenCalled();
   changed.mockRestore();
+});
+
+it('edits startup membership atomically without changing request policy, grants or unrelated agents', async () => {
+  const { app, call, request } = await setup();
+  const initial = { default: 'never', secrets: { 'api-key': { grant: 'auto', agents: ['art'], houses: ['pond-bot'], minutes: 30 }, OTHER: { houses: ['mark'] } } };
+  expect(call(owner, 'policy', initial).ok).toBe(true);
+  const input = { name: 'api-key', agent: 'art', on: true };
+  const first = app.operations.call('direct', owner, 'secrets.startup', input, 'startup-retry');
+  expect(first).toMatchObject({ ok: true, value: { ...initial, secrets: { ...initial.secrets, 'api-key': { ...initial.secrets['api-key'], houses: ['art', 'pond-bot'] } } } });
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('allowed');
+  expect(request('h-1')).toMatchObject({ ok: true, value: { state: 'allowed', minutes: 30 } });
+  const grants = app.db.prepare('SELECT * FROM secrets_grants').all();
+  expect(call(owner, 'startup', { ...input, on: false }).ok).toBe(true);
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('ask');
+  expect(secretStartPermission(app.db, 'pond-bot', 'api-key')).toBe('allowed');
+  expect(app.operations.call('direct', owner, 'secrets.startup', input, 'startup-retry')).toEqual(first);
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('ask');
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual(grants);
+});
+it('rejects non-owner startup edits, unknown names/agents and Never enables, but permits stale membership cleanup', async () => {
+  const { app, call } = await setup();
+  const input = { name: 'api-key', agent: 'art', on: true };
+  for (const viewer of [agent, { kind: 'member', id: 'pollock' }, { kind: 'service', id: 'holder' }, { kind: 'runner', id: 'one' }] as Viewer[])
+    expect(call(viewer, 'startup', input)).toMatchObject({ ok: false, code: 'denied' });
+  expect(call(owner, 'startup', { ...input, name: 'missing' })).toMatchObject({ ok: false, code: 'not-found' });
+  expect(call(owner, 'startup', { ...input, agent: 'missing' })).toMatchObject({ ok: false, code: 'not-found' });
+  expect(call(owner, 'policy', { secrets: { 'api-key': { grant: 'never', houses: ['retired'] } } }).ok).toBe(true);
+  expect(call(owner, 'startup', input)).toMatchObject({ ok: false, code: 'conflict' });
+  expect(call(owner, 'startup', { ...input, agent: 'retired', on: false })).toMatchObject({ ok: true, value: { secrets: { 'api-key': { grant: 'never', houses: [] } } } });
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('denied');
+});
+it('rolls startup edits and retry receipts back without Live when policy persistence fails', async () => {
+  const { app, call } = await setup();
+  expect(call(owner, 'policy', { default: 'ask' }).ok).toBe(true);
+  const changed = vi.spyOn(app.live, 'changed');
+  const baseline = app.db.prepare('SELECT * FROM core_operations').all();
+  app.db.exec("CREATE TRIGGER reject_startup BEFORE UPDATE ON secrets_meta BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+  const input = { name: 'api-key', agent: 'art', on: true };
+  expect(app.operations.call('direct', owner, 'secrets.startup', input, 'failed-startup')).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(baseline);
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('ask');expect(changed).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER reject_startup');
+  expect(app.operations.call('direct', owner, 'secrets.startup', input, 'failed-startup').ok).toBe(true);
+  expect(secretStartPermission(app.db, 'art', 'api-key')).toBe('allowed');
 });
