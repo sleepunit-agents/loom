@@ -6,7 +6,7 @@ export interface VenueRecord extends LiveRecord {
 }
 export interface RouteRecord extends LiveRecord {
   id: string; platform: 'discord' | 'slack'; workspace: string; channel: string;
-  parent?: string; primary?: string; peer: boolean; guest: boolean; readers: string[];
+  parent?: string; primary?: string; pair?: string; peer: boolean; guest: boolean; readers: string[]; notes: string[];
 }
 export interface SendRecord extends LiveRecord {
   id: string; venue: string; incoming: string; state: string; remoteId?: string; created: number;
@@ -20,4 +20,11 @@ export function sendStatus(send: SendRecord, effect?: EffectRecord): string {
   if (effect?.state === 'due') return 'Held in staging';
   if (effect?.state === 'released' || effect?.state === 'started') return 'Attempt in progress';
   return send.state === 'held' ? 'Held · review required' : send.state;
+}
+
+export type RouteInput = Pick<RouteRecord, 'id' | 'platform' | 'workspace' | 'channel' | 'parent' | 'primary' | 'pair' | 'peer' | 'guest' | 'readers' | 'notes'>;
+export function routeInput(route: RouteRecord): RouteInput {
+  return { id: route.id, platform: route.platform, workspace: route.workspace, channel: route.channel,
+    parent: route.parent, primary: route.primary, pair: route.pair, peer: route.peer, guest: route.guest,
+    readers: route.readers, notes: route.notes };
 }
