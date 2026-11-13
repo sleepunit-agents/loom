@@ -71,7 +71,7 @@ function GrantRow({grant,enabled,now,policy}:{grant:Grant;enabled:boolean;now:nu
 }
 function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now}:{name:SecretName;policy:Policy;agents:string[];grants:readonly Grant[];uses:readonly Use[];changes:readonly Change[];enabled:boolean;values:boolean;now:number}) {
   const write=useWrite(),[removing,setRemoving]=useState(false);
-  const rule=policy.secrets[name.id];
+  const rule=policy.secrets[name.id],usage=uses.filter(u=>u.name===name.id);
   return <article className="grid gap-5 p-5"><header><h1 className="text-2xl font-semibold">{name.id}</h1><p>{name.description}</p></header>
     <form aria-label="Describe secret" className="grid gap-3" onSubmit={e=>{e.preventDefault();if(enabled&&!write.blocked)write.send('secrets.describe',{name:name.id,description:String(new FormData(e.currentTarget).get('description'))});}}><label>Description<Textarea key={name.description} name="description" defaultValue={name.description} maxLength={2000} disabled={!enabled||write.blocked}/></label><Button disabled={!enabled||write.blocked}>Save description</Button></form>
     <section><h2>Who may use it</h2>{grants.filter(g=>g.kind==='secret'&&g.target===name.id).map(g=><p key={g.id}>{g.agent} · {grantLabel(g,policy,now)} · {g.scope?.house??'All houses'} · {date(g.expiresAt)}</p>)}
@@ -79,7 +79,7 @@ function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now
       <p>At startup: {rule?.grant==='never'?'Blocked by Never policy':rule?.houses?.join(', ')||'No agents'}</p>
       <div className="grid gap-2">{agents.map(agent=><label className="flex gap-2" key={agent}><input type="checkbox" checked={rule?.grant==='auto'&&!!rule.agents?.includes(agent)} disabled={!enabled||write.blocked||rule?.grant==='never'} onChange={e=>write.send('secrets.always',{name:name.id,agent,on:e.target.checked})}/>Always allow {agent} when asked</label>)}</div>
     </section>
-    <section><h2>Recorded use</h2>{uses.filter(u=>u.name===name.id).length?uses.filter(u=>u.name===name.id).slice().sort((a,b)=>b.at-a.at).slice(0,30).map(u=><p key={u.id}>{date(u.at)} · {u.by.id} · {u.state==='released'?'Delivered':u.state==='failed'?'Failed':'Delivery unconfirmed'}</p>):<p>No recorded use.</p>}</section>
+    <section><h2>Recorded use</h2>{usage.length?usage.slice().sort((a,b)=>b.at-a.at).slice(0,30).map(u=><p key={u.id}>{date(u.at)} · {u.by.id} · {u.state==='released'?'Delivered':u.state==='failed'?'Failed':'Delivery unconfirmed'}</p>):<p>No recorded use.</p>}</section>
     <section><h2>Changes</h2>{changes.filter(c=>c.name===name.id).slice().sort((a,b)=>b.at-a.at).map(c=><p key={c.id}>{date(c.at)} · {c.action} · {c.by}</p>)}</section>
     <ValueForm key={name.id} name={name.id} enabled={enabled&&values} replace/>
     <section><h2>Remove secret</h2>{removing?<div><p>Remove {name.id} and revoke its future access?</p><Button disabled={!enabled||!values||write.blocked} onClick={()=>write.send('secrets.remove',{name:name.id,writeId:crypto.randomUUID()})}>Confirm removal</Button><Button onClick={()=>setRemoving(false)}>Cancel removal</Button></div>:<Button disabled={!enabled||!values||write.blocked} onClick={()=>setRemoving(true)}>Remove {name.id}</Button>}</section>{write.feedback}
@@ -91,6 +91,7 @@ export default function SettingsApp({path:shellPath,go}:{path?:string;go?:(path:
   const parts=path.slice(base.length).split('/');let id:string|undefined;try{id=parts[2]?decodeURIComponent(parts[2]):undefined;}catch{/* malformed link */}
   const [folder,setFolder]=useState(parts[1]||'secrets'),[query,setQuery]=useState(''),[confirmation,setConfirmation]=useState<Confirmation>();
   const view=parts[1]||folder;
+  useEffect(()=>{setConfirmation(current=>view==='requests'&&current?.record.id===id?current:undefined);},[view,id]);
   const navigate=(folder:string,id?:string)=>{setFolder(folder);const next=`${base}/${folder}${id?`/${encodeURIComponent(id)}`:''}`;if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
   useEffect(()=>{if(go||typeof window==='undefined')return;const pop=()=>setLocal(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
   const access=useRecords<SettingsAccess>('secret.settings'),names=useRecords<SecretName>('secret.name'),grants=useRecords<Grant>('secret.grant'),requests=useRecords<Request>('secret.request'),policies=useRecords<Policy>('secret.policy'),uses=useRecords<Use>('secret.use'),changes=useRecords<Change>('secret.change');

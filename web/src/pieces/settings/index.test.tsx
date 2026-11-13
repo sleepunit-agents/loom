@@ -3,6 +3,8 @@ import { createElement as h,useSyncExternalStore } from 'react';
 // @ts-expect-error Renderer is an existing dependency without declarations.
 import { act,create } from 'react-test-renderer';
 import type { Call,CallState,Result,Snapshot } from '../../data';
+// Renderer trees and mock DOM props include arbitrary callbacks/attributes; any
+// below is confined to that dynamic renderer boundary (no declaration package).
 const f=vi.hoisted(()=>({feeds:{} as Record<string,Snapshot>,listeners:new Set<()=>void>(),call:vi.fn()}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.feeds[type]),call:f.call}));
 vi.mock('../../kit',()=>({
@@ -24,14 +26,14 @@ async function draw(element:any){await act(async()=>{tree=create(element);});}
 function text(){return JSON.stringify(tree.toJSON());}
 function button(label:string){return tree.root.findAllByType('button').find((b:any)=>b.children.join('')===label);}
 afterEach(async()=>{await act(async()=>{tree?.unmount();settingsWrites.dispose();});f.call.mockReset();vi.unstubAllGlobals();});
-it('clears the uncontrolled credential input before dispatch and retains the original uncertain call across remounts',async()=>{
+it.each([false,true])('clears credential input before dispatch and retains its uncertain call across remounts (replace=%s)',async replace=>{
  const write=pending();let cleared=false;
  vi.stubGlobal('window',{addEventListener(){},removeEventListener(){}});
  vi.stubGlobal('FormData',class{get(key:string){return key==='value'?'SECRET-SENTINEL':'API';}});
  f.call.mockImplementation(()=>{expect(cleared).toBe(true);return write.request;});
- await draw(h(ValueForm,{enabled:true}));
+ await draw(h(ValueForm,{enabled:true,replace,name:replace?'API':undefined}));
  await act(async()=>tree.root.findByType('form').props.onSubmit({preventDefault(){},currentTarget:{reset(){cleared=true;}}}));
- expect(f.call).toHaveBeenCalledWith('secrets.set',expect.objectContaining({name:'API',value:'SECRET-SENTINEL',mode:'add'}));
+ expect(f.call).toHaveBeenCalledWith('secrets.set',expect.objectContaining({name:'API',value:'SECRET-SENTINEL',mode:replace?'replace':'add'}));
  expect(text()).not.toContain('SECRET-SENTINEL');
  await write.finish({ok:false,code:'unavailable',message:'Uncertain'});
  await act(async()=>tree.unmount());await draw(h(ValueForm,{enabled:true,name:'OTHER',replace:true}));
@@ -81,4 +83,31 @@ it('removal requires confirmation and shares the same lock as value entry',async
  await write.finish({ok:false,code:'unavailable',message:'Uncertain'});
  await act(async()=>tree.update(h(SettingsApp,{path:'/p/settings-preview/add'})));
  expect(tree.root.findByType('fieldset').props.disabled).toBe(true);expect(f.call).toHaveBeenCalledTimes(1);
+});
+
+it.each([['Allow once',true,undefined],['Always allow',true,true],['Deny',false,undefined]] as const)('dispatches %s only after the fresh pending check',async(label,allow,always)=>{
+ const r={id:'q-1',agent:'art',kind:'secret' as const,target:'API',state:'pending',why:'Work'};
+ const open=pending<{requests:typeof r[]}>(),fresh=pending<{requests:typeof r[]}>(),write=pending();
+ await open.finish({ok:true,value:{requests:[r]}});f.call.mockReturnValueOnce(fresh.request).mockReturnValueOnce(write.request);
+ await draw(h(RequestActions,{request:r,enabled:true,confirmation:{record:r,request:open.request},onCheck(){}}));
+ await act(async()=>button(label).props.onClick());await fresh.finish({ok:true,value:{requests:[r]}});
+ expect(f.call).toHaveBeenLastCalledWith('secrets.answer',{id:'q-1',allow,...(always?{always}:{})});
+});
+it('does not reuse a completed confirmation after leaving a request and navigating Back',async()=>{
+ feeds();const r={id:'q-1',agent:'art',kind:'secret' as const,target:'API',state:'pending',why:'Work'};
+ f.feeds['secret.request'].records=[r];const open=pending<{requests:typeof r[]}>();f.call.mockReturnValue(open.request);
+ const go=vi.fn();await draw(h(SettingsApp,{path:'/p/settings-preview/requests',go}));
+ await act(async()=>button('art: APIWorkpending').props.onClick());
+ await act(async()=>tree.update(h(SettingsApp,{path:'/p/settings-preview/requests/q-1',go})));
+ await open.finish({ok:true,value:{requests:[r]}});expect(button('Allow once')).toBeDefined();
+ await act(async()=>tree.update(h(SettingsApp,{path:'/p/settings-preview/secrets',go})));
+ await act(async()=>tree.update(h(SettingsApp,{path:'/p/settings-preview/requests/q-1',go})));
+ expect(button('Allow once')).toBeUndefined();expect(button('Check request')).toBeDefined();expect(f.call).toHaveBeenCalledTimes(1);
+});
+it('shows startup membership, delivery uncertainty and change history without treating unknown delivery as success',async()=>{
+ feeds();f.feeds['secret.policy'].records=[{id:'policy',default:'ask',secrets:{API:{houses:['art']}}}];
+ f.feeds['secret.use'].records=[{id:'u1',name:'API',at:1,state:'released',by:{kind:'agent',id:'art'}},{id:'u2',name:'API',at:2,state:'started',by:{kind:'agent',id:'mark'}}];
+ f.feeds['secret.change'].records=[{id:'c',name:'API',at:1,action:'replace',by:'jonathan'}];
+ await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
+ expect(text()).toContain('At startup: ');expect(text()).toContain('art');expect(text()).toContain('Delivered');expect(text()).toContain('Delivery unconfirmed');expect(text()).toContain('replace');expect(text()).toContain('jonathan');
 });

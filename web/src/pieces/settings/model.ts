@@ -18,6 +18,6 @@ export const activeGrant=(g:Grant,now:number)=>!g.movedTo&&(g.expiresAt===undefi
 export const missingNames=(policy:Policy,names:readonly SecretName[])=>Object.keys(policy.secrets).filter(name=>!names.some(n=>n.id===name));
 export function grantLabel(grant:Grant,policy:Policy,now:number):string {
   const rule=Object.hasOwn(policy.secrets,grant.target)?policy.secrets[grant.target]:undefined;
-  if((rule?.grant??policy.default)==='never')return 'Blocked by Never policy';
+  if(grant.kind==='secret'&&(rule?.grant??policy.default)==='never')return 'Blocked by Never policy';
   return activeGrant(grant,now)?'Granted':grant.movedTo?'Moved to another house':'Expired';
 }

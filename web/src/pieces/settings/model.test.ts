@@ -24,3 +24,8 @@ it('includes every missing policy name and lets Never override recorded grants',
  expect(grantLabel(g,policy,now)).toBe('Blocked by Never policy');
  expect(grantLabel({...g,target:'OTHER'},{id:'p',default:'never',secrets:{}},now)).toBe('Blocked by Never policy');
 });
+
+it.each(['piece','runner','tailnet'] as const)('never applies secret policy to a %s grant',async kind=>{
+ const {grantLabel}=await import('./model');
+ expect(grantLabel({id:'g',agent:'art',kind,target:'API',by:'jonathan'},{id:'policy',default:'never',secrets:{API:{grant:'never'}}},now)).toBe('Granted');
+});
