@@ -190,7 +190,11 @@ function readJson(path: string): unknown {
 export function loadHousehold(home: string): Household | null {
   const path = join(home, HOUSEHOLD_FILE);
   if (!existsSync(path)) return null;
-  const raw = readJson(path) as Record<string, unknown>;
+  return parseHouseholdDocument(home, readJson(path) as Record<string, unknown>, path);
+}
+
+/** Validate a household document from either persistence backend, with legacy defaults. */
+export function parseHouseholdDocument(home: string, raw: Record<string, unknown>, path = join(home, HOUSEHOLD_FILE)): Household {
   if (raw?.v !== 1) throw new HouseholdError(`${path}: v must be 1`);
   const agents = raw.agents;
   if (!Array.isArray(agents) || agents.length === 0 || !agents.every((a) => typeof a === 'string' && AGENT_NAME.test(a))) {
