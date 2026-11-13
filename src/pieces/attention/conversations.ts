@@ -1,7 +1,8 @@
+import { operation } from './commands.js';
 /** Desk metadata only. Delivered words are rejected before retry storage or SQL. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
+import { failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
 const agentId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 const slug = z.string().max(80).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const printable = (max: number) => z.string().min(1).max(max).regex(/^[^\x00-\x1f\x7f]+$/);

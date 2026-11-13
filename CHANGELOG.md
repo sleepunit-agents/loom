@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
 - Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
