@@ -107,4 +107,8 @@ describe('worker-owned Claude session',()=>{
     expect(error.message).toBe('Claude launch failed');expect(error.stack).not.toContain('PRIVATE');
   });
 
+  it.each(['--resume','--permission-mode',' -p','   '])('refuses deny values parsed as harness options (%j)',async deny=>{
+    const f=fixture();await expect(f.session.turn({...f.turn,rules:{...rules,deny:[deny]}})).rejects.toThrow('deny');expect(f.calls).toHaveLength(0);
+  });
+
 });

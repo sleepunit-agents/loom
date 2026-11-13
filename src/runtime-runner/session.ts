@@ -57,6 +57,8 @@ export class ClaudeWorkerSession {
       };
       check();
       const prepared=prepareRunnerBrief(raw.rules,raw.checkout);
+      if(prepared.deny.some(tool=>!tool.trim()||tool.trim().startsWith('-')))
+        throw new WorkerSessionError('Tool deny cannot be a harness option');
       if(typeof raw.message!=='string'||!raw.message.trim()||raw.message.includes('\0')||Buffer.byteLength(raw.message)>MAX_OUTPUT)
         throw new WorkerSessionError('Invalid worker message');
       const message=raw.message,checkout=raw.checkout;
