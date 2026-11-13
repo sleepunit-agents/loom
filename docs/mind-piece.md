@@ -142,3 +142,44 @@ still must select existing stores, supply source viewers and canonical resolvers
 hold the daemon home lock, and handle stale endpoints before starting the group.
 An occupied endpoint is always refused; this helper never removes one. Knowledge
 actions/receipts and the complete source binding remain required before enablement.
+
+## Knowledge page actions and durable retries
+
+`installMindKnowledgeActions(operations, {path, sharing, verify})` adds the two
+page actions beside the read installer. Composition injects the synchronous
+`verifyKnowledgePages` primitive; the piece does not import the old backend or
+initialize its content schema. The connection requires an existing file and
+never creates a missing Knowledge store. Both actions use central `mayAct` for
+the household Knowledge surface and require an operation id.
+
+| Old page action | New operation | Preserved effect |
+| --- | --- | --- |
+| `knowledge-verify` / Still true | `mind.knowledgeVerify({slug})` | Confirmed audit, successful stamp, original confirmation note |
+| `knowledge-recheck` / Check again | `mind.knowledgeRecheck({slug})` | Stale audit and original recheck note; successful stamp stays unchanged |
+
+Attribution is the authenticated viewer id, and timestamps use the operation
+clock. Missing pages return not-found; archived pages require restoration. The
+installer remains additive and is not yet registered in next mode.
+
+A write's `Context.receipt` carries the registry's canonical viewer, operation
+id/name, parsed-input hash and thirty-day expiry. The source transaction creates
+`mind_operation_receipts` if absent, then commits verification and the receipt
+together. This is retry metadata, not a content table or a pending intent: only
+identity, hash, expiry and the small verification result are retained. Failed
+verification rolls the new table back too. No page body or note is copied into
+loom.db or the receipt table. Existing content table definitions and old callers are unchanged.
+
+The content transaction and the core receipt are **not** one atomic transaction.
+If content commits but the core receipt fails, the caller gets unavailable;
+that must never be interpreted as an unchanged content store. Retrying the same
+id, including after restart, finds the source receipt, returns the original
+result and republishes the changed slug without another audit, note or stamp.
+Different input or either action with that id conflicts. Source receipts expire
+at thirty days and are pruned on the next action, matching the core retry window;
+a new request after that window may act again. Source receipt failures roll back
+the content effect. Live publication occurs after the core transaction succeeds,
+so recovery also repairs publication missed by a failed core receipt.
+
+This does not close the remaining daemon source/socket lifecycle work, enable
+next mode, or finish any of the four apps. The composition root must install and
+close both connections and bind outside-write notifications before rollout.

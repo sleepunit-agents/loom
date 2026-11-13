@@ -11,7 +11,11 @@ export type Result = { ok: true; value: unknown } | Failure;
 export const failure = (code: Code, message: string): Failure => ({ ok: false, code, message });
 export class OperationError extends Error { constructor(readonly code: Code, message: string) { super(message); } }
 export interface Change { type: string; id: string }
-export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number }
+/** Stable identity for a write which also commits to a source outside loom.db.
+ * Sources store this receipt atomically with their effects; it is not an intent.
+ */
+export interface WriteReceipt { viewer: string; id: string; name: string; inputHash: string; expires: number }
+export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt> }
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 export interface Operation<I = unknown> {
   name: string; cli?: CliCommand; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
@@ -77,7 +81,7 @@ export class Operations {
           if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
         }
         if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const value = op.run({ db: this.db, viewer, now, changed: (type, id) => { changes.push({ type, id }); } }, parsed.data);
+        const value = op.run({ db: this.db, viewer, now, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } }, parsed.data);
         if (value instanceof Promise) throw new Error('Operations must be synchronous');
         if (value && typeof value === 'object' && 'ok' in value && value.ok === false) {
           const e = value as Failure; throw new OperationError(e.code, e.message);
