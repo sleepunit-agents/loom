@@ -125,9 +125,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (!s.enabled || wakes(db).some(w => w.schedule === s.id && active(w) && w.due > after)) return;
     make({ ...ctx, viewer: s.by }, s, calendar(() => nextOccurrence(s, after)), { schedule: s.id });
   }
+  // Before runNow was recorded, immediate lane runs carried only bypassPause.
+  const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
   function oneOffRoom(ctx: Context, agent: string, api = capacity(ctx.viewer)) {
-    // Before runNow was recorded, immediate lane runs carried only bypassPause.
-    const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     const pending = wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w));
     if (pending.length >= 50) invalid('At most 50 pending one-off wakes');
     if (!api) return;
@@ -301,6 +301,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       prompt: `Woken now: ${ctx.viewer.id} asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.` }, ctx.now, { bypassPause: true });
     const w = get(i.id); if (w.state === 'firing' || w.state === 'fired' || w.state === 'cancelled') invalid('Wake already dispatched or cancelled');
     if (w.hold === 'uncertain') invalid('Uncertain dispatch needs reconciliation before another body can start');
+    if (!active(w) && oneOff(w)) oneOffRoom(ctx, w.agent, w.apiCapacity);
     existingLocalTargetRoom(w);
     w.state = 'pending'; w.due = ctx.now; w.bypassPause = true; w.runNow ??= false; delete w.hold; saveWake(ctx, w); return w;
   });

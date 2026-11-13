@@ -67,3 +67,23 @@ it('does not charge ordinary recurring occurrences against one-off conversation 
  for(let n=0;n<20;n++)expect(app.operations.call('direct',agent,'clock.scheduleSet',{id:`s-${n}`,agent:'art',at:'12:31',prompt:'Repeat',note:''},randomUUID()).ok).toBe(true);
  fill(set);expect(set().ok).toBe(false);expect(wakes(app.db)).toHaveLength(40);
 });
+
+it.each([20,40,50])('rechecks retained capacity when owner fire-now reactivates failed one-off work at limit %s',async limit=>{
+ const {app,set,cv}=await setup();cv('original');
+ const viewer=limit===50?owner:agent;
+ const failed=(set(viewer) as {value:{id:string}}).value;
+ const original=wakes(app.db).find(w=>w.id===failed.id)!;
+ app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.state','failed') WHERE id=?").run(failed.id);
+ fill(set,limit===50?50:20,viewer);
+ if(limit===40){cv('second');fill(set);}
+ const before={rows:wakes(app.db),events:app.db.prepare('SELECT * FROM clock_events').all()};
+ expect(app.operations.call('direct',owner,'clock.now',{id:failed.id},randomUUID())).toMatchObject({ok:false,code:'invalid',message:expect.stringContaining(String(limit))});
+ expect({rows:wakes(app.db),events:app.db.prepare('SELECT * FROM clock_events').all()}).toEqual(before);
+ const cancel=before.rows.find(w=>w.state==='pending' && (limit!==40 || w.apiCapacity?.bucket===original.apiCapacity?.bucket))!;
+ expect(app.operations.call('direct',owner,'clock.cancel',{id:cancel.id},randomUUID()).ok).toBe(true);
+ expect(app.operations.call('direct',owner,'clock.now',{id:failed.id},randomUUID()).ok).toBe(true);
+ expect(wakes(app.db).find(w=>w.id===failed.id)?.state).toBe('pending');
+ expect(wakes(app.db).find(w=>w.id===failed.id)?.apiCapacity).toEqual(original.apiCapacity);
+ // Accelerating already-active work adds no capacity and must not count it twice.
+ expect(app.operations.call('direct',owner,'clock.now',{id:failed.id},randomUUID()).ok).toBe(true);
+});
