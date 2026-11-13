@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
+
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.

@@ -98,3 +98,22 @@ test('CLI validates arguments and never forwards key material in success or fail
   expect(output.join('')).not.toContain('private-key-material');
   expect(output.join('')).toContain('"status":"ok"');
 });
+
+ test('read-only backup permits coordination files but preserves source records and JSON/key bytes', async () => {
+  const { home, to } = fixture();
+  const path = join(home, 'closed.db');
+  const writer = new Database(path);
+  writer.pragma('journal_mode = WAL');
+  writer.exec("CREATE TABLE records (id TEXT PRIMARY KEY); INSERT INTO records VALUES ('kept')");
+  writer.close();
+  const sourceBytes = readFileSync(path);
+  const jsonBytes = readFileSync(join(home, 'household.json'));
+  const keyBytes = readFileSync(join(home, 'comms.key'));
+  await createSnapshot(home, to);
+  expect(readFileSync(path)).toEqual(sourceBytes);
+  expect(readFileSync(join(home, 'household.json'))).toEqual(jsonBytes);
+  expect(readFileSync(join(home, 'comms.key'))).toEqual(keyBytes);
+  const source = new Database(path, { readonly: true });
+  try { expect(source.prepare('SELECT * FROM records').all()).toEqual([{ id: 'kept' }]); }
+  finally { source.close(); }
+});
