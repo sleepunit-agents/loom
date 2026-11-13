@@ -2,8 +2,8 @@ import { registerBuiltinService } from '../../core/services.js';
 import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
-import { migrate, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
-import type { Ask, AgentStatus } from './role.js';
+import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
+import type { Ask, AgentStatus, AttentionSources } from './role.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
 import type { DigestReferences } from './project-references.js';
@@ -35,9 +35,12 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     return row && JSON.parse(row.record) as Ask;
   };
   const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
+  const sources = new Map<string, (ctx: Context, ask: Ask) => void>();
+  const managed = (record: Pick<Ask, 'source' | 'sourceManaged'>) => record.sourceManaged === true || record.source.kind === 'piece' && sources.has(record.source.id);
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
+      if (managed(input) || old && managed(old)) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
@@ -53,7 +56,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     run: (_ctx, input) => readAsk(input.id),
   }));
   operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), 'answer-person', 'attention.answer'); },
+    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), managed(r) ? 'household' : 'answer-person', 'attention.answer'); },
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return failure('conflict', 'Ask is no longer open');
@@ -61,11 +64,18 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       if ((input.answer.kind === 'yes' || input.answer.kind === 'no') && record.answers === 'words') return failure('invalid', 'Ask needs words');
       record.state = 'answered'; record.changedAt = ctx.now;
       record.answer = { ...input.answer, by: ctx.viewer, at: ctx.now };
-      saveAsk(record); ctx.changed('attention.ask', record.id); return record;
+      saveAsk(record); ctx.changed('attention.ask', record.id);
+      const hook = record.source.kind === 'piece' ? sources.get(record.source.id) : undefined;
+      if (managed(record) && !hook) throw new OperationError('unavailable', 'Ask source is not installed');
+      if (hook) {
+        const result: unknown = hook(ctx, record);
+        if (result instanceof Promise) { void result.catch(() => {}); throw new OperationError('unavailable', 'Source answer must be synchronous'); }
+      }
+      return record;
     },
   }));
   operations.register(operation({ name: 'attention.resolve', write: true, input: z.object({ id, reason: z.string().min(1) }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), 'act', 'attention.resolve'); },
+    may: (viewer, input) => { const r = readAsk(input.id); return !!r && !managed(r) && mayAct(viewer, scoped('attention.ask', r), sharing(), 'act', 'attention.resolve'); },
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return record;
@@ -98,4 +108,38 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     },
     inScope: () => true,
   });
+  const role: AttentionSources = { register(name, answer) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(name) || sources.has(name)) throw new Error('Invalid or duplicate attention source');
+    sources.set(name, answer);
+    const check = (ctx: Context) => {
+      if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Source needs its enclosing database transaction');
+    };
+    const own = (record: Ask) => record.source.kind === 'piece' && record.source.id === name;
+    return {
+      raise(ctx, input) {
+        check(ctx);
+        // Parsing blocks scope injection even from an accidentally miswired caller.
+        const parsed = question.parse({ ...input, source: { kind: 'piece', id: name } });
+        if (parsed.project !== undefined || parsed.agent !== undefined || parsed.member !== undefined || parsed.waits_on !== undefined) throw new OperationError('invalid', 'Source asks must be household asks');
+        const old = readAsk(parsed.id);
+        if (old) {
+          if (!own(old)) throw new OperationError('conflict', 'Ask belongs to another source');
+          return;
+        }
+        const record: Ask = { ...parsed, sourceManaged: true, state: 'open', createdAt: ctx.now, changedAt: ctx.now };
+        saveAsk(record); ctx.changed('attention.ask', record.id);
+      },
+      resolve(ctx, id, reason) {
+        check(ctx);
+        const record = readAsk(id);
+        if (!record) return;
+        if (!own(record)) throw new OperationError('conflict', 'Ask belongs to another source');
+        if (record.state !== 'open') return;
+        record.state = 'resolved'; record.resolution = reason; record.changedAt = ctx.now;
+        saveAsk(record); ctx.changed('attention.ask', record.id);
+      },
+    };
+  } };
+  return role;
+
 }

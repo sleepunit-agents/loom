@@ -14,7 +14,8 @@ const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), targe
 /** Trusted in-process attention seam. Implementations must raise a household ask and
  * deliver only its first household owner's yes/no. No caller can inject an answer. */
 export interface GrantAttention {
-  raise(request: GrantRequest): { raised: true };
+  raise(request: GrantRequest, ctx: Context): { raised: true };
+  resolve?(request: GrantRequest, ctx: Context): void;
 }
 const tables = { 'secret.name': 'secrets_names', 'secret.grant': 'secrets_grants', 'secret.request': 'secrets_requests' } as const;
 function read<T>(db: Db, table: string, id: string): T | undefined {
@@ -46,7 +47,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   function raiseRequest(ctx: Context, record: GrantRequest) {
       if (!attention) return failure('unavailable', 'Grant requests need the attention role');
       saveRequest(record);
-      const acknowledgement: unknown = attention.raise(record);
+      const acknowledgement: unknown = attention.raise(record, ctx);
       if (acknowledgement instanceof Promise) {
         // A miswired async role must neither commit nor leave an unhandled rejection.
         void acknowledgement.catch(() => {});
@@ -194,6 +195,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
         const grant: Grant = { id: grantId(record.agent, record, record.scope), ...(record.scope ? { scope: record.scope, requestId: record.id, expiresAt: ctx.now + record.minutes! * 60_000 } : {}), agent: record.agent, kind: record.kind, target: record.target, createdAt: ctx.now, by: ctx.viewer.id };
         saveGrant(grant); ctx.changed('secret.grant', grant.id);
       }
+      attention?.resolve?.(record, ctx);
       ctx.changed('secret.request', record.id); return record;
     },
   }));
