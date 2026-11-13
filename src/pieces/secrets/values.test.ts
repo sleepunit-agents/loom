@@ -1,0 +1,66 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { startLoom } from '../../foundation.js';
+import { fixtureSharing } from '../../fixture.js';
+import { FakeClock, type Viewer } from '../../core/index.js';
+import { installSecrets } from './index.js';
+import { handSecret, installSecretValues } from './values.js';
+import type { KeyHolder } from './keyholder.js';
+const owner: Viewer = { kind: 'member', id: 'jonathan' };
+const sentinel = 'DO-NOT-LEAK-SECRET-1b67847';
+const homes: string[] = [], closes: (() => Promise<void>)[] = [];
+afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+it('writes a value but leaks none to records, operation results, live feed, or logs; pages have no read operation', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-secret-value-')); homes.push(home);
+  const seen: string[] = [];
+  const holder: KeyHolder = { names: () => [], set: (_n, value) => { seen.push(Buffer.from(value).toString()); }, handTo: vi.fn(), remove: vi.fn(), rotate: vi.fn() };
+  const clock = new FakeClock();
+  const app = await startLoom({ home, clock, sharing: fixtureSharing, authenticate: () => ({ viewer: owner, valid: () => true }), install: a => {
+    installSecrets(a.db, a.operations, a.live, fixtureSharing);
+    installSecretValues(a.db, a.operations, fixtureSharing, holder);
+  } }); closes.push(app.close);
+  const logs: unknown[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((...a) => { logs.push(a); });
+  const error = vi.spyOn(console, 'error').mockImplementation((...a) => { logs.push(a); });
+  const warn = vi.spyOn(console, 'warn').mockImplementation((...a) => { logs.push(a); });
+  const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
+  const messages: unknown[] = [];
+  const wait = (predicate: (m: any) => boolean) => new Promise<any>(resolve => {
+    const listener = (raw: Buffer) => { const m = JSON.parse(raw.toString()); if (predicate(m)) { ws.off('message', listener); resolve(m); } };
+    ws.on('message', listener);
+  });
+  ws.on('message', raw => messages.push(JSON.parse(raw.toString())));
+  try {
+    await once(ws, 'open');
+    const initial = wait(m => m.kind === 'set'); ws.send(JSON.stringify({ kind: 'subscribe', type: 'secret.name' })); await initial;
+    const changed = wait(m => m.kind === 'put');
+    const input = { name: 'api-key', value: sentinel, mode: 'add', writeId: randomUUID() };
+    const answer = app.operations.call('socket', owner, 'secrets.set', input, 'write-once');
+    expect(answer).toEqual({ ok: true, value: { saved: true } }); await changed;
+    expect(seen).toEqual([sentinel]);
+    expect(app.operations.call('socket', owner, 'secrets.set', input, 'write-once')).toEqual(answer);
+    expect(seen).toHaveLength(1);
+    const rows = app.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+    for (const { name } of rows) expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${name}"`).all())).not.toContain(sentinel);
+    expect(JSON.stringify(messages)).not.toContain(sentinel);
+    expect(JSON.stringify(logs)).not.toContain(sentinel);
+    expect(app.operations.offered('socket').filter(o => /^secrets\./.test(o.name)).map(o => o.name)).not.toContain('secrets.get');
+    expect(app.operations.call('socket', owner, 'secrets.get', { name: 'api-key' })).toMatchObject({ ok: false, code: 'not-found' });
+    const failing = vi.spyOn(holder, 'set').mockImplementation(() => { throw new Error(sentinel); });
+    const failed = app.operations.call('socket', owner, 'secrets.set', { ...input, writeId: randomUUID() }, 'failed-write');
+    expect(failed).toEqual({ ok: false, code: 'unavailable', message: 'Key holder could not save the secret' });
+    expect(JSON.stringify(logs)).not.toContain(sentinel);
+    failing.mockRestore();
+    expect(handSecret(app.db, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(false);
+    expect(holder.handTo).not.toHaveBeenCalled();
+    app.operations.call('direct', owner, 'secrets.grant', { agent: 'art', kind: 'secret', target: 'api-key' }, 'grant');
+    expect(handSecret(app.db, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(true);
+    expect(holder.handTo).toHaveBeenCalledWith('api-key', 'runtime-sink');
+    expect(app.operations.call('socket', { kind: 'agent', id: 'art' }, 'secrets.set', input, 'agent-write')).toMatchObject({ ok: false, code: 'denied' });
+  } finally { ws.terminate(); log.mockRestore(); error.mockRestore(); warn.mockRestore(); }
+});
