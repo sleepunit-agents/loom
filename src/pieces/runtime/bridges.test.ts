@@ -37,7 +37,9 @@ async function setup(staging=false){
  });
  const socket=()=>Object.assign(new EventEmitter(),{readyState:1,terminate:vi.fn(),send:vi.fn(),ping:vi.fn()}) as unknown as WebSocket;
  const venue=venueSchema.parse({id:'slack',platform:'slack',workspace:'T123',bot:'U123',agent:'art',tokenSecret:'bot',appSecret:'app'});
+ let foundation!:import('../../core/app.js').Foundation;
  let app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket},install(a){
+  foundation=a;
   const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
   for(const name of ['bot','app'])for(const [verb,input] of [['describe',{name,description:name}],['grantService',{service:'bridges',name}]] as const)value(a.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${verb}`,input,`${verb}-${name}`));
   put(a.db,'venues',venue);put(a.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'jonathan'});
@@ -60,7 +62,7 @@ async function setup(staging=false){
   const body=value<{credential:string}>(input).credential;expect(body).toBeTruthy();
   value(await post(runner,'runtime.reportJob',{job,state:'running'}));return {job,body,input};
  };
- return {get app(){return app;},home,clock,posts,request,token,owner,runner,unbound,post,receive,release,running,async restart(){await app.close();app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket}});}};
+ return {get app(){return app;},foundation,home,clock,posts,request,token,owner,runner,unbound,post,receive,release,running,async restart(){await app.close();app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket}});}};
 }
 it('routes a real installed DM through claim, scoped body input/read/reply and the actual durable engine',async()=>{
  const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
@@ -100,7 +102,9 @@ it('keeps connection, inspection, body input and reply effects held separately i
 });
 it('stops a bound body once and prevents old credentials from replying to the next body',async()=>{
  const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const first=await f.running();
+ const changes:string[]=[];const stop=f.app.live.observe(cs=>changes.push(...cs.filter(c=>c.type==='runtime.job').map(c=>c.id)));
  await f.receive('stop','1794503534.000000');await until(()=>runtimeStore(f.app.db).read('job',first.job)?.state==='stopped');
+ expect(changes).toContain(first.job);expect(changes).not.toContain('*');stop();
  expect(await f.post(first.body,'runtime.reply',{id:'late',text:'NO'})).toMatchObject({ok:false});
  await f.receive('next','1794503535.000000');await until(()=>runtimeStore(f.app.db).ids('job').length===2);const second=await f.running();expect(second.job).not.toBe(first.job);
  await f.receive('stop','1794503534.000000');expect(runtimeStore(f.app.db).read('job',second.job)?.state).toBe('running');
@@ -140,4 +144,39 @@ it('holds an already queued reply when an outside account is relinked to another
  value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'bridges.putLinks',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'},'relink'));
  f.release();await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_outbox WHERE state='held'").get());expect(f.posts).toEqual([]);
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:false});expect(await f.post(body,'runtime.reply',{id:'new',text:'NO'})).toMatchObject({ok:false});
+});
+it('rolls back reply transcript, outbox and live notification together before a successful retry',async()=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const {body}=await f.running();
+ const changed:string[]=[];const stop=f.app.live.observe(changes=>changed.push(...changes.filter(c=>c.type==='bridges.send').map(c=>c.id)));
+ f.app.db.exec("CREATE TRIGGER fail_reply_turn BEFORE INSERT ON runtime_bridge_turns WHEN NEW.direction='out' BEGIN SELECT RAISE(ABORT,'reply interrupted'); END");
+ expect(await f.post(body,'runtime.reply',{id:'atomic',text:'ATOMIC WORDS'})).toMatchObject({ok:false,code:'unavailable'});
+ expect(f.app.db.prepare('SELECT * FROM bridges_outbox').all()).toEqual([]);expect(f.app.db.prepare("SELECT * FROM runtime_bridge_turns WHERE direction='out'").all()).toEqual([]);expect(changed).toEqual([]);expect(f.posts).toEqual([]);
+ f.app.db.exec('DROP TRIGGER fail_reply_turn');value(await f.post(body,'runtime.reply',{id:'atomic',text:'ATOMIC WORDS'}));await until(()=>f.posts.length===1);expect(changed.length).toBeGreaterThan(0);stop();
+});
+it.each(['box','house'] as const)('denies retained body read/reply proof after %s execution configuration changes',async kind=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const {body}=await f.running();
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ f.app.db.transaction(()=>{const store=runtimeStore(f.app.db);if(kind==='box'){const {changedAt:_,...box}=store.read('box','a')!;store.put('box',{...box,revokedAt:f.clock.now()},f.clock.now());}else{const {changedAt:_,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/fixture/changed',houseFile:'house/other.json'}},f.clock.now());}})();
+ expect(await f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'late',text:'NO'})).toMatchObject({ok:false,code:'denied'});expect(f.posts).toEqual([]);
+});
+it('denies retained body viewers at root shutdown while SQLite is still open',async()=>{
+ const {closeNext}=await import('../../next.js');const {Bridges}=await import('../bridges/engine.js');
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const {body}=await f.running();
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ // A snapshot-true source fake isolates the runtime's own close guard from the
+ // engine's independent closed-source guard.
+ const snapshot=vi.spyOn(Bridges.prototype,'currentIncoming').mockReturnValue(true);
+ try{await closeNext(f.foundation);expect(f.app.db.open).toBe(true);
+  expect(await f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+  expect(await f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'closed',text:'NO'})).toMatchObject({ok:false,code:'denied'});
+ }finally{snapshot.mockRestore();}
+});
+it('upgrades version-seven storage atomically without altering existing runtime metadata',async()=>{
+ const {createFoundation}=await import('../../core/app.js');const {migrate}=await import('../../core/index.js');const {schema}=await import('./schema/001.js');
+ const home=mkdtempSync(join(tmpdir(),'runtime-bridge-upgrade-')),app=createFoundation({home});cleanups.push(async()=>{app.close();rmSync(home,{recursive:true,force:true});});
+ migrate(app.db,'runtime',schema.filter(m=>m.number<8));app.db.transaction(()=>runtimeStore(app.db).put('settings',{id:'art',agent:'art',boxes:['a']},123))();
+ const before=app.db.prepare('SELECT * FROM runtime_settings').all();app.db.exec("CREATE TRIGGER fail_bridge_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' AND NEW.number=8 BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ expect(()=>migrate(app.db,'runtime',schema)).toThrow('interrupted');expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_bridge_%'").all()).toEqual([]);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
+ app.db.exec('DROP TRIGGER fail_bridge_migration');migrate(app.db,'runtime',schema);expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name IN ('runtime_bridge_turns','runtime_bridge_stops')").all()).toHaveLength(2);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
 });

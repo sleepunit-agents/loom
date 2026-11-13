@@ -75,16 +75,18 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
   },
   async stop(m){
    if(closed||!sink||!permitted(m.agent,m.person))throw new Error('Bridge stop unavailable');
+   let stopped:string|undefined;
    db.transaction(()=>{
     if(db.prepare('SELECT id FROM runtime_bridge_stops WHERE id=?').get(m.id))return;
     const cv=`bridge:${hash([m.agent,m.person,m.venue])}`,b=store.read('binding',cv),job=b?.job?store.read('job',b.job):undefined;
     if(job&&job.member===m.person&&job.agent===m.agent&&active.has(job.state)){
+     stopped=job.id;
      centralRuntimeCredentials.revokeJob(db,{job:job.id,now:operations.clock.now()});
      const {changedAt:_,...before}=job;store.put('job',{...before,state:'stopped',endedAt:operations.clock.now()},operations.clock.now());
     }
     db.prepare('INSERT INTO runtime_bridge_stops VALUES (?)').run(m.id);
    })();
-   app.live.changed([{type:'runtime.job',id:'*'},{type:'core.access',id:'credentials'}]);
+   if(stopped)app.live.changed([{type:'runtime.job',id:stopped},{type:'core.access',id:'credentials'}]);
   },
  };
  return {runtime,connect(role:BridgesRole){sink=role;},valid,bound,
