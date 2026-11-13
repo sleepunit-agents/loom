@@ -962,3 +962,54 @@ Imported change timestamps are source-derived (box/job creation time) or zero
 destination timestamp supplies an expected value to Runtime verification. Runtime
 archive namespaces are excluded from other pieces' discovery, so an opaque file
 called `comms.salt`, `memories.db` or `changes.json` remains a Runtime archive file.
+
+## Bounded nonconversation start attempts
+
+Next mode now owns automatic retries for newly accepted nonprivate manual/spawn
+`runtime.startBody` work without a conversation. The original caller and complete
+start intent are private owning data in `runtime_start_attempts`, created with
+the first job. Old jobs/imported archives and `queueBody` are never enrolled.
+Clock, Comms and general venue conversations keep their own generation/binding
+contracts and are excluded; adopting bounded retries into those owning sources
+remains required before full t-2209 completion and general delivery usability.
+
+Only the assigned runner's `finishJob` with `startFailure: not-started` schedules
+a retry. This attestation means the runner fenced its claim against ever starting,
+including late asynchronous launch completion. An ordinary failed exit, silence,
+unknown input release, lost runner, or timer expiry cannot schedule a replacement.
+The failed job and its revoked body credentials remain terminal. No old body,
+principal, home or native history is carried into the next attempt.
+
+The three waits are 1, 4 and 10 minutes, matching old `delivery.mjs`'s bounded
+start backoff. Each attempt has a fresh deterministic job id and its own one-time
+input/staging effect. The fourth definitively failed attempt exhausts the chain.
+A transaction commits each new job, input and owning pointer together. Restart
+recovers the original deadline; replaying the finish receipt never moves it.
+Local storage failure rolls back and backs off five seconds rather than spinning.
+
+Before retrying, Runtime rechecks the original caller with central `mayCreate`
+and `give-work` policy, the exact failed attempt's configured house, and current
+placement ownership, lending and host eligibility. A withdrawn permission, changed
+house, recovery/import fence or unavailable placement holds the chain. No owner
+approval is fabricated and there is no release/revival operation in this unit.
+A held or exhausted chain remains inspectable and cannot silently restart.
+The exact original model, brief, title, explicit box and project remain the
+accepted intent. Owner setup changes do not create different work under that intent.
+
+`runtime.startProgress {job: <original job>}` returns only the root/current ids,
+attempt number, state and optional deadline, filtered by central job scope.
+`startBody` replay still acknowledges the original id; use progress to find the
+current attempt. Successful/ordinary terminal completion settles the chain.
+
+| Old command/job | New behavior in this unit |
+| --- | --- |
+| `delivery.mjs` `startFails` / `retryAt` tick | Durable bounded nonconversation start deadlines in the daemon Clock, no systemd poller |
+| Runner definitive pre-start failure | Authenticated assigned `runtime.finishJob` with atomic credential revocation and retry scheduling |
+| Delivery retry status | `runtime.startProgress`, ids/state only; source notices and conversation integration remain owning delivery work |
+| Transient old-store polling | No old transport on next mode; local retry transaction failures back off five seconds without consuming an attempt |
+
+This is a reversible code change before cutover, with no running-home changes.
+Importer verification requires the new attempt table to remain empty: archived
+old failures do not become new automatic starts. External execution/history,
+original queued-delivery reconciliation, owner gate/policy adoption, trusted
+Bridges intake/replies and their notifications remain unfinished full-rebuild work.

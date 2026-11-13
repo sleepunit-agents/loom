@@ -1,4 +1,5 @@
 /** A start intent is durable work, never evidence that the runner started it. */
+import { rememberStart } from './start-retries.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, mayAct, mayCreate, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
@@ -42,8 +43,10 @@ export function installStartBody(db: Db, operations: Operations, sharing: () => 
         return {job,state:old.state};
       }
       if(!configuredHouse(store.read('settings',input.agent))) throw new OperationError('conflict','Agent has no house configuration');
-      return enqueueBody(ctx,sharing(),{id:job,agent:input.agent,project:input.project,member:input.member,title:input.title,
+      const queued = enqueueBody(ctx,sharing(),{id:job,agent:input.agent,project:input.project,member:input.member,title:input.title,
         conversation:input.conversation,model:input.model,account:input.account,startRequest:{box:input.box}},input);
+      rememberStart(ctx,job,input);
+      return queued;
     },
   }));
 }

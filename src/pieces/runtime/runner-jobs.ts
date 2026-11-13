@@ -1,3 +1,4 @@
+import { finishStartAttempt } from './start-retries.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
 import { assignedRunner } from './control.js';
@@ -63,6 +64,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       results.put(id, { exit, log });
       ctx.changed('core.access', 'credentials');
       if (store.put('job', { ...job, state, endedAt: ctx.now, ...(startFailure ? { startFailed: true as const } : {}) }, ctx.now)) ctx.changed('runtime.job', id);
+      finishStartAttempt(ctx,id,!!startFailure);
       return { job: id, state };
     },
   }));

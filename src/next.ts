@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { installStartRetries } from './pieces/runtime/start-retries.js';
 import { runtimeOwnerApplication } from './pieces/runtime/owner-application.js';
 import { storedSprite } from './core/household/sprites.js';
 import { installComms } from './pieces/comms/index.js';
@@ -225,6 +226,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     void engine.flush();
     bridgeDaemons.set(app,{async close(){closed=true;stopCredentials();stopLive();const pending=[slack.close(),discord.close(),engine.close()];credentials.close();await Promise.all(pending);for(const attempt of readAttempts.values())effects.finish(attempt.id);}});
   }
+  if (!app.operations.has('runtime.startProgress')) installStartRetries(app,sharing);
   installAttentionMaintenance(app);
   if (!app.operations.has('comms.open')) {
     const comms=installComms({db:app.db,operations:app.operations,live:app.live,clock:app.operations.clock,sharing,
