@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,19 @@ it('offers registry operations through MCP, preserves viewer policy, and shares 
 
 import { installHouseholdTasks, registerSessionOperations } from './task-composition.js';
 import type { Household, Role } from '../household.js';
+
+// These tools exist only on the new side.
+beforeAll(() => { process.env.LOOM_NEXT = '1'; });
+afterAll(() => { delete process.env.LOOM_NEXT; });
+
+it('offers no operation tools on today\'s loom', () => {
+  delete process.env.LOOM_NEXT;
+  const names: string[] = [];
+  const server = { registerTool: (name: string) => { names.push(name); } } as never;
+  try { registerSessionOperations(server, {} as never, { role: { kind: 'agent', agent: 'art' } as never }, () => undefined); }
+  finally { process.env.LOOM_NEXT = '1'; }
+  expect(names).toEqual([]);
+});
 it('production composition derives ownership and binds authenticated owner/agent viewers; anonymous and peer get no operations', async () => {
   const home = mkdtempSync(join(tmpdir(),'loom-task-composition-')); cleanup.push(() => rmSync(home,{recursive:true,force:true}));
   const household: Household = { home, agents: ['art','mark'], default: 'art', members: [
