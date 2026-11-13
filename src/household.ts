@@ -73,7 +73,8 @@ export type ReviewSetting = 'on' | 'off' | string[];
 
 export interface Member {
   person: string;
-  role: 'owner';
+  /** Legacy scoped owners keep their agents; `member` adds no household authority. */
+  role: 'owner' | 'member';
   agents: '*' | string[];
 }
 
@@ -101,12 +102,12 @@ function parseMembers(raw: Record<string, unknown>, agents: string[], path: stri
     if (typeof r.person !== 'string' || !PERSON_SLUG.test(r.person)) throw bad('each names a person by their People slug');
     if (seen.has(r.person)) throw bad(`${r.person} is listed twice`);
     seen.add(r.person);
-    if (r.role !== 'owner') throw bad(`${r.person}'s role is owner (the only role yet)`);
+    if (r.role !== 'owner' && r.role !== 'member') throw bad(`${r.person}'s role is owner or member`);
     const a = r.agents;
-    if (a !== '*' && !(Array.isArray(a) && a.length > 0 && a.every((x) => typeof x === 'string' && agents.includes(x)))) {
+    if ((a === '*' && r.role !== 'owner') || (a !== '*' && !(Array.isArray(a) && (a.length > 0 || r.role === 'member') && a.every((x) => typeof x === 'string' && agents.includes(x))))) {
       throw bad(`${r.person}'s agents is "*" or a list of this household's agents`);
     }
-    return { person: r.person, role: 'owner' as const, agents: a === '*' ? '*' as const : [...new Set(a as string[])] };
+    return { person: r.person, role: r.role as Member['role'], agents: a === '*' ? '*' as const : [...new Set(a as string[])] };
   });
   // There's always a household owner: someone owns the shared things.
   if (!out.some((m) => m.agents === '*')) throw bad('at least one member owns every agent ("agents": "*")');
