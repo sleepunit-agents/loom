@@ -16,18 +16,25 @@ import {installSecretServices} from '../secrets/service.js';
 import {installBridges} from '../bridges/index.js';
 import {venueSchema} from '../bridges/model.js';
 import {put} from '../bridges/store.js';
+import {discordInbox} from '../bridges/discord-inbox.js';
 import {slackInbox} from '../bridges/slack-inbox.js';
 import {runtimeStore} from './store.js';
 const cleanups:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const f of cleanups.splice(0).reverse())await f();});
 const value=<T>(r:Result)=>{expect(r.ok,JSON.stringify(r)).toBe(true);return (r as {ok:true;value:T}).value;};
 async function until(condition:()=>boolean){for(let i=0;i<5000;i++){if(condition())return;await Promise.resolve();}throw Error('condition not reached');}
-async function setup(staging=false){
+async function setup(staging=false,platform:'slack'|'discord'='slack'){
  const home=mkdtempSync(join(tmpdir(),'runtime-bridge-'));fixture(home);const clock=new FakeClock();
  const posts:unknown[]=[];
  const source={generation:async()=> '00000000-0000-4000-8000-000000000000',read:async()=>Buffer.from('BRIDGE-TOKEN')};
  const request=vi.fn<typeof fetch>(async(url,init)=>{
   const method=String(url).split('/').pop();
+  if(platform==='discord'){
+   if(String(url).endsWith('users/@me'))return Response.json({id:'100',bot:true});
+   if(String(url).endsWith('guilds/300'))return Response.json({id:'300'});
+   if(init?.method==='POST'){posts.push(JSON.parse(String(init.body)));return Response.json({id:'900',channel_id:'400'});}
+   return Response.json({id:'400',type:1,recipients:[{id:'200'}]});
+  }
   if(method==='auth.test')return Response.json({ok:true,team_id:'T123',user_id:'U123',bot_id:'B123'});
   if(method==='bots.info')return Response.json({ok:true,bot:{id:'B123',user_id:'U123',deleted:false,app_id:'A123'}});
   if(method==='apps.connections.open')return Response.json({ok:true,url:'wss://wss-primary.slack.com/link?ticket=PRIVATE'});
@@ -36,13 +43,13 @@ async function setup(staging=false){
   return Response.json({ok:true,user:{id:'U200',team_id:'T123',deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false}});
  });
  const socket=()=>Object.assign(new EventEmitter(),{readyState:1,terminate:vi.fn(),send:vi.fn(),ping:vi.fn()}) as unknown as WebSocket;
- const venue=venueSchema.parse({id:'slack',platform:'slack',workspace:'T123',bot:'U123',agent:'art',tokenSecret:'bot',appSecret:'app'});
+ const venue=venueSchema.parse(platform==='discord'?{id:'discord',platform:'discord',workspace:'300',bot:'100',agent:'art',tokenSecret:'bot'}:{id:'slack',platform:'slack',workspace:'T123',bot:'U123',agent:'art',tokenSecret:'bot',appSecret:'app'});
  let foundation!:import('../../core/app.js').Foundation;
- let app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket},install(a){
+ let app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket,discordSocket:socket},install(a){
   foundation=a;
   const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
   for(const name of ['bot','app'])for(const [verb,input] of [['describe',{name,description:name}],['grantService',{service:'bridges',name}]] as const)value(a.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${verb}`,input,`${verb}-${name}`));
-  put(a.db,'venues',venue);put(a.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'jonathan'});
+  put(a.db,'venues',venue);put(a.db,'links',{id:'person',platform,workspace:venue.workspace,user:platform==='slack'?'U200':'200',person:'jonathan'});
  }});
  cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
  let n=0;
@@ -52,7 +59,12 @@ async function setup(staging=false){
  app.db.transaction(()=>{const store=runtimeStore(app.db);store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'a',name:'A',owner:'jonathan',local:true,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
  const post=async(secret:string,name:string,input:unknown)=>{const [piece,op]=name.split('.');return (await fetch(`${app.url}/api/${piece}/${op}`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json() as Promise<Result>;};
  const receive=async(text='INBOUND PRIVATE',ts='1794503533.000000')=>{
-  await slackInbox(app.db,clock,{venue,app:'A123'}).receive({type:'event_callback',team_id:'T123',api_app_id:'A123',event_id:`Ev${ts.replace('.','')}`,event:{type:'message',channel:'D123',user:'U200',ts,text}});
+  if(platform==='discord'){
+   const epoch='00000000-0000-4000-8000-000000000000';const inbox=discordInbox(app.db,clock,{venue,credentialEpoch:epoch},()=>epoch);
+   const checkpoint=(seq:number)=>({seq,session:'SESSION',url:'wss://gateway.discord.gg/?v=10&encoding=json'});
+   const previous=inbox.load();if(!previous)await inbox.commit({type:'READY',seq:1,data:{user:{id:'100'},session_id:'SESSION'}},checkpoint(1));
+   const seq=(previous?.seq??1)+1;await inbox.commit({type:'MESSAGE_CREATE',seq,data:{id:ts.replace('.',''),channel_id:'400',type:0,content:text,timestamp:'2026-11-13T00:00:00.000Z',author:{id:'200'},mentions:[],mention_roles:[]}},checkpoint(seq));
+  }else await slackInbox(app.db,clock,{venue,app:'A123'}).receive({type:'event_callback',team_id:'T123',api_app_id:'A123',event_id:`Ev${ts.replace('.','')}`,event:{type:'message',channel:'D123',user:'U200',ts,text}});
   clock.advance(5000);
  };
  const release=()=>{for(const row of app.db.prepare("SELECT id FROM core_effects WHERE state='due'").all() as {id:string}[])value(app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',row,`release-${++n}`));clock.advance(0);};
@@ -62,7 +74,7 @@ async function setup(staging=false){
   const body=value<{credential:string}>(input).credential;expect(body).toBeTruthy();
   value(await post(runner,'runtime.reportJob',{job,state:'running'}));return {job,body,input};
  };
- return {get app(){return app;},foundation,home,clock,posts,request,token,owner,runner,unbound,post,receive,release,running,async restart(){await app.close();app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket}});}};
+ return {get app(){return app;},foundation,home,clock,posts,request,token,owner,runner,unbound,post,receive,release,running,async restart(){await app.close();app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket,discordSocket:socket}});}};
 }
 it('routes a real installed DM through claim, scoped body input/read/reply and the actual durable engine',async()=>{
  const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
@@ -179,4 +191,25 @@ it('upgrades version-seven storage atomically without altering existing runtime 
  const before=app.db.prepare('SELECT * FROM runtime_settings').all();app.db.exec("CREATE TRIGGER fail_bridge_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' AND NEW.number=8 BEGIN SELECT RAISE(ABORT,'interrupted'); END");
  expect(()=>migrate(app.db,'runtime',schema)).toThrow('interrupted');expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_bridge_%'").all()).toEqual([]);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
  app.db.exec('DROP TRIGGER fail_bridge_migration');migrate(app.db,'runtime',schema);expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name IN ('runtime_bridge_turns','runtime_bridge_stops')").all()).toHaveLength(2);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
+});
+it('runs Discord private receipt intake through installed body read/reply and the real adapter',async()=>{
+ const f=await setup(false,'discord');await f.receive('DISCORD PRIVATE');await until(()=>runtimeStore(f.app.db).ids('job').length===1);
+ const {body}=await f.running();expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[expect.objectContaining({text:'DISCORD PRIVATE'})]}});
+ value(await f.post(body,'runtime.reply',{id:'discord-reply',text:'DISCORD OUTBOUND <@200>'}));await until(()=>f.posts.length===1);
+ expect(f.posts[0]).toMatchObject({content:'DISCORD OUTBOUND <@200>',allowed_mentions:{parse:[],replied_user:false}});
+ value(await f.post(body,'runtime.reply',{id:'discord-reply',text:'DISCORD OUTBOUND <@200>'}));expect(f.posts).toHaveLength(1);
+ expect(f.app.db.prepare('SELECT state,event FROM bridges_discord_receipts').get()).toEqual({state:'consumed',event:null});
+});
+it('deduplicates the trusted runtime stop callback against a replacement body across restart',async()=>{
+ const module=await import('./bridges.js'),original=module.bridgeRuntime,roles:ReturnType<typeof original>[]=[];
+ const capture=vi.spyOn(module,'bridgeRuntime').mockImplementation((...args)=>{const role=original(...args);roles.push(role);return role;});
+ try{const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);await f.running();
+  await f.receive('stop','1794503534.000000');await until(()=>!!f.app.db.prepare('SELECT id FROM runtime_bridge_stops').get());
+  const {id}=f.app.db.prepare('SELECT id FROM runtime_bridge_stops').get() as {id:string};
+  await f.receive('replacement','1794503535.000000');await until(()=>runtimeStore(f.app.db).ids('job').length===2);const {job,body}=await f.running();
+  const stopped={agent:'art',person:'jonathan',venue:'slack:T123:dm:jonathan',id};
+  await roles[0].runtime.stop(stopped);expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');
+  await f.restart();expect(roles).toHaveLength(2);await roles[1].runtime.stop(stopped);
+  expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ }finally{capture.mockRestore();}
 });
