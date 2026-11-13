@@ -20,6 +20,23 @@ export function importChanges(db: Db, from: string, settings: ImportOptions | ((
   const old=db.prepare("SELECT value FROM changes_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
   if(old) {if(old.value!==checksum) throw new Error('A different Changes source was already imported');return {ok:true,imported:false,checksum,changes:source.changes.length};}
  const options=typeof settings==='function'?settings():settings;
+ const expected = changesImportRecords(source, options);
+  if(loadChanges(db).length) throw new Error('Changes destination must be empty before import');
+  replaceChanges(db,expected); options.interrupt?.();
+  if(canonical(loadChanges(db))!==canonical(expected)) throw new Error('Changes import comparison failed: ids, counts or content differ');
+  db.prepare("INSERT INTO changes_meta VALUES ('source-checksum',?)").run(checksum);
+  return {ok:true,imported:true,checksum,changes:expected.length};
+ })();
+}
+
+/** Pure source projection; never opens or writes the destination. */
+export function readChangesImport(from: string, options: ImportOptions) {
+ const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
+ if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
+ const checksum=createHash('sha256').update(bytes).digest('hex');
+ return { expected: changesImportRecords(source, options), checksum };
+}
+function changesImportRecords(source: {v:number; changes:unknown[]}, options: ImportOptions): Change[] {
  // Preserve the source's normalized fields exactly; never trust its project attribution or task cache.
  const expected:Change[]=source.changes.map(raw=>{
   const c=changeSchema.parse(raw), repo=repoId(c.repo);
@@ -28,10 +45,5 @@ export function importChanges(db: Db, from: string, settings: ImportOptions | ((
   return {...attribute(c,options.attribution),...(project ? {project} : {})};
  }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
  if(new Set(expected.map(c=>c.id)).size!==expected.length) throw new Error('Duplicate source change ids');
-  if(loadChanges(db).length) throw new Error('Changes destination must be empty before import');
-  replaceChanges(db,expected); options.interrupt?.();
-  if(canonical(loadChanges(db))!==canonical(expected)) throw new Error('Changes import comparison failed: ids, counts or content differ');
-  db.prepare("INSERT INTO changes_meta VALUES ('source-checksum',?)").run(checksum);
-  return {ok:true,imported:true,checksum,changes:expected.length};
- })();
+ return expected;
 }
