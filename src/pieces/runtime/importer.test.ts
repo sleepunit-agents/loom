@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createFoundation } from '../../core/app.js';
 import { openSnapshotSqlite } from '../../cli/migration-sqlite.js';
 import { readRuntimeImport, readRuntimeInventory } from './import-source.js';
@@ -125,4 +125,27 @@ it('rolls back new source files added after archival and before commit',()=>{
   const f=fixture();expect(()=>f.run({interrupt:()=>writeFileSync(join(f.sources.data,'new-file.bin'),'late')})).toThrow('changed during import');
   expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_%'").all()).toEqual([]);
   expect(f.run()).toMatchObject({imported:true});
+});
+
+it('refuses an oversized corrupt BLOB before SQLite materializes its bytes',()=>{
+  const f=fixture(),source=f.read();f.run();
+  f.app.db.prepare("UPDATE runtime_import_chunks SET bytes=zeroblob(2*1024*1024) WHERE path='data/future.bin'").run();
+  const prepare=f.app.db.prepare.bind(f.app.db);
+  const guard=vi.spyOn(f.app.db,'prepare').mockImplementation(sql=>{
+    const statement=prepare(sql);
+    // Observe raw-BLOB reads, including iterator-based reads, without allocating
+    // the malicious value first. typeof/length metadata is safe to inspect.
+    if(/^SELECT /i.test(sql)&&/\bbytes\b/.test(sql)&&!/(?:length|typeof)\(bytes\)/.test(sql)) {
+      for(const method of ['get','all','iterate'] as const) {
+        const original=statement[method].bind(statement);
+        vi.spyOn(statement,method).mockImplementation((...args:unknown[])=>{
+          const path=args[0];
+          if(typeof path==='string'&&(prepare('SELECT count(*) AS n FROM runtime_import_chunks WHERE path=? AND length(bytes)>1048576').get(path) as {n:number}).n)throw Error('Unbounded archive BLOB read');
+          return original(...args);
+        });
+      }
+    }
+    return statement;
+  });
+  try{expect(compareRuntimeArchive(f.app.db,source)).toBe(false);}finally{guard.mockRestore();}
 });
