@@ -1,9 +1,9 @@
-import { useRecords } from '../../data';
+import { useRecords, type LiveRecord } from '../../data';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
 import type { Ask } from './model';
 import './rail.css';
 
-interface Thread { id: string; agent: string; title: string | null; archived: number | null; last: number; unread: boolean }
+interface Thread extends LiveRecord { id: string; agent: string; title: string | null; archived: number | null; last: number; unread: boolean }
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
@@ -24,7 +24,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const ask = open.find(a=>a.agent===agent.id);
       const recent = threads.status==='live'?threads.records.filter(t=>t.agent===agent.id&&t.archived===null).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)):[];
       const unread = recent.filter(t=>t.unread), thread = unread[0]??recent[0];
-      const path = thread?`/p/comms-preview/thread/${encodeURIComponent(thread.id)}`:'/p/comms-preview';
+      const path = thread?`/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`:'/p/comms-preview';
       const word = status?.state==='offline'?'Unavailable':ask?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
       return <section key={agent.id} className="desk-rail-card" data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={status?.state}>
         <button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>

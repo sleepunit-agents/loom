@@ -104,7 +104,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       })}
     </div>
     <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
-    <div className="next-dock-bar"><Dock className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
+    <div className="next-dock-bar loom-dock-bar"><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
       {value:'home',label:'Home',tint:'pink',icon:<AppIcon label="Home" name="home" />,onSelect:()=>router.home()},
       ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<AppIcon label={app.title} name={app.icon} />,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>route.focused===app.id?router.remove(app.id,true):open(app.id)})),
       {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<AppIcon label="Places" name="grid-2x2" />,onSelect:()=>setLauncher(true)},

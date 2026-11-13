@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
+
 - Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
 - Apply member appearance choices live in the next shell, with controls for look, reduced motion, contrast and zoom.
 
