@@ -151,3 +151,27 @@ for(const reject of [false,true])it(`holds the same read-only destination and da
  finally{resume();await pending;}
  if(reject)expect((await pending).error).toBeInstanceOf(Error);else expect((await pending).report?.status).toBe('verified');expect(opened[0].open).toBe(false);expect(bytes(f.home)).toEqual(before);
 });
+
+for(const kind of ['replaced','missing','malformed'])it(`refuses independent verification with a ${kind} destination key without exposing key data`,async()=>{
+ const f=await fixture();await runMigrationAll(f.root,f.home);
+ const path=join(f.home,'comms.key');
+ if(kind==='missing')rmSync(path);
+ else if(kind==='malformed')writeFileSync(path,'PRIVATE_BAD_KEY');
+ else{const other=join(f.dir,'other');await loadKey(other);writeFileSync(path,readFileSync(join(other,'comms.key')));}
+ const before=bytes(f.home),io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+ expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(kind==='missing'?1:3);
+ if(kind==='missing')expect(io.stdout).not.toHaveBeenCalled();
+ else expect(JSON.parse(io.stdout.mock.calls[0][0])).toMatchObject({status:'different',differences:[{piece:'comms',table:'comms-key',expected:1,actual:1}]});
+ expect(io.stdout.mock.calls.flat().join('')+io.stderr.mock.calls.flat().join('')).not.toMatch(/PRIVATE_|AGE-SECRET-KEY/);
+ expect(bytes(f.home)).toEqual(before);
+});
+
+it('returns a generic CLI refusal and closes resources when Comms crypto rejects',async()=>{
+ const f=await fixture();await runMigrationAll(f.root,f.home);
+ const crypto=await import('../pieces/comms/crypto.js'),{acquireHttpLock}=await import('../transport/http-lock.js'),actual=crypto.wordsKey;
+ vi.spyOn(crypto,'wordsKey').mockImplementation(identity=>({...actual(identity),open:async()=>{throw Error('PRIVATE_CRYPTO_FAILURE');}}));
+ const before=bytes(f.home),io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+ expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(1);expect(io.stdout).not.toHaveBeenCalled();
+ expect(io.stderr).toHaveBeenCalledExactlyOnceWith('Verification refused; check snapshot, plan and migration home, and stop the destination daemon.\n');
+ expect(bytes(f.home)).toEqual(before);const release=acquireHttpLock(f.home);release();
+});

@@ -1,8 +1,8 @@
 # Offline importer registration
 
 `src/cli/migration-registry.ts` is the extension point for `loom migrate all`.
-The registry and [plan preparation](migration-plan.md) are available;
-the all/verify commands follow in t-2213. Existing individual commands are unchanged. No daemon path loads it.
+The registry, [plan preparation](migration-plan.md) and all/verify commands are
+available for offline rehearsal. Existing individual commands are unchanged. No daemon path loads it.
 
 An importer declares a unique lowercase `name`, `dependencies` (registration
 names), `reads` (a human-readable snapshot input inventory), `sourceReads`
@@ -22,7 +22,7 @@ lock and validate all editable plan options before calling any importer.
 
 The importer owns one transaction and its comparison of ids, counts and content.
 It must leave the old input unchanged, roll back an interruption, no-op on the
-same source and refuse a different source. A future verify hook must compare
+same source and refuse a different source. Independent verification must compare
 expected source content to actual destination content independently; calling
 an importer's checksum-only repeat path is insufficient.
 
@@ -31,8 +31,8 @@ names as `missing`. Dependents of a missing registration are `blocked` and are
 excluded from the runnable list. Missing pieces are reported, not import errors
 or successful imports. Registration order breaks ties deterministically.
 
-Current entries: household first; tasks, attention, clock, approvals and Changes
-all depend on household. Household takes copied `home/`; tasks takes the optional
+Current entries: household first; tasks, attention, clock, approvals, Changes and
+Comms all depend on household. Household takes copied `home/`; tasks takes the optional
 `tasks/store.db`; attention takes one or more copied memories databases plus
 `ImportScopes`; clock takes copied WAKE_DATA; approvals takes its copied old
 directory and project map; Changes takes copied snapshot JSON and import settings.
@@ -67,15 +67,15 @@ fsyncing the directory. Retry also fsyncs the directory when the final file exis
 The all coordinator recovers only root `comms.key` / UUID publication-temp pairs
 that have exactly two links, source-identical bytes and the matching plan receipt,
 just as for `ui-cookie.key`. External aliases and unrelated pairs remain refused.
-This prerequisite does not add Comms discovery, registration or independent
-verification; all three remain required before Comms is covered by migrate-all.
+The helper alone does not establish migration coverage; the Comms registration,
+discovery and independent comparison described below complete that integration.
 
 Independent verification's `verifyMigration` and CLI `migrateVerify` return
 Promises. The read-only destination and stopped-daemon gate remain held until
 every source projection settles, including rejection; callers must await the
 result. `migration-projection.ts` builds source-only physical rows separately
 from destination comparison. Existing six projections retain their synchronous
-source readers. This async prerequisite does not register or verify Comms.
+source readers. Comms uses a separate independent cryptographic comparator.
 
 Comms is registered after household. Snapshot collection includes co-located
 `comms.db`, `household.db`, `comms.key` and optional `comms.salt` at the root or
