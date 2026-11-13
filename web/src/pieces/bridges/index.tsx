@@ -62,7 +62,10 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
     : send ? held.find(e => e.id === `bridges:${send.id}`) : undefined;
   const newRoute: RouteInput | undefined = selected?.folder === 'new-route' ? (routes.records.some(r => r.id === selected.id) ? routeInput(routes.records.find(r => r.id === selected.id)!) : { id: selected.id, platform: 'discord', workspace: '', channel: '', peer: false, guest: false, readers: [], notes: [] }) : undefined;
   const newVenue: VenueInput | undefined = selected?.folder === 'new-venue' ? (venues.records.some(v => v.id === selected.id) ? venueInput(venues.records.find(v => v.id === selected.id)!) : { id: selected.id, platform: 'discord', agent: '', workspace: '', bot: '', tokenSecret: '', enabled: true, only: [], ignore: [], botRoles: [] }) : undefined;
-  const newLink: LinkInput | undefined = selected?.folder === 'new-link' ? (links.records.some(l => l.id === selected.id) ? linkInput(links.records.find(l => l.id === selected.id)!) : { id: selected.id, platform: 'discord', workspace: '', user: '', person: '' }) : undefined;
+  const [savedLinkCreations, setSavedLinkCreations] = useState(new Set<string>());
+  const savedLink = selected?.folder === 'new-link' ? links.records.find(l => l.id === selected.id) : undefined;
+  if (ready && savedLink && !savedLinkCreations.has(savedLink.id)) setSavedLinkCreations(new Set([...savedLinkCreations, savedLink.id]));
+  const newLink: LinkInput | undefined = selected?.folder === 'new-link' ? (savedLink ? linkInput(savedLink) : savedLinkCreations.has(selected.id) ? undefined : { id: selected.id, platform: 'discord', workspace: '', user: '', person: '' }) : undefined;
   const writeLink = (kind: RouteWrite['kind'], input: LinkInput | { id: string }) => writeSetup('Links', kind, input);
   const writeVenue = (kind: RouteWrite['kind'], input: VenueInput | { id: string }) => writeSetup('Venues', kind, input);
   const writeRoute = (kind: RouteWrite['kind'], input: RouteInput | { id: string }) => writeSetup('Routes', kind, input);

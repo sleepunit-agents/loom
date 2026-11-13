@@ -14,6 +14,7 @@ import { OperationError } from '../../core/index.js';
 import { venueSchema, routeSchema, type Message, type Venue } from './model.js';
 import { addressed } from './routing.js';
 import { eventTime } from './time.js';
+import { HouseholdDatabase } from '../../core/household/document.js';
 import { postReply } from './outbound.js';
 const sharing: Sharing = {members:{jonathan:{owner:true,agents:['art','mark']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['pond-bot']}},services:{}};
 const owner = {kind:'member',id:'jonathan'} as const;
@@ -509,15 +510,24 @@ describe('in-process bridge delivery',()=>{
     const f=await fixture();
     const before=f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all();
     const changed={id:'person',platform:'discord',workspace:'house',user:'200',person:'mark'};
+    const household=new HouseholdDatabase(f.app.db);
+    f.app.db.transaction(()=>household.replace(f.home,{v:1,agents:['art','mark'],default:'art',members:[
+      {person:'jonathan',role:'owner',agents:'*'},{person:'mark',role:'member',agents:['mark']},
+    ]}))();
+    const accessBefore=household.document(), sharingBefore=structuredClone(sharing);
+    const unchangedAccess=()=>{ expect(household.document()).toEqual(accessBefore); expect(sharing).toEqual(sharingBefore); };
     for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const){
       for(const [name,input] of [['putLinks',changed],['removeLinks',{id:'person'}]] as const){
         expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
         expect(f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all()).toEqual(before);
       }
     }
-    expect(f.op('putLinks',changed).ok).toBe(true);
-    expect(f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all()).not.toEqual(before);
-    expect(f.op('removeLinks',{id:'person'}).ok).toBe(true);
+    const added={...changed,id:'added',user:'201'};
+    expect(f.op('putLinks',added).ok).toBe(true); unchangedAccess();
+    expect(f.op('removeLinks',{id:'added'}).ok).toBe(true); unchangedAccess();
+    expect(f.op('putLinks',changed).ok).toBe(true); unchangedAccess();
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all()).toEqual([{id:'person',record:JSON.stringify(changed)}]);
+    expect(f.op('removeLinks',{id:'person'}).ok).toBe(true); unchangedAccess();
     expect(f.app.db.prepare('SELECT id FROM bridges_links').all()).toEqual([]);
   });
   it('protects links and connection setup through the central household policy',async()=>{

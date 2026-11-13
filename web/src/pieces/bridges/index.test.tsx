@@ -301,3 +301,15 @@ it('clears evicted person-link details', async () => {
   await draw('/p/bridges-preview/item/links/link'); await publish('bridges.link', []);
   expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view');
 });
+it.each([false, true])('clears an evicted saved person link on its creation URL (navigate=%s)', async navigateAway => {
+  const answer = pendingWrite(); await draw('/p/bridges-preview/item/new-link/new-id');
+  await change('Workspace ID', 'house'); await change('Platform user ID', '201'); await change('Person ID', 'mark'); await submit();
+  await publish('bridges.link', [{ id: 'new-id', platform: 'discord', workspace: 'house', user: '201', person: 'mark' }]);
+  await answer({ ok: true, value: { id: 'new-id' } });
+  expect(button('Save person link')).toBeDefined();
+  if (navigateAway) await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/routes/route' })); });
+  await publish('bridges.link', []);
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-link/new-id' })); });
+  expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view'); expect(text()).not.toContain('Person ID');
+  expect(f.call).toHaveBeenCalledTimes(1);
+});

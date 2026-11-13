@@ -32,7 +32,7 @@ export function LinkEditor({ link, fresh, request, busy, write }: {
   };
   return <form className="grid min-w-0 gap-4" onSubmit={submit}>
     <h2>{fresh ? 'New person link' : 'Edit person link'}</h2>
-    <p>This maps a platform account to a People person ID. Intake uses that identity; runtime policy decides admission. It does not grant access or change the person’s tier.</p>
+    <p>This maps a platform account to a People person ID. Intake uses that identity; runtime policy decides admission. Linking changes whose identity intake uses. It does not change runtime policy or the person’s tier.</p>
     <div className="flex flex-wrap gap-2" role="group" aria-label="Platform">
       {(['discord', 'slack'] as const).map(platform => <Button key={platform} type="button" variant="outline" aria-pressed={draft.platform === platform}
         disabled={pending} onClick={() => { setDraft({ ...draft, platform }); setConfirm(false); }}>{platform === 'discord' ? 'Discord' : 'Slack'}</Button>)}
