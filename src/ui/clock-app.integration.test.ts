@@ -3,6 +3,10 @@ import { it, expect } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { signin, hash } from '../core/signin/index.js';
+import { clockLocalFiling } from '../pieces/clock/role.js';
+import { wakes } from '../pieces/clock/store.js';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
@@ -24,12 +28,24 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const access = fixtureSharing();
   access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
   const sharing = () => access;
+  let auth: ReturnType<typeof signin> | undefined;
   const loom = await startLoom({home,clock,install(app) {
-    installApprovals(app.db,app.operations,app.live,sharing,{applications:{clock:clockVouchApplication(app.operations)}});
+    installApprovals(app.db,app.operations,app.live,sharing,{localAgent:'art',applications:{clock:clockVouchApplication(app.operations)}});
     installFixture(app,sharing);
     importClock(app.db,source,clock.now());
     const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
-  },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},window:true,valid:()=>true})});
+  },authenticate: req => auth?.resolve(req)});
+  auth = signin(loom);
+  function session(member: string) {
+    const bearer = randomBytes(32).toString('hex');
+    auth!.tokens.change(tokens => tokens.push({role:'owner',member,label:`browser-${member}`,sha256:hash(bearer),created:new Date(clock.now()).toISOString()}));
+    return auth!.createSession(hash(bearer));
+  }
+  const ownerSession = session('jonathan'), guestSession = session('pollock');
+  const localCards = ['Allow once','Deny this job','Standing job'].map(note => {
+    const result=clockLocalFiling(loom.operations).request({who:{agent:'art',where:'house (queue)'},for:'owner',member:'jonathan',people:['jonathan'],conversation:'cv-123456789abc'},`<!-- house: local -->\nReport host disk usage: ${note}.`,note);
+    expect(result.ok).toBe(true);return (result as {ok:true;value:{id:string}}).value.id;
+  });
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
   call('in',{agent:'art',prompt:'Review today’s work',note:'Morning review',when:'2h'});
@@ -47,6 +63,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       if(!path.startsWith(`${root}/`)||!existsSync(path))return route.fulfill({status:404,body:''});
       return route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});
     };
+    await context.addCookies([{name:'loom_ui',value:ownerSession,url:loom.url}]);
     await context.route('**/*',staticFiles);
     const a=await context.newPage(),b=await context.newPage();
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
@@ -91,12 +108,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await b.getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
     await expect.poll(()=>b.getByText('Ask the household owner to count this imported wake as their work?',{exact:false}).count()).toBe(1);
     expect(await b.getByText('Review these exact imported words',{exact:true}).count()).toBe(1);
+    /* Local request screenshots below include the exact words and live decisions. */
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/clock-app');mkdirSync(shots,{recursive:true});
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
     await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
     await expect.poll(()=>b.getByText(/Owner request a-[0-9a-f]+: pending. Work stays held until allowed./).count()).toBe(1);
     expect(wake(loom.db,'w-aaaaaa')).toEqual(original);
@@ -119,9 +132,35 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText('Saved',{exact:true}).count()).toBe(1);
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
-    const guest=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await guest.grantPermissions(['local-network-access'],{origin:loom.url});await guest.addCookies([{name:'fixture',value:'pollock',url:loom.url}]);await guest.route('**/*',staticFiles);
+    await b.getByRole('button',{name:/Local requests/}).click();
+    await expect.poll(()=>b.getByRole('list',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
+    const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
+    await openLocal(b,0);
+    await expect.poll(()=>b.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(1);
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await openLocal(a,0);
+    const beforeLocal=wakes(loom.db).length;
+    await b.getByRole('group',{name:'Answer approval'}).getByRole('button',{name:'Allow',exact:true}).click();
+    await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('allowed');
+    await expect.poll(()=>a.getByText('local-wake · allowed',{exact:true}).count()).toBe(1);
+    expect(await a.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    await openLocal(b,1);await b.getByRole('button',{name:'Deny',exact:true}).click();
+    await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[1])?.state).toBe('denied');
+    await openLocal(b,2);await b.getByRole('button',{name:'Allow every time',exact:true}).click();
+    await expect.poll(()=>load(loom.db).standing.length).toBe(1);
+    expect(wakes(loom.db)).toHaveLength(beforeLocal);
+    expect(await b.getByRole('button',{name:'Run now',exact:true}).count()).toBe(0);
+    const guest=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await guest.grantPermissions(['local-network-access'],{origin:loom.url});await guest.addCookies([{name:'loom_ui',value:guestSession,url:loom.url}]);await guest.route('**/*',staticFiles);
     const p=await guest.newPage();await p.goto(`${loom.url}/p/clock-preview`);await expect.poll(()=>row(p,'Pond check').count()).toBe(1);
     expect(await row(p,'Private clock work').count()).toBe(0);expect(await row(p,'Morning review').count()).toBe(0);
+    await p.goto(`${loom.url}/p/clock-preview/item/${localCards[0]}`);
+    await expect.poll(()=>p.getByText('This work is no longer in view',{exact:true}).count()).toBe(1);
+    expect(await p.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(0);
+    expect(await p.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
     await guest.close();
   }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
