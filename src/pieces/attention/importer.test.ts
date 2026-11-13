@@ -168,3 +168,20 @@ it.each([
   expect(()=>importAttention(f.app.db,[f.path],f.scopes)).toThrow();
   expect(f.app.db.prepare("SELECT * FROM core_migrations WHERE piece='attention'").all()).toEqual([]);
 });
+it('repairs legacy lexical bounds from mixed timestamp precision and preserves original bounds',async()=>{
+  const f=await setup();
+  f.source.exec('DELETE FROM conversation_days; DELETE FROM findings;');
+  f.source.prepare('UPDATE conversations SET started=?,last=?,last_seq=2').run('2026-11-01T00:00:00.100Z','2026-11-01T00:00:00Z');
+  f.source.prepare('UPDATE conversation_turns SET seq=1,at=? WHERE seq=5').run('2026-11-01T00:00:00Z');
+  f.source.prepare('UPDATE conversation_turns SET seq=2,at=? WHERE seq=6').run('2026-11-01T00:00:00.100Z');
+  importAttention(f.app.db,[f.path],f.scopes);
+  expect(f.load('attention_conversations')[0]).toMatchObject({started:'2026-11-01T00:00:00.000Z',last:'2026-11-01T00:00:00.100Z',legacyBounds:{started:'2026-11-01T00:00:00.100Z',last:'2026-11-01T00:00:00Z'}});
+});
+it('runtime digest reads preserve revision and chronological/rowid order after import',async()=>{
+  const f=await setup(true);
+  const tied=f.digest('r2','2026-11-01T00:00:01Z');
+  importAttention(f.app.db,[f.path],f.scopes);
+  const result=f.app.operations.call('direct',{kind:'member',id:'alice'},'attention.digests',{conversation:f.id});
+  expect(result).toMatchObject({ok:true});if(!result.ok)throw Error('read refused');
+  expect((result.value as {id:string;revision:number;order:number}[]).map(d=>[d.id,d.revision,d.order])).toEqual([[tied,1,3],[f.latest,1,2],[f.first,1,1]]);
+});

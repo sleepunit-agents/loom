@@ -15,3 +15,12 @@ TREE sha256:16cd4ba154bf4dec47441ab53eeb857d0461782956cedf7e8f74fda680beb1ec (13
 - NIT, actionable: duplicated migration list. Shared attentionMigrations exported from schema/index.ts and used by install/import.
 
 Additional author correction after frozen round1: preserve prototype-like folded model labels via Object.fromEntries, with a literal __proto__/constructor regression fixture (Zod record normalization could discard arbitrary own keys). Changelog documents offline staging command.
+
+## Round 2 — BLOCKING
+
+Valid frozen tree round-2-clean/tree from02c46b65c29c9c0c87b4f899ecc344ff8f1b3756, TREE sha256:9f7827487578c9951a07a4bb65e749379e500afcf23e1de34fca1100b0a56041 (1401 files), reply round-2-clean/reply.md. Recipe excludes this ledger from archive and patch. First round-2 invocation accidentally included the author ledger, was canceled and discarded without using a verdict; only the clean contract-only invocation counts.
+
+- CRITICAL, actionable: old lexical timestamp bounds can invert chronological bounds for valid mixed-precision inputs. Reconcile min/max using both source bounds and held turns, retaining exact original bounds as legacyBounds when repaired; regression fixture covers reachable same-second case. Document folded-turn precision limitation.
+- MAJOR, actionable: revision/order were not checked through runtime reads. Installed-piece fixture asserts all digest ids/revisions/orders through attention.digests, including timestamp and same-clock rowid ordering.
+
+GitHub reported CONFLICTING against main716994f768c2aabfd863deadc9af093b33630b4a (shared changelog insertion). Resolved by signed branch merge, retaining both entries and published history. No remote history rewrite.

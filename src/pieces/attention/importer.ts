@@ -65,6 +65,7 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   const rows = (table: typeof tables[number]) => snapshots.flatMap(s => s[table]);
   const expected: Record<typeof destinations[number], Row[]> = Object.fromEntries(destinations.map(t => [t, []])) as unknown as Record<typeof destinations[number], Row[]>;
   const conversations = new Map<string, Conversation>();
+  const originalBounds = new Map<string, { started: string; last: string }>();
   for (const r of rows('conversations')) {
     const agent = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).parse(r.agent);
     const venue = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).parse(r.venue), place = z.string().min(1).max(200).parse(r.place);
@@ -72,7 +73,7 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
     check(r.id === id && !conversations.has(id), 'conversation identity or duplicate source');
     check(Object.hasOwn(scopes, id), `explicit audience required for ${id}`);
     const c: Conversation = { ...scopes[id], id, agent, venue, place, label: z.string().nullable().parse(r.label), people: z.array(slug).max(32).parse(json(r,'people_json')), agents: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)).max(16).parse(json(r,'agents_json')), projects: [], started: time(r.started), last: time(r.last), turns: integer.parse(r.last_seq) };
-    check(c.started <= c.last, 'conversation times'); conversations.set(id,c);
+    originalBounds.set(id,{started:String(r.started),last:String(r.last)}); conversations.set(id,c);
   }
   check(Object.keys(scopes).every(id => conversations.has(id)), 'unused audience map entry');
   const parent = (r: Row) => { const c = conversations.get(String(r.conversation)); check(c, 'orphan record'); return c!; };
@@ -85,8 +86,12 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
     const { turn } = recordTurnInput.parse({ agent: c.agent, turn: raw });
     const writer = z.string().min(1).parse(r.writer);
     const record = { ...turn, ...scope(c), id: `${c.id}:${seq}`, conversation: c.id, seq, writer: { kind: 'legacy', id: writer }, ...(r.latency_ms !== null ? { latency_ms: integer.parse(r.latency_ms) } : {}) };
-    check(turn.at >= c.started && turn.at <= c.last, 'turn outside conversation times');
     expected.attention_turns.push({ id: record.id, conversation: c.id, seq, record: JSON.stringify(record) });
+  }
+  for (const c of conversations.values()) {
+    const times = [c.started,c.last,...expected.attention_turns.filter(t => t.conversation === c.id).map(t => String(JSON.parse(String(t.record)).at))].sort();
+    if (times[0] !== c.started || times.at(-1) !== c.last) c.legacyBounds = originalBounds.get(c.id)!;
+    c.started = times[0]; c.last = times.at(-1)!;
   }
   const folded = new Set<string>();
   for (const r of rows('conversation_days')) {

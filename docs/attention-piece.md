@@ -52,7 +52,7 @@ The audience file maps **every** conversation id to `{project?, member?}`. An ex
 
 | Old data | Import mapping |
 |---|---|
-| `conversations` | Same ids, metadata and `last_seq` high-water mark (`turns`), normalized UTC dates; project reference union recomputed |
+| `conversations` | Same ids, metadata and `last_seq` high-water mark (`turns`), normalized UTC dates with reconciled bounds; project reference union recomputed |
 | `conversation_turns` | Same seq, sender, time, kind, run/model/harness/outcome and recorded latency; stable `conversation:seq` ids; original writer retained as `{kind: 'legacy', id: <old writer>}` |
 | `conversation_days` | Same counts, median and model outcomes; stable `conversation:day` ids; no replay/recomputation |
 | `conversation_digests` | Same ids and authored content; revision starts at 1, order follows old `at,rowid`; stored pre-lint question wording is retained |
@@ -66,3 +66,5 @@ Every source is read within one read transaction, including committed WAL data. 
 The new records, migration history and receipt are committed in one destination transaction. Import into a nonempty Attention destination is refused. Before the receipt is written, every target table is compared against the complete mapped records (ids, counts and content); any mismatch or interruption rolls everything back. Repeating the same batch and map is a no-op; changing either refuses. The receipt intentionally is not a continuous mirror/check of a destination subsequently used by the daemon. It never gates installation, operations or next-mode startup. Schema 5 only adds the offline receipt table.
 
 `replied` is an import-only answer kind: a delivered reply with no stored words. Runtime answer input still accepts only yes/no/done/dismiss/words. Digest `legacyAnswer` preserves the original verdict, actor, time and optional reason even when it predates a rewrite or the current digest cleared its ask. Old overwritten digest revisions and old delivered message words cannot be recovered and are not invented. Status records are derived from live runtime state, never fabricated from old conversation rows.
+
+Legacy timestamps with mixed fractional precision exposed an old lexical min/max bug. The importer takes the chronological min/max of both stored bounds and all held turns; when this repairs a bound it also retains the exact source strings as conversation `legacyBounds`. Folded turns no longer expose their individual timestamps, so they cannot supply more precise bounds than the source retained. No source record is changed.
