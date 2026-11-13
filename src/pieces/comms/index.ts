@@ -27,6 +27,20 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
  const touched = (t: Thread, seq?: number) => { armSweep(); live.changed([{type:'thread',id:t.id}, ...(seq === undefined ? [] : [{type:'message',id:messageId(t.id,seq)}])]); };
  const requireAgent = (agent: string, place: string) => { const t = thread(db,place); if (!t || t.agent !== agent) return fail('denied','Thread unavailable'); return t; };
+ // Settlement is derived from durable routing progress: no async rewrite of private rows.
+ const progressed=(t:Thread,seq:number)=>t.working||(t.startedThrough??0)>=seq||!!db.prepare(
+  "SELECT 1 FROM comms_messages WHERE thread=? AND seq>? AND (kind IN ('card','reply') OR (kind='error' AND (id LIKE 'notice:no-reply:%' OR id LIKE 'noreply-%'))) LIMIT 1"
+ ).get(t.id,seq);
+ const settleStart=(r:MessageRow,record:LiveRecord):LiveRecord=>{
+  if(r.kind!=='error'||!/^start:[1-9][0-9]*$/.test(r.id))return record;
+  const step=record.step as Record<string,unknown>|undefined,t=thread(db,r.thread);
+  if(!t||step?.error!=='start-retry'||!progressed(t,Number(r.id.slice(6))))return record;
+  const name=t.agent.charAt(0).toUpperCase()+t.agent.slice(1);
+  return {...record,text:`${name} couldn't start at first.`,step:{...step,settled:true}};
+ };
+ const progressChanged=(t:Thread)=>live.changed((db.prepare(
+  "SELECT seq FROM comms_messages WHERE thread=? AND kind='error' AND id GLOB 'start:[0-9]*' AND words IS NOT NULL AND at>?"
+ ).all(t.id,clock.now()-days*day) as {seq:number}[]).map(r=>({type:'message',id:messageId(t.id,r.seq)})));
  const decode = async (r: MessageRow): Promise<LiveRecord> => {
   const {encoding,stepCipher,privateCipher,legacyHash,...metadata}=JSON.parse(r.record);
   const alive=()=>r.words!==null && r.at + days*day > clock.now();
@@ -36,9 +50,9 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const step=stepCipher?JSON.parse(await key.open(Buffer.from(stepCipher,'base64'))):undefined;
   // Crypto can cross the retention deadline. Never return any private field after it.
   const words=encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
-  return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null})};
+  return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null})});
  };
- const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?record:{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
+ const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?settleStart(rows[n],record):{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
  const bodyAlive = (t:Thread) => t.working && typeof t.aliveAt==='number' && t.aliveAt >= (t.workingSince??t.last)-60_000 && t.aliveAt <= clock.now()+60_000
   ? {at:t.aliveAt,...(typeof t.aliveTokens==='number'?{tokens:t.aliveTokens}:{})} : undefined;
@@ -331,7 +345,10 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(terminal&&!result.repeat){t.working=false;t.workingSince=null;t.workingBeat=null;saveThread(db,t);}
    return {seq:result.seq};
   })();
-  touched(requireAgent(agent,place),result.seq);return result;
+  const current=requireAgent(agent,place);
+  touched(current,result.seq);
+  if(m.kind==='card'||m.kind==='reply'||m.id.startsWith('notice:no-reply:'))progressChanged(current);
+  return result;
  }
  async function startNotice(agent:string,place:string,raw:StartNotice) {
   const common={seq:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),attempt:z.number().int().min(1).max(1000),
@@ -360,14 +377,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(JSON.stringify(readNotice())!==JSON.stringify(old))return fail('conflict','Start notice changed');
    return t;
   };
-  const progressed=(t:Thread)=>t.working||(t.startedThrough??0)>=n.seq||!!db.prepare(
-   "SELECT 1 FROM comms_messages WHERE thread=? AND seq>? AND (kind IN ('card','reply') OR (kind='error' AND (id LIKE 'notice:no-reply:%' OR id LIKE 'noreply-%'))) LIMIT 1"
-  ).get(place,n.seq);
-  if(progressed(before))return {seq:old?.seq??null};
+  if(progressed(before,n.seq))return {seq:old?.seq??null};
   if(old&&(!old.words||old.at+days*day<=clock.now()))return {seq:old.seq};
   // Attempt, error reason and run stay inside ciphertext, including retry arbitration.
   const previous=old?JSON.parse(await key.open(old.words!)):undefined;
-  if(progressed(recheck()))return {seq:old?.seq??null};
+  if(progressed(recheck(),n.seq))return {seq:old?.seq??null};
   if(previous&&(previous.step?.error!=='start-retry'||n.attempt<previous.step.attempt||
    (n.attempt===previous.step.attempt&&n.kind==='start-retry')))return {seq:old!.seq};
   const name=agent.charAt(0).toUpperCase()+agent.slice(1);
@@ -380,7 +394,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const encoded=JSON.stringify(payload),words=await key.seal(encoded);
   const result=db.transaction(()=>{
    const t=recheck();
-   if(progressed(t))return {seq:old?.seq??null};
+   if(progressed(t,n.seq))return {seq:old?.seq??null};
    if(old) {
     if(old.at+days*day<=clock.now())return {seq:old.seq};
     db.prepare('UPDATE comms_messages SET words=?,hash=? WHERE thread=? AND seq=?').run(words,key.hash(encoded),place,old.seq);
@@ -485,7 +499,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     t.workingBeat=working?clock.now():null;t.working=working;
     if(t.archived===null)t.startedThrough=t.nextSeq-1;
    }
-   saveThread(db,t);touched(t);return {stop,archived:t.archived!==null};
+   saveThread(db,t);touched(t);if(state!==undefined&&t.archived===null)progressChanged(t);return {stop,archived:t.archived!==null};
   },
   async close(){closed=true;cancel();await Promise.all([...pending.values(),...(recovery?[recovery]:[])]);},
  };

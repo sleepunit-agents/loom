@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,6 +105,67 @@ for(const progress of ['working','done','card','reply','no-reply'] as const)it(`
  const seq=(s.app.db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE kind='message'").get() as {seq:number}).seq;
  await s.comms.deliver('art',place,seq);
  expect((await s.comms.startNotice('art',place,{kind:'start-failed',seq,attempt:1})).seq).not.toBeNull();
+});
+for(const progress of ['working','done','card','reply','no-reply'] as const)it(`settles an existing retry headline after body progress (${progress})`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const notice={kind:'start-retry' as const,seq:1,attempt:2,retryAt:'2026-11-12T00:01:00Z',reason:'private start reason'};
+ await s.comms.startNotice('art',place,notice);
+ const stored=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages WHERE seq=2').get());
+ const changed=vi.spyOn(s.app.live,'changed');changed.mockClear();
+ if(progress==='working'||progress==='done')s.comms.status('art',place,progress);
+ else if(progress==='no-reply')await s.comms.notice('art',place,{kind:'no-reply',id:'progress'});
+ else await s.comms.post('art',place,{id:'progress',kind:progress,text:'body progress'});
+ expect(changed.mock.calls.flatMap(([refs])=>refs)).toContainEqual({type:'message',id:`${place}/2`});
+ const read=()=>s.comms.reader({agent:'art',conversation:place,valid:()=>true}).read({thread:place});
+ const page=await read();
+ expect(page.messages.find(m=>m.seq===2)).toMatchObject({text:"Art couldn't start at first.",step:{error:'start-retry',settled:true,attempt:2,reason:'private start reason'}});
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain("Art couldn't start at first.");
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages WHERE seq=2').get())).toBe(stored);
+ if(progress==='working')s.clock.advance(90_000);
+ await s.restart();
+ expect((await read()).messages.find(m=>m.seq===2)?.text).toBe("Art couldn't start at first.");
+ await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:3});
+ expect((await read()).messages.find(m=>m.seq===2)?.text).toBe("Art couldn't start at first.");
+ s.clock.advance(14*86400_000);
+ expect((await read()).messages.find(m=>m.seq===2)).toMatchObject({text:null});
+ expect((await read()).messages.find(m=>m.seq===2)).not.toHaveProperty('step');
+});
+it('refreshes a subscribed retry line when the body starts',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.startNotice('art',place,{kind:'start-retry',seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});
+ cleanup.push(()=>ws.terminate());await once(ws,'open');
+ const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'message',scope:place}));
+ expect(JSON.stringify(JSON.parse((await initial)[0].toString()))).toContain("Art couldn't start; retrying.");
+ const update=once(ws,'message');s.comms.status('art',place,'working');
+ expect(JSON.stringify(JSON.parse((await update)[0].toString()))).toContain("Art couldn't start at first.");
+});
+it('settles a page retry line if progress arrives while a later row decrypts',async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,open:async blob=>{
+  const words=await k.open(blob);
+  if(pause&&words.includes('later private ask')){started();await waiting;}
+  return words;
+ }})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.startNotice('art',place,{kind:'start-retry',seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
+ await s.comms.post('art',place,{id:'ask',kind:'ask',text:'later private ask'});pause=true;
+ const page=s.call('messages',{thread:place});await began;
+ s.comms.status('art',place,'done');release();
+ expect(JSON.stringify(await page)).toContain("Art couldn't start at first.");
+});
+it('keeps final start failures and a newer message retry distinct from prior progress',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1});
+ s.comms.status('art',place,'done');
+ await s.call('send',{thread:place,id:'newmessageaaaaaa',text:'new request'});
+ await s.comms.deliver('art',place,3);
+ await s.comms.startNotice('art',place,{kind:'start-retry',seq:3,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
+ const page=await s.comms.reader({agent:'art',valid:()=>true}).read({thread:place});
+ expect(page.messages.find(m=>m.seq===2)).toMatchObject({text:"Art couldn't start.",step:{error:'start-failed'}});
+ expect(page.messages.find(m=>m.seq===4)).toMatchObject({text:"Art couldn't start; retrying."});
+ expect(page.messages.find(m=>m.seq===4)?.step).not.toHaveProperty('settled');
 });
 for(const boundary of ['revoked','closed','archived','conversation','project','source','notice'] as const)it(`refuses changed start-notice snapshots during encryption (${boundary})`,async()=>{
  let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};

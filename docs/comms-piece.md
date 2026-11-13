@@ -79,7 +79,7 @@ data does not remove the behavior it delivered.
 | Adapter `post` | `Comms.post` | Partial: encrypted replies, cards, ask refs, agent isolation and id dedupe; harness labels, spawn report refs and continuation receipt semantics need parity. |
 | Adapter `reconcile` | Runtime role | Partial: message recovery supports accepted/not-accepted/unknown runtime receipts with snapshot/ownership/retention checks; production binding and full continuation/deleted/deadline semantics remain missing. |
 | Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
-| Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen. Body progress suppresses late notices, including after heartbeat expiry/restart. Runtime binding, queued/busy timing, settling an existing retry headline after progress, and app retry-time/Send again controls remain missing. |
+| Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. Runtime binding, queued/busy timing and app retry-time/Send again controls remain missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
 | Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; batch validation, run-scoped identity, timing/body limits, heartbeat and non-thread conversation steps missing. |
@@ -182,8 +182,7 @@ closure/archive during encryption, transaction rollback and retention. Crypto
 stays outside transactions; changes after an awaited operation are rejected.
 An overlapping notice update reports a conflict so the runtime can retry with
 the same identity. No notice details enter plaintext records. Production
-binding, queued/busy timers, changing an existing retry headline to “couldn't
-start at first” after progress, and app retry-time/Send again rendering remain
+binding, queued/busy timers and app retry-time/Send again rendering remain
 required. This unit supplies the internal persistence role only.
 
 Runtime write guard follow-up: `post` also snapshots the original project across
@@ -193,3 +192,20 @@ instances and archived threads, alongside wrong-agent/deleted denial and the
 existing member-title precedence. Before the fix five cases failed (two project
 races and three unavailable title writes). All 188 focused tests and TypeScript
 checking pass afterward. No production binding or web change is included.
+
+Existing start-retry notices now resolve to “couldn't start at first” and a
+`step.settled` flag once durable body progress covers their member-message
+sequence. This is a read projection from the same progress used to suppress
+late start notices; it leaves encrypted rows, retention deadlines and thread
+activity intact. Working/done, cards, replies and no-reply events invalidate
+the existing notice Live records. Pages recheck settlement after all rows
+finish decrypting. Final start failures remain failures, and prior progress
+does not settle a newer member-message retry.
+
+Before this change five new cases failed because progress never invalidated
+the existing notice. Eight added cases now cover all five progress sources,
+actual signed-in Live refresh, progress during page decryption, restart,
+heartbeat expiry, late failure suppression, retained encrypted details, final
+failure/new-message separation and expiry without resurrection. All 196 focused
+tests and TypeScript checking pass. Runtime binding and app retry controls
+remain required; no web code or production composition changes are included.
