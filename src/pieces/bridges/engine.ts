@@ -8,17 +8,21 @@ import { addressed, isStop } from './routing.js';
 import { all, venueById, routeFor, personFor } from './store.js';
 import type { BridgeRuntime, BridgeSecrets, BridgesRole, VenueAdapter, VenueConnection } from './role.js';
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
-interface Inbox { id: string; venue: string; message: string; state: string }
-interface Outbox { id: string; venue: string; address: string; text: string; state: string }
+interface Inbox { id: string; venue: string; identity: string; message: string; state: string }
+interface Outbox { id: string; venue: string; identity: string; address: string; text: string; state: string }
+const identity = (v: Venue) => JSON.stringify([v.platform,v.workspace,v.agent,v.bot]);
+interface ConnectionState { signature: string; connection?: VenueConnection; cancel?: () => void; failures: number; generation: number }
 /** Daemon-owned connections and durable IO queues. No body or subprocess runs here. */
 export class Bridges implements BridgesRole {
   private closed = false;
-  private connections = new Map<string, { signature: string; connection?: VenueConnection; cancel?: () => void; failures: number; generation: number }>();
+  private connections = new Map<string, ConnectionState>();
+  private unsubscribeRelease: () => void;
   private cancelRetry?: () => void;
   private draining?: Promise<void>;
   private again = false;
   constructor(private app: Foundation, private clock: Clock, private runtime: BridgeRuntime, private secrets: BridgeSecrets,
     private adapters: VenueAdapter[], private effects: OutsideEffects) {
+    this.unsubscribeRelease = effects.onReleased(id => { if (id.startsWith('bridges:')) void this.flush(); });
     // A crash can happen after the venue accepted a send but before we recorded its receipt.
     app.db.prepare("UPDATE bridges_outbox SET state='uncertain' WHERE state='sending'").run();
   }
@@ -49,7 +53,7 @@ export class Bridges implements BridgesRole {
     }));
     await this.flush();
   }
-  private async connect(v: Venue, c: { signature: string; connection?: VenueConnection; cancel?: () => void; failures: number; generation: number }) {
+  private async connect(v: Venue, c: ConnectionState) {
     if (this.closed || this.connections.get(v.id) !== c) return;
     const generation = ++c.generation;
     this.status(v.id,'connecting');
@@ -75,7 +79,7 @@ export class Bridges implements BridgesRole {
     const v = venueById(this.app.db,venueId);
     if (!v) throw new Error('Unknown venue');
     const id = hash([v.platform,v.workspace,message.channel,message.id,v.agent]);
-    this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,'pending',NULL,?,NULL)").run(id,v.id,JSON.stringify(message),this.clock.now());
+    this.app.db.prepare("INSERT OR IGNORE INTO bridges_inbox VALUES (?,?,?,?,'pending',NULL,?,NULL)").run(id,v.id,identity(v),JSON.stringify(message),this.clock.now());
     this.changed('bridges.venue',v.id);
     // Receipt is durable before the gateway ACK. Delivery can fail independently.
     void this.flush();
@@ -89,7 +93,7 @@ export class Bridges implements BridgesRole {
     if (!incoming) throw new Error('No delivered message for reply');
     const m = JSON.parse(incoming.message) as Message;
     const address: Address = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group};
-    db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,JSON.stringify(address),input.text,this.clock.now());
+    db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,incoming.identity,JSON.stringify(address),input.text,this.clock.now());
     this.changed('bridges.send',input.id);
     // If invoked within runtime's transaction, defer IO until that transaction has committed.
     this.clock.at(this.clock.now(), () => { if (!this.closed) void this.flush(); });
@@ -111,7 +115,7 @@ export class Bridges implements BridgesRole {
       const v = venueById(db,row.venue), message = JSON.parse(row.message) as Message;
       let state = 'dropped', reason: string | null = null;
       try {
-        if (!v) { state='held'; reason='venue removed'; }
+        if (!v || identity(v)!==row.identity) { state='held'; reason='venue identity changed'; }
         else {
           const route = routeFor(db,v,message.channel,message.parent);
           const person = personFor(db,v,message.user);
@@ -141,7 +145,7 @@ export class Bridges implements BridgesRole {
     for (const row of db.prepare("SELECT * FROM bridges_outbox WHERE state='pending' ORDER BY created,id").all() as Outbox[]) {
       if (this.closed) return;
       const v = venueById(db,row.venue);
-      if (!v?.enabled) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id); this.changed('bridges.send',row.id); continue; }
+      if (!v?.enabled || identity(v)!==row.identity) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id); this.changed('bridges.send',row.id); continue; }
       const adapter = this.adapters.find(a => a.platform === v.platform);
       if (!adapter) { this.retry(); continue; }
       let token: string;
@@ -161,9 +165,10 @@ export class Bridges implements BridgesRole {
       this.changed('bridges.send',row.id); this.changed('bridges.venue',row.venue);
     }
   }
-  close() {
-    this.closed=true; this.cancelRetry?.();
+  async close() {
+    this.closed=true; this.cancelRetry?.(); this.unsubscribeRelease();
     for (const c of this.connections.values()) { c.cancel?.(); c.connection?.close(); }
     this.connections.clear();
+    await this.draining;
   }
 }

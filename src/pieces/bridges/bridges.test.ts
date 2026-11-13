@@ -28,11 +28,11 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   let effects!: ReturnType<typeof installEffects>;
   const app=await startLoom({home,clock,install(app) { installBridges(app,()=>sharing); effects=installEffects(app,()=>sharing,staging); }});
   const adapter=new FakeVenue(platform), deliveries=new Map<string,Incoming>(), stops: unknown[]=[];
-  let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false;
+  let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
   const runtime: BridgeRuntime={async admit(){return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');},async stop(i){stops.push(i);}};
-  const secrets: BridgeSecrets={async may(){return true;},async get(){return 'token-value-do-not-store';}};
+  const secrets: BridgeSecrets={async may(){return secretAllowed;},async get(_agent,name){secretGets.push(name);return 'token-value-do-not-store';}};
   const engine=new Bridges(app,clock,runtime,secrets,[adapter],effects);
-  const close=async()=>{engine.close();await app.close();}; closes.push(close);
+  const close=async()=>{await engine.close();await app.close();}; closes.push(close);
   const op=(name:string,input:unknown,id=crypto.randomUUID())=>app.operations.call('direct',owner,`bridges.${name}`,input,id);
   const venue=venueSchema.parse({id:'art-'+platform,platform,agent:'art',workspace:'house',bot:'100',tokenSecret:'art-token'});
   if (!existingHome) {
@@ -41,7 +41,7 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
     expect(op('putRoutes',{id:'channel',platform,workspace:'house',channel:'300',primary:'art'}).ok).toBe(true);
   }
   const message=(overrides: Partial<Message>={}): Message=>({id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
-  return {home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
+  return {secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
   it.each(['discord','slack'] as const)('%s receives, routes, delivers and replies once',async platform=>{
@@ -78,8 +78,9 @@ describe('in-process bridge delivery',()=>{
   it('holds every staging send until released, then sends exactly once',async()=>{
     const f=await fixture('slack',true); await f.engine.receive(f.venue.id,f.message({dm:true})); await f.engine.flush();
     f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'held'}); await f.engine.flush(); expect(f.adapter.posts).toHaveLength(0);
+    const posted = new Promise<void>(resolve=>{ const send=f.adapter.send.bind(f.adapter); f.adapter.send=async(...args)=>{const result=await send(...args);resolve();return result;}; });
     expect(f.app.operations.call('direct',owner,'core.releaseEffect',{id:'bridges:reply'},'release').ok).toBe(true);
-    await f.engine.flush(); await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
+    f.clock.advance(0); await posted; expect(f.adapter.posts).toHaveLength(1);
   });
   it('holds an uncertain send for a person and never sends it again, including after restart',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush(); f.adapter.uncertain=true;
@@ -93,10 +94,53 @@ describe('in-process bridge delivery',()=>{
     const f=await fixture(); await f.engine.sync(); f.adapter.callbacks!.dropped(); expect(f.adapter.connections).toBe(1);
     f.clock.advance(1000); await f.engine.sync(); // Await credentials/connect microtasks without a wall clock sleep.
     await Promise.resolve(); await Promise.resolve(); expect(f.adapter.connections).toBe(2);
-    f.adapter.callbacks!.dropped(); f.engine.close(); f.clock.advance(120000); expect(f.adapter.connections).toBe(2);
+    f.adapter.callbacks!.dropped(); await f.engine.close(); f.clock.advance(120000); expect(f.adapter.connections).toBe(2);
   });
   it('accepts stop without waking another body',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message({text:'<@100> cancel!'})); await f.engine.flush(); expect(f.stops).toHaveLength(1); expect(f.deliveries.size).toBe(0);
+  });
+
+  it('never gets a denied credential or opens a connection or sends with one',async()=>{
+    const f=await fixture(); f.denySecret(); await f.engine.sync();
+    expect(f.secretGets).toEqual([]); expect(f.adapter.connections).toBe(0);
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0); expect(f.adapter.posts).toEqual([]); expect(f.secretGets).toEqual([]);
+  });
+  it('holds pending work if its receiving identity changes',async()=>{
+    const f=await fixture(); f.setGate('wait'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.op('putVenues',{...f.venue,agent:'mark',bot:'101'}).ok).toBe(true);
+    f.setGate('allow'); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'held'});
+  });
+  it('holds a queued reply if the bot identity is replaced',async()=>{
+    const f=await fixture('discord',true); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
+    f.op('putVenues',{...f.venue,workspace:'another-workspace'}); await f.engine.flush();
+    expect(f.adapter.posts).toHaveLength(0); expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'held'});
+  });
+  it('keeps a pending runtime turn id across restart',async()=>{
+    const f=await fixture(); f.failDelivery(); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const id=[...f.deliveries.keys()][0]; await f.close(); closes.splice(closes.indexOf(f.close),1);
+    const next=await fixture('discord',false,f.home); await next.engine.sync(); expect([...next.deliveries.keys()]).toEqual([id]);
+  });
+  it('recovers an interrupted sending row as uncertain without attempting another post',async()=>{
+    const f=await fixture('discord',true); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
+    f.app.db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id='reply'").run();
+    await f.close(); closes.splice(closes.indexOf(f.close),1);
+    const next=await fixture('discord',false,f.home); await next.engine.sync(); expect(next.adapter.posts).toHaveLength(0);
+    expect(next.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'uncertain'});
+  });
+  it('handles multiple bot connections once per addressed agent',async()=>{
+    const f=await fixture();
+    f.op('putVenues',{...f.venue,id:'second-connection'});
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.receive('second-connection',f.message()); await f.engine.flush();
+    expect(f.deliveries.size).toBe(1);
+    f.op('putVenues',{...f.venue,id:'mark-connection',agent:'mark',bot:'101'});
+    const both=f.message({id:'both',mentions:['100','101']});
+    await f.engine.receive(f.venue.id,both); await f.engine.receive('mark-connection',both); await f.engine.flush();
+    expect([...f.deliveries.values()].filter(d=>d.text==='hi')).toHaveLength(3);
+    expect(new Set([...f.deliveries.values()].map(d=>d.key.agent))).toEqual(new Set(['art','mark']));
   });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();
