@@ -448,3 +448,37 @@ provenance, apply scopes/steers, and pass `beforeOutside`. Unknown provenance
 must fail closed. Claim metadata is not a grant to execute; queue acknowledgements
 are not `started`. Actual secret-role lookup, repository access/build discovery,
 body-host lifecycle, dispatch and default-login resolution remain required.
+
+## Reported build discovery
+
+`runtime.buildStatus {agent}` returns `{agent, build: {image, job, at} | null}`
+from the caller's visible new-side job records, matching the current effective
+house identity, including its repository-secret reference. It is the discovery
+portion of old `noteBuild`/`s.builds`; it does not check a repository or image.
+The caller needs central visibility of this agent's runtime settings; each
+candidate separately needs central runtime job visibility. Services need both
+settings and job type grants plus the exact operation grant. Runners cannot
+read agent settings and cannot use this endpoint. Hidden private/project jobs
+do not influence selection, even if they carry the newest report. The answer
+is consequently caller-relative, not a global authoritative current image.
+
+A first image report now stores server `job.buildAt` with the image, metadata
+and receipt in the same transaction. Later progress, duplicate reports and
+receipt replay preserve that time. Claim clears stale queued image and time.
+Discovery selects the greatest report time, with lexical job id breaking equal
+times. It excludes undated historical reports, missing claim provenance,
+invalid agent tags, report times before claim or in the future, and changed
+repo/file/branch/secret-reference identities. Completed jobs remain candidates;
+completion does not erase a successfully reported build. Existing records are
+not rewritten: `buildAt` is optional JSON metadata, no SQL migration. Repeating
+an undated old image does not invent its original report time; a new job must
+report a new build. This deliberately avoids using `changedAt`, which later
+progress or completion can change independently of the image.
+
+The read operation creates no receipt, notification or outside effect and
+returns no locator, secret reference or input words. No current-build cache or
+parallel store is introduced. Actual `build-check`/`build-report`, trusted body
+hosts, warm-host upgrades, repository credential release and daemon execution
+remain outstanding. This metadata is neither execution authorization nor proof
+that an image exists on a box; an eventual execution consumer must revalidate
+current central authority/configuration/grants after commit before release.

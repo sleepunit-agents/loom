@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
+
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
 - Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
