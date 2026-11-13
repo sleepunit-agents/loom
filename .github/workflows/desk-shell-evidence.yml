@@ -4,6 +4,8 @@ on:
     paths:
       - 'web/src/shell/**'
       - 'web/src/kit/split.tsx'
+      - 'web/src/pieces/attention/agent-face*'
+      - 'src/core/household/display*'
       - 'web/src/pieces/attention/rail*'
       - 'web/src/pieces/attention/home*'
       - 'web/src/apps.ts'

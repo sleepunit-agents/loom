@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
 
+- Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.
+
 - Keep a neighboring next-mode app's narrow reader from taking focus away from the chosen tile.
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.

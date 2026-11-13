@@ -1,3 +1,4 @@
+import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import './home.css';
 import { useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
@@ -24,6 +25,7 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const displays = useAgentDisplays();
   const people = useRecords<AgentPerson>('person');
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
@@ -60,7 +62,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const jobs = deskJobs(work, paused);
             const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
             return <section key={agent.id} aria-label={`${agent.name} card`} className="desk-home-card grid min-w-0 gap-3">
-              <header className="desk-home-identity"><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
+              <header className="desk-home-identity"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!first)} size={96} /><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
