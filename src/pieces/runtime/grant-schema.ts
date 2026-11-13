@@ -14,7 +14,7 @@ const port = z.object({
 }).strict();
 const tailnet = z.object({
   name: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
-  socket: z.string().max(400).regex(/^\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/tailscaled\.sock$/)
+  socket: z.string().max(400).regex(/^\/(?:[A-Za-z0-9._-]+\/)*tailscaled\.sock$/)
     .refine(value => value.split('/').every(part => part !== '.' && part !== '..')),
 }).strict();
 export const grantFields = {

@@ -404,7 +404,8 @@ login or secret value and releases no work or credential.
 The structured fields are `nested`/`gpu` booleans, optional `repoSecret` store
 name, `secrets` mapping house alias to store name (32), `ports` as `{ip,port}`
 (8, IPv4, 1024–65535, unique port), `tailnets` as `{name,socket}` (4, unique
-name, absolute path ending in `tailscaled.sock` without dot/parent segments),
+name, absolute path ending in `tailscaled.sock` without dot/parent segments,
+including `/tailscaled.sock`),
 `logins` (`claude` and/or `codex`), `scopes`, and `steers`. Missing capabilities
 reset to false/empty; missing `repoSecret` removes that reference. No secret
 value, token, inferred principal or caller-provided scope history is accepted.

@@ -79,9 +79,9 @@ it('validates bounded structured grants and refuses values/authority injected as
     { secrets: { name: 'secret value with spaces' } }, { secrets: Object.fromEntries(Array.from({ length: 33 }, (_, n) => [`a${n}`, 'store'])) },
     ...[{ ip: '256.1.1.1', port: 7401 }, { ip: '::1', port: 7401 }, { ip: '127.0.0.1', port: 1023 }, { ip: '0.0.0.0', port: 65536 }, { ip: '127.0.0.1', port: 7401.5 }, { ip: '127.0.0.1', port: 7401, extra: true }].map(port => ({ ports: [port] })),
     { ports: Array.from({ length: 9 }, (_, n) => ({ ip: '127.0.0.1', port: 7400 + n })) }, { ports: [{ ip: '127.0.0.1', port: 7401 }, { ip: '0.0.0.0', port: 7401 }] },
-    ...['run/tailscaled.sock', '/run/../tailscaled.sock', '/run/./tailscaled.sock', '/run//tailscaled.sock', '/run/podman.sock', '/tailscaled.sock'].map(socket => ({ tailnets: [{ name: 'fleet', socket }] })),
+    ...['run/tailscaled.sock', '/run/../tailscaled.sock', '/run/./tailscaled.sock', '/run//tailscaled.sock', '/run/podman.sock'].map(socket => ({ tailnets: [{ name: 'fleet', socket }] })),
     { tailnets: [full.tailnets[0], full.tailnets[0]] }, { tailnets: Array.from({ length: 5 }, (_, n) => ({ name: `a${n}`, socket: '/run/tailscaled.sock' })) },
-    { logins: ['gemini'] }, { scopes: { github: 'owner++pond' } }, { scopes: { github: Array(11).fill('pond').join('+') } }, { scopes: { github: 'x'.repeat(201) } },
+    { logins: ['gemini'] }, { logins: ['claude', 'codex', 'claude'] }, { scopes: { github: 'owner++pond' } }, { scopes: { github: Array(11).fill('pond').join('+') } }, { scopes: { github: 'x'.repeat(201) } },
     { steers: { owner: ['pond'] } }, { steers: { patrick: ['owner'] } }, { steers: { patrick: [] } }, { steers: { patrick: Array(11).fill('pond') } },
     ...['token', 'value', 'scopeStores', 'owner', 'member', 'project', 'principal', 'changedAt', 'house', 'job'].map(key => ({ [key]: 'injected' })),
   ];
@@ -119,6 +119,8 @@ it('snapshots the repository secret reference on claim and excludes builds after
   expect(f.app.operations.call('direct', runner, 'runtime.reportJob', { job: 'j', state: 'running', build }, 'report').ok).toBe(true);
   const job = f.store.read('job', 'j')!;
   expect(configuredBuild(job, configuredHouse(f.store.read('settings', 'art')))).toBe(build);
+  const { repoSecret: _secret, ...historical } = job.made!;
+  expect(configuredBuild({ ...job, made: historical }, configuredHouse(f.store.read('settings', 'art')))).toBeUndefined();
   expect(f.call({ repoSecret: 'repo-two' }).ok).toBe(true);
   expect(configuredBuild(job, configuredHouse(f.store.read('settings', 'art')))).toBeUndefined();
   expect(f.call({}).ok).toBe(true);
@@ -138,6 +140,16 @@ it('accepts documented list/map limits and inherited-object names as ordinary se
   expect(f.call({ scopes: Object.fromEntries(Array.from({ length: 41 }, (_, n) => [`a${n}`, 'owner'])) })).toMatchObject({ ok: false, code: 'invalid' });
   expect(f.call({ secrets: { constructor: 'same', toString: 'same' }, scopes: 'none', steers: 'none' }).ok).toBe(true);
   expect(f.store.read('settings', 'art')?.grants?.secrets).toEqual({ constructor: 'same', toString: 'same' });
+  expect(f.call({ tailnets: [{ name: 'root', socket: '/tailscaled.sock' }] }).ok).toBe(true);
+  expect(f.store.read('settings', 'art')?.grants?.tailnets).toEqual([{ name: 'root', socket: '/tailscaled.sock' }]);
+});
+it('replaces supplied nonempty scope and steering maps rather than merging old entries', async () => {
+  const f = await setup();
+  expect(f.call({ ...full, steers: { patrick: ['pond'], mark: ['other'] } }).ok).toBe(true);
+  expect(f.call({ scopes: { github: 'owner' }, steers: { patrick: ['other'] } }).ok).toBe(true);
+  expect(f.store.read('settings', 'art')?.grants).toMatchObject({ scopes: { github: 'owner' }, steers: { patrick: ['other'] }, scopeStores: { github: 'github-store' } });
+  expect(f.store.read('settings', 'art')?.grants?.scopes).toEqual({ github: 'owner' });
+  expect(f.store.read('settings', 'art')?.grants?.steers).toEqual({ patrick: ['other'] });
 });
 it('exposes grant references only through centrally scoped settings and keeps acknowledgements minimal', async () => {
   const f = await setup(); expect(f.call(full)).toEqual({ ok: true, value: { agent: 'art' } });
