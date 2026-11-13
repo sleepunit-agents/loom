@@ -84,6 +84,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
+            // Checking may scroll its button into view; capture Home from its identity/header.
+            await page.locator('.desk-home').evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
             if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0);
           }
           if(surface==='work') {
