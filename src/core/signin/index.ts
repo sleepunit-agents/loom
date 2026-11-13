@@ -49,7 +49,7 @@ export class Signin {
   readonly sessions: SessionDatabase;
   readonly tokens: TokenDatabase;
   private readonly key: Buffer;
-  private readonly bodies = new WeakMap<Viewer, {agent: string; job: string; service?: string; valid(): boolean}>();
+  private readonly bodies = new WeakMap<Viewer, {agent: string; job?: string; service?: string; valid(): boolean}>();
   constructor(private app: Foundation) {
     this.sessions=new SessionDatabase(app.db); this.tokens=new TokenDatabase(app.db);
     const rows=new HouseholdRows<string>(app.db,'settings');
@@ -65,18 +65,23 @@ export class Signin {
     if (t.role==='owner') { const id=t.member ?? h.members.find(m=>m.agents==='*')?.person; if (id && h.members.some(m=>m.person===id)) viewer={kind:'member',id}; }
     const a=/^agent:([a-z0-9-]+)(?:\/([a-z0-9-]+))?(?:@([a-z0-9-]+))?$/.exec(t.role);
     if (a && h.agents.includes(a[1])) viewer={kind:'agent',id:a[1]};
-    if (viewer && a?.[3]) {
+    if (viewer && a) {
       const agent=a[1], service=a[2], job=a[3], role=t.role;
-      this.bodies.set(viewer,{agent,job,...(service?{service}:{}),valid:()=>this.tokens.records(digest).some(current=>current.role===role && !current.revoked && (!current.expires || Date.parse(current.expires)>this.app.operations.clock.now()))});
+      this.bodies.set(viewer,{agent,...(job?{job}:{}),...(service?{service}:{}),valid:()=>this.tokens.records(digest).some(current=>current.role===role && !current.revoked && (!current.expires || Date.parse(current.expires)>this.app.operations.clock.now()))});
     }
     const r=/^(runner|service):([a-z0-9-]+)$/.exec(t.role);
     if (r && new HouseholdRows<{active:boolean}>(this.app.db,'settings').get(`signin-principal:${r[1]}:${r[2]}`)?.active) viewer={kind:r[1] as 'runner'|'service',id:r[2]};
     return viewer ? {viewer,...(t.expires?{expiresAt:Date.parse(t.expires)}:{})} : undefined;
   }
-  /** Only a viewer actually resolved from a current job-bearing credential has proof. */
-  body(viewer: Viewer) {
+  /** Exact authenticated agent credential identity, including service without a job. */
+  agent(viewer: Viewer) {
     const proof=this.bodies.get(viewer);
     return proof?.valid() ? proof : undefined;
+  }
+  /** Only a viewer actually resolved from a current job-bearing credential has body proof. */
+  body(viewer: Viewer) {
+    const proof=this.agent(viewer);
+    return proof?.job ? {...proof,job:proof.job} : undefined;
   }
   /** Trusted composition role. Caller owns the same database transaction. */
   issueBody(agent: string, job: string): string {

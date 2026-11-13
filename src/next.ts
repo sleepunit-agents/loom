@@ -105,7 +105,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
-  const conversations=conversationRuntime(app,sharing,v=>signin(app).body(v));
+  const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
     applications: { clock: clockVouchApplication(app.operations) },

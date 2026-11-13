@@ -369,7 +369,7 @@ it('derives Approval caller only from the live authenticated body and database m
   // Shared agent credentials, another job, and a copied Viewer have no principal.
   for(const secret of [f.unbound,f.token('agent:art@another')]){
    const other=value<{for:string}>(await f.post(secret,'approvals.request',{...ask,target:'unknown:'+secret.slice(0,8)}));
-   expect(other).toMatchObject({for:'?',who:{where:'a body'}});expect(other).not.toHaveProperty('conversation');
+   expect(other).toMatchObject({for:'?'});expect(other).not.toHaveProperty('conversation');
   }
   const original=signin(f.app).token(hash(body))!.viewer;
   const copied=value<{for:string}>(f.app.operations.call('direct',{...original},'approvals.request',{...ask,target:'copy:viewer'},'copy-viewer'));
@@ -402,4 +402,26 @@ it('retains centrally authenticated service-house spend identity and fences stal
  // An archived thread no longer proves a person, even before asynchronous end work settles.
  await f.socket('comms.change',{thread,action:'archive'});
  expect(await f.post(service,'approvals.request',{...ask,target:'after:archive'})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('keeps service restrictions without a job or after execution loses its binding',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const discord=f.token(`agent:art/discord@${job}`),slack=f.token('agent:art/slack'),same=f.token('agent:art/discord');
+ f.app.db.transaction(()=>{const store=runtimeStore(f.app.db),cv=store.read('job',job)!.conversation!,{changedAt:_,...b}=store.read('binding',cv)!;store.put('binding',{...b,job:'unbound'},f.clock.now());})();
+ const ask={kind:'github-write',target:'unknown:service',what:'A restricted service write',why:'Prove fail closed spending'};
+ const receipt=value<{id:string}>(await f.post(discord,'approvals.request',ask));
+ expect(receipt).toMatchObject({for:'?',who:{where:`${job} (discord)`}});
+ expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true});
+ expect(await f.post(slack,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
+ const unknown=value<{for:string}>(await f.post(slack,'approvals.request',{...ask,target:'unknown:slack',principal:'owner'}));
+ expect(unknown).toMatchObject({for:'?',who:{where:'a body (slack)'}});
+ expect(await f.post(same,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:true,value:{state:'used'}});
+ const viewer=signin(f.app).token(hash(slack))!.viewer;
+ expect(signin(f.app).agent(viewer)).toMatchObject({agent:'art',service:'slack'});
+ expect(signin(f.app).body(viewer)).toBeUndefined();expect(signin(f.app).agent({...viewer})).toBeUndefined();
+ signin(f.app).tokens.change(tokens=>{tokens.find(t=>t.sha256===hash(slack))!.revoked=new Date(f.clock.now()).toISOString();});
+ expect(signin(f.app).agent(viewer)).toBeUndefined();
+ expect(await f.post(slack,'approvals.request',{...ask,target:'revoked:service'})).toMatchObject({ok:false,code:'denied'});
 });
