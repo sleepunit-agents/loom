@@ -30,3 +30,9 @@ TREE: sha256:76806f235bddf0b1b3c01807d19af6bf3fed2975c71b0d87289848e2ff2dffce (9
 - NIT, latency absent assertion: actionable. The unsolicited reply now explicitly has no latency_ms property.
 
 Three rounds reached; no fourth round. The last review remains BLOCKING as tagged; all actionable findings are folded. The two final major/critical claims are rejected with the code evidence above. No known implementation hole remains. Original remaining rebuild obligations are carried by docs/attention-piece.md. This bounded review and its non-clear final verdict must be reported with the merge; it is not an owner blocker under the 2026-11-12 review-by-judgment ruling.
+
+## Integration CI baseline
+
+At head 0500ba1618aa914fa9bfbedbf5fbd1fd41cd477e, GitHub's merge test included concurrently advanced main. Run 43354863080 passed build, DCO, all analysis, and shards 1–3. Shard 4 failed ten assertions in unrelated `src/cli/household-importer.test.ts`: it expected no household tables after rollback, but foundation installation now creates fourteen before import. The single permitted rerun reproduced the same failures (attempt 2); no attention failure was reported.
+
+The household house repaired those tests in PR #859, merged as 6c2cd4fc12afe4bfe27392d06858c52af27917c0. This evidence-only commit triggers fresh integration checks against repaired main without rebasing or changing another piece's files. Metadata code and all seventeen targeted tests are unchanged. No fourth cold round.
