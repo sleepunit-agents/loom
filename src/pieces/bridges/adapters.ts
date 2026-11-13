@@ -51,14 +51,14 @@ export function venueAdapters(secrets:SecretUseAuthority, options:{
     // No second receiver: installDiscordDaemon/installSlackDaemon own connections.
     async connect(){return {close(){}};},
     inspect,
-    async send(input,address,text,_operationId,authorize) {
+    async send(input,address,text,_operationId,authorize,currentPolicy=()=>true) {
       const v=structuredClone(input),target={...address},current=lease(v);
       if(v.platform!==platform || !v.enabled || !(platform==='discord'?snowflake(target.channel):slackId(target.channel))) throw Error('Bridge reply attempt uncertain');
       if(target.thread!==undefined && !(platform==='discord'?target.thread===target.channel:/^\d{10,}\.\d{6}$/.test(target.thread))) throw Error('Bridge reply attempt uncertain');
       return postReply(platform,text,async part=>{
-        if(!current() || !await authorize() || !current())throw Error('Bridge reply attempt uncertain');
+        if(!current() || !await authorize() || !current() || !currentPolicy())throw Error('Bridge reply attempt uncertain');
         return secrets.withValue(v.tokenSecret,async token=>{
-          if(!current() || !await authorize() || !current() || !secrets.mayUse(v.tokenSecret))throw Error('Bridge reply attempt uncertain');
+          if(!current() || !await authorize() || !current() || !currentPolicy() || !secrets.mayUse(v.tokenSecret))throw Error('Bridge reply attempt uncertain');
           const slackText=part.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
           const response=await request(platform==='discord'?`https://discord.com/api/v10/channels/${target.channel}/messages`:'https://slack.com/api/chat.postMessage',{
             method:'POST',redirect:'error',signal:AbortSignal.timeout(15_000),

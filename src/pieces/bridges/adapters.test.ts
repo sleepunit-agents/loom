@@ -73,3 +73,13 @@ it.each(['discord','slack'] as const)('%s rejects an otherwise valid receipt for
   const f=fixture(platform);f.request.mockResolvedValueOnce(Response.json(platform==='discord'?{id:'400',channel_id:'301'}:{ok:true,channel:'D2',ts:'1794503533.000001'}));
   await expect(f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'hello','reply',async()=>true)).rejects.toThrow(/^Bridge reply attempt uncertain$/);expect(f.request).toHaveBeenCalledOnce();
 });
+it.each(['discord','slack'] as const)('%s checks owning policy synchronously after the final async authorization resolves',async platform=>{
+ const f=fixture(platform);let allowed=true,calls=0;
+ const authorize=()=>{
+  calls++;
+  if(calls===2){const answer=Promise.resolve(true);queueMicrotask(()=>{allowed=false;});return answer;}
+  return Promise.resolve(true);
+ };
+ await expect(f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'NO POST','reply',authorize,()=>allowed)).rejects.toThrow('Bridge reply attempt uncertain');
+ expect(calls).toBe(2);expect(f.request).not.toHaveBeenCalled();
+});

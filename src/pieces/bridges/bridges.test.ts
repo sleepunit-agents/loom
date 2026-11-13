@@ -865,3 +865,14 @@ it('rechecks synchronous owning policy after awaited admission before intake and
  await f.engine.flush();expect(f.adapter.posts).toEqual([]);
  expect(f.app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('policy-race-reply')).toEqual({state:'uncertain'});
 });
+it('passes the synchronous owning predicate to the adapter final POST boundary',async()=>{
+ const f=await fixture();let allowed=true;f.runtime.current=()=>allowed;
+ await f.engine.receive(f.venue.id,f.message());await f.engine.flush();
+ const incomingId=[...f.deliveries.keys()][0];f.engine.reply({id:'post-boundary',incomingId,text:'NO POST'});
+ f.adapter.send=async(_v,_address,_text,_id,authorize,currentPolicy)=>{
+  const admitted=await authorize();await Promise.resolve().then(()=>{allowed=false;});
+  if(!admitted || currentPolicy?.()===false)throw Error('Policy changed after authorization');
+  f.adapter.posts.push(['LEAK']);return {id:'wrong'};
+ };
+ await f.engine.flush();expect(f.adapter.posts).toEqual([]);
+});

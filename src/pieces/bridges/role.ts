@@ -35,7 +35,7 @@ export interface VenueAdapter {
   }): Promise<VenueConnection>;
   /** Slack workspace/guest/group checks. A failure is wait, never allow. */
   inspect(venue: Venue, message: Message): Promise<Inspection>;
-  send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>): Promise<{ id: string }>;
+  send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>, currentPolicy?: () => boolean): Promise<{ id: string }>;
 }
 export interface BridgesRole {
   /** Current delivered source still belongs to this linked household person. */

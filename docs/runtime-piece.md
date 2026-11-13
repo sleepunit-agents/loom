@@ -1109,7 +1109,8 @@ permission/proposal source holds admission, delivery, input and body reads/repli
 until that path enforces compiled body rules. Adoption alone never removes this
 hold. Existing bound runners receive stop/discard; delayed outbox sends also
 recheck owning policy synchronously after asynchronous admission and at final
-outbound authorization. Fresh household DMs without owner configuration or
+outbound authorization and at the adapter’s actual POST boundary, after its
+last await. Fresh household DMs without owner configuration or
 archived permission sources keep #1104's central member binding contract.
 
 General external delivery, compiled-policy enforcement by the separate runner,

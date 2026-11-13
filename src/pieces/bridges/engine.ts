@@ -254,7 +254,7 @@ export class Bridges implements BridgesRole {
           if (!current() || !samePerson() || !message || !this.setupUnchanged(v,message,route,revision)) return false;
           const admitted=await this.admit(v,message,route,adapter,personFor(db,v,message.user) ?? '');
           return current() && this.runtime.current?.(v.agent)!==false && samePerson() && admitted === 'allow' && !!this.setupUnchanged(v,message,route,revision);
-        });
+        },()=>!this.closed && current() && this.runtime.current?.(v.agent)!==false && samePerson() && !!this.setupUnchanged(v,message,route,revision));
         db.prepare("UPDATE bridges_outbox SET state='sent',remote_id=? WHERE id=?").run(result.id,row.id);
         this.effects.finish(`bridges:${row.id}`);
       } catch {
