@@ -48,10 +48,10 @@ export function readBridgeStoreInventory(files: readonly BridgeStoreFile[], open
       let documents: BridgeStoreDocument[], revisions: BridgeStoreRevision[];
       try {
         [documents,revisions] = db.transaction(() => {
-          const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string}[];
+          const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7) <> 'sqlite_' ORDER BY name").all() as {name:string}[];
           if (JSON.stringify(tables.map(t=>t.name)) !== '["docs","revisions"]') throw Error();
           for (const table of ['docs','revisions'] as const) {
-            const actual = db.prepare(`PRAGMA table_info(${table})`).all() as {name:string}[];
+            const actual = db.prepare(`PRAGMA table_xinfo(${table})`).all() as {name:string}[];
             if (JSON.stringify(actual.map(c=>c.name)) !== JSON.stringify(columns[table])) throw Error();
           }
           // Bound SQLite-to-JS materialization BEFORE selecting document words.

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -52,11 +52,13 @@ it('refuses missing/duplicate/mislabeled inputs and leaf links before opening SQ
   }
   expect(open).not.toHaveBeenCalled();
 });
-it.each(['bad-json','unsafe-rev','extra-table','extra-column','unsafe-revision-id'])('refuses %s with exact sanitized error and closes source',kind=>{
+it.each(['bad-json','unsafe-rev','extra-table','extra-column','generated-column','wildcard-table','unsafe-revision-id'])('refuses %s with exact sanitized error and closes source',kind=>{
   const {file,db,add}=fixture();add('people','art','{}');
   if(kind==='bad-json')db.prepare("UPDATE docs SET doc='private source text'").run();
   if(kind==='unsafe-rev')db.exec('UPDATE docs SET rev=9007199254740993');
   if(kind==='extra-table')db.exec('CREATE TABLE lost(value TEXT)');
+  if(kind==='wildcard-table')db.exec('CREATE TABLE sqliteXlost(value TEXT)');
+  if(kind==='generated-column'){db.exec('DELETE FROM docs');db.exec("ALTER TABLE docs ADD COLUMN lost TEXT GENERATED ALWAYS AS (doc || 'lost') STORED");}
   if(kind==='extra-column')db.exec('ALTER TABLE docs ADD COLUMN lost TEXT');
   if(kind==='unsafe-revision-id')db.exec("INSERT INTO revisions VALUES(9007199254740993,'people','art','{}',1,'put','t','by')");db.close();
   let closed=false;
@@ -73,4 +75,19 @@ it('refuses source mutation around the read snapshot and sanitizes SQLite failur
   const {file,db}=fixture();db.close();
   expect(()=>readBridgeStoreInventory([file],path=>{const changed=new Database(path);changed.prepare('INSERT INTO docs VALUES(?,?,?,?,?,?)').run('people','art','{}',1,'t','owner');changed.close();return openSnapshotSqlite(path);})).toThrow(/^Invalid offline Bridges store inventory$/);
   expect(()=>readBridgeStoreInventory([file],()=>{throw Error('private source path and credential');})).toThrow(/^Invalid offline Bridges store inventory$/);
+});
+
+it('refuses an oversized file before hashing or opening SQLite',()=>{
+  const {file,db}=fixture();db.close();truncateSync(file.path,128*1024*1024+1);
+  const open=vi.fn(openSnapshotSqlite);
+  expect(()=>readBridgeStoreInventory([file],open)).toThrow(/^Invalid offline Bridges store inventory$/);
+  expect(open).not.toHaveBeenCalled();
+});
+it.each(['count','metadata'])('bounds %s before selecting document words',kind=>{
+  const {file,db,add}=fixture();
+  if(kind==='count')db.transaction(()=>{for(let n=0;n<10001;n++)add('people',String(n),'{}');})();
+  else {add('people','art','{}');db.prepare('UPDATE docs SET by=?').run('x'.repeat(8*1024*1024));}
+  db.close();let selected=false;
+  const open=(path:string)=>{const source=openSnapshotSqlite(path),prepare=source.prepare.bind(source);source.prepare=((sql:string)=>{if(sql.startsWith('SELECT collection,key,doc'))selected=true;return prepare(sql);}) as typeof source.prepare;return source;};
+  expect(()=>readBridgeStoreInventory([file],open)).toThrow(/^Invalid offline Bridges store inventory$/);expect(selected).toBe(false);
 });
