@@ -79,6 +79,19 @@ it('requires caller transaction and rolls back partial multi-concern changes, th
     expect(() => f.db.transaction(() => f.store.replace(f.home, next)).immediate()).toThrow('interrupted');
     expect(f.store.document()).toEqual(raw);
     expect(new HouseholdRows(f.db, 'agents').get('mark')).toBeUndefined();
+    const settings = new HouseholdRows(f.db, 'settings');
+    expect(() => f.store.change(f.home, r => {
+      settings.put('callback-write', { shouldRollback: true });
+      Object.assign(r, next);
+    })).toThrow('interrupted');
+    expect(settings.get('callback-write')).toBeUndefined();
+    expect(new HouseholdRows(f.db, 'agents').get('mark')).toBeUndefined();
+    expect(f.store.document()).toEqual(raw);
+    expect(() => f.store.change(f.home, () => {
+      settings.put('callback-write', { shouldRollback: true });
+      throw new Error('callback interrupted');
+    })).toThrow('callback interrupted');
+    expect(settings.get('callback-write')).toBeUndefined();
     f.db.exec('DROP TRIGGER fail_member');
     f.db.transaction(() => f.store.replace(f.home, next)).immediate();
     expect(f.store.document()).toEqual(next);
