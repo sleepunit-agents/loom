@@ -176,3 +176,38 @@ Missing partners are retained for history, never proof of authorization; the
 final importer must refuse unsupported effective-grant composition, suppress
 claimed originals and map every identity to a registered principal. The complete
 transactional importer and daemon registration remain pending on t-2208.
+
+## Offline request authority plan
+
+`planLegacySecretRequests(bytes, principals, snapshotAt)` in `request-plan.ts`
+adds explicit principal resolution and effective-grant planning to the validated
+source model. It performs no IO, DB writes or current-clock lookup, and is not
+registered with the migration CLI or daemon. The caller supplies snapshot time
+and exact legacy-string bindings to a set of registered new-side agent IDs.
+There is no same-name fallback or normalization; two distinct source principals
+cannot map to the same new principal, including historical/pending rows.
+
+The plan retains every original request field under `source` alongside its
+mapped agent. Missing owner attribution stays missing. Its grant proposals are
+only the live `granted` rows at snapshot time, scoped to the exact house and
+service presence, with the stored expiry. Expired, denied, pending, revoked and
+claimed-original rows confer no authority. Always and policy grants remain
+house-scoped and temporary; standing policy must be imported separately.
+A live carry requires the surviving reciprocal original and cannot predate that
+original's decision. A missing original on an expired/revoked carry remains
+history; a missing original on a live carry refuses the plan. A claimed original
+whose target was pruned is retained as history and never grants access.
+
+Multiple live proposals for one mapped agent/name/exact house/service refuse,
+regardless of order or expiry. The new table stores one grant per exact scope;
+choosing one or unioning their durations would silently lose request provenance.
+Different services, houses and names remain distinct. This conservative refusal
+is an explicit unsupported-composition choice for the final offline import.
+
+These are proposals, not complete `Grant` records. The final importer still
+owns atomic names/policy/requests/grants/audit persistence, checksum and content
+verification, attribution without invention, pending attention composition and
+non-authorizing moved-original records needed for paired revocation. It must use
+the household registry for `registered`, reconcile the same mappings with policy
+membership, and preserve the original metadata for history. No real import is
+performed by this increment.
