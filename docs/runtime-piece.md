@@ -57,9 +57,9 @@ preference, then a matching primary, then a single eligible matching box.
 Multiple other matches require an explicit choice. Missing individual needs
 and needs split across different boxes produce distinct conflicts.
 Report-only and revoked boxes never host work. Ownership/lending and host
-permission use the existing `canHost` predicate. Local metadata initialization,
-runner heartbeats and drill/write-off state remain separate unfinished work;
-this helper makes no claim to implement their lifecycle.
+permission use the existing `canHost` predicate. Internal local metadata initialization and heartbeat updates are described
+below; their authorized operations and drill/write-off state remain unfinished.
+Placement alone makes no claim to implement their lifecycle.
 
 ## Remaining before the final move
 
@@ -107,3 +107,35 @@ calling the role again. A new attempt at a revoked box is `not-found`; local
 runners cannot be revoked. The old `pendingRevokes` file retry queue is replaced
 by the shared transaction: a role failure rolls back all changes and leaves no
 successful retry receipt, so the caller can retry the same id.
+
+## Internal box lifecycle helpers
+
+`lifecycle.ts` provides `initializeLocalBox` and `hearBox` for subsequent setup
+and runner operations. Neither is registered as an operation or called by next
+mode yet. Both require the caller's database transaction and return
+`{box, changed}`; the caller must announce `runtime.box` after commit only when
+changed. They read no environment, files, credentials or clock.
+
+`initializeLocalBox` replaces the metadata-creation part of old `state.mjs`'s
+`empty`/`load` with explicit `{id, name, owner}` from trusted composition. The
+caller must validate the owner. A new local record permits all agents, starts
+with empty facts/labels/loans, is always on and is not report-only. It has no
+invented heartbeat. An identical repeat preserves all owner configuration and
+timestamps. A second local identity, changed name/owner, revoked id or promotion
+of an existing remote record conflicts. Renaming and moving a local runner need
+an explicit later operation; restarting the daemon never silently moves one.
+
+`hearBox` ports only the metadata part of `hello`/`pollState`: a current enrolled
+id receives the supplied server time as `lastSeen`; optional facts replace its
+previous report, omitted facts preserve it, and an empty array clears it.
+Facts retain the old 32-entry limit and key/value grammar; the structured API
+uses arrays and deduplicates exact repeats. Labels, ownership, loans, hosting
+permissions, report-only and watch configuration remain owner-controlled.
+Reports resolve exact ids only, never names, and cannot recreate or revive a
+missing/revoked runner. They create no jobs or dispatch effects.
+
+The future runner operation must derive the id from the central authenticated
+runner principal before calling `hearBox`. The future setup path must authorize
+local initialization centrally. This slice does not implement those public
+operations, hello/poll responses, account/harness reports, report-only enrollment
+choice, health alerts, drills, write-off, dispatch or credential lifecycle.
