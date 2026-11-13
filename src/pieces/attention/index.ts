@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
@@ -22,6 +23,7 @@ const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing);

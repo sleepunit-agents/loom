@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, mayMove, type Db, type Operations, type Live, type Sharing, type Viewer, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { apply, type Command, type StoreState, type Result, type Task } from './domain.js';
@@ -54,6 +55,7 @@ function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, u
   return true;
 }
 export function installTasks(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+  registerBuiltinService(operations, 'tasks', ['task']);
   migrate(db, 'tasks', schema);
   const visible = (state: StoreState, viewer: Viewer): StoreState => {
     const tasks = state.tasks.filter(t => maySee(viewer, scope(t), sharing()));

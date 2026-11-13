@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import type { Foundation } from '../../core/app.js';
 import { installHouseholdProjects } from '../../core/household/operations.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
@@ -7,6 +8,7 @@ import { mayAct } from '../../core/index.js';
 
 /** Next-side composition only: all metadata comes from loom.db, including an empty home. */
 export function installSharing(app: Foundation, home: string) {
+  registerBuiltinService(app.operations, 'sharing', ['household.project', 'household.sharing'], 'household');
   migrateHouseholdTables(app.db);
   const store = new SharingDatabase(app.db, home);
   installHouseholdProjects(app, home);

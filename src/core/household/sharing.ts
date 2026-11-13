@@ -1,3 +1,4 @@
+import { builtinServices } from '../services.js';
 import { z } from 'zod';
 import type { Db } from '../db/index.js';
 import { OperationError } from '../operations/index.js';
@@ -33,7 +34,7 @@ export class SharingDatabase {
   sharing(): Sharing {
     return this.db.transaction(() => {
       const h = new HouseholdDatabase(this.db).household(this.home);
-      if (!h) return { members: {}, projects: {}, services: {} };
+      if (!h) return { members: {}, projects: {}, services: builtinServices(this.db) };
       const projects = new HouseholdRows<unknown>(this.db, 'projects').entries().map(([id]) => {
         const p = this.project(id)!;
         // Removed members and agents must not keep project access through stale references.
@@ -42,7 +43,7 @@ export class SharingDatabase {
       return {
         members: Object.fromEntries(h.members.map(m => [m.person, { owner: m.agents === '*', agents: m.agents === '*' ? h.agents : m.agents }])),
         projects: Object.fromEntries(projects),
-        services: {},
+        services: builtinServices(this.db),
       };
     })();
   }

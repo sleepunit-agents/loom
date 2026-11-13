@@ -1,9 +1,11 @@
+import { registerBuiltinService } from '../../core/services.js';
 /** Test-only piece. Production startup never installs it. */
 import { z } from 'zod';
 import { migrate, operation, maySee, mayCreate, mayMove, mayAct, OperationError, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 interface Row extends RecordScope, LiveRecord { id: string; title: string; parent: string | null; expires: number | null }
 export function installExample(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+  registerBuiltinService(operations, 'example', ['example.record']);
   migrate(db, 'example', schema);
   const row = (id: string) => db.prepare('SELECT * FROM example_records WHERE id = ?').get(id) as Row | undefined;
   // SQLite NULL is absence in the policy model.

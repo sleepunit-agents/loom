@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, mayAct, maySee, type Sharing } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
@@ -5,6 +6,7 @@ import { schema } from './schema/001.js';
 import { venueSchema, routeSchema, linkSchema } from './model.js';
 import { all, put } from './store.js';
 export function installBridges(app: Foundation, sharing: () => Sharing) {
+  registerBuiltinService(app.operations, 'bridges', ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send']);
   migrate(app.db, 'bridges', schema);
   const { db, operations, live } = app;
   // Connections and routing are household setup; person links are authority, not descriptive People handles.

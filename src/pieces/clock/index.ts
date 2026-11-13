@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, OperationError, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
@@ -36,6 +37,7 @@ function quotaDue(reset: unknown, now: number): number {
 export interface ClockOptions { runtime?: Runtime; approvals?: Approvals }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
+  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
   migrate(db, 'clock', schema);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
   let parksChanged = false;
