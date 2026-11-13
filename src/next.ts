@@ -22,6 +22,7 @@ import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installSecrets } from './pieces/secrets/index.js';
+import { secretGrantAttention } from './pieces/secrets/attention.js';
 import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
 import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
@@ -77,6 +78,8 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations))) : installedAttentionSources(app.operations);
+  if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing,
+    attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
@@ -103,7 +106,6 @@ export function installNext(app: Foundation, options: NextOptions) {
     // unconfigured reader fails before acquiring a value or contacting GitHub.
     const credentials = options.changes;
     if (credentials) {
-      if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing);
       if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
     }
     const secrets = githubSecrets(credentials

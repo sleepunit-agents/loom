@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
+
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
