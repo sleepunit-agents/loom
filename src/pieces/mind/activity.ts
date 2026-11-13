@@ -28,7 +28,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  function fromRun(r:ActivityRun):ActivityEntry{
   const c=r.conversation,title=c.label.trim().replace(/^(?:schedule|alert) [\w.-]+:\s+(?=\S)/,'').replace(/^\p{Ll}/u,x=>x.toUpperCase())||`A ${VENUES[venueKey(c.venue)]??c.venue} conversation`;
   const venue=venueKey(c.venue),where=venue==='wakes'?(/^lane:|^schedule /.test(c.place)||/^schedule /.test(c.label)?'Lane':/^alert:/.test(c.place)?'Alert':'Wake'):whereLabel(whereOfConversation(c))||VENUES[venue]||c.venue;
-  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turns${r.replies?`, ${r.replies} replies`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(options.owner&&c.people.includes(options.owner))?{owner:true as const}:{})};
+  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turn${r.turns===1?'':'s'}${r.replies?`, ${r.replies} repl${r.replies===1?'y':'ies'}`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(options.owner&&c.people.includes(options.owner))?{owner:true as const}:{})};
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
   const entry=fromRun(r),refs=refsIn([r.summary??'',...r.decided].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
@@ -64,7 +64,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   for(const {agent} of agents(v)){
    if(options.conversations&&allowed(v,agent,'conversation'))try{
     const answer=z.object({available:z.boolean(),rows:z.array(runSchema).max(MAX_ENTRIES+1),expires:z.number().finite().optional()}).strict().parse(options.conversations.list(v,{agent,from,until,limit:MAX_ENTRIES+1}));
-    if(!answer.available){conversations='unavailable';}else{
+    if(!answer.available){if(conversations!=='error')conversations='unavailable';}else{
      const rows=answer.rows.filter(r=>seesConversation(v,r.conversation,agent)&&(r.expires===undefined||r.expires>now)&&Date.parse(r.at)>=from&&Date.parse(r.at)<until);
      const digested=new Set(rows.filter(r=>r.kind==='digest').map(r=>r.conversation.id));
      for(const r of rows){if(r.kind==='conversation'&&digested.has(r.conversation.id))continue;const e=fromRun(r);entries.push(e);if(e.expires)deadlines.push(e.expires);covered.add(`${agent}:${r.conversation.id}`);if(r.kind==='digest')runs.push({agent,venue:e.venue,at:Date.parse(e.at)});}

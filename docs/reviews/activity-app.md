@@ -61,3 +61,29 @@ Author checks before round 3 also restored latest-plan/repeated-step folding wit
 UI regression, day-address scrolling, and screenshot waiting for lazy story prose.
 Conversation expiry now withdraws named episode readers too; role lookup failures
 produce generic source errors. Exact deadline and failure regression added.
+
+## Round 3 — BLOCKING / bounded, no fourth
+
+TREE sha256:52e19383921f86375c303492738af07309c98da53571b2a861c2a1846b6cdf88.
+
+- CRITICAL cross-agent error aggregation: actionable. A later unavailable result no
+  longer overwrites an earlier error. A two-agent fake exercises that exact ordering.
+- MAJOR independent moved conversation: actionable. Source fixture asserts presence
+  and reader with no digest; hosted browser asserts its initial row and opens its reader.
+- MAJOR self-hosted rejection regression: actionable. Actual evidence module is imported
+  with opted-in self-hosted environment and a mocked browser launch. It must reject with
+  the hosted-runner error before registering/running a browser test; launch remains unused.
+  A manual guarded invocation also rejected before launch with zero browser tests.
+- NIT DTO duplication: same recorded consumer-type trade-off as prior rounds.
+
+All real findings folded with checks. Raw final verdict remains BLOCKING/UNCONVERGED;
+these post-freeze changes are author-tested and CI-validated, not cold-clear. Three
+rounds complete; no fourth. No known runtime hole is accepted. Final author adjustment
+limits always-present venue filters to the five specified venues plus venues in the feed.
+
+Final composition: rebased once, only after GitHub reported CONFLICTING, onto
+fbda518 (snapshot-bound offline migration plans plus concurrent household/Clock/Home/Bridges work).
+Only CHANGELOG conflicted; kept both entries and placed Activity beside Projects
+to avoid the shared top insertion point. No app/role implementation changed. Root
+TypeScript, all93 affected tests and full web build pass after rebase. No fourth
+review; this composition is author-tested, not attributed to the frozen review head.

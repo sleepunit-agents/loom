@@ -116,3 +116,11 @@ it('withdraws an open named episode at its conversation expiry and reports looku
  const expired=once(ws,'message');(app.operations.clock as FakeClock).advance(1000);expect(JSON.parse((await expired)[0].toString())).toMatchObject({kind:'del',id:'e~art~named'});
  r.conversation=()=>{throw Error('private path');};expect(read(app,'e~art~named')).toMatchObject({value:{state:'error'}});
 });
+
+it('keeps an earlier conversation error when another agent’s role is unavailable',async()=>{
+ const a=source(),b=source(),r=role([]);r.list=(_v,q)=>{if(q.agent==='art')throw Error('unreadable');return {available:false,rows:[]};};const app=await fixture(a.path,b.path,r);expect(list(app).conversations).toBe('error');
+});
+it('includes an independent moved conversation and opens its no-digest reader',async()=>{
+ const a=source(),r=run('cv-111111111111',{kind:'conversation',summary:undefined,turns:3,replies:1,asked:[],decided:[],tasks:[]}),app=await fixture(a.path,undefined,role([r]));
+ expect(list(app).entries).toMatchObject([{id:'c~art~cv-111111111111',title:'Build the household',line:'3 turns, 1 reply, no summary yet'}]);expect(read(app,'c~art~cv-111111111111')).toMatchObject({value:{id:'c~art~cv-111111111111',asked:[],decided:[],tasks:[],more:[]}});
+});

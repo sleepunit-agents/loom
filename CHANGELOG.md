@@ -13,7 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
-- Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
@@ -25,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
+- Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 

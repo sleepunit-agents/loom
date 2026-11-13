@@ -40,6 +40,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await Promise.all([a.goto(`${app.url}/p/activity-preview`),b.goto(`${app.url}/p/activity-preview`)]);
   const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({has:p.getByText(title,{exact:true})});
   await expect.poll(()=>row(b,'Build the household desk').count()).toBe(1);expect(await row(a,'Other member private thread').count()).toBe(0);
+  expect(await row(a,'Planning the next release').count()).toBe(1);await row(a,'Planning the next release').click();await expect.poll(()=>a.getByRole('heading',{name:'Planning the next release',exact:true}).count()).toBe(1);
   await row(a,'Build the household desk').click();await row(b,'Build the household desk').click();
   await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);expect(await b.getByText('Keep content in the agents’ stores',{exact:true}).count()).toBe(1);expect(await b.getByText('Read the contracts',{exact:false}).count()).toBe(1);
   expect(await b.locator('article a[href="/p/tasks-preview/task/t-2207"]').count()).toBe(1);expect(await b.getByText('Review the result',{exact:false}).count()).toBe(1);

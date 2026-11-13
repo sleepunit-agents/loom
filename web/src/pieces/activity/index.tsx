@@ -66,7 +66,7 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  const isOn=(id:string)=>id==='all'?!f.who.length&&!f.where.length&&!f.what.length:(f[id.split(':')[0] as keyof Filters]??[]).includes(id.split(':').slice(1).join(':'));
  const todayEntries=entries.filter(e=>e.day===day),n=(test:(e:ActivityEntry)=>boolean)=>todayEntries.filter(test).length;
  const who=[...(permission?.agents??[]).map(agent=>({id:`who:${agent}`,label:agent,count:n(e=>e.agent===agent)})),{id:'who:owner',label:permission?.owner??'Owner',count:n(e=>!!e.owner)}].sort((a,b)=>a.label.localeCompare(b.label));
- const venues={...VENUES};for(const e of entries)venues[e.venue]??=e.venue;
+ const venues:Record<string,string>=Object.fromEntries(['comms','discord','slack','terminal','wakes'].map(v=>[v,VENUES[v]]));for(const e of entries)venues[e.venue]??=e.venue;
  const where=Object.entries(venues).map(([id,label])=>({id:`where:${id}`,label,count:n(e=>e.venue===id)})).sort((a,b)=>a.label.localeCompare(b.label));
  const what=[['conversation','Conversations'],['system','System'],['work','Work done']].map(([id,label])=>({id:`what:${id}`,label,count:n(e=>e.what===id)}));
  const groups=[{label:'Who',items:who},{label:'Where',items:where},{label:'What',items:what}];
