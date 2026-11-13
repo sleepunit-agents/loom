@@ -10,7 +10,7 @@ const request = z.object({
   secret: secretName,
   agent: secretAgent,
   house: z.string().regex(/^h-[0-9]{1,9}$/),
-  service: z.string().min(1).max(100).optional(),
+  service: z.string().min(1).optional(),
   why: z.string().min(1).max(300),
   minutes: z.number().int().min(1).max(480),
   at: timestamp,
@@ -18,7 +18,7 @@ const request = z.object({
   expires: timestamp.optional(),
   decided: timestamp.optional(),
   by: z.enum(['owner', 'policy']).optional(),
-  who: z.string().min(1).max(200).optional(),
+  who: z.string().min(1).optional(),
   always: z.literal(true).optional(),
   carriedFrom: requestId.optional(),
   claimedBy: requestId.optional(),
@@ -33,7 +33,12 @@ const request = z.object({
     if (r.by === 'policy' && (r.who || r.always || r.carriedFrom || r.claimedBy)) invalid();
     if ((r.always || r.carriedFrom || r.claimedBy) && r.by !== 'owner') invalid();
     if (r.carriedFrom && (r.always || r.claimedBy)) invalid();
-    if (r.always && r.claimedBy) invalid();
+    if (r.always && (r.claimedBy || r.minutes !== 480)) invalid();
+    if (r.carriedFrom && r.who) invalid();
+    // Owner Allow/Always use one Date for decision and expiry. Revoke overwrites
+    // decided, and a carry retains the earlier house's expiry instead.
+    if (r.state === 'granted' && r.by === 'owner' && !r.carriedFrom && r.decided && r.expires
+      && Date.parse(r.expires) !== Date.parse(r.decided) + r.minutes * 60_000) invalid();
   }
 });
 const source = z.object({ v: z.literal(1), requests: z.record(requestId, request) }).strict();
@@ -47,7 +52,7 @@ export type LegacySecretRequest = z.infer<typeof request>;
  */
 export function parseLegacySecretRequests(bytes: Buffer): LegacySecretRequest[] {
   try {
-    const parsed = source.parse(JSON.parse(bytes.toString('utf8')));
+    const parsed = source.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     for (const [key, r] of Object.entries(parsed.requests)) {
       if (key !== r.id || r.carriedFrom === r.id || r.claimedBy === r.id) throw new Error();
     }
