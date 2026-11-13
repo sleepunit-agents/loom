@@ -2,8 +2,9 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import * as fs from 'node:fs';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createSnapshot, inventorySnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
@@ -13,8 +14,12 @@ import { run } from './migrate.js';
 import { createFoundation } from '../core/app.js';
 import { importHousehold } from './household-importer.js';
 import type { IOStreams } from './io.js';
+vi.mock('node:fs',async original=>{
+  const actual=await original<typeof import('node:fs')>();
+  return {...actual,openSync:vi.fn(actual.openSync),readFileSync:vi.fn(actual.readFileSync),readdirSync:vi.fn(actual.readdirSync),lstatSync:vi.fn(actual.lstatSync)};
+});
 const roots:string[]=[];
-afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 const bytes=(root:string):unknown=>Object.fromEntries(readdirSync(root).sort().map(name=>{
   try{return[name,readFileSync(join(root,name)).toString('base64')];}
   catch(e){if((e as NodeJS.ErrnoException).code!=='EISDIR')throw e;return[name,bytes(join(root,name))];}
@@ -28,6 +33,7 @@ async function fixture() {
   writeFileSync(join(state,'state.json'),JSON.stringify({v:1,boxes:{r1:{created:'2026-11-13T00:00:00Z',owner:'jonathan'}},houses:{'h-1':{id:'h-1',agent:'art',box:'r1',state:'running',created:'2026-11-13T00:00:00Z',task:'PRIVATE'}},primaries:{},agents:{},seq:1}));
   writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'session',place:'fixture',actsFor:{owner:true}}));
   writeFileSync(join(data,'runs','retained.json'),'{}');
+  for(const name of ['comms.salt','comms.db','household.db','memories.db','approvals.json','changes.json','requests.json','policy.json'])writeFileSync(join(data,'runs',name),'OPAQUE-RUNTIME-ARCHIVE');
   mkdirSync(join(data,'logins','codex'),{recursive:true});writeFileSync(join(data,'logins','codex','auth.json'),'FIXTURE-LOGIN-MUST-STAY-ON-RUNNER');
   const store=new Database(join(old,'commons','stores','runtime.db'));store.pragma('journal_mode=WAL');
   store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER PRIMARY KEY,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
@@ -41,6 +47,7 @@ async function fixture() {
 it('discovers every runtime root, requires explicit maps and independently verifies all imported content',async()=>{
   const f=await fixture(),before=bytes(f.snapshot);
   expect(f.plan.importers.runtime.paths).toEqual(['home/commons/stores/runtime.db','runtime','runtime-data']);
+  expect(Object.keys(f.plan.importers)).toEqual(['household','runtime']);
   expect(readFileSync(join(f.snapshot,'manifest.json'),'utf8')).toContain('runner-owned CLI login material');
   expect(JSON.stringify(before)).not.toContain(Buffer.from('FIXTURE-LOGIN-MUST-STAY-ON-RUNNER').toString('base64'));
   expect(f.plan.importers.runtime.options).toMatchObject({boxes:{r1:null},jobs:{'h-1':null},conversations:{'cv-abcdef123456':null}});
@@ -88,6 +95,25 @@ it('standalone import and independent verification accept an explicitly configur
   const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
   expect(await run(['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
   expect(await verifyRuntimeMigration(f.snapshot,f.home,options)).toMatchObject({status:'verified'});
+});
+it('standalone verification rejects coordinated timestamp and receipt tampering using source-derived expectations',async()=>{
+  const f=await fixture();const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);app.close();
+  const mapping=join(f.root,'mapping.json');writeFileSync(mapping,JSON.stringify(f.options));
+  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
+  expect(await run(['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
+  const db=new Database(join(f.home,'loom.db'));
+  for(const table of ['runtime_jobs','runtime_boxes','runtime_settings','runtime_bindings'])db.prepare(`UPDATE ${table} SET changed_at=777`).run();
+  db.prepare("INSERT INTO runtime_import_meta VALUES ('source-at','777') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();db.close();
+  const report=await verifyRuntimeMigration(f.snapshot,f.home,f.options);expect(report.status).toBe('different');expect(report.differences.some(d=>d.table==='runtime_jobs')).toBe(true);
+});
+it('does not open or enumerate CLI credentials or omitted environment-default roots',async()=>{
+  const f=await fixture();vi.stubEnv('LOOM_BOX_HOME',f.state);vi.stubEnv('LOOM_BOX_DATA',f.data);
+  const open=vi.mocked(fs.openSync),read=vi.mocked(fs.readFileSync),list=vi.mocked(fs.readdirSync),stat=vi.mocked(fs.lstatSync);
+  for(const spy of [open,read,list,stat])spy.mockClear();
+  inventorySnapshot(f.old,join(f.root,'no-defaults'));
+  for(const spy of [open,read,list,stat])expect(spy.mock.calls.some(([p])=>String(p).startsWith(f.state)||String(p).startsWith(f.data))).toBe(false);
+  await createSnapshot(f.old,join(f.root,'credential-exclusion'),undefined,{runtime:f.state,'runtime-data':f.data});
+  for(const spy of [open,read,list])expect(spy.mock.calls.some(([p])=>String(p).startsWith(join(f.data,'logins')))).toBe(false);
 });
 it('never probes omitted runtime defaults and refuses supplied empty roots',async()=>{
   const f=await fixture(),target=join(f.root,'inventory-only');

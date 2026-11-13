@@ -2,6 +2,11 @@
 import { basename } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 import type { RuntimeImportSources } from '../pieces/runtime/import-source.js';
+import { canonicalRuntimeSource } from '../pieces/runtime/import-source.js';
+type HouseholdIdentity={agents:readonly string[];members:readonly unknown[]};
+export function sameRuntimeHousehold(current:HouseholdIdentity|undefined|null,source:HouseholdIdentity):boolean {
+  return !!current&&canonicalRuntimeSource({agents:current.agents,members:current.members})===canonicalRuntimeSource({agents:source.agents,members:source.members});
+}
 export function runtimeMigrationSources(paths: readonly string[]): RuntimeImportSources {
   const result: RuntimeImportSources = {};
   for (const path of paths) {

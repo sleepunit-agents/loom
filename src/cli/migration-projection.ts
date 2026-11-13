@@ -68,7 +68,7 @@ export async function expectedTables(piece: string, paths: string[], options: un
     case 'runtime': {
       if(!householdHome)throw Error('Source household required');
       const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
-      return runtimeImportTables(readRuntimeImport(runtimeMigrationSources(paths),options,{agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite),now);
+      return runtimeImportTables(readRuntimeImport(runtimeMigrationSources(paths),options,{agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite));
     }
     case 'household': return householdTables(paths[0],now);
     case 'secrets': {

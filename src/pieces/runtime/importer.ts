@@ -14,8 +14,8 @@ export function compareRuntimeImport(db: Db, expected: ReturnType<typeof runtime
   return Object.entries(expected).every(([table,rows])=>normalized(db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[])===normalized(rows));
 }
 export function importRuntime(db: Db, sources: RuntimeImportSources, options: unknown, identities: RuntimeImportIdentities,
-  now: number, open: (path:string)=>Database.Database, controls: {interrupt?:()=>void; afterSnapshot?:()=>void} = {}) {
-  const source = readRuntimeImport(sources,options,identities,open,controls), expected = runtimeImportTables(source,now);
+  _now: number, open: (path:string)=>Database.Database, controls: {interrupt?:()=>void; afterSnapshot?:()=>void} = {}) {
+  const source = readRuntimeImport(sources,options,identities,open,controls), expected = runtimeImportTables(source);
   return db.transaction(()=>{
     migrate(db,'runtime',schema);
     const before = db.prepare("SELECT value FROM runtime_import_meta WHERE key='source-checksum'").get() as {value:string}|undefined;

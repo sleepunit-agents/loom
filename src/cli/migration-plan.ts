@@ -101,7 +101,9 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     const prefix = physical.has(`home/${alias.path}`) ? 'home/' : '';
     return physical.has(prefix + alias.path) && physical.has(prefix + alias.realPath) ? [prefix + alias.realPath] : [];
   }));
-  const files = new Set([...physical].filter(path => !aliased.has(path)));
+  // Runtime archives intentionally preserve arbitrary filenames; they are never
+  // discovery candidates for a different owning piece.
+  const files = new Set([...physical].filter(path => !aliased.has(path)&&!path.startsWith('runtime/')&&!path.startsWith('runtime-data/')));
   if (!files.has('home/household.json')) throw Error('Snapshot household is required');
   const household = parseHouseholdDocument(path('home'), json('home/household.json'));
   const memories = manifest.files.filter(f => files.has(f.path) && f.kind === 'sqlite' && basename(f.path) === 'memories.db').map(f => f.path).sort();
@@ -192,7 +194,7 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
   const runtimePaths = [
     ...['home/commons/stores/runtime.db'].filter(p=>files.has(p)),
-    ...(['runtime','runtime-data'] as const).filter(root=>manifest.runtimeRoots?.includes(root)||[...files].some(p=>p.startsWith(root+'/'))),
+    ...(['runtime','runtime-data'] as const).filter(root=>manifest.runtimeRoots?.includes(root)||[...physical].some(p=>p.startsWith(root+'/'))),
     ...commsPaths.filter(p=>basename(p)==='household.db'),
   ];
   if(runtimePaths.some(p=>basename(p)!=='household.db')) {

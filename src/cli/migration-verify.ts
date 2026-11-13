@@ -15,7 +15,7 @@ import { SharingDatabase } from '../core/household/sharing.js';
 import { parseHouseholdDocument } from '../household.js';
 import { readRuntimeImport } from '../pieces/runtime/import-source.js';
 import { runtimeImportTables } from '../pieces/runtime/import-projection.js';
-import { runtimeMigrationSources, assertRuntimeCheckpointed } from './migration-runtime.js';
+import { runtimeMigrationSources, assertRuntimeCheckpointed, sameRuntimeHousehold } from './migration-runtime.js';
 
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
@@ -94,7 +94,7 @@ export async function verifyMigration(snapshot: string, destination: string, sup
     } finally { db.close(); }
   } finally { lock.close(); }
 }
-const usage = 'usage: loom migrate verify --snapshot <directory> --home <stopped-home> [--plan <file>]\n';
+const usage = 'usage: loom migrate verify --snapshot <directory> --home <stopped-home> [--plan <file> | --runtime-mapping <file>]\n';
 /** Standalone Runtime verification has its own owning import metadata, not an all receipt. */
 export async function verifyRuntimeMigration(snapshot:string,home:string,options:unknown):Promise<VerificationReport> {
   const prepared=prepareMigrationPlan(snapshot),input=prepared.plan.importers.runtime;
@@ -112,13 +112,12 @@ export async function verifyRuntimeMigration(snapshot:string,home:string,options
       const sourceHome=join(prepared.root,'home');
       const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
       const current=new HouseholdDatabase(db).household(home);
-      if(!current||canonicalPlanValue({agents:current.agents,members:current.members})!==canonicalPlanValue({agents:h.agents,members:h.members}))throw Error('Destination household differs from snapshot');
-      const at=db.prepare("SELECT value FROM runtime_import_meta WHERE key='source-at'").get() as {value:string}|undefined;
-      const now=Number(at?.value);if(!at||!Number.isSafeInteger(now))throw Error('Runtime import time required');
+      if(!sameRuntimeHousehold(current,h))throw Error('Destination household differs from snapshot');
       const source=readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>snapshotPath({snapshot:prepared},p))),options,
         {agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(db,home).projectIds()},openSnapshotSqlite);
-      const report:VerificationReport={status:'verified',snapshot:prepared.plan.snapshot,plan:'runtime-standalone',pieces:['runtime'],missing:[],differences:[]};
-      for(const [table,expected] of Object.entries(runtimeImportTables(source,now))) {
+      const plan={...prepared.plan,importers:{...prepared.plan.importers,runtime:{...input,options:JSON.parse(source.options)}}};
+      const report:VerificationReport={status:'verified',snapshot:prepared.plan.snapshot,plan:migrationPlanChecksum(plan),pieces:['runtime'],missing:[],differences:[]};
+      for(const [table,expected] of Object.entries(runtimeImportTables(source))) {
         let actual:Row[]|null=null;
         try{actual=db.prepare(`SELECT * FROM ${table}`).all() as Row[];}catch{/* A missing schema is a difference. */}
         let equal=false;try{equal=actual!==null&&normalize(actual)===normalize(expected);}catch{/* Invalid JSON is a difference. */}

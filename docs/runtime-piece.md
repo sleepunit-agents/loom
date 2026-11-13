@@ -956,3 +956,9 @@ includes schema, archive, metadata, provenance and checksum/mapping receipt.
 A simulated interruption rolls all of it back. Same source and mapping are a no-op;
 a changed source/mapping or a nonempty unowned destination refuses. Independent
 verification still catches corruption after a successful receipt/no-op.
+
+Imported change timestamps are source-derived (box/job creation time) or zero
+(settings/bindings have no trustworthy source change time). No import receipt or
+destination timestamp supplies an expected value to Runtime verification. Runtime
+archive namespaces are excluded from other pieces' discovery, so an opaque file
+called `comms.salt`, `memories.db` or `changes.json` remains a Runtime archive file.

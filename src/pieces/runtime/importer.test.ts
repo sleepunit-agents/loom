@@ -47,7 +47,7 @@ function fixture() {
 it('imports exact source bytes, every document and revision, scoped metadata and held work without old authority',()=>{
   const f=fixture(), before=readFileSync(f.sources.store), expected=f.read();
   expect(f.run()).toMatchObject({ok:true,imported:true});
-  expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected,123))).toBe(true);
+  expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected))).toBe(true);
   const jobs=f.app.db.prepare('SELECT record FROM runtime_jobs ORDER BY id').all() as {record:string}[];
   expect(jobs.map(r=>JSON.parse(r.record))).toMatchObject([{id:'h-1',member:'guest',project:'pond',state:'uncertain'},{id:'h-2',state:'done'}]);
   expect(JSON.stringify(jobs)).not.toMatch(/PRIVATE|OLD-CREDENTIAL/);
@@ -69,7 +69,7 @@ it('rolls back schema, archive, metadata and receipt together after an interrupt
 it('refuses a changed source or mapping and detects archive/metadata corruption independently of receipts',()=>{
   const f=fixture(),expected=f.read();f.run();
   f.app.db.prepare("UPDATE runtime_import_sources SET content='corrupt' WHERE path='data/future.bin'").run();
-  expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected,123))).toBe(false);
+  expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected))).toBe(false);
   f.options.jobs['h-2']={member:'guest'};expect(()=>f.run()).toThrow('different runtime source or mapping');
   f.options.jobs['h-2']={};f.state.seq++;f.save();expect(()=>f.run()).toThrow('different runtime source or mapping');
 });
