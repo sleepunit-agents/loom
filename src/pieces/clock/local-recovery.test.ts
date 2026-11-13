@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
@@ -53,19 +53,21 @@ it('recovers exact saved words and whole note after restart, atomically spends o
 });
 it('refuses retyped words or note, principal, service, agent and project mismatches before spending',async()=>{
   const s=await setup(),id=idOf(s);allow(s,id);const before=load(s.app.db);
+  const call=vi.spyOn(s.app.operations,'call');
   for(const extra of [{prompt:prompt+'x'},{note:'disk report '},{when:'bad'},{when:'0s'}])
     expect(recover(s,id,extra).ok).toBe(false);
   for(const c of [{...caller,for:'?'},{...caller,for:'pollock'},{...caller,people:['pollock']},
     {...caller,project:'pond'},{...caller,who:{agent:'bo',where:caller.who.where}},
     {...caller,who:{agent:'art',where:'bridge (discord)'}}, {...caller,who:{agent:'art',where:'a body'}}])
     expect(recover(s,id,{},c).ok).toBe(false);
+  expect(call.mock.calls.some(args=>args[2]==='approvals.piece-use-local')).toBe(false);
   expect(load(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([]);
 });
 it('requires a current live Allow, its full digest, displayed details and scope',async()=>{
   const s=await setup(),id=idOf(s);
   expect(recover(s,id).ok).toBe(false);allow(s,id);
   const original=load(s.app.db).approvals[0];
-  for(const change of [{digest:'f'.repeat(64)},{details:'Other words'},{project:'pond'},{member:'jonathan'},
+  for(const change of [{digest:original.digest!.slice(0,16)+'f'.repeat(48)},{details:'Other words'},{project:'pond'},{member:'jonathan'},
     {who:{agent:'art',where:'bridge (discord)'}},{for:'?'},{state:'denied'},{state:'used',used:original.decided},
     {expires:new Date(s.clock.now()-1000).toISOString()}]) {
     s.app.db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify({...original,...change}),id);
@@ -82,7 +84,9 @@ it('checks capacity and current central agent/project/service policy before spen
   s.access.services.clock.operations.push('clock.localSchedule');expect(recover(s,id,{},c).ok).toBe(false);
   s.access.services.clock.operations.push('approvals.piece-use-local');
   for(let n=0;n<50;n++) value(s.app.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'ordinary',note:'',when:'2h'},randomUUID()));
+  const call=vi.spyOn(s.app.operations,'call');
   expect(recover(s,id,{},c).ok).toBe(false);expect(load(s.app.db)).toEqual(before);
+  expect(call.mock.calls.some(args=>args[2]==='approvals.piece-use-local')).toBe(false);
 });
 it('rolls back consumption, audit and changes if scheduling fails',async()=>{
   const s=await setup(),id=idOf(s);allow(s,id);const before=load(s.app.db);

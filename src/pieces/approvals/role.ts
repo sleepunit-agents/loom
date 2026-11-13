@@ -45,3 +45,5 @@ export { vouchDetails, type VouchWords } from './vouch-details.js';
 /** Trusted consumer validation and provenance contract. */
 export { callerSchema } from './validation.js';
 export type { Caller } from './model.js';
+
+export { serviceOf } from './model.js';

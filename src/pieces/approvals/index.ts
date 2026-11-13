@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
-import { approvalScope as scope, type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
+import { approvalScope as scope, type Caller, type Approval, type State, stateOf, ownerAnswered, iso, serviceOf, maySpend, forOf, type Rule, type Standing } from './model.js';
 import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, alwaysScope, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
@@ -136,12 +136,11 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('piece-use-local',true,(s,i,c)=>{
     const expected = z.object({target:z.string(),digest:z.string().regex(/^[0-9a-f]{64}$/),details:z.string(),caller:callerSchema.strict()}).strict().parse(i.expected);
     const a=find(s,String(i.id));
-    const service=(where:string)=>/\(([^()]*)\)$/.exec(where)?.[1];
     if (a.kind!=='local-wake' || a.target!==expected.target || a.digest!==expected.digest || a.details!==expected.details
       || a.project!==expected.caller.project || a.member!==undefined || a.for!=='owner' || a.people?.length
-      || a.who.agent!==expected.caller.who.agent || service(a.who.where)!==service(expected.caller.who.where)
+      || a.who.agent!==expected.caller.who.agent || serviceOf(a.who)!==serviceOf(expected.caller.who)
       || c.caller.for!=='owner' || c.caller.people?.length || c.caller.project!==a.project
-      || c.caller.who.agent!==a.who.agent || service(c.caller.who.where)!==service(a.who.where))
+      || c.caller.who.agent!==a.who.agent || serviceOf(c.caller.who)!==serviceOf(a.who))
       denied('The current local receipt differs from its exact filing or caller');
     return use(s,a.id,'local-wake',expected.target,c);
   },{piece:true});

@@ -13,7 +13,7 @@ import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
 import { vouchable, askable, automaticVouch, vouchDetails, vouchWords } from './vouch.js';
 import type { VouchFiling } from './dependencies/filing.js';
-import { approvalsRole, callerSchema, vouchOf } from '../approvals/role.js';
+import { approvalsRole, callerSchema, serviceOf, vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
@@ -120,10 +120,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       if(closed) throw new OperationError('unavailable','Clock stopped');
       const filing=filedLocal(db,i.approval);
       if(!filing) throw new OperationError('not-found','No trusted local filing');
-      const service=(where:string)=>/\(([^()]*)\)$/.exec(where)?.[1];
       if(i.caller.for!=='owner' || i.caller.people?.length || filing.caller.for!=='owner' || filing.caller.people?.length
         || i.caller.project!==filing.caller.project || i.caller.who.agent!==filing.caller.who.agent
-        || service(i.caller.who.where)!==service(filing.caller.who.where)
+        || serviceOf(i.caller.who)!==serviceOf(filing.caller.who)
         || i.prompt!==undefined && i.prompt!==filing.prompt || i.note!==undefined && i.note!==filing.note)
         throw new OperationError('denied','Local recovery requires the original words, scope and caller');
       const words=localWords(filing.prompt,filing.note);
