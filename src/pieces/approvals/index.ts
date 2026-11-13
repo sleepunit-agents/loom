@@ -22,7 +22,7 @@ export interface ApprovalOptions {
   applications?: ApprovalApplications;
   caller?(viewer: Viewer, proof?: string): Caller | undefined;
   projects?(): Project[] | undefined;
-  localAgent?: string;
+  localAgent?: string | (()=>string);
 }
 export function installApprovals(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ApprovalOptions = {}) {
   registerBuiltinService(operations, 'approvals', ['approval', 'approval-rule']);
@@ -35,7 +35,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     if (!callerSchema.safeParse(caller).success) denied('Invalid authenticated caller context');
     // A resolver cannot authenticate another agent under this viewer.
     if (viewer.kind === 'agent' && caller.who.agent !== viewer.id) denied('Caller agent does not match viewer');
-    return { caller,now,piece,window,localAgent:options.localAgent ?? 'agent',projects:options.projects?.(),canRead:a=>(piece || !a.member || window) && visible(piece && caller.member ? {kind:'member',id:caller.member} : viewer,a) };
+    return { caller,now,piece,window,localAgent:(typeof options.localAgent==='function'?options.localAgent():options.localAgent) ?? 'agent',projects:options.projects?.(),canRead:a=>(piece || !a.member || window) && visible(piece && caller.member ? {kind:'member',id:caller.member} : viewer,a) };
   };
   const visible = (viewer: Viewer, a: Approval) => maySee(viewer,scope(a),sharing());
   const owner = (v: Viewer, name: string) => mayAct(v,{type:'approval-rule'},sharing(),'household',name);

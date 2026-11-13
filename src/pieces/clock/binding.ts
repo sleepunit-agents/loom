@@ -37,7 +37,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     if (!arg.startsWith('-')) { positional.push(arg); continue; }
     const option=clockOption(arg), flag=option?.flag;
     if (!flag || !Object.hasOwn(spec.flags ?? {}, flag)) return fail(`unrecognized arguments: ${arg}`,2);
-    if (flag === 'local' || flag === 'no-local') { if (option!.attached !== undefined) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
+    if (flag === 'local' || flag === 'no-local' || flag === 'standing') { if (option!.attached !== undefined) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
     const value = option!.attached ?? argv[++n];
     if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
     flags[flag] = value;
@@ -50,9 +50,9 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
   if (timed) input.when = positional.join(name === 'in' ? '' : ' ');
   if (['at','in','park','schedule set'].includes(name!)) {
-    if (!!flags.prompt === !!flags['prompt-file']) return fail('give exactly one of --prompt/-p or --prompt-file/-f');
-    input.agent = agent; input.note ??= '';
-    if (flags.prompt) input.prompt = flags.prompt; else input.file = flags['prompt-file'];
+    if (!(timed && flags.approval && !flags.prompt && !flags['prompt-file']) && !!flags.prompt === !!flags['prompt-file']) return fail('give exactly one of --prompt/-p or --prompt-file/-f');
+    input.agent = agent; if (!timed || !flags.approval) input.note ??= '';
+    if (flags.prompt) input.prompt = flags.prompt; else if (flags['prompt-file']) input.file = flags['prompt-file'];
   }
   if (name === 'schedule run') input.note ??= '';
   if (name === 'park' && !flags.on) return fail('park needs --on',2);
@@ -94,6 +94,16 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   const read = (verb: string, data: object = {}) => ops.call('direct',viewer,`clock.${verb}`,data);
   const previous = ['pause','resume'].includes(name!) ? read('status',{agent}) : undefined;
   if (previous && !previous.ok) return fail(previous.message);
+  if (flags.standing && !flags.approval) return fail('--standing needs its saved --approval');
+  if (timed && (flags.approval || String(flags.prompt ?? '').includes('<!-- house: local -->'))) {
+    if (['model','slot','continuation','place','prompt-file'].some(key=>flags[key]!==undefined)) return fail('Local work uses only its exact saved prompt and note, without file, model, slot, continuation or place');
+    const recovered=!!flags.approval;
+    const result=ops.call('direct',viewer,recovered?'clock.recoverLocal':'clock.requestLocal',
+      recovered?{...input,mode:name,...(flags.standing?{standing:true}:{})}:{agent,prompt:input.prompt,note:input.note},randomUUID());
+    if(!result.ok)return fail(result.message);
+    const ack=result.value as {id:string;state?:string;due?:number};
+    return success(recovered?`${ack.id} will wake at ${clockTime(ack.due!)}`:`${ack.id}: asked in the owner's signed-in window (${ack.state}); nothing armed`);
+  }
   // Nested calls share the command's outer registry transaction and retry receipt.
   const result = ops.call('direct',viewer,`clock.${operation}`,input,randomUUID());
   if (!result.ok) return fail(result.message);

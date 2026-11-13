@@ -878,3 +878,28 @@ markers outlive standing-history trimming. Rendered Clock/Approvals command retr
 receipts are omitted because text output may lose structured scope; public work
 records remain. Restoring a snapshot does not restore private local authority.
 No old row is promoted or widened, and no real import or rollout runs here.
+
+
+### Public body filing and recovery
+
+Next composition now passes the exact Signin Viewer to Runtime's existing
+approvalCaller proof for `clock.requestLocal` and `clock.recoverLocal`.
+Neither operation accepts Caller, member, people or project overrides. Unbound,
+non-owner, other-agent, member-token, service and runner requests fail closed.
+Private successful responses contain only approval id/state or wake id/due;
+words remain visible only in the member's signed-in window. Clock declares only
+four exact cross-piece local Approvals calls in central builtin Sharing.
+
+The generated wake command uses these operations for an explicit local prompt
+and for `wake in 1h --approval <id>` without retyping the saved prompt or note.
+`--standing` selects the saved Allow-every-time authority and requires an approval.
+Unsupported model, file, slot, continuation or place overrides are refused;
+optional retyped prompt/note must match the original exactly. Standing public and
+command receipts remain reserved beyond core receipt expiry. Private words and
+public wrapper receipts are omitted from export. Local recovery starts no body;
+private local dispatch remains held pending the real Runtime delivery unit.
+
+Remaining in this workflow: the Clock app's owner-facing local filing/recovery
+controls and screenshot evidence. A member window never manufactures a body
+Caller. The current app can see the member's private approval and wake, but this
+unit exposes the new writes only to an authentically bound agent body.

@@ -1,3 +1,5 @@
+import { wakes } from '../clock/store.js';
+import { exportDatabase } from '../../core/index.js';
 import { readApproval } from '../approvals/store.js';
 import * as commsCrypto from '../comms/crypto.js';
 import { runtimeRole } from './role.js';
@@ -497,4 +499,62 @@ it('removes terminal job principal authority even when its credential and privat
   expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
   for(const field of ['people','conversation','project'])expect(receipt).not.toHaveProperty(field);
  }
+});
+
+it('composes Clock local filing and approval-only recovery from the exact running private body, returning acknowledgements only',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const prompt='<!-- house: local -->\nInspect host disk usage.',note='PRIVATE LOCAL EXACT note';
+ const input={agent:'art',prompt,note};
+ for(const secret of [f.owner,f.runner,f.unbound,f.token('agent:art@another')]) expect(await f.post(secret,'clock.requestLocal',input)).toMatchObject({ok:false});
+ expect(await f.post(body,'clock.requestLocal',{...input,caller:{for:'owner'},member:'jonathan'})).toMatchObject({ok:false});
+ const card=value<{id:string;state:string}>(await f.post(body,'clock.requestLocal',input));
+ expect(Object.keys(card).sort()).toEqual(['id','state']);
+ expect(readApproval(f.app.db,card.id)).toMatchObject({member:'jonathan',people:['jonathan'],conversation:runtimeStore(f.app.db).read('job',job)!.conversation});
+ expect(wakes(f.app.db)).toHaveLength(0);
+ expect(await f.post(body,'clock.recoverLocal',{agent:'art',approval:card.id,when:'1h',mode:'in'})).toMatchObject({ok:false});
+ value(await f.socket('approvals.answer',{id:card.id,action:'allow'}));
+ await f.restart();
+ const ack=value<{id:string;due:number}>(await f.post(body,'clock.recoverLocal',{agent:'art',approval:card.id,when:'1h',mode:'in'}));
+ expect(Object.keys(ack).sort()).toEqual(['due','id']);
+ expect(wakes(f.app.db)).toEqual([expect.objectContaining({id:ack.id,prompt,note,member:'jonathan',agent:'art',by:{kind:'agent',id:'art'}})]);
+ expect(JSON.stringify(exportDatabase(f.app.db))).not.toContain(note);
+ const command=value<{exit:number;stdout:string}>(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','-p',prompt+' Again','--note','COMMAND PRIVATE']}));
+ expect(command).toMatchObject({exit:0,stdout:expect.stringContaining('nothing armed')});
+ const second=command.stdout.match(/a-[0-9a-f]{8}/)![0];
+ value(await f.socket('approvals.answer',{id:second,action:'allow'}));
+ const recovered=value<{exit:number;stdout:string}>(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',second]}));
+ expect(recovered).toMatchObject({exit:0,stdout:expect.stringContaining('will wake at')});
+ expect(JSON.stringify(recovered)).not.toContain('COMMAND PRIVATE');
+ expect(wakes(f.app.db)).toHaveLength(2);
+ expect(await f.post(body,'clock.list',{agent:'art'})).toMatchObject({ok:true,value:[]});
+ expect(await f.socket('clock.list',{agent:'art'})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({prompt,note})])});
+});
+it('refuses private non-owner local public requests without publishing a card',async()=>{
+ const f=await setup(false,'pollock');await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ expect(await f.post(body,'clock.command',{argv:['in','1h','-p','<!-- house: local --> Inspect host','--note','PRIVATE REFUSED'],agent:'art'})).toMatchObject({ok:true,value:{exit:1}});
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM approvals_approvals').get()).toEqual({n:0});
+ expect(wakes(f.app.db)).toHaveLength(0);
+});
+
+it('recovers standing private work through the public body command without returning words or replaying after receipt expiry',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const card=value<{id:string}>(await f.post(body,'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Inspect disk',note:'PRIVATE STANDING'}));
+ value(await f.socket('approvals.every-time',{id:card.id}));
+ const original=signin(f.app).token(hash(body))!.viewer;
+ const input={agent:'art',approval:card.id,mode:'in',when:'1h',standing:true};
+ const first=f.app.operations.call('http',original,'clock.recoverLocal',input,'standing-public');value(first);
+ // Expires only the ordinary core receipt; the private owning receipt must remain.
+ f.app.db.prepare("DELETE FROM core_operations WHERE id='standing-public'").run();
+ expect(f.app.operations.call('http',original,'clock.recoverLocal',input,'standing-public')).toEqual(first);
+ expect(f.app.operations.call('http',original,'clock.in',{agent:'art',prompt:'new',note:'',when:'2h'},'standing-public')).toMatchObject({ok:false,code:'conflict'});
+ expect(wakes(f.app.db)).toHaveLength(1);
+ expect(JSON.stringify(first)).not.toContain('PRIVATE STANDING');
+ expect(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',card.id,'--standing']})).toMatchObject({ok:true,value:{exit:1}});
 });

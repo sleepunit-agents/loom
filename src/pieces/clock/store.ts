@@ -53,6 +53,6 @@ export function installPrivateExport(db:Db) {
   if(!table.startsWith('clock_') && table!=='core_operations')return true;
   const ids=new Set((db.prepare("SELECT key FROM clock_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
   for(const w of [...wakes(db),...schedules(db)])if(w.member)ids.add(w.id);
-  return !(table==='core_operations' && row.name==='clock.command') && !privateExportCopy(row,ids);
+  return !(table==='core_operations' && ['clock.command','clock.requestLocal','clock.recoverLocal'].includes(String(row.name))) && !privateExportCopy(row,ids);
  });
 }
