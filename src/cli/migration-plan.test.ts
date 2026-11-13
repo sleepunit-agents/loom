@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
+import { conversationId } from '../pieces/attention/conversations.js';
 import { createSnapshot } from './migration-snapshot.js';
 import { migrationPlanChecksum, migrationSnapshotChecksum, prepareMigrationPlan } from './migration-plan.js';
 
@@ -16,14 +17,19 @@ async function fixture(full = true) {
   const old = join(dir, 'old'), root = join(dir, 'snapshot'); mkdirSync(old);
   const put = (path: string, value: unknown) => { mkdirSync(join(old, path, '..'), { recursive: true }); writeFileSync(join(old, path), JSON.stringify(value)); };
   put('household.json', { v: 1, agents: ['art','mark'], default: 'art', owner: 'jonathan' });
-  const ids = ['cv-000000000001','cv-000000000002'];
+  const ids = ['art','mark'].map(a => conversationId(a, 'session', 'fixture'));
   if (full) {
     for (const [i, name] of ['art','mark'].entries()) {
       const path = join(old, 'agents', name); mkdirSync(path, { recursive: true });
       const db = new Database(join(path, 'memories.db'));
       db.pragma('journal_mode = WAL');
-      db.exec('CREATE TABLE conversations(id TEXT, agent TEXT); CREATE TABLE conversation_turns(id TEXT); CREATE TABLE conversation_days(id TEXT); CREATE TABLE conversation_digests(id TEXT)');
-      db.prepare('INSERT INTO conversations VALUES (?,?)').run(ids[i], name); db.close();
+      db.exec(`
+        CREATE TABLE conversations(id TEXT PRIMARY KEY, agent TEXT, venue TEXT, place TEXT, label TEXT, people_json TEXT, agents_json TEXT, started TEXT, last TEXT, last_seq INTEGER);
+        CREATE TABLE conversation_turns(conversation TEXT, seq INTEGER, at TEXT, from_json TEXT, kind TEXT, run TEXT, latency_ms INTEGER, model TEXT, harness TEXT, outcome TEXT, writer TEXT);
+        CREATE TABLE conversation_days(conversation TEXT, day TEXT, counts_json TEXT, median_latency_ms INTEGER, outcomes_json TEXT);
+        CREATE TABLE conversation_digests(id TEXT, conversation TEXT, run TEXT, at TEXT, summary TEXT, asks_json TEXT, decisions_json TEXT, tasks_json TEXT, projects_json TEXT, needs_owner TEXT, needs_owner_href TEXT, needs_owner_json TEXT);
+      `);
+      db.prepare('INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)').run(ids[i], name, 'session', 'fixture', null, '[]', '[]', '2026-11-12T00:00:00Z', '2026-11-12T00:00:00Z', 0); db.close();
     }
     put('clock/art/schedules.json', {});
     writeFileSync(join(old,'clock/art/spool.jsonl'), '');
@@ -34,9 +40,9 @@ async function fixture(full = true) {
   const tasks = join(dir, 'store.db');
   if (full) {
     const db = new Database(tasks);
-    db.exec('CREATE TABLE tasks(ord INTEGER, record TEXT)');
-    db.prepare('INSERT INTO tasks VALUES (?,?)').run(1, JSON.stringify({ id: 't-1', type: 'epic', project: 'loom' }));
-    db.prepare('INSERT INTO tasks VALUES (?,?)').run(2, JSON.stringify({ id: 't-2', type: 'task' })); db.close();
+    db.exec("CREATE TABLE tasks(ord INTEGER, record TEXT); CREATE TABLE links(ord INTEGER, record TEXT); CREATE TABLE meta(key TEXT, value TEXT); INSERT INTO meta VALUES ('seq','2')");
+    db.prepare('INSERT INTO tasks VALUES (?,?)').run(1, JSON.stringify({ id: 't-1', type: 'epic', title: 'Build loom', status: 'open', priority: 1, createdAt: '2026-11-12T00:00:00Z', createdBy: 'art', comments: [], project: 'loom' }));
+    db.prepare('INSERT INTO tasks VALUES (?,?)').run(2, JSON.stringify({ id: 't-2', type: 'task', title: 'Check migration', status: 'open', priority: 1, createdAt: '2026-11-12T00:00:00Z', createdBy: 'art', comments: [] })); db.close();
   }
   await createSnapshot(old, root, full ? tasks : undefined);
   return { dir, root, old, ids, plan: prepareMigrationPlan(root).plan };
@@ -68,9 +74,12 @@ it('derives six explicit inputs and private audiences from old-format fixtures w
 it('supports a household-only snapshot and reports an unregistered piece without pretending it was imported', async () => {
   const f = await fixture(false);
   expect(Object.keys(f.plan.importers)).toEqual(['household']);
-  f.plan.importers.comms = { paths: ['home/household.json'], options: { retained: true } };
+  f.plan.importers.comms = { paths: ['home/household.json'], options: { retained: { nested: [true, null, 42] } } };
   f.plan.importers.constructor = { paths: ['home'], options: {} };
-  expect(prepareMigrationPlan(f.root, f.plan)).toMatchObject({ missing: ['comms','constructor'], blocked: [] });
+  const prepared = prepareMigrationPlan(f.root, f.plan);
+  expect(prepared).toMatchObject({ missing: ['comms','constructor'], blocked: [] });
+  expect(prepared.plan.importers.comms).toEqual(f.plan.importers.comms);
+  expect(prepared.plan.importers.constructor).toEqual(f.plan.importers.constructor);
 });
 it('binds a plan to full snapshot contents and hashes every plan option with object order ignored', async () => {
   const f = await fixture(), original = migrationPlanChecksum(f.plan);
@@ -84,7 +93,7 @@ it('binds a plan to full snapshot contents and hashes every plan option with obj
   f.plan.snapshot = '0'.repeat(64);
   expect(() => prepareMigrationPlan(f.root, f.plan)).toThrow('different snapshot');
 });
-it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknown-member','partial-attention','duplicate-path','escape','absolute','unknown-epic','conflicting-project','bad-attribution','injected-projects','approval-extra','approval-value'])('refuses malformed or incomplete plans before execution: %s', async kind => {
+it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknown-member','partial-attention','duplicate-path','escape','absolute','unknown-epic','conflicting-project','bad-attribution','injected-projects','approval-extra','approval-value','redirect-tasks'])('refuses malformed or incomplete plans before execution: %s', async kind => {
   const f = await fixture(), p = f.plan;
   if (kind === 'omit') delete p.importers.household;
   if (kind === 'extra-option') p.importers.household.options = { ignored: true };
@@ -100,6 +109,7 @@ it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknow
   if (kind === 'conflicting-project') p.importers.tasks.options = { projects: { 't-1': 'other' } };
   if (kind === 'bad-attribution') p.importers.changes.options = { attribution: { agents: {}, ownerLogins: [], taskOwner: 'stranger' } };
   if (kind === 'injected-projects') p.importers.changes.options = { attribution: { agents: {}, ownerLogins: [] }, projects: [] };
+  if (kind === 'redirect-tasks') p.importers.tasks.paths = ['home/agents/art/memories.db'];
   if (kind === 'approval-extra') p.importers.approvals.options = { projects: {}, interrupt: 'forbidden' };
   if (kind === 'approval-value') p.importers.approvals.options = { projects: { 'a-12345678': 'INVALID' } };
   expect(() => prepareMigrationPlan(f.root, p)).toThrow();
@@ -145,6 +155,7 @@ it.each(['approvals','clock','changes'])('refuses ambiguous %s sources and permi
   manifest.files.push({ path: relative, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), kind: 'file' });
   writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
   expect(() => prepareMigrationPlan(f.root)).toThrow(`Multiple ${name} inputs`);
+  expect(() => prepareMigrationPlan(f.root, JSON.parse('null'))).toThrow();
   f.plan.snapshot = migrationSnapshotChecksum(manifest);
   const choice = name === 'changes' ? relative : 'home/zzz';
   f.plan.importers[name].paths = [choice];
@@ -170,4 +181,43 @@ it.each(['conversations','conversation_turns','conversation_days','conversation_
   const bytes = readFileSync(join(f.root, file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
   writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
   expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention');
+});
+
+it('rejects canonical manifest aliases, and changed valid content changes snapshot identity', async () => {
+  const f = await fixture(false);
+  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+  manifest.files[0].path = 'home/./household.json';
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  expect(() => prepareMigrationPlan(f.root)).toThrow('Noncanonical snapshot path');
+  manifest.files[0].path = 'home/household.json';
+  const bytes = Buffer.from(JSON.stringify({ v: 1, agents: ['art','mark'], default: 'mark', owner: 'jonathan' }));
+  writeFileSync(join(f.root,'home/household.json'), bytes);
+  manifest.files[0].bytes = bytes.length; manifest.files[0].sha256 = createHash('sha256').update(bytes).digest('hex');
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  expect(migrationSnapshotChecksum(manifest)).not.toBe(f.plan.snapshot);
+  expect(() => prepareMigrationPlan(f.root, f.plan)).toThrow('different snapshot');
+});
+it('hashes the complete canonical manifest against an independent expected digest', () => {
+  const sha256 = 'a'.repeat(64);
+  const expected = createHash('sha256').update('{"consistency":"per-database","files":[{"bytes":3,"kind":"file","path":"home/data","sha256":"' + sha256 + '"}],"version":1}').digest('hex');
+  expect(migrationSnapshotChecksum({ version: 1, consistency: 'per-database', files: [{ path: 'home/data', bytes: 3, kind: 'file', sha256 }] })).toBe(expected);
+});
+it('excludes a memories database with no conversation tables', async () => {
+  const f = await fixture();
+  const relative = 'home/knowledge/memories.db'; mkdirSync(join(f.root, relative, '..'), { recursive: true });
+  const db = new Database(join(f.root, relative)); db.exec('CREATE TABLE memories(id TEXT, body TEXT)'); db.close();
+  const bytes = readFileSync(join(f.root, relative)), manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+  manifest.files.push({ path: relative, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), kind: 'sqlite' });
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  expect(prepareMigrationPlan(f.root).plan.importers.attention.paths).toEqual(f.plan.importers.attention.paths);
+});
+it.each(['conversations','conversation_turns','conversation_days','conversation_digests','conversation_needs_answers','findings'])('rejects missing required columns in %s', async table => {
+  const f = await fixture();
+  const db = new Database(join(f.root,'home/agents/art/memories.db'));
+  db.exec(`DROP TABLE IF EXISTS ${table}; CREATE TABLE ${table}(id TEXT)`); db.close();
+  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+  const file = manifest.files.find((r: {path:string}) => r.path === 'home/agents/art/memories.db');
+  const bytes = readFileSync(join(f.root, file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention source columns');
 });

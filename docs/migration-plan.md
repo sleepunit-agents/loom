@@ -35,8 +35,9 @@ copied `memories.db` with conversation tables, directories containing an agent's
 `spool.jsonl`, `schedules.json` or `paused`, directories containing
 `approvals.json`, and v1 `{changes: [...]}` JSON in a `changes/` directory or
 named `changes.json`. Memories databases without conversation tables are not
-Attention sources; incomplete conversation schemas and duplicate conversation
-ids are errors. These are data-layout conventions, not a search through legacy
+Attention sources; missing required tables or importer-read columns, and duplicate
+conversation ids, are errors. Optional legacy columns and absent optional tables
+remain allowed; each importer still validates complete source row content. These are data-layout conventions, not a search through legacy
 programs or settings for live paths. A nonstandard Changes export can be placed
 in the old home under one of these names before snapshotting by its coordinator.
 Multiple clock, approvals or Changes candidates require an explicit plan choosing

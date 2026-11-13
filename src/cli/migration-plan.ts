@@ -82,6 +82,7 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
 export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   root: string; manifest: SnapshotManifest; plan: MigrationPlan; missing: string[]; blocked: string[];
 } {
+  const explicit = supplied === undefined ? undefined : planSchema.parse(supplied);
   const root = realpathSync(snapshot);
   const regular = regularFiles(root);
   const manifest = readSnapshot(root);
@@ -98,8 +99,20 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   for (const source of memories) sqlite(path(source), db => {
     const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));
     const required = ['conversations','conversation_turns','conversation_days','conversation_digests'];
-    if (!required.some(t => tables.has(t))) return;
+    if (![...required, 'conversation_needs_answers', 'findings'].some(t => tables.has(t))) return;
     if (!required.every(t => tables.has(t))) throw Error('Incomplete attention source');
+    const columns: Record<string, string[]> = {
+      conversations: ['id','agent','venue','place','label','people_json','agents_json','started','last','last_seq'],
+      conversation_turns: ['conversation','seq','at','from_json','kind','latency_ms','writer'],
+      conversation_days: ['conversation','day','counts_json','median_latency_ms','outcomes_json'],
+      conversation_digests: ['id','conversation','run','at','summary','asks_json','decisions_json','tasks_json','projects_json','needs_owner'],
+      conversation_needs_answers: ['digest','conversation','verdict','by','at'],
+      findings: ['id','conversation','seq','day','measure','score','text','at'],
+    };
+    for (const [table, names] of Object.entries(columns)) if (tables.has(table)) {
+      const held = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(r => r.name));
+      if (names.some(name => !held.has(name))) throw Error('Incomplete attention source columns');
+    }
     attentionPaths.push(source);
     for (const row of db.prepare('SELECT id, agent FROM conversations').all() as { id: string; agent: string }[]) {
       z.string().regex(/^cv-[0-9a-f]{12}$/).parse(row.id);
@@ -125,13 +138,13 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const pick = (name: string, candidates: string[], value: z.infer<typeof inputSchema>['options']) => {
     if (!candidates.length) return;
     // An explicit plan resolves ambiguous layouts; discovery must never pick one silently.
-    if (candidates.length > 1 && supplied === undefined) throw Error(`Multiple ${name} inputs; supply an explicit plan`);
+    if (candidates.length > 1 && explicit === undefined) throw Error(`Multiple ${name} inputs; supply an explicit plan`);
     discovered[name] = { paths: [candidates[0]], options: value };
   };
   pick('clock', clock, {});
   pick('approvals', approvals, { projects: {} });
   pick('changes', changes, { attribution: { agents: Object.fromEntries(household.agents.map(id => [id, { logins: [], branches: [] }])), ownerLogins: [] } });
-  const plan = planSchema.parse(supplied ?? { version: 1, snapshot: migrationSnapshotChecksum(manifest), importers: discovered });
+  const plan = planSchema.parse(explicit ?? { version: 1, snapshot: migrationSnapshotChecksum(manifest), importers: discovered });
   if (plan.snapshot !== migrationSnapshotChecksum(manifest)) throw Error('Plan belongs to a different snapshot');
   for (const name of Object.keys(discovered)) if (!Object.hasOwn(plan.importers, name)) throw Error(`Plan omits discovered ${name} input`);
   if (canonicalPlanValue(plan.importers.household.paths) !== '["home"]') throw Error('Household must use copied home');
