@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixtureSharing } from '../../fixture.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { installSecrets, type GrantAttention } from './index.js';
+import { FakeClock, migrate, openDb, type Viewer } from '../../core/index.js';
+import { grantsRole, installSecrets, type GrantAttention } from './index.js';
+import { schema } from './schema/001.js';
+import { handSecret } from './values.js';
+import type { KeyHolder } from './keyholder.js';
 import type { GrantRequest } from './role.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const agent: Viewer = { kind: 'agent', id: 'pond-bot' };
@@ -83,4 +86,53 @@ describe('one grants authority', () => {
     expect(call(owner, 'answer', answer, 'answer-once')).toEqual(first);
     expect(call(agent, 'may', { agent: agent.id, kind: 'tailnet', target: 'home' })).toEqual({ ok: true, value: { allow: false } });
   });
+});
+
+it('keeps temporary grants confined to their exact house and service through runtime handoff', async () => {
+  const { app, call, clock } = await setup();
+  const resource = { kind: 'secret' as const, target: 'api-key' };
+  const scope = { house: 'h-12', service: 'discord' };
+  const grant = { agent: agent.id, ...resource, scope, expiresAt: clock.now() + 1000 };
+  expect(call(owner, 'grant', { ...grant, expiresAt: undefined })).toMatchObject({ ok: false, code: 'invalid' });
+  for (const expiresAt of [clock.now(), clock.now() - 1]) {
+    expect(call(owner, 'grant', { ...grant, expiresAt })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  }
+  expect(call(agentOwner, 'grant', grant)).toMatchObject({ ok: false, code: 'denied' });
+  expect(call(owner, 'grant', grant).ok).toBe(true);
+  expect(call(owner, 'grant', { ...grant, scope: { house: 'h-13' } }).ok).toBe(true);
+  const grants = grantsRole(app.db);
+  for (const context of [undefined, { house: 'h-12' }, { house: 'h-12', service: 'slack' }, { house: 'h-14', service: 'discord' }]) {
+    expect(grants.mayUse(agent.id, resource, clock.now(), context)).toBe(false);
+  }
+  expect(grants.mayUse(agent.id, resource, clock.now(), scope)).toBe(true);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-13' })).toBe(true);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-13', service: 'discord' })).toBe(false);
+  expect(call(agent, 'may', { agent: agent.id, ...resource })).toEqual({ ok: true, value: { allow: false } });
+  expect(call(agent, 'may', { agent: agent.id, ...resource, scope })).toMatchObject({ ok: false, code: 'invalid' });
+  const handed: string[] = [];
+  const holder: KeyHolder = { names: () => [], set() {}, remove() {}, rotate() {}, handTo(_name, sink) { handed.push(sink); } };
+  expect(handSecret(app.db, holder, agent.id, resource.target, 'sink', clock.now())).toBe(false);
+  expect(handSecret(app.db, holder, agent.id, resource.target, 'sink', clock.now(), scope)).toBe(true);
+  expect(handed).toEqual(['sink']);
+  expect(call(owner, 'revoke', { agent: agent.id, ...resource, scope }).ok).toBe(true);
+  expect(grants.mayUse(agent.id, resource, clock.now(), scope)).toBe(false);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-13' })).toBe(true);
+  clock.advance(1000);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-13' })).toBe(false);
+});
+it('upgrades the initial table without changing existing grant identity, content or expiry', () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-grant-upgrade-')); homes.push(home);
+  const { db, close } = openDb(home);
+  try {
+    migrate(db, 'secrets', schema.slice(0, 1));
+    const record = { id: '["art","piece","tasks"]', agent: 'art', kind: 'piece', target: 'tasks', by: 'jonathan', createdAt: 10, expiresAt: 100 };
+    db.prepare('INSERT INTO secrets_grants VALUES (?,?,?,?,?)').run(record.id, record.agent, record.kind, record.target, JSON.stringify(record));
+    migrate(db, 'secrets', schema);
+    migrate(db, 'secrets', schema);
+    expect(db.prepare('SELECT record FROM secrets_grants').all()).toEqual([{ record: JSON.stringify(record) }]);
+    const grants = grantsRole(db);
+    expect(grants.mayUse('art', { kind: 'piece', target: 'tasks' }, 99)).toBe(true);
+    expect(grants.mayUse('art', { kind: 'piece', target: 'tasks' }, 100)).toBe(false);
+  } finally { close(); }
 });

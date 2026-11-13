@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, failure, mayAct, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
-import type { Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
+import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
 import { secretName as name } from './input.js';
 const agent = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
+const grantScope = z.object({ house: z.string().regex(/^h-[0-9]{1,9}$/), service: agent.optional() }).strict();
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and
  * deliver only its first household owner's yes/no. No caller can inject an answer. */
@@ -20,11 +21,13 @@ function read<T>(db: Db, table: string, id: string): T | undefined {
 function all<T>(db: Db, table: string): T[] {
   return (db.prepare(`SELECT record FROM ${table} ORDER BY id`).all() as { record: string }[]).map(r => JSON.parse(r.record) as T);
 }
-const grantId = (agent: string, r: Resource) => JSON.stringify([agent, r.kind, r.target]);
+export const grantId = (agent: string, r: Resource, scope?: GrantContext) => JSON.stringify(scope ? [agent, r.kind, r.target, scope.house, scope.service ?? null] : [agent, r.kind, r.target]);
 export function grantsRole(db: Db): Grants {
-  return { mayUse(agent, resource, now) {
-    const row = read<Grant>(db, 'secrets_grants', grantId(agent, resource));
-    return !!row && (row.expiresAt === undefined || row.expiresAt > now);
+  return { mayUse(agent, resource, now, context) {
+    const candidates = [read<Grant>(db, 'secrets_grants', grantId(agent, resource))];
+    if (context) candidates.push(read<Grant>(db, 'secrets_grants', grantId(agent, resource, context)));
+    return candidates.some(row => !!row && (row.expiresAt === undefined || row.expiresAt > now)
+      && (!row.scope || !!context && row.scope.house === context.house && row.scope.service === context.service));
   } };
 }
 export function installSecrets(db: Db, operations: Operations, live: Live, sharing: () => Sharing, attention?: GrantAttention) {
@@ -43,16 +46,17 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       ctx.changed('secret.name', record.id); return record;
     },
   }));
-  operations.register(operation({ name: 'secrets.grant', write: true, input: z.object({ agent, ...resource, expiresAt: z.number().int().positive().optional() }).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'secrets.grant', write: true, input: z.object({ agent, ...resource, scope: grantScope.optional(), expiresAt: z.number().int().positive().optional() }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.grant'), run(ctx, input) {
+      if (input.scope && input.expiresAt === undefined) return failure('invalid', 'House grants must expire');
       if (input.expiresAt !== undefined && input.expiresAt <= ctx.now) return failure('invalid', 'Grant must expire in the future');
-      const record: Grant = { ...input, id: grantId(input.agent, input), by: ctx.viewer.id, createdAt: ctx.now };
+      const record: Grant = { ...input, id: grantId(input.agent, input, input.scope), by: ctx.viewer.id, createdAt: ctx.now };
       saveGrant(record); ctx.changed('secret.grant', record.id); return record;
     },
   }));
-  operations.register(operation({ name: 'secrets.revoke', write: true, input: z.object({ agent, ...resource }).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'secrets.revoke', write: true, input: z.object({ agent, ...resource, scope: grantScope.optional() }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.revoke'), run(ctx, input) {
-      const id = grantId(input.agent, input); db.prepare('DELETE FROM secrets_grants WHERE id=?').run(id); ctx.changed('secret.grant', id); return { revoked: true };
+      const id = grantId(input.agent, input, input.scope); db.prepare('DELETE FROM secrets_grants WHERE id=?').run(id); ctx.changed('secret.grant', id); return { revoked: true };
     },
   }));
   operations.register(operation({ name: 'secrets.may', input: z.object({ agent, ...resource }).strict(), output: z.object({ allow: z.boolean() }),

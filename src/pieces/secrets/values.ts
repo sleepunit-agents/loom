@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { operation, mayAct, OperationError, type Db, type Operations, type Sharing } from '../../core/index.js';
 import { grantsRole } from './index.js';
+import type { GrantContext } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
@@ -31,7 +32,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
 /** Runtime-only seam, never offered on any browser/API registry door.
  * Sink names are assigned by the authenticated runtime, never a caller's path.
  */
-export function handSecret(db: Db, holder: KeyHolder, agent: string, name: string, sink: string, now: number): boolean {
-  if (!grantsRole(db).mayUse(agent, { kind: 'secret', target: name }, now)) return false;
+export function handSecret(db: Db, holder: KeyHolder, agent: string, name: string, sink: string, now: number, context?: GrantContext): boolean {
+  if (!grantsRole(db).mayUse(agent, { kind: 'secret', target: name }, now, context)) return false;
   try { holder.handTo(name, sink); return true; } catch { return false; }
 }
