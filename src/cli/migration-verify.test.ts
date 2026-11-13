@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as projection from './migration-projection.js';
+import * as snapshotSqlite from './migration-sqlite.js';
 import * as foundation from '../core/app.js';
 import * as core from '../core/index.js';
 import * as database from '../core/db/index.js';
@@ -220,6 +221,12 @@ it('compares every credential/settings concern on changed same-count content and
 it.each([false,true])('keeps read-only resources and the daemon gate until an asynchronous projection settles (reject=%s)',async reject=>{
   const f=await fixture(true);await runMigrationAll(f.root,f.home);
   const source=bytes(f.root),before=bytes(f.home),original=projection.expectedTables;
+  const open=snapshotSqlite.openSnapshotSqlite,connections:Database.Database[]=[],closes:ReturnType<typeof vi.spyOn>[]=[];
+  vi.spyOn(snapshotSqlite,'openSnapshotSqlite').mockImplementation(path=>{
+    const db=open(path);
+    if(path===join(f.home,'loom.db')){connections.push(db);closes.push(vi.spyOn(db,'close'));}
+    return db;
+  });
   let resolveProjection!:(value:projection.Tables)=>void,rejectProjection!:(error:Error)=>void;
   const pending=new Promise<projection.Tables>((resolve,reject)=>{resolveProjection=resolve;rejectProjection=reject;});
   let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
@@ -232,10 +239,12 @@ it.each([false,true])('keeps read-only resources and the daemon gate until an as
   try {
     await started;
     expect(settled).toBe(false);expect(()=>acquireHttpLock(f.home)).toThrow('already running');
+    expect(connections).toHaveLength(1);expect(connections[0].open).toBe(true);expect(closes[0]).not.toHaveBeenCalled();
     expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
     if(reject){rejectProjection(Error('PRIVATE_ASYNC_PROJECTION_CANARY'));await expect(result).rejects.toThrow('PRIVATE_ASYNC_PROJECTION_CANARY');}
     else {resolveProjection(await original('tasks',[join(f.root,'tasks/store.db')],f.plan.importers.tasks.options,JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).now));expect((await result).status).toBe('verified');}
   } finally {rejectProjection(Error('cleanup'));await result.catch(()=>{});}
+  expect(connections).toHaveLength(1);expect(closes[0]).toHaveBeenCalledOnce();expect(connections[0].open).toBe(false);
   const unlock=acquireHttpLock(f.home);unlock();
   expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
 });
