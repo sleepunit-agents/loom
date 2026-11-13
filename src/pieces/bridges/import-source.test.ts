@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, openSync, readFileSync, readSync, rmSync, symli
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readBridgeInventory, type BridgeSourceFile, type BridgeSourceKind } from './import-source.js';
-const io = vi.hoisted(()=>({ afterStat: undefined as (()=>void) | undefined, forbidWholeFile: false }));
+const io = vi.hoisted(()=>({ afterStat: undefined as (()=>void) | undefined, forbidWholeFile: false, nonregular: false }));
 vi.mock('node:fs',async importOriginal=>{
   const actual=await importOriginal<typeof import('node:fs')>();
   return {...actual,openSync:vi.fn(actual.openSync),readSync:vi.fn(actual.readSync),
@@ -13,12 +13,12 @@ vi.mock('node:fs',async importOriginal=>{
       return actual.readFileSync(...args);
     }),
     fstatSync:(...args:Parameters<typeof actual.fstatSync>)=>{
-      const stat=actual.fstatSync(...args),hook=io.afterStat;io.afterStat=undefined;hook?.();return stat;
+      const stat=actual.fstatSync(...args),hook=io.afterStat;io.afterStat=undefined;hook?.();return io.nonregular ? {...stat,isFile:()=>false} : stat;
     },
   };
 });
 const roots: string[] = [];
-afterEach(()=>{io.afterStat=undefined;io.forbidWholeFile=false;vi.clearAllMocks();for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{io.afterStat=undefined;io.forbidWholeFile=false;io.nonregular=false;vi.clearAllMocks();for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true});});
 function fixture() {
   const root=mkdtempSync(join(tmpdir(),'bridges-source-'));roots.push(root);
   const file=(name:string,kind:BridgeSourceKind,value:unknown):BridgeSourceFile=>{
@@ -101,10 +101,20 @@ describe('offline legacy Bridges source inventory',()=>{
   it('accepts exact safe numeric legacy ids and refuses lossy numbers',()=>{
     const {file}=fixture();const f=file('people.json','people',{people:{a:{discord:123,slack:{T1:456}}}});
     expect(readBridgeInventory([f]).accounts.map(a=>a.user)).toEqual(['123','456']);
+    writeFileSync(f.path,'{"people":{"a":{"discord":0}},"agents":{"peer":{"discord":0}}}');
+    expect(readBridgeInventory([f]).accounts.map(a=>a.user)).toEqual(['0','0']);
+    const roleSource=file('routes.json','routes',{bot_roles:{art:[0,123]}});
+    expect(readBridgeInventory([roleSource]).routes[0].botRoles).toEqual({art:['0','123']});
     for (const spelling of ['9007199254740993','9007199254740991.1','123.000000000000001','1e2','123.0']) {
       writeFileSync(f.path,`{"people":{"a":{"discord":${spelling}}}}`);
       expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
     }
+  });
+  it('refuses nonregular descriptors before reading otherwise valid JSON',()=>{
+    const {file}=fixture();const f=file('people.json','people',{});
+    vi.clearAllMocks();io.nonregular=true;
+    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    expect(vi.mocked(readSync)).not.toHaveBeenCalled();
   });
   it('refuses malformed, duplicate, traversal, unknown leaf, oversized, symlink and nonregular inputs with sanitized errors',()=>{
     const {file,root}=fixture();const f=file('people.json','people',{});

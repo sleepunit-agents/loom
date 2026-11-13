@@ -7,7 +7,7 @@ import { z } from 'zod';
 const id = z.string().min(1).max(200);
 const slug = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 const map = <T extends z.ZodType>(value: T) => z.record(z.string().min(1).max(200), value);
-const ids = z.union([id, z.number().int().safe().positive(), z.array(z.union([id, z.number().int().safe().positive()]))]);
+const ids = z.union([id, z.number().int().safe().nonnegative(), z.array(z.union([id, z.number().int().safe().nonnegative()]))]);
 const list = (value: z.infer<typeof ids>): string[] => (Array.isArray(value) ? value : [value]).map(String);
 const strings = z.array(id);
 const channel = z.object({ name: z.string().optional(), primary: slug.nullish(), parent: id.optional(),

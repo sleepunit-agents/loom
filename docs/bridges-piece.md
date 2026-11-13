@@ -831,7 +831,7 @@ credential values or parser/filesystem exception details. Configured `secrets`,
 `secret_cmd`, `ext`, `commands`, token files and env bundles are never opened or
 executed. Synthetic fixtures cover both old JSON-text settings and object settings,
 exact account IDs (numeric spellings must be canonical safe nonnegative integers;
-use strings for other IDs), conflict retention, unchanged sources, sanitized failures and
+use strings for other IDs; numeric zero is preserved for later importer validation), conflict retention, unchanged sources, sanitized failures and
 file-boundary refusals. No real data is used.
 
 The remaining importer still owes one transaction, receipt/checksum, repeat no-op,
