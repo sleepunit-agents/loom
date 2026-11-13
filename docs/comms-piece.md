@@ -845,3 +845,20 @@ match the captured body binding, both before and after decryption. An explicit
 thread id cannot widen that binding, including for a local body or another
 member's thread on the same agent. A missing conversation denies before crypto.
 This follows web-foundation's replacement of the old cross-thread MCP read.
+
+
+## Attention thread-project metadata
+
+`commsMetadata(operations)` exposes a metadata-only role from an explicitly installed
+Comms instance. `threadProject` takes the original viewer and stored conversation
+identity (id, agent and member), requires central thread membership, and returns
+only the unique matching thread's project slug or null. It never reads or decrypts
+message rows, exposes a title, or changes a thread. Public conversations cannot
+inherit private thread filing. Archived threads retain filing; deletion, lost
+ownership, an ambiguous binding and a closed Comms instance return null.
+
+Next-mode Attention looks up this role at call time before its project venue
+fallback. The Projects role still verifies the slug is canonical, live and belongs
+to the conversation agent. This replaces the old trusted `threadProject` digest
+argument with a role lookup; it does not install Comms, create keys, send replies or
+complete Runtime/private-reply composition. No new schema or permission rule.

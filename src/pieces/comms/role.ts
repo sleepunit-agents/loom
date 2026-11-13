@@ -11,7 +11,7 @@ export interface RuntimeDelivery {
 }
 /** The frame's staging gate must wrap every effect, including runtime delivery. */
 export type Hold = <T>(effect: () => Promise<T>, facts?: EffectFacts) => Promise<T>;
-import type { Viewer, Result } from '../../core/index.js';
+import type { Operations, Viewer, Result } from '../../core/index.js';
 /** Structural subset of attention/role.ts; keep the original member and stable retry id. */
 export interface Attention {
  answer(viewer: Viewer, input: { id: string; answer: { kind: 'yes' | 'no' } | { kind: 'words'; text: string } }, operationId: string): Result;
@@ -102,3 +102,12 @@ export function stagingHold(effects: OutsideEffects): Hold {
   catch(error){effects.finish(facts.id,false);throw error;}
  };
 }
+
+/** Metadata-only seam; private thread filing never enters a public conversation. */
+export interface CommsMetadata {
+ threadProject(viewer: Viewer, conversation: {id: string; agent: string; member?: string}): string | null;
+}
+const metadataRoles = new WeakMap<Operations, CommsMetadata>();
+export function registerCommsMetadata(operations: Operations, role: CommsMetadata): void { metadataRoles.set(operations, role); }
+/** Late lookup permits independent piece installation; absence never opens a store. */
+export function commsMetadata(operations: Operations): CommsMetadata | undefined { return metadataRoles.get(operations); }

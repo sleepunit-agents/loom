@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Resolve Attention digest filing through visible private Comms thread metadata without reading message words.
+
 - Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
 
