@@ -104,3 +104,39 @@ it.each(['permission', 'authentication'] as const)('rechecks %s after preparatio
   release(); expect(await pending).toMatchObject({ code: 'denied' }); expect(spies.run).not.toHaveBeenCalled();
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual([]);
 });
+
+
+it.each([false, true])('uses current policy before replay only when explicitly required (recheckPolicy=%s)', async recheckPolicy => {
+  const { app } = setup(); let allowed = true;
+  const spies = install(app, { allowed: () => allowed, recheckPolicy });
+  const result = await app.operations.callAsync('http', owner, 'example.save', input, 'permission-retry');
+  expect(result.ok).toBe(true); allowed = false;
+  expect(await app.operations.callAsync('http', owner, 'example.save', input, 'permission-retry'))
+    .toEqual(recheckPolicy ? expect.objectContaining({ code: 'denied' }) : result);
+  expect(await app.operations.callAsync('http', owner, 'example.save', { words: 'changed' }, 'permission-retry'))
+    .toMatchObject({ code: recheckPolicy ? 'denied' : 'conflict' });
+  expect(await app.operations.callAsync('http', owner, 'example.save', input, 'fresh')).toMatchObject({ code: 'denied' });
+  expect(spies.prepare).toHaveBeenCalledTimes(1); expect(spies.run).toHaveBeenCalledTimes(1);
+});
+
+it('checks recovery again after preparation when an external receipt becomes available during the await', async () => {
+  const { app, clock } = setup(); let available = false, release!: () => void;
+  const expires = clock.now() + 1000;
+  app.db.exec('CREATE TABLE example_recovered(id TEXT)');
+  const recover = vi.fn((ctx: Context) => {
+    if (!available) return;
+    ctx.db.prepare('INSERT INTO example_recovered VALUES (?)').run('after-prepare');
+    ctx.changed('example.saved', 'after-prepare');
+    return new RecoveredWrite({ saved: true }, expires);
+  });
+  const spies = install(app, { recover, prepare: () => new Promise<void>(resolve => { release = resolve; }) });
+  const publish = vi.spyOn(app.live, 'changed');
+  const pending = app.operations.callAsync('http', owner, 'example.save', input, 'late-recovery');
+  expect(recover).toHaveBeenCalledTimes(1); expect(publish).not.toHaveBeenCalled();
+  available = true; release();
+  expect(await pending).toEqual({ ok: true, value: { saved: true } });
+  expect(recover).toHaveBeenCalledTimes(2); expect(spies.prepare).toHaveBeenCalledTimes(1); expect(spies.run).not.toHaveBeenCalled();
+  expect(app.db.prepare('SELECT * FROM example_recovered').all()).toEqual([{ id: 'after-prepare' }]);
+  expect(app.db.prepare('SELECT expires FROM core_operations').get()).toEqual({ expires });
+  expect(publish).toHaveBeenCalledExactlyOnceWith([{ type: 'example.saved', id: 'after-prepare' }]);
+});

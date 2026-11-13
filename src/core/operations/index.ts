@@ -92,12 +92,11 @@ export class Operations {
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
-    if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
     try {
       if (op.write) {
         const prior = this.execute(door, viewer, name, input, id, undefined, window, true);
         if (prior !== preparationNeeded) return prior;
-      }
+      } else if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
       const prepared = await op.prepare?.(parsed.data, {viewer});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);

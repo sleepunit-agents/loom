@@ -703,7 +703,9 @@ current-member removal, same-CA peer rejection, failed startup and shutdown.
 
 The core registry now checks a prepared write's existing operation receipt and
 registered external recovery hooks before calling `prepare`. A committed matching
-retry returns its acknowledgement without preparing again; a name or full-input
+retry returns its acknowledgement without preparing again, including after permission
+loss for an ordinary operation. Operations marked `recheckPolicy` or `windowOnly`
+still require current policy before replay. A name or full-input
 fingerprint mismatch conflicts before preparation. External recovery can reconcile
 metadata and publish changes in that same transaction, preserving its original
 receipt deadline. Receipt, recovery and permission checks run again after awaited
