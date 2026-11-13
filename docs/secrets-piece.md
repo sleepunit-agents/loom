@@ -508,3 +508,23 @@ agent, with the default-policy explanation. Those inherited checkboxes are
 read-only: the existing Stop operation edits explicit Always membership and cannot
 turn off inherited Auto. Explicit per-name membership remains editable. Every
 scoped grant displays its exact service, including “No service” when absent.
+
+
+## Startup policy editing in Settings
+
+The secret reader offers separate “Allow AGENT at startup” checkboxes. These
+call household-owner-only `secrets.startup {name, agent, on}`. Each edit reads
+the current policy inside the operation transaction and changes only that
+agent's startup membership, preserving request level, Always agents, duration,
+default and every other name. Concurrent readers therefore cannot replace an
+unrelated policy edit with an old browser snapshot. The shared Settings mutation
+lock and exact-call uncertain retry apply to these edits too.
+
+Enabling requires an existing name and an agent currently registered in household
+membership or a project. Explicit per-name Never refuses enabling; the default
+request level remains independent of startup, matching the runtime start rule.
+Saved startup members no longer registered are shown so owners can remove them,
+including under Never. Removal affects future starts; already running houses may
+retain delivered values. Existing temporary grants and request records are not
+revoked or rewritten. No runtime value delivery or production holder mutation is
+activated by editing this metadata.
