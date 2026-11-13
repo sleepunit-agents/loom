@@ -4,9 +4,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, mayAct, mayCreate, type Db, type Operations, type Sharing } from '../../core/index.js';
-import { approvalsRole } from '../approvals/role.js';
-import { callerSchema } from '../approvals/validation.js';
-import type { Caller } from '../approvals/model.js';
+import { approvalsRole, callerSchema, type Caller } from '../approvals/role.js';
 export const localMarker = '<!-- house: local -->';
 const invalid = (message: string): never => { throw new OperationError('invalid', message); };
 const denied = (message: string): never => { throw new OperationError('denied', message); };
