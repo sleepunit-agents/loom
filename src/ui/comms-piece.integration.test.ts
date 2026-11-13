@@ -61,12 +61,17 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(inFront).toBe(clock.now());expect(readSeq()).toBe(hiddenReply.seq);
   for(const page of [a,b])await page.evaluate(()=>{Reflect.deleteProperty(document,'visibilityState');Reflect.deleteProperty(document,'hasFocus');document.dispatchEvent(new Event('visibilitychange'));});
   // Body activity comes from the thread subscription; it must disappear when the turn ends.
+  const activeRow=b.locator('[data-split-row]').filter({hasText:'New thread with art'});
+  await expect.poll(()=>activeRow.getByLabel('Thread activity time').getAttribute('datetime')).toBe(new Date(JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).last).toISOString());
+  expect(await activeRow.getByLabel('Thread activity time').textContent()).toContain('CT');
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
+  await expect.poll(()=>activeRow.getByLabel('Thread working').textContent()).toBe('working…');
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('41,900 tokens');
   expect(await b.getByLabel('Body activity').locator('time').getAttribute('datetime')).toBe(new Date(clock.now()).toISOString());
   comms.activity('art',place,{at:clock.now()+1});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).not.toContain('tokens');
   comms.status('art',place,'done');
+  await expect.poll(()=>activeRow.getByLabel('Thread working').count()).toBe(0);
   await expect.poll(()=>b.getByLabel('Body activity').count()).toBe(0);
   await expect.poll(()=>b.getByLabel('Working status').count()).toBe(0);
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now()+2,tokens:0});
@@ -102,6 +107,11 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
   await capture('comms',true);
+  await b.setViewportSize({width:390,height:900});
+  await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
+  await b.locator('.loom-split__back').click();
+  await capture('comms-list');
+  await row(b).click();
   const conversation=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
   const created=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Work made in this thread',agent:'art',source:`conversation:${conversation}`,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work');
   expect(created).toMatchObject({ok:true,value:{result:{ok:true}}});
