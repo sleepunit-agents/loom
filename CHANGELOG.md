@@ -970,6 +970,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the owner-only `household.setMemberProjects` operation to replace one member's project assignments atomically and refresh open windows.
 
+- Add owner-only next-mode registration of existing agent contexts with atomic retries and live household updates.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
