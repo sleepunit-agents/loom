@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
 - Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
 
+- Include Comms in offline migration plans, imports and independent private-content verification.
 - Migration snapshots collect registered importer data and keys only, skip legacy aliases and live/program entries safely, explain refusals, and support a no-write `--dry-run` inventory.
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 - Add read-only `migrate verify` that independently compares imported IDs, counts, metadata and content against the snapshot and full plan on every invocation.
