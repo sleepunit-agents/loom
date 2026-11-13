@@ -204,3 +204,24 @@ it('next owns clock jobs, holds starts without a runtime and restores held work 
     expect(loom.operations.call('direct',viewer,'clock.list',{})).toMatchObject({ok:true,value:[{id,state:'held',hold:'staging'}]});
   } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
+
+it('next serves real PWA files and rejects missing resources instead of returning the shell', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-next-pwa-'));
+  writeFileSync(join(home, 'next.html'), '<html lang="en">desk</html>');
+  const loom = await startLoom({ home, next:true, clock:new FakeClock(), webRoot:home });
+  try {
+    const manifest = await fetch(loom.url+'/manifest.webmanifest');
+    expect(manifest.headers.get('content-type')).toBe('application/manifest+json');
+    expect(await manifest.json()).toMatchObject({ name:'loom', display:'standalone' });
+    for (const size of [32,180,192,512]) {
+      const icon = await fetch(`${loom.url}/icons/loom-${size}.png`);
+      expect(icon.headers.get('content-type')).toBe('image/png');
+      expect(Buffer.from(await icon.arrayBuffer()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+    }
+    const worker = await fetch(loom.url+'/sw.js');
+    expect(worker.headers.get('content-type')).toBe('text/javascript');
+    expect(await worker.text()).toContain('loom-next-static-');
+    for (const path of ['/icons/missing.png','/app/assets/missing.js','/missing.css','/faces/missing.png','/pixel-icons/missing.png','/fonts/missing.woff2']) expect((await fetch(loom.url+path)).status).toBe(404);
+    expect(await (await fetch(loom.url+'/p/tasks-preview')).text()).toContain('desk');
+  } finally { await loom.close(); rmSync(home,{recursive:true,force:true}); }
+});
