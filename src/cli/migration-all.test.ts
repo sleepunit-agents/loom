@@ -1,6 +1,11 @@
+import * as fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { SharingDatabase } from '../core/household/sharing.js';
+import { change } from '../pieces/changes/fixture.js';
+import { loadChanges } from '../pieces/changes/store.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -9,6 +14,7 @@ import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
 import { run } from './migrate.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
+import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import { createMigrationRegistry, MigrationRegistry } from './migration-registry.js';
@@ -19,7 +25,7 @@ const bytes = (path: string): unknown => Object.fromEntries(readdirSync(path).so
   const p = join(path, name); try { return [name, readFileSync(p).toString('base64')]; }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EISDIR') throw e; return [name, bytes(p)]; }
 }));
-async function fixture(full = false) {
+async function fixture(full = false, matchingChange = false) {
   const dir = mkdtempSync(join(tmpdir(), 'migration-all-')); dirs.push(dir);
   const old = join(dir, 'old'), root = join(dir, 'snapshot'), home = join(dir, 'new'); mkdirSync(old);
   const put = (p: string, v: unknown) => { mkdirSync(join(old,p,'..'), { recursive: true }); writeFileSync(join(old,p), JSON.stringify(v)); };
@@ -28,7 +34,7 @@ async function fixture(full = false) {
   let tasks: string | undefined;
   if (full) {
     put('clock/art/schedules.json', {}); writeFileSync(join(old,'clock/art/spool.jsonl'), '');
-    put('approvals/approvals.json', { v: 1, approvals: {} }); put('changes/snapshot.json', { v: 1, changes: [] });
+    put('approvals/approvals.json', { v: 1, approvals: {} }); put('changes/snapshot.json', { v: 1, changes: matchingChange ? [change({project:'forged'})] : [] });
     tasks = join(dir,'tasks.db'); const t = new Database(tasks); t.pragma('journal_mode = WAL');
     t.exec("CREATE TABLE tasks(ord INTEGER, record TEXT); CREATE TABLE links(ord INTEGER, record TEXT); CREATE TABLE meta(key TEXT, value TEXT); INSERT INTO meta VALUES ('seq','1')");
     t.prepare('INSERT INTO tasks VALUES (?,?)').run(1, JSON.stringify({id:'t-1',type:'task',title:'Migrate',status:'open',priority:1,createdAt:'2026-11-12T00:00:00Z',createdBy:'art',comments:[]})); t.close();
@@ -50,9 +56,11 @@ it('imports all six pieces in dependency order, repeats without import writes, a
   const db = new Database(join(f.home,'loom.db'),{readonly:true});
   expect(db.prepare('SELECT count(*) AS n FROM tasks_tasks').get()).toEqual({n:1}); db.close();
   const receipt = readFileSync(join(f.home,'.migration-all.json'),'utf8');
+  const destinationBefore = bytes(f.home);
   const again = runMigrationAll(f.root,f.home,undefined,{now:()=>99999});
   expect(again.pieces.every(p=>p.status==='completed')).toBe(true);
   expect(readFileSync(join(f.home,'.migration-all.json'),'utf8')).toBe(receipt);
+  expect(bytes(f.home)).toEqual(destinationBefore);
   expect(bytes(f.root)).toEqual(before);
   expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(Buffer.alloc(32,17));
 });
@@ -67,7 +75,7 @@ it('resumes the crash window after importer commit with stable time and keeps ea
 });
 it('rejects different plan, including Changes attribution, and different snapshots before destination changes', async () => {
   const f = await fixture(true); runMigrationAll(f.root,f.home); const before = bytes(f.home);
-  const plan = structuredClone(f.plan); (plan.importers.changes.options as any).attribution.ownerLogins.push('another');
+  const plan = structuredClone(f.plan); (plan.importers.changes.options as { attribution: { ownerLogins: string[] } }).attribution.ownerLogins.push('another');
   expect(()=>runMigrationAll(f.root,f.home,plan)).toThrow('another migration');
   const other = await fixture(); expect(()=>runMigrationAll(other.root,f.home)).toThrow('another migration');
   expect(bytes(f.home)).toEqual(before);
@@ -122,4 +130,58 @@ it('rejects tampered snapshots before touching an existing destination, even on 
   const f=await fixture();runMigrationAll(f.root,f.home);const before=bytes(f.home);
   writeFileSync(join(f.root,'home/ui-cookie.key'),Buffer.alloc(32,19));
   expect(()=>runMigrationAll(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);
+});
+
+it('recovers an unpublished receipt without widening home or receipt permissions',async()=>{
+  const f=await fixture();mkdirSync(f.home,{mode:0o755});writeFileSync(join(f.home,'.migration-all.pending'),'partial',{mode:0o644});
+  expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+  expect(statSync(f.home).mode&0o777).toBe(0o700);
+  expect(statSync(join(f.home,'.migration-all.json')).mode&0o777).toBe(0o600);
+});
+
+it('recovers exactly the household key publication hardlink pair after process death',async()=>{
+  const f=await fixture();
+  const registry=new MigrationRegistry();registry.register({name:'household',dependencies:[],reads:[],run:()=>{throw Error('death');}});
+  expect(()=>runMigrationAll(f.root,f.home,undefined,{registry})).toThrow();
+  // Reproduce death after key link publication but before household transaction commit.
+  writeFileSync(join(f.home,'ui-cookie.key'),readFileSync(join(f.root,'home/ui-cookie.key')),{mode:0o600});
+  const temp=join(f.home,`.ui-cookie.key-import-${randomUUID()}`);linkSync(join(f.home,'ui-cookie.key'),temp);
+  expect(runMigrationAll(f.root,f.home).status).toBe('complete');expect(readdirSync(f.home)).not.toContain(temp.split('/').at(-1));
+  expect(statSync(join(f.home,'ui-cookie.key')).nlink).toBe(1);
+});
+it('refuses a key publication pair with another external alias, wrong bytes, or no matching receipt',async()=>{
+  for(const kind of ['external','bytes','receipt']) {
+    const f=await fixture();runMigrationAll(f.root,f.home);const temp=join(f.home,`.ui-cookie.key-import-${randomUUID()}`);linkSync(join(f.home,'ui-cookie.key'),temp);
+    if(kind==='external')linkSync(temp,join(f.dir,'outside'));
+    if(kind==='bytes')writeFileSync(temp,Buffer.alloc(32,18));
+    if(kind==='receipt')rmSync(join(f.home,'.migration-all.json'));
+    const before=bytes(f.home);expect(()=>runMigrationAll(f.root,f.home)).toThrow();expect(bytes(f.home)).toEqual(before);
+  }
+});
+it('refuses symlink homes and symlink parent components unrelated to the source',async()=>{
+  const f=await fixture();mkdirSync(f.home);const alias=join(f.dir,'alias');symlinkSync(f.home,alias);
+  expect(()=>runMigrationAll(f.root,alias)).toThrow('Symlink');expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow('Symlink');expect(readdirSync(f.home)).toEqual([]);
+});
+it('derives Changes projects from sharing and holds the daemon lock through import, receipt fsync and close',async()=>{
+  const f=await fixture(true,true), registry=new MigrationRegistry();
+  const steps:string[]=[];
+  const publication={sync:(fd:number)=>{expect(()=>acquireHttpLock(f.home)).toThrow('already running');steps.push(fs.fstatSync(fd).isDirectory()?'directory':'file');fs.fsyncSync(fd);},rename:(from:fs.PathLike,to:fs.PathLike)=>{steps.push('rename');fs.renameSync(from,to);}};
+  for(const entry of createMigrationRegistry().order().importers) registry.register(entry.name==='household'?{...entry,run:(context,input)=>{
+    expect(()=>acquireHttpLock(f.home)).toThrow('already running');
+    importHousehold(context.db,context.home,join(context.snapshot.root,input.paths[0]),context.now);
+    context.db.transaction(()=>new SharingDatabase(context.db,context.home).create({slug:'pond',name:'Pond',repositories:['acme/app'],members:[],agents:['art']}))();
+  }}:entry.name==='changes'?{...entry,run:(context,input)=>{
+    expect((input.options as ()=>{projects:unknown[]})().projects).toEqual([{slug:'pond',name:'Pond',repos:['acme/app']}]);
+    return entry.run(context,input);
+  }}:entry);
+  expect(runMigrationAll(f.root,f.home,undefined,{registry,publication}).status).toBe('complete');expect(steps).toEqual(Array.from({length:7},()=>['file','rename','directory']).flat());
+  const db=new Database(join(f.home,'loom.db'),{readonly:true});try{expect(loadChanges(db)).toMatchObject([{project:'pond'}]);}finally{db.close();}
+});
+it('retries safely when receipt publication fails before rename or directory fsync',async()=>{
+  for(const stage of ['file','rename','directory']) {
+    const f=await fixture();let sync=0;const actual=fs.fsyncSync;
+    const publication={sync:(fd:number)=>{sync++;if(stage!=='rename'&&sync===(stage==='file'?1:2))throw Error('power loss');actual(fd);},rename:(from:fs.PathLike,to:fs.PathLike)=>{if(stage==='rename')throw Error('power loss');fs.renameSync(from,to);}};
+    expect(()=>runMigrationAll(f.root,f.home,undefined,{publication})).toThrow('power loss');
+    expect(runMigrationAll(f.root,f.home).status).toBe('complete');
+  }
 });
