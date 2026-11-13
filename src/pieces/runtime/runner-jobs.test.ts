@@ -58,6 +58,24 @@ it('denies off-assignment, missing, private and other viewer kinds for both oper
       expect(f.call(op, body('j'), viewer)).toMatchObject({ ok: false, code: 'denied' });
   }
 });
+it('rejects member, agent and service id collisions and independently checks job box assignment', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => {
+    for (const id of ['jonathan', 'art', 'runtime']) {
+      const { changedAt: _, ...box } = f.store.read('box', 'a')!;
+      f.store.put('box', { ...box, id, name: id }, 1);
+      f.store.put('job', { id, agent: 'art', box: id, runner: id, title: id, state: 'queued', createdAt: 1 }, 1);
+    }
+    f.store.put('job', { id: 'mismatch', agent: 'art', box: 'b', runner: 'a', title: 'mismatch', state: 'queued', createdAt: 1 }, 1);
+  })();
+  for (const viewer of [{ kind: 'member', id: 'jonathan' }, { kind: 'agent', id: 'art' }, { kind: 'service', id: 'runtime' }] as Viewer[]) {
+    expect(f.call('claimJob', { job: viewer.id }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    expect(f.call('reportJob', { job: viewer.id, state: 'running' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    expect(f.store.read('job', viewer.id)?.state).toBe('queued');
+  }
+  expect(f.call('claimJob', { job: 'mismatch' })).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.call('reportJob', { job: 'mismatch', state: 'running' })).toMatchObject({ ok: false, code: 'denied' });
+});
 it('refuses revoked/missing boxes, divergent job runner, report-only and withdrawn hosting eligibility', async () => {
   const f = await setup();
   for (const set of [{ reportOnly: true }, { mayHost: [] }, { owner: 'pollock' }, { revokedAt: 1 }]) {

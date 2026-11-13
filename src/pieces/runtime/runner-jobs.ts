@@ -10,7 +10,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   const store = runtimeStore(db);
   function assigned(viewer: Viewer, id: string): boolean {
     const job = store.read('job', id), box = job && store.read('box', job.box);
-    return !!job && !!box && box.id === viewer.id && box.revokedAt === undefined
+    return viewer.kind === 'runner' && !!job && !!box && box.id === viewer.id && box.revokedAt === undefined
       && mayAct(viewer, { ...job, type: 'runtime.job' }, sharing(), 'report-job');
   }
   function save(ctx: { now: number; changed(type: string, id: string): void }, id: string, state: RuntimeRecords['job']['state']) {
