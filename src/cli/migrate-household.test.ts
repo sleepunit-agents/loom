@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -22,4 +22,14 @@ it('refuses a running destination and releases the gate after successful or fail
   expect(await migrateHousehold(argv,io)).toBe(1);
   const unlock = acquireHttpLock(home); unlock();
   expect(await migrateHousehold(['--from',from],io)).toBe(2);
+});
+
+it('refuses same-home aliases before creating any old-home files', async () => {
+  const root = mkdtempSync(join(tmpdir(),'household-same-')); roots.push(root);
+  const from = join(root,'old'), alias = join(root,'alias'); mkdirSync(from); symlinkSync(from,alias);
+  writeFileSync(join(from,'household.json'),JSON.stringify({v:1,agents:['art']}));
+  const io = {stdout:()=>{},stderr:()=>{},stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await migrateHousehold(['--home',from,'--from',from],io)).toBe(1);
+  expect(await migrateHousehold(['--home',alias,'--from',from],io)).toBe(1);
+  expect(readdirSync(from)).toEqual(['household.json']);
 });

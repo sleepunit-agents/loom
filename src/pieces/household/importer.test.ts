@@ -112,3 +112,12 @@ it('retries after interruption between durable key publication and committing th
   expect(importHousehold(f.app.db,f.home,f.from,1000).imported).toBe(true);
   expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(f.files['ui-cookie.key']);
 });
+it.each(['extra-id','extra-record'])('refuses hidden token rows: %s', async kind => {
+  const f = await fixture();
+  expect(() => importHousehold(f.app.db,f.home,f.from,1000,{interrupt:()=>{
+    const rows = new HouseholdRows<unknown[]>(f.app.db,'tokens');
+    if (kind === 'extra-id') rows.put(hash('hidden'),[{...f.tokens.tokens[0],sha256:hash('hidden')}]);
+    else rows.put(hash('token'),[...rows.get(hash('token'))!,{...f.tokens.tokens[0],label:'hidden duplicate'}]);
+  }})).toThrow('content comparison failed');
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+});

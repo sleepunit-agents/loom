@@ -87,6 +87,22 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     assertImportContentEqual(new HouseholdDatabase(db).document(), raw);
     assertImportContentEqual(tokenStore.document(), tokens); assertImportContentEqual(tokenStore.used(), used);
     assertImportContentEqual(sessionStore.read(), sessions); assertImportContentEqual(Object.fromEntries(pieces.entries()), Object.fromEntries(settings));
+    // Envelope reconstruction intentionally reads only its named entities.
+    // Also compare physical IDs, so a hidden extra row cannot import a token
+    // or other state that does not appear in the reconstructed document.
+    const keys = (value: unknown) => Object.keys((value ?? {}) as object).sort();
+    const expectedIds: Record<typeof concerns[number], string[]> = {
+      settings: ['household-envelope','session-envelope','token-envelope'],
+      agents: [...new Set(raw.agents as string[])].sort(),
+      members: ((raw.members ?? []) as Array<{person:string}>).map(m => m.person).sort(),
+      projects: [], tokens: [...new Set(tokens.tokens.map(t => t.sha256))].sort(), token_use: keys(used),
+      sessions: keys(sessions.sessions), links: keys(sessions.links), challenges: keys(sessions.challenges), passkeys: keys(sessions.passkeys),
+      readers: keys(sessions.members),
+      push: sessions.push === undefined ? [] : ['state', ...keys((sessions.push as {subs?:object}).subs).map(id => `sub:${id}`)].sort(),
+      piece_settings: settings.map(([id]) => id).sort(), imports: [],
+    };
+    for (const concern of concerns) assertImportContentEqual(new HouseholdRows(db, concern).entries().map(([id]) => id).sort(), expectedIds[concern]);
+    for (const digest of expectedIds.tokens) assertImportContentEqual(tokenStore.records(digest), tokens.tokens.filter(t => t.sha256 === digest));
     if (checksumOf(snapshot(from)) !== checksum) throw new Error('Source changed during household import');
     if (key && !previousKey) copyKey(home, key);
     receipts.put('legacy-home', { checksum, at: now });
