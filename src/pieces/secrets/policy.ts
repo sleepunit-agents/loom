@@ -17,15 +17,16 @@ export function readSecretPolicy(db: Db): SecretPolicy {
   const row = db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as { value: string } | undefined;
   return row ? secretPolicy.parse(JSON.parse(row.value)) : { default: 'ask', secrets: {} };
 }
+const ruleFor = (policy: SecretPolicy, name: string) => Object.hasOwn(policy.secrets, name) ? policy.secrets[name] : undefined;
 export function requestDecision(policy: SecretPolicy, agent: string, name: string) {
-  const rule = Object.hasOwn(policy.secrets, name) ? policy.secrets[name] : undefined;
+  const rule = ruleFor(policy, name);
   const level = rule?.grant === 'auto' ? (rule.agents?.includes(agent) ? 'auto' : 'ask') : rule?.grant ?? policy.default;
   return { level, minutes: rule?.minutes ?? 60 };
 }
 /** Called only by the runtime that authenticated the agent; this returns no value. */
 export function secretStartPermission(db: Db, agent: string, name: string): 'allowed' | 'denied' | 'ask' {
   const policy = readSecretPolicy(db);
-  const rule = Object.hasOwn(policy.secrets, name) ? policy.secrets[name] : undefined;
+  const rule = ruleFor(policy, name);
   // Old start policy uses explicit never; the request default does not grant start access.
   if (rule?.grant === 'never') return 'denied';
   return rule?.houses?.includes(agent) ? 'allowed' : 'ask';

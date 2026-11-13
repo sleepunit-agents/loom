@@ -18,7 +18,8 @@ async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'loom-secret-policy-')); homes.push(home);
   const clock = new FakeClock(); const raised: GrantRequest[] = [];
   const viewers: Record<string, Viewer> = { owner, agent, agentOwner: { kind: 'member', id: 'pollock' }, runner: { kind: 'runner', id: 'one' }, service: { kind: 'service', id: 'holder' } };
-  const app = await startLoom({ home, clock, authenticate: req => ({ viewer: viewers[String(req.headers['x-viewer'] ?? 'owner')], valid: () => true }), sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise: r => { raised.push(r); return { raised: true }; } }) });
+  const sharing = () => ({ ...fixtureSharing(), services: { holder: { types: ['secret.policy'], operations: ['secrets.policy'] } } });
+  const app = await startLoom({ home, clock, authenticate: req => ({ viewer: viewers[String(req.headers['x-viewer'] ?? 'owner')], valid: () => true }), sharing, install: a => installSecrets(a.db, a.operations, a.live, sharing, { raise: r => { raised.push(r); return { raised: true }; } }) });
   closes.push(app.close); let seq = 0;
   const call = (viewer: Viewer, op: string, input: unknown) => app.operations.call('direct', viewer, `secrets.${op}`, input, `p-${++seq}`);
   expect(call(owner, 'describe', { name: 'api-key', description: '' }).ok).toBe(true);
@@ -37,6 +38,10 @@ it('ports the old auto agent restriction, duration clamp, default and exact hous
   expect(grants.mayUse('art', resource, clock.now(), { house: 'h-2' })).toBe(false);
   expect(request('h-3', 5, { kind: 'agent', id: 'pond-bot' })).toMatchObject({ ok: true, value: { state: 'pending', minutes: 5 } });
   expect(raised).toHaveLength(1);
+  const scoped = { agent: 'art', target: 'api-key', scope: { house: 'h-5', service: 'discord' }, why: 'bridge' };
+  expect(call(agent, 'requestHouse', scoped)).toMatchObject({ ok: true, value: { state: 'allowed' } });
+  expect(grants.mayUse('art', resource, clock.now(), scoped.scope)).toBe(true);
+  for (const context of [{ house: 'h-5' }, { house: 'h-5', service: 'slack' }, { house: 'h-6', service: 'discord' }]) expect(grants.mayUse('art', resource, clock.now(), context)).toBe(false);
   clock.advance(30 * 60_000);
   expect(grants.mayUse('art', resource, clock.now(), { house: 'h-1' })).toBe(false);
   expect(call(owner, 'policy', { default: 'auto' }).ok).toBe(true);

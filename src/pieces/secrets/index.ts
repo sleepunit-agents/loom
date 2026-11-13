@@ -59,7 +59,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
     },
   }));
   live.register({ name: 'secret.policy', ids: () => ['policy'], inScope: () => true,
-    read: (id, viewer) => id === 'policy' && maySee(viewer, { type: 'secret.policy' }, sharing()) ? { id, ...readSecretPolicy(db) } : undefined,
+    read: (id, viewer) => id === 'policy' && owner(viewer, 'secrets.list') ? { id, ...readSecretPolicy(db) } : undefined,
   });
   operations.register(operation({ name: 'secrets.describe', write: true, input: z.object({ name, description: z.string().max(2000) }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.describe'), run(ctx, input) {
