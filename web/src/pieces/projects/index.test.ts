@@ -39,3 +39,8 @@ it('opens the scoped full memory route and never calls a legacy page',async()=>{
  await act(async()=>{tree=create(h(Projects,{...props,path:'/p/projects-preview/project/art%3Apond/memory/m-test'}));});
  expect(text()).toContain('Full memory');expect(text()).toContain('The whole source body');expect(f.call).not.toHaveBeenCalled();
 });
+it('renders Changes counts, repo truncation and quiet cards without waiting or Lately counts',async()=>{
+ const p={...project(),changes:{open:4,failing:1,running:2},card:{...project().card,links:{repos:Array.from({length:8},(_,i)=>`github:owner/repo${i}`)}}};f.feed={records:[p],status:'live'};
+ await act(async()=>{tree=create(h(Projects,props));});expect(text()).toContain('4');expect(text()).toContain(' failing');expect(text()).toContain(' checking');expect(text()).toContain('+2');expect(text()).toContain('owner/repo5');expect(text()).not.toContain('owner/repo6');
+ f.feed={records:[{...p,card:{...p.card,status:'paused'},lately:[{title:'Should be suppressed'}],waiting:[{title:'Should not count'}]}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).not.toContain('Should be suppressed');expect(text()).not.toContain('Should not count');expect(text()).not.toContain(' checking');
+});
