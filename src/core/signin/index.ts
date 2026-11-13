@@ -85,7 +85,7 @@ export class Signin {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');
     const id=random(), now=this.now();
     this.sessions.change(f=>{
-      f.sessions[hash(id)]={issuedAt:now,secret,...meta};
+      f.sessions[hash(id)]={issuedAt:now,secret,...meta,...(/HeadlessChrome\b/.test(meta.device ?? '')?{agent:true as const}:{})};
       const rank=(s:typeof f.sessions[string])=>!this.token(s.secret) || now>=s.issuedAt+(s.agent?HOURS:MONTH)?0:s.agent||/^HeadlessChrome\b/.test(s.device ?? '')?1:2;
       const all=Object.entries(f.sessions).sort((a,b)=>rank(a[1])-rank(b[1])||a[1].issuedAt-b[1].issuedAt);
       for(const [key] of all.slice(0,Math.max(0,all.length-50))) delete f.sessions[key];

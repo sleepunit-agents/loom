@@ -98,3 +98,9 @@ it('runner and service tokens keep their viewer kinds; expired and unknown-agent
   expect((await f.post('/logout',{}, {cookie:`loom_ui=${f.cookie}`})).status).toBe(403);
   const path=f.s.link('pollock');f.s.tokens.change(tokens=>{for(const t of tokens)if(t.member==='pollock')t.revoked=new Date(f.clock.now()).toISOString();});expect((await f.post(path)).status).toBe(401);
 });
+it('headless browser sessions end in six hours and a stale link cannot authorize adding a passkey',async()=>{
+  const f=await setup();const path=f.s.link('jonathan',undefined,false,f.clock.now()/1000-601);
+  const res=await f.post(path,{}, {'user-agent':'Mozilla/5.0 HeadlessChrome/120 Linux'});expect(res.status).toBe(303);
+  const cookie=res.headers.get('set-cookie')!.split(';')[0], id=cookie.slice(8);expect(f.s.fresh(id)).toBeUndefined();
+  expect(f.s.session(id)?.s.agent).toBe(true);f.clock.advance(6*3600_000);expect(f.s.session(id)).toBeUndefined();
+});
