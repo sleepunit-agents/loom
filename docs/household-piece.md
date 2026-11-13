@@ -102,3 +102,12 @@ entry point is exposed. The new MCP continuity tests cover two simultaneous
 agents' Owners and room cards, shared directory/private relationships,
 standalone override beside legacy JSON, and an agent-scoped merge with the
 other agent's relationship database unchanged.
+
+Conversation list/view readers accept `conversationSelection: {household, agent}`
+(or `null` for standalone) on `createLoomServer`. Explicit readers use the
+context's conversation records and core's generic render, with core venue labels
+or the recorded venue name. They never discover installed venue pieces, open the
+legacy venue registry, or run an external renderer. Omitted selection preserves
+legacy venue rendering. `homeFor` also accepts the selection for subsequent
+composition. This slice does not change the house conversation gate, digest,
+profile, Comms, or project-hub composition, and exposes no new entry point.

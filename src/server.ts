@@ -73,14 +73,14 @@ import {
 } from './tools/project.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
-import { conversationsList, conversationView, homeFor } from './conversations.js';
+import { conversationsList, conversationView, homeFor, type ConversationSelection } from './conversations.js';
 import { houseConversation } from './household-store.js';
 import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
 import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
-function agentOfDir(contextDir: string): string {
-  return householdOf(contextDir)?.agent ?? (contextDir.replace(/\/+$/, '').split('/').pop() || 'agent');
+function agentOfDir(contextDir: string, selection?: ConversationSelection): string {
+  return (selection === undefined ? householdOf(contextDir)?.agent : selection?.agent) ?? (contextDir.replace(/\/+$/, '').split('/').pop() || 'agent');
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -88,6 +88,8 @@ function agentOfDir(contextDir: string): string {
 export interface LoomServerConfig {
   /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
   peopleSelection?: PeopleSelection;
+  /** Explicit conversation readers use generic core renders without installed-piece discovery. */
+  conversationSelection?: ConversationSelection;
   /** Explicit commons selection; null uses the local knowledge store, omitted keeps legacy discovery. */
   knowledgeSelection?: KnowledgeSelection;
   contextDir: string;
@@ -1660,7 +1662,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ people, project, venue, since }) => convText(() => {
-      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) });
+      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }, process.env, config.conversationSelection);
       // From a house, only the conversation it holds (t-2118): a digest summarises its conversation's words, and a
       // house (a sibling's, a guest's, a chat bridge's) never reads another's. None from a house the runtime named none for.
       const held = bodyHouseConversation(contextDir, config.caller);
@@ -1681,7 +1683,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // From a house, only the conversation it holds (t-2118), the same refusal as one that isn't there.
       const held = bodyHouseConversation(contextDir, config.caller);
       if (held !== undefined && held !== id) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `no conversation ${id}` }, null, 2) }], isError: true };
-      const view = await conversationView(contextDir, agentOfDir(contextDir), id);
+      const view = await conversationView(contextDir, agentOfDir(contextDir, config.conversationSelection), id, process.env, config.conversationSelection);
       return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
     },
   );
