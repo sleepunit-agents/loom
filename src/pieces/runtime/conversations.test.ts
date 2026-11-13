@@ -203,7 +203,8 @@ it('follows an authorized thread filing change without losing delivery or creati
    return key.open(blob);
   }};
  });
- const f=await setup(),thread=await f.open();let jobs:string[]=[];
+ const f=await setup();cleanups.push(()=>{overlap=false;releaseDelivery();releaseRead();});
+ const thread=await f.open();let jobs:string[]=[];
  for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
  const job=jobs[0];await f.post(f.runner,'runtime.claimJob',{job});
  const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
@@ -222,7 +223,8 @@ it('follows an authorized thread filing change without losing delivery or creati
  expect(await f.socket('comms.send',{thread,id:'cdefghijklmnopqr',text:'PRIVATE after filing'})).toMatchObject({ok:true});
  const concurrentRead=f.post(body,'runtime.readConversation',{});
  try {
-  await reading;releaseDelivery();
+  expect(await Promise.race([reading.then(()=>({started:true})),concurrentRead.then(result=>({completed:result}))])).toEqual({started:true});
+  releaseDelivery();
   await expect.poll(()=>f.app.db.prepare("SELECT json_extract(record,'$.delivery') AS delivery FROM comms_messages WHERE id=?").get('cdefghijklmnopqr')).toEqual({delivery:'delivered'});
  } finally {overlap=false;releaseDelivery();releaseRead();}
  expect(await concurrentRead).toMatchObject({ok:false,code:'conflict',message:'Thread changed; load this page again'});
