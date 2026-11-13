@@ -331,3 +331,33 @@ credential/configuration failures such as `missing_scope` and `account_inactive`
 wait for owner repair, as the legacy Slack check failures did; they do not prove
 that the sender is permanently ineligible. Malformed envelopes never imply a
 definite denial. The durable engine's transient intake budget still applies.
+
+## Slack Socket Mode transport
+
+`slackSocket` implements the connection protocol without registering an adapter.
+It acquires the app-level credential through the supplied service `SecretUse` on
+**each** `apps.connections.open` call, checks staging before acquisition and dial,
+refuses redirects and non-Slack WSS targets, and keeps the returned ticket private.
+The HTTP response is bounded at 16 KiB, frames at 1 MiB, and queued envelopes at 64.
+Connection/hello deadlines are 15 seconds; a 30-second ping requires a pong within
+10 seconds. Failures refresh the URL with exponential backoff from 1 to 60 seconds;
+a successful Slack hello resets backoff. Shutdown cancels timers, aborts the open
+request and suppresses late ACKs and connections. No history polling is performed.
+
+The raw `events_api` payload goes to a receiver that **must commit durable receipt
+before resolving**, including duplicates. The transport ACKs only after that
+resolution. Failed receipts disconnect without ACK. The receiver must deduplicate
+platform event identities across restarts; `envelope_id` is only an ACK address.
+Slack has no session/sequence resume cursor. Unacknowledged envelopes rely on Slack's
+retry delivery, so receipt/ACK is not a claim of lossless history recovery. In-flight
+receipts can finish after close, but their obsolete socket is never ACKed. Unsupported
+interactive and slash-command envelopes are consumed without runtime delivery.
+The protocol reference is [Slack's Socket Mode guide](https://docs.slack.dev/apis/events-api/using-socket-mode/).
+
+The fake HTTP/socket/clock fixtures include a `startLoom` durable receiver and
+restart deduplication. This fixture receiver is not the production raw inbox.
+Raw inbox integration, authenticated workspace/app binding, People normalization,
+fresh Web API inspection, admission and daemon registration remain required. This
+slice changes neither `serve --next` nor the legacy programs and makes no live
+connection. The existing engine's normalized inbox cannot simply receive the raw
+payload: durable raw receipt must precede fallible platform metadata reads.
