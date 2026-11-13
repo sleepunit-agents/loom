@@ -1,3 +1,4 @@
+import { apps, appAt } from './apps';
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { phoneRowAbout } from './row-about';
@@ -462,6 +463,8 @@ export default function App() {
   // pages that agent's; Home is no tile.
   const agentOf = (key: string) => chrome?.shell?.agents.find((a) => key === `/a/${a.id}`);
   const tileOf = (at: string): { key: string; label: string } | null => {
+    const registered = appAt(new URL(at, 'http://loom').pathname);
+    if (registered) return { key:registered.path,label:registered.title };
     if (at === '/' || !chrome?.shell) return null;
     const agent = /^\/a\/([a-z][a-z0-9-]*)/.exec(at)?.[1];
     if (agent) { const a = chrome.shell.agents.find((x) => x.id === agent); return a ? { key: `/a/${a.id}`, label: a.label } : null; }
@@ -479,7 +482,7 @@ export default function App() {
   };
   /** An app by its name in the tiles' address (the last part of its key): a household app's first, then an agent's. */
   const tileNamed = (name: string) => {
-    const hrefs = [...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
+    const hrefs = [...apps.map(app => ({ href: app.path })), ...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
       .concat('/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
     for (const h of hrefs) { const r = tileOf(h); if (r && tileName(r.key) === name) return { ...r, href: h }; }
     return null;
@@ -509,7 +512,9 @@ export default function App() {
     : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
-  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
+  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false, appGo = go) => {
+    const registered = appAt(new URL(pg.url, 'http://loom').pathname);
+    if (registered) return <Suspense fallback={<Skeleton />}><registered.Screen path={pg.url} go={appGo} /></Suspense>;
     const data = withAgentCards(withThreads(withAttention(pg.data, attention), threads), cards);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -697,7 +702,7 @@ export default function App() {
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} onOpen={setTileOpen} outerGo={go}
                 shell={chrome.shell} homeData={deskHome} deskEnv={(g) => pageEnv(mainPage, g)}
-                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
+                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true, g)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.
                 lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <span className="loom-letter" aria-hidden style={{ '--c': markColor(agentOf(o.key)!.bg), '--ls': '22px' } as React.CSSProperties}>{agentOf(o.key)!.label[0]}</span> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}

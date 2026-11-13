@@ -1,3 +1,4 @@
+import { appAt } from '../apps';
 // The tiled desktop (docs/specs/desk-tiling.md): apps share the screen by the rule (layout.ts), each in a tile with its
 // own page (page.ts usePage), its own history (trail.ts, keyed as the window's was) and its own frame. Opening an app
 // adds a tile, or focuses it if it's open, or brings it back if it's in the dock; the focused app's own key minimizes
@@ -164,7 +165,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   oneWindow: boolean;
 }) {
   // A piece's own fit (its manifest's tab.fit) wins over the table's row for its label (fit.ts).
-  const own = (key: string) => shell.pieces.find((p) => p.href === key)?.fit;
+  const own = (key: string) => appAt(key)?.fit ?? shell.pieces.find((p) => p.href === key)?.fit;
   const appOf = (path: string) => withFit(appOfRaw(path), own);
   const byName = (name: string) => withFit(byNameRaw(name), own);
   const [, bump] = useReducer((n: number) => n + 1, 0);

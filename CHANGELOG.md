@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.
+
 - Add an in-repo tasks piece, opt-in `loom-taskstore` API client, and offline verified tasks importer; existing taskstore and Tasks screens stay on their current path until cutover.
 
 - Add the first web foundation slice: an app database, operation registry, central permission rule, live feed and

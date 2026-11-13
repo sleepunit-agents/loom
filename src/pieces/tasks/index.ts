@@ -110,7 +110,13 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
         return target && maySee(viewer, scope(JSON.parse(target.record) as ScopedTask), sharing());
       });
       const parent = visibleLinks.find(l => l.type === 'parent-child')?.dependsOn;
-      return { ...task, dependsOn: visibleLinks.filter(l => l.type === 'blocks').map(l => l.dependsOn), ...(parent !== undefined ? { parent } : {}), changedAt: row.changed_at } as unknown as LiveRecord;
+      // Readiness is derived before visibility filtering: a hidden blocker still blocks.
+      const blocked = links.map(r => JSON.parse(r.record) as { dependsOn: string; type: string }).some(link => {
+        if (link.type !== 'blocks') return false;
+        const target = db.prepare('SELECT record FROM tasks_tasks WHERE id=?').get(link.dependsOn) as { record: string } | undefined;
+        return target && JSON.parse(target.record).status !== 'closed';
+      });
+      return { ...task, blocked, ready: task.status === 'open' && task.type !== 'epic' && !blocked, dependsOn: visibleLinks.filter(l => l.type === 'blocks').map(l => l.dependsOn), ...(parent !== undefined ? { parent } : {}), changedAt: row.changed_at } as unknown as LiveRecord;
     },
     inScope: (r, parent, now) => (parent === undefined || r.parent === parent) && (r.status !== 'closed' || Number(r.changedAt) + week > now),
     expires: r => r.status === 'closed' ? Number(r.changedAt) + week : undefined,
