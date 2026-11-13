@@ -25,3 +25,8 @@
 [data-motion=reduce] .next-tile {animation:none}
 
 .next-rail {position:absolute;right:0;top:0;bottom:0;overflow:auto;}
+
+.loom-cmenu {position:fixed;z-index:100;padding:8px;min-width:180px;max-width:calc(100vw - 16px);background:var(--v-paper);border:1px solid var(--v-edge);border-radius:8px;box-shadow:0 12px 40px #0006;}
+.loom-cmenu__title {font-size:12px;color:var(--v-text-2);padding:4px 8px;}
+.loom-cmenu button {display:flex;width:100%;padding:8px;gap:12px;text-align:left;border-radius:4px;}
+.loom-cmenu button:focus {outline:2px solid var(--v-pink);}

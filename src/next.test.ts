@@ -1,4 +1,8 @@
 import { it, expect } from 'vitest';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { WebSocket } from 'ws';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,4 +51,73 @@ it('staging holds every effect, releases one claim once, and never retries an in
     loom.effects!.finish('bridge-send');
     expect(loom.effects!.beforeOutside({id:'bridge-send',kind:'bridge-send',title:'bridge-send'})).toBe(false);
   } finally { await loom.close(); rmSync(home,{recursive:true,force:true}); }
+});
+
+it('default next authentication never accepts legacy credentials on any door', async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-default-auth-'));
+  const loom=await startLoom({home,next:true});
+  try {
+    for(const path of ['/api/tasks/list','/mcp']) expect((await fetch(loom.url+path,{method:'POST',headers:{authorization:'Bearer legacy',cookie:'fixture=jonathan','content-type':'application/json'},body:'{"input":{}}'})).status).toBe(401);
+    const ws=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{cookie:'fixture=jonathan'}});
+    const refused=new Promise<number>(ok=>ws.once('unexpected-response',(_req,res)=>{res.resume();ws.terminate();ok(res.statusCode!);}));
+    ws.on('error',()=>{});expect(await refused).toBe(401);
+  }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('MCP tools bind concurrent callers independently and live held records use central policy',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-next-doors-'));fixture(home);
+  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(0),install:installFixture,sharing:fixtureSharing,
+    authenticate:req=>({viewer:{kind:'member',id:req.headers.authorization==='pollock'?'pollock':'jonathan'},valid:()=>true})});
+  const sockets:WebSocket[]=[];
+  const socket=async(who:string)=>{
+    const ws=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:who}});sockets.push(ws);
+    const queue:unknown[]=[];const waiting:((v:unknown)=>void)[]=[];
+    ws.on('message',raw=>{const value=JSON.parse(raw.toString());const next=waiting.shift();if(next)next(value);else queue.push(value);});
+    await once(ws,'open');return {ws,next:()=>queue.length?Promise.resolve(queue.shift()):new Promise<unknown>(ok=>waiting.push(ok))};
+  };
+  try{
+    const tool=async(who:string)=>{
+      const res=await fetch(loom.url+'/mcp',{method:'POST',headers:{authorization:who,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'tasks.list',arguments:{input:{}}}})});
+      expect(res.status).toBe(200);const answer=await res.json();return JSON.parse(answer.result.content[0].text).value.result.entries;
+    };
+    const [owner,member]=await Promise.all([tool('jonathan'),tool('pollock')]);
+    expect(owner).toHaveLength(4);expect(member.map((t:{title:string})=>t.title)).toEqual(['Pond work','Pond-bot own work']);
+    const a=await socket('jonathan'),b=await socket('pollock');
+    a.ws.send(JSON.stringify({kind:'subscribe',type:'core.effect'}));b.ws.send(JSON.stringify({kind:'subscribe',type:'core.effect'}));
+    expect(await a.next()).toMatchObject({kind:'set',records:[]});expect(await b.next()).toMatchObject({kind:'set',records:[]});
+    for(const kind of ['wake','bridge-send','body-start','push'] as const){
+      expect(loom.effects!.beforeOutside({id:kind,kind,title:kind})).toBe(false);
+      expect(await a.next()).toMatchObject({kind:'put',record:{id:kind,state:'due'}});
+    }
+    b.ws.send(JSON.stringify({kind:'call',request:'denied',name:'core.releaseEffect',input:{id:'wake'},id:'no'}));
+    expect(await b.next()).toMatchObject({kind:'pending',request:'denied'});expect(await b.next()).toMatchObject({kind:'result',result:{ok:false,code:'denied'}});
+    a.ws.send(JSON.stringify({kind:'call',request:'released',name:'core.releaseEffect',input:{id:'wake'},id:'yes'}));
+    expect(await a.next()).toMatchObject({kind:'pending'});expect(await a.next()).toMatchObject({kind:'put',record:{id:'wake',state:'released'}});expect(await a.next()).toMatchObject({kind:'result',result:{ok:true}});
+    // Closing with live sockets must finish as well as releasing its home.
+    await loom.close();sockets.length=0;
+  }finally{sockets.forEach(s=>s.terminate());await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('normal next effects claim once without release, including across restart',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-normal-effects-'));let loom=await startLoom({home,next:true});
+  const effect={id:'push',kind:'push' as const,title:'A push'};
+  try{
+    expect(loom.effects!.beforeOutside(effect)).toBe(true);expect(loom.effects!.beforeOutside(effect)).toBe(false);
+    await loom.close();loom=await startLoom({home,next:true});expect(loom.effects!.beforeOutside(effect)).toBe(false);
+    expect(loom.db.prepare('SELECT state FROM core_effects WHERE id=?').get('push')).toEqual({state:'uncertain'});
+  }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('multiple next addresses share one foundation and failed later binds release all resources',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-next-hosts-'));
+  let loom=await startLoom({home,next:true,host:['127.0.0.1','127.0.0.2']});
+  try{
+    const other=loom.url.replace('127.0.0.1','127.0.0.2');expect(await(await fetch(other+'/health')).json()).toMatchObject({next:true});
+    await loom.close();
+    const blocker=createServer();await new Promise<void>(ok=>blocker.listen(0,'127.0.0.2',ok));
+    const port=(blocker.address() as AddressInfo).port;
+    try{await expect(startLoom({home,next:true,host:['127.0.0.1','127.0.0.2'],port})).rejects.toThrow();}
+    finally{await new Promise<void>(ok=>blocker.close(()=>ok()));}
+    loom=await startLoom({home,next:true,host:'127.0.0.1',port});expect((await fetch(loom.url+'/health')).status).toBe(200);
+  }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
 });

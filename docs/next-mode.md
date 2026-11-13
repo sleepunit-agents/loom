@@ -2,7 +2,7 @@
 
 `loom serve --next --home <new-home> --port 8788 --staging` runs only the new side. Without `--next`, serve keeps
 its existing behavior. Repeat `--host` to listen on several addresses in the same process. Next mode claims its
-home with an OS socket; it never opens the old HTTP lock database. Linux uses the abstract socket namespace.
+home with an OS socket; it never opens the old HTTP lock database. Linux uses the abstract socket namespace, so process death releases it. Windows uses a named pipe. Other Unix platforms use an OS socket and fail closed on a stale socket after a crash; they never race to unlink one. The coordinator must verify and remove a stale socket there before restarting.
 
 `src/next.ts` is the composition root: household tables and database sharing, in-repo piece registration, the
 HTTP API, MCP operation tools and `/live`, plus the built `dist/web/next.html` shell at the root. It mounts no old

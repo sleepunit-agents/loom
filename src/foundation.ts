@@ -30,7 +30,8 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   if (next) {
     try {
       const server = await listenNext(app, nextOptions);
-      return { ...app, effects, url: server.url, async close() { try { await server.close(); } finally { app.close(); await release(); } } };
+      let closed=false;
+      return { ...app, effects, url: server.url, async close() { if(closed)return;closed=true;try { await server.close(); } finally { app.close(); await release(); } } };
     } catch (e) { app.close(); await release(); throw e; }
   }
   if (listen) {

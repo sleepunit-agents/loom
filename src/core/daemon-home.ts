@@ -1,7 +1,7 @@
 /** Lifetime OS socket ownership; no lock database or mutable app-state file. */
 import { createHash } from 'node:crypto';
-import { createServer, createConnection } from 'node:net';
-import { mkdirSync, realpathSync, unlinkSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 export async function ownHome(home: string): Promise<() => Promise<void>> {
@@ -13,12 +13,10 @@ export async function ownHome(home: string): Promise<() => Promise<void>> {
   try { await listen(); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code!=='EADDRINUSE') throw error;
-    // Unix filesystem sockets can survive process death; remove only a refused socket.
-    if(process.platform!=='linux'&&process.platform!=='win32') {
-      const stale=await new Promise<boolean>(done=>{const probe=createConnection(path);probe.once('connect',()=>{probe.destroy();done(false);});probe.once('error',(e:NodeJS.ErrnoException)=>done(e.code==='ECONNREFUSED'));});
-      if(stale){try{unlinkSync(path);}catch{} await listen();}
-      else throw new Error('loom next is already running for this home');
-    } else throw new Error('loom next is already running for this home');
+    // Never unlink a refused filesystem socket: another contender may have
+    // acquired it since our probe. Linux abstract sockets and Windows pipes
+    // disappear with the process; other platforms fail closed after a crash.
+    throw new Error('loom next is already running for this home (or its OS socket needs cleanup)');
   }
   return ()=>new Promise<void>(ok=>server.close(()=>ok()));
 }

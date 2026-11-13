@@ -35,6 +35,16 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await a.getByRole('textbox',{name:'Title',exact:true}).fill('Two windows on the next desk');
     await a.getByRole('button',{name:'Add record',exact:true}).click();
     await expect.poll(()=>b.getByText('Two windows on the next desk',{exact:true}).count()).toBe(1);
+    await a.getByRole('textbox',{name:'Title',exact:true}).fill('An unsent draft');
+    await a.getByRole('button',{name:'Minimize Live example',exact:true}).click();
+    await a.getByRole('button',{name:'Open Live example',exact:true}).click();
+    expect(await a.getByRole('textbox',{name:'Title',exact:true}).inputValue()).toBe('An unsent draft');
+    await a.getByRole('button',{name:'Make Live example big',exact:true}).focus();
+    await a.keyboard.press('Alt+Shift+Enter');
+    await expect.poll(()=>a.locator('[data-tile]').first().getAttribute('data-tile')).toBe('example');
+    await a.keyboard.press('Alt+h');await expect.poll(()=>a.locator('[data-tile]').count()).toBe(0);
+    await a.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>a.locator('[data-tile]').count()).toBe(2);
+    expect(await a.getByRole('textbox',{name:'Title',exact:true}).inputValue()).toBe('An unsent draft');
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/next-shell');mkdirSync(shots,{recursive:true});
     for (const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
       await b.setViewportSize({width,height:900});await b.reload();

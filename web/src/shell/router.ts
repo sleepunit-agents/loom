@@ -1,9 +1,9 @@
 /** The address and its browser history are the sole owner of app paths and tile state. */
-import { admit, promote, underMinimum, capFor, type AppTile, type Rect } from '../tiling/layout';
+import { admit, promote, underMinimum, capFor, swap, type AppTile, type Rect } from '../tiling/layout';
 import type { Fit } from '../tiling/fit';
 export interface AppRegistration { id: string; title: string; path: string; fit: Fit }
 export interface Tile { id: string; trail: string[]; at: number; minimized?: boolean; pinned?: boolean; used: number }
-export interface DeskRoute { tiles: Tile[]; focused?: string }
+export interface DeskRoute { tiles: Tile[]; focused?: string; home?: string[] }
 export const currentPath = (tile: Tile) => tile.trail[tile.at];
 export function readRoute(href: string, apps: readonly AppRegistration[]): DeskRoute {
   const url = new URL(href, 'http://loom');
@@ -23,7 +23,7 @@ export function readRoute(href: string, apps: readonly AppRegistration[]): DeskR
     if (!min && raw.startsWith('*') && !focused) focused = id;
     tiles.push({ id, trail: [path], at: 0, used: 0, minimized: min, pinned: !min && tiles.length === 0 && raw.endsWith('!') });
   }
-  return { tiles, focused: focused ?? tiles.find(t => !t.minimized)?.id };
+  return { tiles, focused: focused ?? tiles.find(t => !t.minimized)?.id, ...(url.searchParams.has('h') ? {home:(url.searchParams.get('h')??'').split(',').filter(id=>tiles.some(t=>t.id===id))}: {}) };
 }
 export function writeRoute(route: DeskRoute): string {
   const focused = route.tiles.find(t => t.id === route.focused && !t.minimized);
@@ -32,6 +32,7 @@ export function writeRoute(route: DeskRoute): string {
   url.searchParams.set('t', visible.map(t => `${t.id === route.focused ? '*' : ''}${t.id}${t.pinned ? '!' : ''}`).join(','));
   const min = route.tiles.filter(t => t.minimized);
   if (min.length) url.searchParams.set('m', min.map(t => t.id).join(',')); else url.searchParams.delete('m');
+  if(route.home) url.searchParams.set('h',route.home.join(',')); else url.searchParams.delete('h');
   url.searchParams.set('paths', JSON.stringify(Object.fromEntries(route.tiles.map(t => [t.id,currentPath(t)]))));
   return url.pathname + url.search;
 }
@@ -76,7 +77,7 @@ export class DeskRouter {
   go(id: string, path: string) {
     const app = this.apps.find(a => a.id === id);
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
-      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id); this.go(other.id,path); } return;
+      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,1920,id); this.go(other.id,path); } return;
     }
     this.save({ focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
   }
@@ -102,5 +103,12 @@ export class DeskRouter {
     if(notices.length) this.save({...this.route,tiles},true);
     return notices;
   }
-  home() { this.save({ tiles: this.route.tiles.map(t => ({ ...t,minimized:true,pinned:false })) }); }
+  swap(id: string, other: string) {
+    const active=this.asTiles();const order=swap(active,active.findIndex(t=>t.id===id),active.findIndex(t=>t.id===other));
+    this.save({...this.route,tiles:[...order.map(t=>({...this.route.tiles.find(o=>o.id===t.id)!,pinned:t.pinned})),...this.route.tiles.filter(t=>t.minimized)]});
+  }
+  home() {
+    if(this.route.home) {const order=this.route.home;this.save({tiles:[...order.flatMap(id=>{const t=this.route.tiles.find(t=>t.id===id);return t?[{...t,minimized:false}]:[]}),...this.route.tiles.filter(t=>!order.includes(t.id))],focused:order[0]});}
+    else this.save({ tiles: this.route.tiles.map(t => ({ ...t,minimized:true })),home:this.route.tiles.filter(t=>!t.minimized).map(t=>t.id) });
+  }
 }

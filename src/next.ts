@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { getRequestListener } from '@hono/node-server';
 import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
@@ -65,11 +66,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   });
   const servers: ReturnType<typeof createServer>[] = [];
   const detaches: (() => void)[] = [];
+  const sockets = new Set<Socket>();
   const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
   if (!hosts.length) throw new Error('next mode needs a bind host');
   let port = options.port ?? 0;
   const close = async () => {
     detaches.forEach(detach => detach());
+    for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
       http.closeAllConnections();
       return new Promise<void>(ok => http.close(() => ok()));
@@ -83,6 +86,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         if (req.url?.startsWith('/api/')) return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
+      http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
       servers.push(http); detaches.push(app.live.attach(http,auth));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
