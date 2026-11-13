@@ -116,10 +116,17 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await writer.write([{id:'earliest',tool:'Shell',summary:'Earlier conversation label',state:'done'}]);
   clock.advance(500);
   for(let start=0;start<102;start+=50)await writer.write(Array.from({length:Math.min(50,102-start)},(_,n)=>({id:`label-${start+n}`,tool:'Shell',summary:`Conversation label ${start+n}`,state:'running' as const})));
-  // The previous deadline proof left this clock paused, slightly ahead of the server.
+  // Prove fixture writes independently of the browser before opening its scoped view.
+  const labels=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.conversationSteps',{conversation:'cv-label-fixture'},undefined,true);
+  expect(labels).toMatchObject({ok:true,value:{steps:expect.arrayContaining([expect.objectContaining({text:'Conversation label 101'})])}});
+  // Navigation installs a fresh document. Let its startup timers and lazy app load
+  // run before freezing time for the next exact-deadline proof.
   await b.clock.setSystemTime(clock.now());
+  await b.clock.resume();
   await b.goto(`${loom.url}/p/comms-preview/conversation/cv-label-fixture`);
-  await expect.poll(()=>b.getByText('Conversation label 101',{exact:true}).count()).toBe(1);
+  await expect.poll(async()=>({label:await b.getByText('Conversation label 101',{exact:true}).count(),page:await b.locator('body').innerText()})).toMatchObject({label:1});
+  await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
+  await b.clock.setSystemTime(clock.now());
   expect(await b.getByText('Earlier conversation label',{exact:true}).count()).toBe(0);
   await b.getByRole('button',{name:'Load earlier activity',exact:true}).click();
   await expect.poll(()=>b.getByText('Earlier conversation label',{exact:true}).count()).toBe(1);
