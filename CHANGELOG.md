@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
+- Add owner-controlled runtime house grant configuration with preserved secret scopes and repository-secret build provenance.
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
 - Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
