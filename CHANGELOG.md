@@ -62,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
+- Review local machine requests in Clock with the existing exact-word approval controls; private decisions use the owning signed-in window and start no work.
+
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
 
 - Next desk: show loom's server minute/timezone and live connection/working-agent status glyphs on desktop; retain compact phone chrome.

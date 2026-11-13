@@ -1,8 +1,12 @@
 /** One browser proof: real operations/live feed, two windows, six looks/widths. */
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { signin, hash } from '../core/signin/index.js';
+import { clockLocalFiling } from '../pieces/clock/role.js';
+import { wakes } from '../pieces/clock/store.js';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
@@ -22,14 +26,28 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const access = fixtureSharing();
+  access.services.clock = {types:['clock','approval'],operations:['clock.localRequest','approvals.piece-request']};
   access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
   const sharing = () => access;
+  let auth: ReturnType<typeof signin> | undefined;
   const loom = await startLoom({home,clock,install(app) {
-    installApprovals(app.db,app.operations,app.live,sharing,{applications:{clock:clockVouchApplication(app.operations)}});
+    installApprovals(app.db,app.operations,app.live,sharing,{localAgent:'art',applications:{clock:clockVouchApplication(app.operations)}});
     installFixture(app,sharing);
     importClock(app.db,source,clock.now());
     const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
-  },authenticate: req => ({viewer:{kind:'member',id:req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : 'jonathan'},window:true,valid:()=>true})});
+  },authenticate: req => auth?.resolve(req)});
+  auth = signin(loom);
+  loom.db.transaction(()=>auth!.tokens.replace({v:1,tokens:[]},{}))();
+  function session(member: string) {
+    const bearer = randomBytes(32).toString('hex');
+    auth!.tokens.change(tokens => tokens.push({role:'owner',member,label:`browser-${member}`,sha256:hash(bearer),created:new Date(clock.now()).toISOString()}));
+    return auth!.createSession(hash(bearer));
+  }
+  const ownerSession = session('jonathan'), guestSession = session('pollock');
+  const localCards = ['Allow once','Deny this job','Standing job'].map(note => {
+    const result=clockLocalFiling(loom.operations).request({who:{agent:'art',where:'house (queue)'},for:'owner',member:'jonathan',people:['jonathan'],conversation:'cv-123456789abc'},`<!-- house: local -->\nReport host disk usage: ${note}.`,note);
+    expect(result).toMatchObject({ok:true});return (result as {ok:true;value:{id:string}}).value.id;
+  });
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
   call('in',{agent:'art',prompt:'Review today’s work',note:'Morning review',when:'2h'});
@@ -47,6 +65,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       if(!path.startsWith(`${root}/`)||!existsSync(path))return route.fulfill({status:404,body:''});
       return route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});
     };
+    await context.addCookies([{name:'loom_ui',value:ownerSession,url:loom.url}]);
     await context.route('**/*',staticFiles);
     const a=await context.newPage(),b=await context.newPage();
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
@@ -91,12 +110,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await b.getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
     await expect.poll(()=>b.getByText('Ask the household owner to count this imported wake as their work?',{exact:false}).count()).toBe(1);
     expect(await b.getByText('Review these exact imported words',{exact:true}).count()).toBe(1);
+    /* Local request screenshots below include the exact words and live decisions. */
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/clock-app');mkdirSync(shots,{recursive:true});
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
     await b.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Ask owner to count this work',exact:true}).click();
     await expect.poll(()=>b.getByText(/Owner request a-[0-9a-f]+: pending. Work stays held until allowed./).count()).toBe(1);
     expect(wake(loom.db,'w-aaaaaa')).toEqual(original);
@@ -119,9 +134,112 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText('Saved',{exact:true}).count()).toBe(1);
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
-    const guest=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await guest.grantPermissions(['local-network-access'],{origin:loom.url});await guest.addCookies([{name:'fixture',value:'pollock',url:loom.url}]);await guest.route('**/*',staticFiles);
+    // Keep the pending live record constant while varying only the owning open
+    // response. This discriminates the reader's independent preflight checks.
+    let openMode: 'pass' | 'hold' | 'denied' | 'closed' = 'hold';
+    let releaseOpen: ((result: Awaited<ReturnType<typeof loom.operations.callAsync>>) => void) | undefined;
+    const opened=(open:boolean,mayAnswer:boolean)=>({ok:true as const,value:{open,mayAnswer,mayEveryTime:true,mayAlways:false}});
+    let holdClock=false;
+    let releaseClock: ((result: Awaited<ReturnType<typeof loom.operations.callAsync>>) => void) | undefined;
+    const actualCall=loom.operations.callAsync.bind(loom.operations);
+    const calls=vi.spyOn(loom.operations,'callAsync').mockImplementation((...args)=>{
+      if(args[2]==='approvals.open') {
+        if(openMode==='hold')return new Promise(resolve=>{releaseOpen=resolve;});
+        if(openMode==='denied')return Promise.resolve(opened(true,false));
+        if(openMode==='closed')return Promise.resolve(opened(false,true));
+      }
+      if(holdClock && ['clock.pause','clock.resume'].includes(args[2]))return new Promise(resolve=>{releaseClock=resolve;});
+      return actualCall(...args);
+    });
+    const decisions=()=>calls.mock.calls.filter(args=>['approvals.answer','approvals.every-time'].includes(args[2])).length;
+    await b.setViewportSize({width:1280,height:900});
+    await b.getByRole('button',{name:/Local requests/}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
+    await b.getByRole('searchbox',{name:'Search clock',exact:true}).fill('no-such-local-request');
+    await expect.poll(()=>b.getByText('Nothing matches “no-such-local-request”',{exact:true}).count()).toBe(1);
+    await b.getByRole('searchbox',{name:'Search clock',exact:true}).fill('');
+    const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
+    await row(b,'Allow once').click();
+    await expect.poll(()=>!!releaseOpen).toBe(true);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    expect(decisions()).toBe(0);
+    releaseOpen!(opened(true,false));
+    await expect.poll(()=>b.getByText('You cannot answer this question.',{exact:true}).count()).toBe(1);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    openMode='closed';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>calls.mock.calls.filter(args=>args[2]==='approvals.open').length).toBe(2);
+    expect(await b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    openMode='hold';releaseOpen=undefined;await b.getByRole('button',{name:'Allow',exact:true}).click();
+    await expect.poll(()=>!!releaseOpen).toBe(true);
+    expect(await b.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(false);
+    expect(decisions()).toBe(0);
+    releaseOpen!(opened(false,true));
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    expect(decisions()).toBe(0);
+    expect(load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('pending');
+    openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    openMode='denied';await b.getByRole('button',{name:'Allow',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    expect(decisions()).toBe(0);
+    openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    const exactDetails=load(loom.db).approvals.find(card=>card.id===localCards[0])!.details;
+    await expect.poll(()=>b.getByRole('heading',{name:'Details',exact:true}).locator('..').locator('p').textContent()).toBe(exactDetails);
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    // Delay one feed's snapshots without changing authentication, records or the
+    // other feeds. Each page still connects to the real signed-in Live socket.
+    let maskedFeed: 'approval' | 'clock' | undefined;
+    await a.routeWebSocket('**/live',ws=>{
+      const server=ws.connectToServer();
+      server.onMessage(message=>{
+        const packet=JSON.parse(String(message));
+        if(['set','put','del'].includes(packet.kind) && (maskedFeed==='approval' ? packet.type==='approval' : maskedFeed==='clock' && ['wake','schedule','clock'].includes(packet.type)))return;
+        ws.send(message);
+      });
+    });
+    maskedFeed='approval';await a.goto(`${loom.url}/p/clock-preview`);
+    await expect.poll(()=>a.getByRole('button',{name:'Create wake',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('button',{name:/Local requests/}).click();
+    await expect.poll(()=>a.getByText('Opening local requests…',{exact:true}).count()).toBe(1);
+    expect(await a.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    maskedFeed='clock';await openLocal(a,0);
+    expect(await a.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(true);
+    maskedFeed=undefined;await a.goto(`${loom.url}/p/clock-preview`);
+    await expect.poll(()=>a.getByRole('button',{name:'Resume art',exact:true}).isEnabled()).toBe(true);
+    holdClock=true;await a.getByRole('button',{name:'Resume art',exact:true}).click();
+    await a.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Resume art',exact:true}).click();
+    await expect.poll(()=>!!releaseClock).toBe(true);
+    expect(await a.getByRole('button',{name:'Create wake',exact:true}).isEnabled()).toBe(false);
+    await a.getByRole('button',{name:/Local requests/}).click();await row(a,'Allow once').click();
+    await expect.poll(()=>a.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    expect(await a.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(true);
+    holdClock=false;releaseClock!({ok:false,code:'unavailable',message:'Fixture released held ordinary write'});
+
+    const beforeLocal=wakes(loom.db).length;
+    await b.getByRole('group',{name:'Answer approval'}).getByRole('button',{name:'Allow',exact:true}).click();
+    await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('allowed');
+    await expect.poll(()=>a.getByText('local-wake · allowed',{exact:true}).count()).toBe(1);
+    expect(await a.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    await openLocal(b,1);await b.getByRole('button',{name:'Deny',exact:true}).click();
+    await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[1])?.state).toBe('denied');
+    await openLocal(b,2);await b.getByRole('button',{name:'Allow every time',exact:true}).click();
+    await expect.poll(()=>load(loom.db).standing.length).toBe(1);
+    expect(wakes(loom.db)).toHaveLength(beforeLocal);
+    expect(await b.getByRole('button',{name:'Run now',exact:true}).count()).toBe(0);
+    const guest=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await guest.grantPermissions(['local-network-access'],{origin:loom.url});await guest.addCookies([{name:'loom_ui',value:guestSession,url:loom.url}]);await guest.route('**/*',staticFiles);
     const p=await guest.newPage();await p.goto(`${loom.url}/p/clock-preview`);await expect.poll(()=>row(p,'Pond check').count()).toBe(1);
     expect(await row(p,'Private clock work').count()).toBe(0);expect(await row(p,'Morning review').count()).toBe(0);
+    await p.goto(`${loom.url}/p/clock-preview/item/${localCards[0]}`);
+    await expect.poll(()=>p.getByText('This work is no longer in view',{exact:true}).count()).toBe(1);
+    expect(await p.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(0);
+    expect(await p.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
     await guest.close();
   }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
