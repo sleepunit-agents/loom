@@ -136,7 +136,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const { startLoom } = await import('../foundation.js');
     const { resolve } = await import('node:path');
     const { homedir } = await import('node:os');
-    const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
+    const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom-next`);
     const hosts = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }

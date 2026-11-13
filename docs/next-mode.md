@@ -1,7 +1,7 @@
 # Next mode
 
 `loom serve --next --home <new-home> --port 8788 --staging` runs only the new side. Without `--next`, serve keeps
-its existing behavior. Repeat `--host` to listen on several addresses in the same process. Next mode claims its
+its existing behavior. The default next home is `~/.config/loom-next`; an explicit `--home` or `LOOM_HOME` overrides it. Old and next daemons must use separate homes. Cross-mode ownership is deliberately not shared: the old path is unchanged and next never consults its lock store. The final move stops the old daemon before next starts on its home. Repeat `--host` to listen on several addresses in the same process. Next mode claims its
 home with an OS socket; it never opens the old HTTP lock database. Linux uses the abstract socket namespace, so process death releases it. Windows uses a named pipe. Other Unix platforms use an OS socket and fail closed on a stale socket after a crash; they never race to unlink one. The coordinator must verify and remove a stale socket there before restarting.
 
 `src/next.ts` is the composition root: household tables and database sharing, in-repo piece registration, the
