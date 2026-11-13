@@ -335,6 +335,49 @@ describe('in-process bridge delivery',()=>{
     expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'runtime delivery held'});
     expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
   });
+  it.each(['discord','slack'] as const)('%s retries runtime-held intake only after restart with its original receipt',async platform=>{
+    const f=await fixture(platform); const deliver=vi.fn(async()=> 'held' as const); f.runtime.deliver=deliver;
+    const message=f.message();
+    await f.engine.receive(f.venue.id,message); await f.engine.flush();
+    const before=f.app.db.prepare('SELECT * FROM bridges_inbox').get() as {id:string;message:string;received:number};
+    f.clock.advance(3_600_001); await f.engine.sync(); await f.engine.receive(f.venue.id,{...message,text:'changed duplicate'}); await f.engine.flush();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(f.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
+    await f.close(); closes.pop();
+    const restarted=await fixture(platform,false,f.home); await restarted.engine.sync();
+    expect([...restarted.deliveries.values()]).toEqual([expect.objectContaining({id:before.id,text:message.text,at:'2026-11-12T17:00:00.123Z',label:message.label})]);
+    expect(restarted.app.db.prepare('SELECT state,reason,message,received FROM bridges_inbox').get()).toEqual({state:'delivered',reason:null,message:before.message,received:before.received});
+    await restarted.close(); closes.pop();
+    const again=await fixture(platform,false,f.home); await again.engine.sync();
+    expect(again.deliveries.size).toBe(0);
+  });
+  it('rechecks current admission before repairing held intake and erases a newly denied message',async()=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'held';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); restarted.setGate('drop'); await restarted.engine.sync();
+    expect(restarted.deliveries.size).toBe(0);
+    expect(restarted.app.db.prepare('SELECT state,reason,message FROM bridges_inbox').get()).toEqual({state:'dropped',reason:'not admitted',message:'{}'});
+  });
+  it('holds a still-broken runtime delivery once again for the new process',async()=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'held';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); const deliver=vi.fn(async()=> 'held' as const); restarted.runtime.deliver=deliver;
+    await restarted.engine.sync(); restarted.clock.advance(10_000); await restarted.engine.sync();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(restarted.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'runtime delivery held'});
+  });
+  it.each(['venue removed','venue identity changed','invalid event time'])('leaves %s intake holds untouched on restart',async reason=>{
+    const f=await fixture(); f.runtime.deliver=async()=> 'held';
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.app.db.prepare('UPDATE bridges_inbox SET reason=?').run(reason);
+    const before=f.app.db.prepare('SELECT * FROM bridges_inbox').get();
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); await restarted.engine.sync();
+    expect(restarted.deliveries.size).toBe(0);
+    expect(restarted.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
+  });
   it('holds a malformed stop event without stopping runtime or binding a conversation',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message({text:'cancel!',at:'bad'})); await f.engine.flush();
     expect(f.stops).toEqual([]); expect(f.deliveries.size).toBe(0);

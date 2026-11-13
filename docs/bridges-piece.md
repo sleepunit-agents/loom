@@ -44,7 +44,12 @@ Previously queued foundation messages without a recoverable event time also hold
 The injected runtime delivery role returns `delivered`, `refused`, `retry` or `held`.
 Only `delivered` establishes a conversation binding. A final refusal consumes the
 receipt and erases its words; a transient outcome or exception retains the stable id
-for retry; malformed/unknown outcomes hold without retry until deliberately repaired.
+for retry; malformed/unknown outcomes hold for the life of the engine. On daemon restart, only
+`runtime delivery held` receipts return to pending, preserving the original id, words
+and event metadata. Delivery repeats current setup, credential and admission checks;
+a still-malformed result holds again. Venue-removal, identity and invalid-event-time
+holds stay held. Delivered/dropped receipts and all outbox states are unaffected.
+The legacy one-hour transient retry limit remains a separate pending port.
 Production composition must map the runtime registry Result into these outcomes and
 must preserve authenticated caller identity; that integration remains on t-2210.
 
