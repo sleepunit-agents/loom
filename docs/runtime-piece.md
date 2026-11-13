@@ -139,3 +139,37 @@ runner principal before calling `hearBox`. The future setup path must authorize
 local initialization centrally. This slice does not implement those public
 operations, hello/poll responses, account/harness reports, report-only enrollment
 choice, health alerts, drills, write-off, dispatch or credential lifecycle.
+
+## Internal quota calculations
+
+`quota.ts` ports the calculation part of old `accounts.mjs`. It is internal and
+uncalled: it stores nothing, exposes no operation and reads no clock, file,
+environment, login or provider API. Every call receives explicit server time.
+Reading `checked`, resets and holds use seconds; the server time uses
+milliseconds. These helpers do not yet implement an accounts collection.
+
+| Old calculation | New internal helper | Scope |
+| --- | --- | --- |
+| `mergeUsage` | `mergeUsage` | Newest reading per window across all supplied sources, fuller on equal timestamps; unread sources add nothing |
+| `hasRoom`, `windowNow` | `hasRoom` | General windows plus the requested model window; 97 percent is full; elapsed reset restores room |
+| `roomAt` | `roomAt` | Latest hold/full-window reset; null means either room now or an unknown reset, distinguished by `hasRoom` |
+| `holdAccount` arithmetic | `nextQuotaHold` | Structured refusal holds, 30 minute blind backoff, eight day cap, preserve longer active hold, bounded reason |
+
+Two choices make the documented old behavior independent of incidental state:
+merge readings chronologically so an older known future reset survives a newer
+reading without a reset regardless of input order; reset a blind streak after
+a day without a refusal even when the old hold has not yet been pruned. Known
+reset refusals end the blind streak. Missing/nonfinite reset times use blind
+backoff. Nonfinite usage passed to `hasRoom` fails closed; `mergeUsage` consumes
+numeric report metadata, with untrusted report validation still the future
+caller's responsibility.
+
+The future account layer must supply only readings of the same owner/salted
+short CLI identity, including stale copies' readings while offering only live
+copies. It must authenticate the reporting box/body, enforce login eligibility
+centrally, validate/clamp reports and persist the selected account's hold in the
+caller transaction. API key accounts use secret references only, never values.
+Account grouping, metadata schemas/storage, retention, owner-only keys versus
+labels, account operations and UI, `usageOf`, resolver/model settings and provider
+refusal parsing are unfinished. No legacy account command or runner behavior is
+changed by this calculation module.
