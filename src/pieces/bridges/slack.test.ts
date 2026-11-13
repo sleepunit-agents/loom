@@ -86,7 +86,14 @@ describe('Slack intake contract',()=>{
     try {
       const event=raw({subtype:'file_share',files:[{id:'F1',name:'report.pdf',url_private:'https://files.slack.com/private'}]});
       const before=structuredClone({event,venue,dm});
-      expect(slackMessage(event,venue,dm)!.text).toBe('hello [file: report.pdf]');
+      const environment=process.env;
+      let message;
+      try {
+        // The synchronous normalizer has no reason to inspect ANY environment key.
+        process.env=new Proxy(environment,{get:io.attempt,has:io.attempt,ownKeys:io.attempt,getOwnPropertyDescriptor:io.attempt,set:io.attempt});
+        message=slackMessage(event,venue,dm);
+      } finally {process.env=environment;}
+      expect(message!.text).toBe('hello [file: report.pdf]');
       expect({event,venue,dm}).toEqual(before);
       expect(io.attempt).not.toHaveBeenCalled();
     } finally {fetch.mockRestore();}
