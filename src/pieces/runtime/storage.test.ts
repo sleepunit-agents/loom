@@ -14,10 +14,10 @@ const art: Viewer = { kind: 'agent', id: 'art' };
 const runner: Viewer = { kind: 'runner', id: 'r1' };
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function setup(home?: string, nextMode = true, sharing: () => Sharing = fixtureSharing) {
+async function setup(home?: string, nextMode = true, sharing: () => Sharing = fixtureSharing, viewer: Viewer = art) {
   if (!home) { home = mkdtempSync(join(tmpdir(), 'runtime-storage-')); const dir = home; cleanups.push(() => rmSync(dir, { recursive: true, force: true })); }
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, next: nextMode, sharing, authenticate: () => ({ viewer: art, valid: () => true }) });
+  const app = await startLoom({ home, clock, next: nextMode, sharing, authenticate: () => ({ viewer, valid: () => true }) });
   cleanups.push(app.close);
   const call = (op: string, viewer = owner, scope?: string) => app.operations.call('direct', viewer, `runtime.${op}`, scope === undefined ? {} : { scope });
   return { app, clock, home, store: runtimeStore(app.db), call };
@@ -103,14 +103,44 @@ it('rejects extra words/credentials, mismatched settings ids and duplicate conve
 it('uses the same policy for live sets and removes records after access changes', async () => {
   const { app, store } = await setup();
   app.db.transaction(() => { store.put('job', job('live'), 1); store.put('job', job('private', { member: 'jonathan' }), 1); store.put('job', job('visible-off-scope', { agent: 'pond-bot', project: 'pond' }), 1); })();
+  const { next } = await subscribe(app, 'runtime.job', 'art');
+  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'live' }] });
+  app.db.transaction(() => store.put('job', job('live', { member: 'jonathan' }), 2))();
+  app.live.changed([{ type: 'runtime.job', id: 'live' }]);
+  expect(await next()).toMatchObject({ kind: 'del', id: 'live' });
+});
+
+async function subscribe(app: { url: string }, type: string, scope?: string) {
   const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
   const queue: unknown[] = [], waiters: Array<(v: unknown) => void> = [];
   ws.on('message', raw => { const value = JSON.parse(raw.toString()); const next = waiters.shift(); if (next) next(value); else queue.push(value); });
   const next = () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiters.push(resolve));
   await once(ws, 'open'); cleanups.push(() => { ws.terminate(); });
-  ws.send(JSON.stringify({ kind: 'subscribe', type: 'runtime.job', scope: 'art' }));
-  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'live' }] });
-  app.db.transaction(() => store.put('job', job('live', { member: 'jonathan' }), 2))();
-  app.live.changed([{ type: 'runtime.job', id: 'live' }]);
-  expect(await next()).toMatchObject({ kind: 'del', id: 'live' });
+  ws.send(JSON.stringify({ kind: 'subscribe', type, scope }));
+  return { ws, next };
+}
+
+it('limits runner live records to its assigned non-private jobs', async () => {
+  const { app, store } = await setup(undefined, true, fixtureSharing, runner);
+  app.db.transaction(() => {
+    store.put('box', box, 1);
+    store.put('job', job('assigned'), 1);
+    store.put('job', job('unassigned', { runner: 'r2' }), 1);
+    store.put('job', job('private', { member: 'jonathan' }), 1);
+  })();
+  const jobs = await subscribe(app, 'runtime.job');
+  expect(await jobs.next()).toMatchObject({ kind: 'set', records: [{ id: 'assigned' }] });
+  const boxes = await subscribe(app, 'runtime.box');
+  expect(await boxes.next()).toMatchObject({ kind: 'set', records: [] });
+});
+it('requires live service type grants, excludes private jobs and refreshes on lost grants', async () => {
+  const access = { ...fixtureSharing(), services: { reader: { types: ['runtime.job'], operations: [] as string[] } } };
+  const { app, store } = await setup(undefined, true, () => access, { kind: 'service', id: 'reader' });
+  app.db.transaction(() => { store.put('job', job('shared'), 1); store.put('job', job('private', { member: 'jonathan' }), 1); })();
+  const jobs = await subscribe(app, 'runtime.job');
+  expect(await jobs.next()).toMatchObject({ kind: 'set', records: [{ id: 'shared' }] });
+  access.services.reader.types = [];
+  access.services.reader.operations = ['runtime.listJobs'];
+  app.live.refreshAccess();
+  expect(await jobs.next()).toMatchObject({ kind: 'set', records: [] });
 });
