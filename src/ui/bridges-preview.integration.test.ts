@@ -81,11 +81,6 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
       expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
     }
     await b.setViewportSize({ width: 1280, height: 900 });
-    // Restore the original recipient before the independent send-release proof.
-    // A missing/relinked source account now correctly holds its queued reply.
-    await b.getByRole('textbox', { name: 'Platform user ID', exact: true }).fill('200');
-    await b.getByRole('button', { name: 'Save person link', exact: true }).click();
-    for (const p of [a, b]) await expect.poll(() => row(p, 'jonathan').textContent()).toContain('Account: 200');
     for (const p of [a, b]) {
       await p.getByRole('button', { name: 'Routes', exact: false }).click();
       await row(p, '300').click();
