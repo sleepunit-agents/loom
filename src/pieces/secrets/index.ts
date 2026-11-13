@@ -27,7 +27,7 @@ export function grantsRole(db: Db): Grants {
     if (resource.kind === 'secret' && requestDecision(readSecretPolicy(db), agent, resource.target).level === 'never') return false;
     const candidates = [read<Grant>(db, 'secrets_grants', grantId(agent, resource))];
     if (context) candidates.push(read<Grant>(db, 'secrets_grants', grantId(agent, resource, context)));
-    return candidates.some(row => !!row && (row.expiresAt === undefined || row.expiresAt > now)
+    return candidates.some(row => !!row && !row.movedTo && (row.expiresAt === undefined || row.expiresAt > now)
       && (!row.scope || !!context && row.scope.house === context.house && row.scope.service === context.service));
   } };
 }
@@ -92,7 +92,21 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   }));
   operations.register(operation({ name: 'secrets.revoke', write: true, input: z.object({ agent, ...resource, scope: grantScope.optional() }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.revoke'), run(ctx, input) {
-      const id = grantId(input.agent, input, input.scope); db.prepare('DELETE FROM secrets_grants WHERE id=?').run(id); ctx.changed('secret.grant', id); return { revoked: true };
+      const id = grantId(input.agent, input, input.scope);
+      const grant = read<Grant>(db, 'secrets_grants', id);
+      const revoke = (g: Grant) => {
+        db.prepare('DELETE FROM secrets_grants WHERE id=?').run(g.id); ctx.changed('secret.grant', g.id);
+        const request = g.requestId && read<GrantRequest>(db, 'secrets_requests', g.requestId);
+        if (request) { request.state = 'revoked'; saveRequest(request); ctx.changed('secret.request', request.id); }
+      };
+      if (grant) {
+        const paired = grant.pairedRequestId && read<GrantRequest>(db, 'secrets_requests', grant.pairedRequestId);
+        const other = paired && read<Grant>(db, 'secrets_grants', grantId(paired.agent, paired, paired.scope));
+        // A later independent grant at the same scope is not part of this pair.
+        if (other && other.requestId === paired.id && other.pairedRequestId === grant.requestId) revoke(other);
+        revoke(grant);
+      }
+      return { revoked: true };
     },
   }));
   operations.register(operation({ name: 'secrets.may', input: z.object({ agent, ...resource }).strict(), output: z.object({ allow: z.boolean() }),
@@ -133,6 +147,23 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
             scope: input.scope, requestId: record.id, expiresAt: ctx.now + minutes * 60_000, createdAt: ctx.now, by: 'policy' };
           saveGrant(grant); ctx.changed('secret.grant', grant.id);
         }
+        return record;
+      }
+      // Policy wins first. Only a still-live plain owner Allow may move once.
+      for (const source of all<GrantRequest>(db, 'secrets_requests')) {
+        if (source.kind !== 'secret' || source.agent !== record.agent || source.target !== record.target
+          || source.state !== 'allowed' || !source.by || source.decision || source.always || source.carriedFrom || source.claimedBy
+          || !source.scope || source.scope.house === input.scope.house || source.scope.service !== input.scope.service) continue;
+        const original = read<Grant>(db, 'secrets_grants', grantId(source.agent, source, source.scope));
+        if (!original || original.requestId !== source.id || original.movedTo || original.expiresAt === undefined || original.expiresAt <= ctx.now) continue;
+        record.state = 'allowed'; record.by = source.by; record.answeredAt = ctx.now; record.carriedFrom = source.id;
+        source.claimedBy = record.id;
+        const carried: Grant = { id: grantId(record.agent, record, input.scope), agent: record.agent, kind: 'secret', target: record.target,
+          scope: input.scope, requestId: record.id, expiresAt: original.expiresAt, createdAt: ctx.now, by: source.by, pairedRequestId: source.id };
+        original.movedTo = record.id; original.pairedRequestId = record.id;
+        saveRequest(source); saveRequest(record); saveGrant(original); saveGrant(carried);
+        for (const r of [source, record]) ctx.changed('secret.request', r.id);
+        for (const g of [original, carried]) ctx.changed('secret.grant', g.id);
         return record;
       }
       return raiseRequest(ctx, record);

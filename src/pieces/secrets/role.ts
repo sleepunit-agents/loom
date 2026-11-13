@@ -13,11 +13,15 @@ export interface Grant extends Resource {
   scope?: GrantContext;
   /** The particular request that produced this grant; manual grants omit it. */
   requestId?: string;
+  /** A moved original is retained for paired revocation, but grants no access. */
+  movedTo?: string;
+  pairedRequestId?: string;
 }
 export interface SecretName { id: string; description: string; changedAt: number; by: string }
 export interface GrantRequest extends Resource {
   id: string; agent: string; askedBy: { kind: string; id: string }; why: string;
-  state: 'pending' | 'allowed' | 'denied' | 'cancelled'; createdAt: number;
+  state: 'pending' | 'allowed' | 'denied' | 'cancelled' | 'revoked'; createdAt: number;
+  carriedFrom?: string; claimedBy?: string;
   always?: true; answeredAt?: number; by?: string; decision?: 'policy';
   scope?: GrantContext; minutes?: number;
 }
