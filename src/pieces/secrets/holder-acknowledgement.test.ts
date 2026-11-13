@@ -11,12 +11,15 @@ import { handSecret, installSecretValues } from './values.js';
 import type { KeyHolder } from './keyholder.js';
 const owner: Viewer = {kind: 'member', id: 'jonathan'};
 const sentinel = 'HOLDER-ACK-SECRET-SENTINEL';
+const captured: unknown[] = [];
+afterEach(() => {vi.restoreAllMocks(); captured.length = 0;});
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of closes.splice(0)) await close();
   for (const home of homes.splice(0)) rmSync(home, {recursive: true, force: true});
 });
 async function setup() {
+  for (const method of ['log', 'warn', 'error'] as const) vi.spyOn(console, method).mockImplementation((...args) => {captured.push(args);});
   const home = mkdtempSync(join(tmpdir(), 'loom-holder-ack-')); homes.push(home); fixture(home);
   const holder: KeyHolder = {names: () => [], set() {}, remove() {}, handTo() {}, rotate() {}};
   const clock = new FakeClock();
@@ -35,6 +38,7 @@ async function setup() {
 const asynchronous = [
   ['resolved Promise', () => Promise.resolve(sentinel)],
   ['rejected Promise', () => Promise.reject(Error(sentinel))],
+  ['native Promise with shadowed then', () => Object.defineProperty(Promise.reject(Error(sentinel)), 'then', {value: undefined})],
   ['resolved thenable', () => ({then(resolve: (v: string) => void) {resolve(sentinel);}})],
   ['rejected thenable', () => ({then(_resolve: unknown, reject: (e: Error) => void) {reject(Error(sentinel));}})],
 ] as const;
@@ -44,38 +48,45 @@ it.each(asynchronous)('rejects %s for set/remove without metadata, receipts or L
   for (const method of ['set', 'remove'] as const) {
     const input = {name: 'api-key', writeId: randomUUID(), ...(method === 'set' ? {value: sentinel, mode: 'replace'} : {})};
     const before = snapshot();
-    const attempted = vi.spyOn(holder, method).mockImplementation(() => output());
+    const attempted: unknown[][] = [];
+    let acknowledge: () => unknown = output;
+    // Plain adapter: Vitest spies inspect Promise.then before returning it.
+    holder[method] = (...args: unknown[]) => {attempted.push(args); return acknowledge();};
     const id = `retry-${method}`;
     expect(call(method, input, id)).toEqual({ok: false, code: 'unavailable', message: `Key holder could not ${method === 'set' ? 'save' : 'remove'} the secret`});
-    expect(attempted).toHaveBeenCalledTimes(1);
+    expect(attempted).toHaveLength(1);
     expect(snapshot()).toEqual(before); expect(changed).not.toHaveBeenCalled();
-    if (method === 'set') expect(attempted.mock.calls[0][1]).toEqual(Buffer.alloc(Buffer.byteLength(sentinel)));
-    attempted.mockImplementation(() => sentinel);
+    if (method === 'set') expect(attempted[0][1]).toEqual(Buffer.alloc(Buffer.byteLength(sentinel)));
+    acknowledge = () => sentinel;
     expect(call(method, input, id)).toEqual({ok: true, value: method === 'set' ? {saved: true} : {removed: true}});
-    expect(attempted).toHaveBeenCalledTimes(2);
+    expect(attempted).toHaveLength(2);
     expect(changed).toHaveBeenCalledTimes(1);
     expect(JSON.stringify([snapshot(), changed.mock.calls])).not.toContain(sentinel);
-    changed.mockClear(); attempted.mockRestore();
+    changed.mockClear();
   }
   // Flush Promise/thenable assimilation and rejection handlers before teardown.
   await Promise.resolve(); await Promise.resolve();
+  expect(JSON.stringify(captured)).not.toContain(sentinel);
 });
 it.each(asynchronous)('does not count %s handoff as a released use; synchronous retry succeeds', async (_label, output) => {
   const {app, holder, clock, call, snapshot} = await setup();
-  const handed = vi.spyOn(holder, 'handTo').mockImplementation(() => output());
+  const changed = vi.spyOn(app.live, 'changed');
+  let hands = 0, acknowledge: () => unknown = output;
+  holder.handTo = () => {hands++; return acknowledge();};
   expect(handSecret(app.db, app.live, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(false);
-  expect(handed).toHaveBeenCalledOnce();
+  expect(hands).toBe(1);
   const failed = call('usage', {name: 'api-key'});
   expect(failed).toMatchObject({ok: true, value: {count: 0, lastUsedAt: null, events: [{state: 'failed', by: {kind: 'agent', id: 'art'}}]}});
-  handed.mockImplementation(() => sentinel);
+  acknowledge = () => sentinel;
   expect(handSecret(app.db, app.live, holder, 'art', 'api-key', 'runtime-sink', clock.now())).toBe(true);
   expect(call('usage', {name: 'api-key'})).toMatchObject({ok: true, value: {count: 1, lastUsedAt: clock.now()}});
-  expect(JSON.stringify(snapshot())).not.toContain(sentinel);
+  expect(JSON.stringify([snapshot(), changed.mock.calls])).not.toContain(sentinel);
   await Promise.resolve(); await Promise.resolve();
+  expect(JSON.stringify(captured)).not.toContain(sentinel);
 });
 it('redacts throwing then accessors and leaves no save receipt', async () => {
   const {app, holder, call, snapshot} = await setup();
-  vi.spyOn(holder, 'set').mockImplementation(() => ({get then() {throw Error(sentinel);}}));
+  holder.set = () => ({get then() {throw Error(sentinel);}});
   const before = snapshot(), changed = vi.spyOn(app.live, 'changed');
   expect(call('set', {name: 'api-key', value: sentinel, mode: 'replace', writeId: randomUUID()})).toEqual({ok: false, code: 'unavailable', message: 'Key holder could not save the secret'});
   expect(snapshot()).toEqual(before); expect(changed).not.toHaveBeenCalled();

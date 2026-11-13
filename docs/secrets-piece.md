@@ -354,3 +354,12 @@ This check cannot cancel work already started by an invalid asynchronous holder.
 The asynchronous read channel must not be connected to the synchronous mutation
 seam. Persistent write/remove/rotation, full-input and authenticated-member durable
 receipts, and their production composition remain required on t-2208.
+
+`KeyHolder` implementations are trusted in-process code. This check handles
+accidentally async adapters with ordinary native Promises (including a shadowed
+`then`) and thenables. It does not sandbox adapter code or native Promises whose
+`constructor`/`Symbol.species` have been sabotaged: JavaScript consults those
+properties before allowing a native rejection handler to attach. Production
+adapters must not return such objects or independently log credential material.
+The persistent production adapter and its regression tests must satisfy this
+constraint when that adapter is composed.
