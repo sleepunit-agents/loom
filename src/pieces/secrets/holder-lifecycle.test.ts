@@ -57,10 +57,13 @@ it('composes persistent holder and actual current database authority across rest
   await expect(api.hasReceipt(who)).resolves.toBe(false);
   await api.set(who,'API',Buffer.from(value),'add');
   await expect(api.hasReceipt(who)).resolves.toBe(true);
+  const generation=await source.generation();
   const first=await source.read('API');expect(Buffer.from(first).toString()).toBe(value);first.fill(0);
   await api.set({...who,writeId:randomUUID()},'API',Buffer.from('NEW'),'replace');
+  const replacedGeneration=await source.generation();expect(replacedGeneration).not.toBe(generation);
   await holder.close();await app.close();
   app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,stdout:()=>{}});holder=await startPersistentHolder(s.file);
+  expect(await source.generation()).toBe(replacedGeneration);
   await expect(api.hasReceipt(who)).resolves.toBe(true);
   await api.set(who,'API',Buffer.from(value),'add');
   const newer=await source.read('API');expect(Buffer.from(newer).toString()).toBe('NEW');newer.fill(0);

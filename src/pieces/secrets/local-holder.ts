@@ -57,25 +57,26 @@ export function tlsMaterial(config: Omit<LocalHolderConfig, 'servername'>) {
     return {ca, cert, key};
   } catch { throw failed(); }
 }
-export function localSecretSource(config: LocalHolderConfig): SecretValueSource {
+export interface HolderGeneration { generation(): Promise<string> | string }
+const generationPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export function localSecretSource(config: LocalHolderConfig): SecretValueSource & HolderGeneration {
   const {ca, cert, key} = tlsMaterial(config);
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
-  return { async read(name) {
-    if (!secretName.safeParse(name).success) throw failed();
+  async function acquire(path: string, limit: number) {
     try { privateSocket(config.socket); } catch { throw failed(); }
     return new Promise<Uint8Array>((resolve, reject) => {
       const chunks: Buffer[] = []; let size = 0, settled = false;
       const erase = () => { for (const b of chunks) b.fill(0); };
       const fail = () => { if (settled) return; settled = true; erase(); reject(failed()); };
       const request = https.request({socketPath: config.socket, servername: config.servername,
-        path: `/v1/value/${name}`, method: 'GET', ca, cert, key, rejectUnauthorized: true,
+        path, method: 'GET', ca, cert, key, rejectUnauthorized: true,
         agent: false, maxHeaderSize: 8192, minVersion: 'TLSv1.3',
       }, response => {
         if (response.statusCode !== 200 || response.headers['content-type'] !== 'application/octet-stream') { fail(); response.destroy(); return; }
         response.on('data', (chunk: Buffer) => {
           if (settled) { chunk.fill(0); return; }
           size += chunk.length;
-          if (size > LIMIT) { chunk.fill(0); fail(); response.destroy(); request.destroy(); }
+          if (size > limit) { chunk.fill(0); fail(); response.destroy(); request.destroy(); }
           else chunks.push(chunk);
         });
         response.on('error', fail); response.on('aborted', fail);
@@ -90,12 +91,26 @@ export function localSecretSource(config: LocalHolderConfig): SecretValueSource 
       request.on('close', () => clearTimeout(deadline));
       request.on('error', fail); request.end();
     }).catch(() => { throw failed(); });
-  }};
+  }
+  return {
+    async read(name) {
+      if (!secretName.safeParse(name).success) throw failed();
+      return acquire(`/v1/value/${name}`, LIMIT);
+    },
+    async generation() {
+      const bytes = await acquire('/v1/generation', 36);
+      try {
+        const generation = Buffer.from(bytes).toString('ascii');
+        if (bytes.length !== 36 || !generationPattern.test(generation) || !Buffer.from(generation).equals(Buffer.from(bytes))) throw failed();
+        return generation;
+      } finally { bytes.fill(0); }
+    },
+  };
 }
 /** Run in the holder process. The provider is crypto-only and returns owned bytes.
  * Refuses existing sockets; restart cleanup is an explicit operator step.
  */
-export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource, daemonFingerprint?: string) {
+export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource & Partial<HolderGeneration>, daemonFingerprint?: string) {
   if (!isAbsolute(config.socket)) throw failed();
   assertPrivateDirectory(dirname(config.socket));
   const {key, cert, ca} = tlsMaterial(config);
@@ -107,8 +122,13 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
       const peer = req.socket as TLSSocket;
       if (daemonFingerprint && (!peer.authorized || peer.getPeerCertificate().fingerprint256 !== daemonFingerprint)) throw failed();
       const match = /^\/v1\/value\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url ?? '');
-      if (req.method !== 'GET' || !match || req.headers['transfer-encoding'] || (req.headers['content-length'] && req.headers['content-length'] !== '0')) throw failed();
-      bytes = await source.read(match[1]);
+      const generation = req.url === '/v1/generation';
+      if (req.method !== 'GET' || (!match && !generation) || req.headers['transfer-encoding'] || (req.headers['content-length'] && req.headers['content-length'] !== '0')) throw failed();
+      if (generation) {
+        const marker = await source.generation?.();
+        if (typeof marker !== 'string' || !generationPattern.test(marker)) throw failed();
+        bytes = Buffer.from(marker);
+      } else bytes = await source.read(match![1]);
       if (res.destroyed || !bytes.length || bytes.length > LIMIT) throw failed();
       res.writeHead(200, {'content-type':'application/octet-stream', 'cache-control':'no-store', 'content-length':bytes.length});
       // Keep ownership until Node has finished copying/flushing the supplied bytes.

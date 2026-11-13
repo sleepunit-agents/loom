@@ -280,3 +280,24 @@ it('absolute deadline also bounds a peer that never completes TLS',async()=>{
     await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await result;
   } finally {vi.useRealTimers();}
 });
+
+it('reads only a bounded public generation through the authenticated holder, without obtaining a value',async()=>{
+  const {home,client,server}=setup();const {randomUUID}=await import('node:crypto');
+  let marker=randomUUID();const read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const generation=vi.fn(()=>marker);
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  const source=localSecretSource(client);
+  expect(await source.generation()).toBe(marker);marker=randomUUID();expect(await source.generation()).toBe(marker);
+  expect(read).not.toHaveBeenCalled();
+  await expect(localSecretSource({...client,cert:join(home,'stranger.pem'),key:join(home,'stranger.key')}).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(generation).toHaveBeenCalledTimes(2);
+  generation.mockReturnValueOnce('CREDENTIAL-INSTEAD-OF-GENERATION');
+  await expect(source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  generation.mockImplementationOnce(()=>{throw Error('PRIVATE');});
+  await expect(source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(read).not.toHaveBeenCalled();
+});
+it.each(['X'.repeat(37),'a'.repeat(36),'00000000-0000-4000-8000-00000000000\u00b0'])('rejects malformed holder generation responses without reflecting them',async body=>{
+  const {client}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end(body);});
+  await expect(localSecretSource(client).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+});

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
+
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
 ### Added
 
