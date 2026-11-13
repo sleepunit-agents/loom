@@ -4,7 +4,7 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result } from '../../data';
 const f = vi.hoisted(() => ({ status: 'live', access: true, call: vi.fn(), once: vi.fn() }));
-vi.mock('../../data', () => ({ call: f.call, callOnce: f.once, useRecords: (name: string) => ({ status: f.status, records: name === 'signin.admin' ? !f.access ? [] : [{ id: 'household', at: Date.parse('2026-11-13T12:00:00Z'), tokens: [{ ref: 'expired', label: 'operator', role: 'owner', created: '2026-11-11T12:00:00Z', expires: '2026-11-12T12:00:00Z' }, { ref: 'live', label: 'operator', role: 'owner', created: '2026-11-12T12:00:00Z' }], sessions: [{ ref: '0123456789abcdef', issuedAt: 1, expiresAt: 2, member: 'jonathan', agent: false }] }] : [{ id: 'household', members: ['jonathan'], agents: ['art'] }] }) }));
+vi.mock('../../data', () => ({ call: f.call, callOnce: f.once, useRecords: (name: string) => ({ status: f.status, records: name === 'signin.admin' ? !f.access ? [] : [{ id: 'household', at: Date.parse('2026-11-13T12:00:00Z'), tokens: [{ ref: 'expired', label: 'operator', role: 'owner', created: '2026-11-11T12:00:00Z', expires: '2026-11-12T12:00:00Z' }, { ref: 'live', label: 'operator', role: 'owner', created: '2026-11-12T12:00:00Z' }], sessions: [{ ref: '0123456789abcdef', issuedAt: 1, expiresAt: 2, member: 'jonathan', agent: false, label: 'same browser' }, { ref: 'fedcba9876543210', issuedAt: 1, expiresAt: 2, member: 'jonathan', agent: false, label: 'same browser' }] }] : [{ id: 'household', members: ['jonathan'], agents: ['art'] }] }) }));
 vi.mock('../../kit', () => Object.fromEntries(['Button', 'Input', 'Empty', 'Error', 'Loading'].map(name => [name, (props: object) => h(name === 'Button' ? 'button' : name === 'Input' ? 'input' : 'div', props)])));
 import AccessAdmin, { tokenInput } from './access';
 import { mutation, tokenAttempt } from './model';
@@ -93,4 +93,15 @@ it('forgets an already returned bearer on owner demotion with a connected empty 
   expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(0);
   await act(async () => { f.access = true; tree.update(h(AccessAdmin)); });
   expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(0);
+});
+
+it('distinguishes otherwise identical sessions by visible safe refs and exact confirmation text', async () => {
+  await act(async () => { tree = create(h(AccessAdmin)); });
+  const codes = tree.root.findAllByType('code').map((node: { props: { children: string } }) => node.props.children);
+  expect(codes).toEqual(['0123456789abcdef', 'fedcba9876543210']);
+  for (const ref of codes) {
+    const form = tree.root.findByProps({ 'aria-label': `Revoke session ${ref}` });
+    const label = form.findByType('label');
+    expect(label.props.children.slice(1).join('')).toBe(`I confirm signing out session ${ref}`);
+  }
 });

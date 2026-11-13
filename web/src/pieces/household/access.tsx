@@ -72,9 +72,9 @@ export default function AccessAdmin({ active = true }: { active?: boolean }) {
     <h3 className="font-semibold">Sessions</h3>
     {!admin.sessions.length && <Empty title="No sessions" />}
     <ul className="grid min-w-0 gap-3">{admin.sessions.map(session => <li key={session.ref} className="grid min-w-0 gap-2 rounded-xl border p-4 break-words">
-      <p className="font-semibold">{session.label ?? session.device ?? session.ref}</p><p>{session.member ?? 'Unknown member'} · {session.agent ? 'Agent browser' : 'Browser'} · {session.ended ? 'Ended' : 'Active'}{session.via ? ` · ${session.via}` : ''}</p>
+      <p className="font-semibold">{session.label ?? session.device ?? session.ref}</p><p>Session: <code>{session.ref}</code></p><p>{session.member ?? 'Unknown member'} · {session.agent ? 'Agent browser' : 'Browser'} · {session.ended ? 'Ended' : 'Active'}{session.via ? ` · ${session.via}` : ''}</p>
       <p>Token: {session.token ?? 'Unknown'}<br />Created: {when(session.issuedAt * 1000)}<br />Last seen: {when(session.seenAt === undefined ? undefined : session.seenAt * 1000)}<br />Expires: {when(session.expiresAt)}</p>
-      <form aria-label={`Revoke session ${session.ref}`} onSubmit={revoke('sessions.revoke', { ref: session.ref }, 'Revoke session')}><fieldset disabled={!enabled} className="grid gap-2"><label className="flex gap-2"><input type="checkbox" required />I confirm signing out this session</label><Button type="submit" variant="outline">Revoke session</Button></fieldset></form>
+      <form aria-label={`Revoke session ${session.ref}`} onSubmit={revoke('sessions.revoke', { ref: session.ref }, 'Revoke session')}><fieldset disabled={!enabled} className="grid gap-2"><label className="flex gap-2"><input type="checkbox" required />I confirm signing out session {session.ref}</label><Button type="submit" variant="outline">Revoke session</Button></fieldset></form>
     </li>)}</ul>
   </section>;
 }
