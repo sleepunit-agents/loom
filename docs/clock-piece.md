@@ -672,7 +672,10 @@ path: an agent-scoped approval cannot carry their saved words. Scope-preserving
 filing remains future work. Known-person, steered, other-agent and capability-bearing imports are refused;
 archived words supply no authority. The target uses the same canonical grammar
 and bounds as owner vouch. Clock generates the question and lists every id and
-saved due time within Approvals' details cap, shortening only the note.
+saved due time within Approvals' details cap. Each line includes a saved-note and
+executable prompt or file excerpt, marking truncated words with `...`. Long notes
+cannot consume the executable excerpt's space. These are excerpts for review;
+Allow retains the complete saved words.
 
 Next mode supplies the owning Approvals filing role; missing composition or
 current central service access fails closed. No caller-supplied principal,

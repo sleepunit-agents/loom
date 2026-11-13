@@ -39,6 +39,7 @@ export function httpDoor(app: Foundation, authenticate: (req: IncomingMessage) =
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return (req: IncomingMessage, res: ServerResponse) => {
+    res.setHeader('cache-control', 'no-store');
     let auth: Authentication | undefined;
     try { auth = authenticate(req); } catch { /* invalid credentials fail closed */ }
     if (!auth || !auth.valid()) { res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify(failure('denied', 'Authentication required'))); return; }

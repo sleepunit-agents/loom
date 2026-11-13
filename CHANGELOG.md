@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
+- Next runtime accepts stable body-start intents and connects Clock dispatch to runner-confirmed starts, preserving staging holds and uncertain outcomes.
 
 - Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.
 - Add next-mode Household Setup for owner-managed members, agent ownership, project access, existing agent registration and GitHub attribution.
@@ -50,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
 - Let the owner review and count eligible unknown imported wakes as their work in the Clock app, retaining saved words, due times and current authority checks.
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
+- Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
 - Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
@@ -1045,6 +1048,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 
+- New-side household token/session administration and generated `loom-token`/`loom-sessions` clients: safe lists, one-time minting, scoped session revocation and atomic passkey/device compromise cascades.
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
 ## [0.16.1] - 2026-10-25
