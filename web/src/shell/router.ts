@@ -40,6 +40,8 @@ export class DeskRouter {
   private route: DeskRoute;
   private subscribers = new Set<() => void>();
   private serial = 0;
+  private area: Rect = {x:0,y:0,w:1920,h:900};
+  private screen = 1920;
   constructor(readonly apps: readonly AppRegistration[], private browser: Pick<Window,'location'|'history'|'addEventListener'|'removeEventListener'>) {
     this.route = this.read();
     this.serial = Math.max(0,...this.route.tiles.map(t => t.used));
@@ -60,14 +62,14 @@ export class DeskRouter {
     this.browser.history[replace ? 'replaceState' : 'pushState']({loomNext:route}, '', writeRoute(route)); this.emit();
   }
   asTiles(tiles = this.route.tiles): AppTile[] { return tiles.filter(t => !t.minimized).map(t => ({ id: t.id, name: this.apps.find(a => a.id === t.id)!.title, fit: this.apps.find(a => a.id === t.id)!.fit, pinned: t.pinned })); }
-  open(id: string, area?: Rect, screen = 1920, from?: string) {
+  open(id: string, area?: Rect, screen = this.screen, from?: string) {
     const app = this.apps.find(a => a.id === id); if (!app) return;
     const old = this.route.tiles.find(t => t.id === id);
     if (old && !old.minimized) { this.focus(id); return; }
     const added: Tile = old ? { ...old, minimized: false, used: ++this.serial } : { id, trail: [app.path], at: 0, used: ++this.serial };
     const others = this.route.tiles.filter(t => t.id !== id);
     const tile = { id, name: app.title, fit: app.fit, pinned: added.pinned };
-    const result = admit(this.asTiles(others), tile, area ?? { x:0,y:0,w:1920,h:900 }, screen, { from: from ? { tile: from } : undefined, usedAt: Object.fromEntries(others.map(t => [t.id,t.used])) });
+    const result = admit(this.asTiles(others), tile, area ?? this.area, screen, { from: from ? { tile: from } : undefined, usedAt: Object.fromEntries(others.map(t => [t.id,t.used])) });
     const order = result.apps.map(t => ({ ...(t.id === id ? added : others.find(o => o.id === t.id)!), pinned: t.pinned }));
     const live = new Set(order.map(t => t.id));
     this.save({ tiles: [...order, ...others.filter(t => !live.has(t.id)).map(t => ({ ...t,minimized:true,pinned:false }))], focused: id });
@@ -77,7 +79,7 @@ export class DeskRouter {
   go(id: string, path: string) {
     const app = this.apps.find(a => a.id === id);
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
-      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,1920,id); this.go(other.id,path); } return;
+      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,undefined,id); this.go(other.id,path); } return;
     }
     this.save({ focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
   }
@@ -91,6 +93,7 @@ export class DeskRouter {
     this.save({ ...this.route, tiles: [...order.map(t => ({ ...this.route.tiles.find(o => o.id === t.id)!,pinned:t.pinned })), ...this.route.tiles.filter(t => t.minimized)] });
   }
   fit(area: Rect, screen: number) {
+    this.area=area;this.screen=screen;
     const tiles = this.route.tiles.map(t => ({...t})); const notices: string[]=[];
     for (;;) {
       const active = this.asTiles(tiles); const under = underMinimum(active,area,screen);

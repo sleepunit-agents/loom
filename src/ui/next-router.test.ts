@@ -34,3 +34,11 @@ it('pure tiling draws the registrations without overlap and admits by fit and ca
   expect(result.apps.map(t=>t.id)).toEqual(['tasks','third']);expect(result.docked[0].app.id).toBe('example');
   expect(readRoute(writeRoute({tiles:[]}),apps)).toEqual({tiles:[],focused:undefined});
 });
+
+it('cross-app links admit beside their source using the actual screen cap',()=>{
+  const all=[...apps,{...apps[1],id:'third',path:'/third'}];const b=browser();const r=new DeskRouter(all,b as never);
+  r.fit({x:0,y:0,w:1052,h:720},1100);r.open('tasks');r.open('example');r.go('example','/third/detail');
+  expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['example','third']);
+  expect(r.getSnapshot().tiles.find(t=>t.id==='tasks')?.minimized).toBe(true);
+  expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='third')!)).toBe('/third/detail');r.close();
+});
