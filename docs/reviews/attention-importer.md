@@ -24,3 +24,12 @@ Valid frozen tree round-2-clean/tree from02c46b65c29c9c0c87b4f899ecc344ff8f1b375
 - MAJOR, actionable: revision/order were not checked through runtime reads. Installed-piece fixture asserts all digest ids/revisions/orders through attention.digests, including timestamp and same-clock rowid ordering.
 
 GitHub reported CONFLICTING against main716994f768c2aabfd863deadc9af093b33630b4a (shared changelog insertion). Resolved by signed branch merge, retaining both entries and published history. No remote history rewrite.
+
+## Round 3 — BLOCKING; complete at three-round bound
+
+Frozen tree round-3/tree froma1e1780ee17f4f729bf75c6c1b3d476ef3ba08e5, TREE sha256:9d589af3a2a3b3de847efadaf8ccd958ed9a66ac33a5f085314c544779ca9cf6 (1404 files), reply round-3/reply.md. Same ledger-free archive/diff recipe.
+
+- MAJOR, actionable: extra/malformed audience entries lacked discriminating tests. Added extra-id, non-string member, malformed project and unknown audience field cases, each asserting refusal before any Attention migration/record mutation.
+- MAJOR, actionable: checksum filename independence lacked a test. Added identical committed source snapshot under a different filename; repeat asserts entire result, including exact checksum and imported:false.
+
+STOP: three valid rounds complete; no fourth round. Final raw verdict is BLOCKING (two missing-test findings), both folded. Final change after reviewed implementation only adds tests/this ledger. No known importer hole remains; implementer judgment is ship on current-head green checks, reporting non-clear review in PR/task/note. Overall t-2205 still has client, project reconciliation, UI/delivery/composition work; this importer does not claim it is complete.

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { mkdtempSync, rmSync, linkSync } from 'node:fs';
+import { mkdtempSync, rmSync, linkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
@@ -184,4 +184,17 @@ it('runtime digest reads preserve revision and chronological/rowid order after i
   const result=f.app.operations.call('direct',{kind:'member',id:'alice'},'attention.digests',{conversation:f.id});
   expect(result).toMatchObject({ok:true});if(!result.ok)throw Error('read refused');
   expect((result.value as {id:string;revision:number;order:number}[]).map(d=>[d.id,d.revision,d.order])).toEqual([[tied,1,3],[f.latest,1,2],[f.first,1,1]]);
+});
+
+it.each(['extra','bad-member','bad-project','unknown-field'])('refuses %s audience maps before mutation',async kind=>{
+  const f=await setup();
+  const invalid=kind==='extra'?{...f.scopes,'cv-000000000000':{}}:{[f.id]:kind==='bad-member'?{member:42}:kind==='bad-project'?{project:'unsafe/name'}:{agent:'mark'}};
+  expect(()=>importAttention(f.app.db,[f.path],invalid as never)).toThrow();
+  expect(f.app.db.prepare("SELECT * FROM core_migrations WHERE piece='attention'").all()).toEqual([]);
+});
+it('same snapshot under a different filename repeats with identical checksum',async()=>{
+  const f=await setup(),renamed=f.path+'.renamed';
+  const result=importAttention(f.app.db,[f.path],f.scopes);
+  writeFileSync(renamed,f.source.serialize());
+  expect(importAttention(f.app.db,[renamed],f.scopes)).toEqual({...result,imported:false});
 });
