@@ -81,9 +81,24 @@ describe('runner-local compiled brief',()=>{
   vi.spyOn(fs,'fstatSync').mockImplementation(((...args:Parameters<typeof fs.fstatSync>)=>{
    const stat=original(...args);return Object.assign(stat,{isFile:()=>false});
   }) as typeof fs.fstatSync);
+  const opened=vi.spyOn(fs,'openSync');
   const read=vi.spyOn(fs,'readSync');
   expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),root)).toThrow(RunnerBriefError);
   expect(read).not.toHaveBeenCalled();
+  // Verify the syscall safety contract without creating a FIFO in a child
+  // process: even opening a FIFO must not wait for a writer before fstat.
+  const fileOpen=opened.mock.calls.find(([p])=>String(p).endsWith('/floor'))!;
+  expect(Number(fileOpen[1])&fs.constants.O_NONBLOCK).not.toBe(0);
+ });
+ it('refuses file sections on unsupported workers before IO, while inline-only works',()=>{
+  const opened=vi.spyOn(fs,'openSync');
+  const platform=Object.getOwnPropertyDescriptor(process,'platform')!;
+  Object.defineProperty(process,'platform',{value:'darwin'});
+  try {
+   expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),'/some/checkout')).toThrow('Linux worker checkout');
+   expect(opened).not.toHaveBeenCalled();
+   expect(prepareRunnerBrief(rules([{text:'inline'}])).brief).toBe('inline');
+  } finally {Object.defineProperty(process,'platform',platform);}
  });
  it('pins opened directories across a replacement with an escaping symlink',()=>{
   const root=temp(),outside=temp();mkdirSync(join(root,'dir'));writeFileSync(join(root,'dir/floor'),'SAFE');writeFileSync(join(outside,'floor'),'PRIVATE');
