@@ -137,6 +137,13 @@ describe('private Slack durable raw inbox',()=>{
     const [row]=other.pending();expect(()=>first.consume(row.id)).toThrow('Unknown');expect(first.pending()).toHaveLength(1);expect(other.pending()).toHaveLength(1);expect(second.pending()).toHaveLength(1);
     expect(f.app.db.prepare('SELECT count(*) AS n FROM bridges_slack_receipts').get()).toEqual({n:3});
   });
+  it('isolates receipts and consumption when only the authenticated app binding differs',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());const [first]=f.inbox.pending();
+    const other=slackInbox(f.app.db,f.clock,{venue,app:'A456'});expect(other.pending()).toEqual([]);
+    expect(()=>other.consume(first.id)).toThrow('Unknown');await other.receive({...payload(),api_app_id:'A456'});
+    const [second]=other.pending();expect(second.id).not.toBe(first.id);expect(()=>f.inbox.consume(second.id)).toThrow('Unknown');
+    expect(f.inbox.pending()).toEqual([first]);other.consume(second.id);expect(other.pending()).toEqual([]);expect(f.inbox.pending()).toEqual([first]);
+  });
   it('a replacement identity under the same venue id cannot read or consume prior pending words',async()=>{
     const f=await fixture();await f.inbox.receive(payload());const [old]=f.inbox.pending();
     const replacement={...venue,bot:'U456',agent:'mark'};put(f.app.db,'venues',replacement);
