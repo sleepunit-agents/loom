@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -138,6 +139,72 @@ describe('session database persistence before activation', () => {
     persistence.change(f => { f.sessions[hash('cookie')] = { issuedAt: 1000, secret: digest.toString('hex') }; f.passkeys = { credential: passkey }; });
     expect(new SessionStore(home, persistence).get('cookie')).not.toBeNull();
     expect(persistence.read().passkeys).toEqual({ credential: passkey });
+  });
+
+  it.each(['link', 'challenge'] as const)('holds a write transaction from reading through consuming a %s', (kind) => {
+    const first = new SessionStore(home, persistence);
+    const code = kind === 'link' ? first.createLink(digest, 100, 1000) : first.createChallenge('register', digest, 100, 1000);
+    const other = new Database(join(home, 'loom.db'), { timeout: 0 });
+    try {
+      const second = new SessionStore(home, new SessionDatabase(other));
+      const read = persistence.read.bind(persistence);
+      const intercept = vi.spyOn(persistence, 'read').mockImplementationOnce(() => {
+        const value = read();
+        // Interleave another connection after the first has read, before it
+        // deletes. Without an enclosing write transaction both could spend it.
+        expect(db.inTransaction).toBe(true);
+        expect(() => kind === 'link' ? second.spendLink(code, 1001) : second.useChallenge(code, 'register', 1001)).toThrow(/locked/);
+        return value;
+      });
+      expect(kind === 'link' ? first.spendLink(code, 1001) : first.useChallenge(code, 'register', 1001)).toEqual({ secret: digest });
+      intercept.mockRestore();
+      expect(kind === 'link' ? second.spendLink(code, 1001) : second.useChallenge(code, 'register', 1001)).toBeNull();
+    } finally { other.close(); }
+  });
+
+  it('uses the supplied connection even when migration metadata and a home path are absent', () => {
+    const memory = new Database(':memory:');
+    try {
+      // The table layout is already installed; no migration metadata survives.
+      // An adapter that tries to open or migrate a home cannot use this store.
+      memory.exec('CREATE TABLE core_migrations (piece TEXT, number INTEGER, sql TEXT, PRIMARY KEY(piece, number))');
+      migrateHouseholdTables(memory);
+      memory.exec('DROP TABLE core_migrations');
+      const supplied = new SessionDatabase(memory);
+      supplied.change(f => { f.sessions.known = { issuedAt: 1, secret: digest.toString('hex') }; });
+      expect(supplied.get('sessions', 'known')).toEqual({ issuedAt: 1, secret: digest.toString('hex') });
+      expect(new HouseholdRows(memory, 'sessions').get('known')).toEqual({ issuedAt: 1, secret: digest.toString('hex') });
+      memory.close();
+      expect(() => supplied.read()).toThrow(/not open/);
+    } finally { if (memory.open) memory.close(); }
+  });
+
+  it('a busy database never delays last-use bookkeeping or loses another reader choice', () => {
+    const s = new SessionStore(home, persistence), id = s.create(digest, 1000);
+    const other = new Database(join(home, 'loom.db'), { timeout: 0 });
+    try {
+      other.exec('BEGIN IMMEDIATE');
+      s.touch(id, 2000);
+      expect(persistence.get('sessions', hash(id))?.seenAt).toBeUndefined();
+      expect(() => s.setPrefs({ sound: true }, 'pollock', 1000)).toThrow(/locked/);
+      other.exec('ROLLBACK');
+      s.setPrefs({ sound: false }, 'pollock', 1000);
+      s.touch(id, 2000);
+      expect(persistence.get('sessions', hash(id))?.seenAt).toBe(2000);
+      expect(s.prefs('pollock')).toMatchObject({ sound: false });
+    } finally { if (other.inTransaction) other.exec('ROLLBACK'); other.close(); }
+  });
+
+  it('restricts a formerly public database and its already-open sidecars before use', () => {
+    lease.close();
+    const older = new Database(join(home, 'loom.db'));
+    try {
+      older.pragma('journal_mode = WAL');
+      older.exec('CREATE TABLE legacy (id TEXT)');
+      for (const suffix of ['', '-wal', '-shm']) chmodSync(join(home, 'loom.db') + suffix, 0o666);
+      lease = openDb(home); db = lease.db;
+      for (const suffix of ['', '-wal', '-shm']) expect(statSync(join(home, 'loom.db') + suffix).mode & 0o777).toBe(0o600);
+    } finally { older.close(); }
   });
 
   it('caps sessions with the same preference for people over agents, and never stores cookie/link ids', () => {
