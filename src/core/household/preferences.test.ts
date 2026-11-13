@@ -110,3 +110,11 @@ it('sends only the subscribing member record, then publishes updates and removes
   expect(app.operations.call('direct', owner, 'household.removeMember', { person: 'pollock' }, 'remove')).toMatchObject({ ok: true });
   expect(await next()).toEqual({ kind: 'set', type: 'household.preferences', records: [] });
 });
+
+it('normalizes an unknown imported look without rewriting the stored choice', async () => {
+  const { app, readers } = await setup();
+  const reader = { prefs: { look: 'future-look', mode: 'light', tiling: false }, opened: { retained: 1 } };
+  readers.put('pollock', reader);
+  expect(app.operations.call('direct', member, 'household.preferences', {})).toEqual({ ok: true, value: { look: 'neon', mode: 'light', tiling: false, oneWindow: true } });
+  expect(readers.get('pollock')).toEqual(reader);
+});
