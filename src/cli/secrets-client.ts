@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { secretCommands } from '../pieces/secrets/commands.js';
+import { secretName, requestReason } from '../pieces/secrets/input.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
@@ -18,14 +19,25 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
     const arg = argv[i];
     if (arg.startsWith('--')) {
       const flag = arg.slice(2), key = spec.flags?.[flag];
-      if (!key || !spec.booleanFlags?.includes(flag) || Object.hasOwn(input, key)) return invalid();
-      input[key] = true;
+      if (!key || Object.hasOwn(input, key)) return invalid();
+      if (spec.booleanFlags?.includes(flag)) input[key] = true;
+      else {
+        const value = argv[++i];
+        if (value === undefined || value.startsWith('--')) return invalid();
+        if (spec.numberFlags?.includes(flag)) {
+          if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) return invalid();
+          input[key] = Number(value);
+        } else input[key] = value;
+      }
     } else {
       const key = spec.positional?.[position++];
       if (!key) return invalid();
       input[key] = arg;
     }
   }
+  if (spec.requiredFlags?.some(flag => input[spec.flags![flag]] === undefined)) return invalid();
+  if (spec.name === 'request' && !z.object({ job: z.uuid(), name: secretName, why: requestReason, minutes: z.number().int().positive().optional() }).strict().safeParse(input).success) return invalid();
+  if (spec.name === 'status' && !z.string().regex(/^q-(?:[0-9a-f]{8}|[0-9a-f-]{36})$/).safeParse(input.id).success) return invalid();
   if (position !== (spec.positional?.length ?? 0)) return invalid();
   if (input.name !== undefined && (typeof input.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(input.name))) return invalid();
   if (spec.name === 'policy') {
@@ -46,7 +58,7 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
     io.stdout(stdout); io.stderr(stderr); return code;
   };
   if (spec.operation === 'command') input.command = spec.name;
-  if (spec.write) input.writeId = randomUUID();
+  if (spec.write && spec.name !== 'request') input.writeId = randomUUID();
   if (spec.name === 'policy') delete input.writeId;
   if (spec.name === 'add' || spec.name === 'replace') {
     if (io.stdinIsTTY) return fail('Pipe a value on stdin, or use Settings for interactive entry', 2);
@@ -85,6 +97,14 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
         const result = metadata.safeParse(envelope.data.value);
         if (!result.success) return fail('Invalid daemon response');
         return emit(result.data.stdout, result.data.stderr, result.data.code);
+      }
+      if (spec.name === 'request' || spec.name === 'status') {
+        const schema = spec.name === 'request'
+          ? z.object({ id: z.string().regex(/^q-(?:[0-9a-f]{8}|[0-9a-f-]{36})$/), state: z.enum(['pending', 'allowed', 'denied', 'cancelled', 'revoked']) }).strict()
+          : z.object({ state: z.enum(['pending', 'granted', 'expired', 'denied', 'cancelled', 'revoked']) }).strict();
+        const result = schema.safeParse(envelope.data.value);
+        if (!result.success) return fail('Invalid daemon response');
+        return emit(JSON.stringify(result.data) + '\n', '', spec.name === 'request' && result.data.state === 'denied' ? 1 : 0);
       }
       const result = spec.operation === 'set' ? z.object({ saved: z.literal(true) }).strict().safeParse(envelope.data.value)
         : spec.operation === 'remove' ? z.object({ removed: z.literal(true) }).strict().safeParse(envelope.data.value)

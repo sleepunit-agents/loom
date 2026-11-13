@@ -11,7 +11,7 @@ policy and state rendering. This keeps the existing typed mutation operations
 unchanged instead of adding a second daemon write API solely for CLI rendering.
 This separate executable leaves existing `loom secrets` dispatch unchanged until
 the final move. Tokens supply actual household membership; environment variables
-cannot assert an owner, service or house. These owner commands require a current
+cannot assert an owner, service or house. The owner commands below require a current
 household owner, including metadata reads. A host's old same-user access is not
 remote authentication.
 
@@ -29,7 +29,8 @@ remote authentication.
 | `get --reveal`, `podman`, `issue` | Trusted runtime sink / service `withValue` | Dropped from the remote client; it has no value-read operation, host environment bypass or local injection subprocess. Production runtime sink wiring remains required. |
 | `policy houses-import` | Offline metadata importer | Bulk legacy source transfer stays offline, not a series of partial remote policy writes. |
 | `ui`, `ui page/act`, `api --json` | Settings and typed registry operations | Old manifest/page/envelope protocol retired. |
-| House `request`, `status`, granted `get` through old API | Authenticated runtime adapter | Not exposed by this owner client. Actual job/house/service binding and sink delivery remain required; no caller-supplied house is accepted. |
+| House `request`, `status` through old API | `request NAME --job UUID --why TEXT [--minutes N]` / `secrets.houseRequest`; `status q-ID` / `secrets.houseStatus` | Compact metadata JSON only; current central body authentication, described below. |
+| House granted `get` | Trusted Runtime sink | Remains required; no plaintext command or value-read operation is introduced. |
 
 Mutations use the same complete registry id, member-bound writeId and input on
 every transport retry. Add/remove stay unavailable in normal next mode until
@@ -1032,6 +1033,30 @@ The public acknowledgement contains only request ID and stored decision state.
 and returns only pending, granted, expired, denied, cancelled or revoked. Another
 house's request is indistinguishable from a missing request. Granted requires a
 surviving request-linked exact-scope grant. Both operations read only new stores.
-They replace the metadata request/status part of the old house API; granted-get,
-trusted Runtime sinks and typed house commands remain required on t-2208. No
-value-read endpoint or credential delivery is introduced here.
+They replace the metadata request/status part of the old house API. The typed
+`loom-secrets-client` binds them as:
+
+```
+loom-secrets-client request API --job UUID --why "needed for this job" --minutes 30
+loom-secrets-client status q-ID
+```
+
+`--job` is an explicit assertion, never inferred from `HOUSE_ID` or another
+environment variable. The token file must contain the actual central body
+credential. The daemon derives all authority and refuses stale, unbound or
+mismatched credentials. Request retries keep the same complete input and core
+operation ID; no writeId, agent, service, scope, sink or path is sent.
+
+Request stdout is compact `{id,state}` JSON plus a newline, with exit 1 for a
+stored denied decision and 0 for the other acknowledged states. Status stdout
+is compact `{state}` JSON plus a newline, with exit 0 for each known state.
+Missing or foreign requests exit 3; refused authentication exits 4; malformed
+arguments exit 2; transport failures and malformed acknowledgements exit 1.
+Provider error text and arbitrary response fields are never printed. The old
+house API's human request sentence (including grant expiry) and status list are
+replaced by these exact-request metadata projections; the existing owner `state`
+command keeps its legacy text contract. This change is deliberate: the new
+public operations expose no expiry, request list or secret value.
+
+Granted-get, trusted Runtime sinks, and typed granted-get remain required on
+t-2208. No value-read endpoint or credential delivery is introduced here.
