@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
+- Reduce first-page JavaScript while keeping app screens loaded on demand.
 
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
