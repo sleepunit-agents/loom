@@ -3,22 +3,14 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, type Viewer } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import { signin } from '../../core/signin/index.js';
-import { runtimeStore } from '../runtime/store.js';
-import { bodyPolicyExecutionHeld } from '../runtime/policy-store.js';
+import { runtimeHouseContext } from '../runtime/role.js';
 import { secretName, requestReason } from './input.js';
 import type { GrantRequest, Grant } from './role.js';
 
 export function installHouseSecrets(app: Foundation) {
-  const store = runtimeStore(app.db), auth = signin(app);
   const context = (viewer: Viewer) => {
-    const proof = auth.body(viewer);
-    if (!proof || viewer.kind !== 'agent' || proof.agent !== viewer.id) return;
-    const job = store.read('job', proof.job), box = job && store.read('box', job.box);
-    if (!job || job.agent !== proof.agent || job.service !== proof.service || job.imported || job.endedAt !== undefined
-      || !['starting', 'running', 'waiting'].includes(job.state) || !box || box.revokedAt !== undefined
-      || bodyPolicyExecutionHeld(app.db, job.agent)) return;
-    return { agent: job.agent, scope: { house: job.id, ...(job.service === undefined ? {} : { service: job.service }) } };
+    const bound = runtimeHouseContext(app, viewer);
+    return bound && {agent: bound.agent, scope: {house: bound.job, ...(bound.service === undefined ? {} : {service: bound.service})}};
   };
   const requireContext = (viewer: Viewer) => {
     const bound = context(viewer);
