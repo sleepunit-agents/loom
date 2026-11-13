@@ -48,6 +48,8 @@ it('imports exact source bytes, every document and revision, scoped metadata and
   const f=fixture(), before=readFileSync(f.sources.store), expected=f.read();
   expect(f.run()).toMatchObject({ok:true,imported:true});
   expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected))).toBe(true);
+  for(const table of ['runtime_boxes','runtime_jobs'])expect((f.app.db.prepare(`SELECT changed_at FROM ${table}`).all() as {changed_at:number}[]).map(row=>row.changed_at)).toEqual([Date.parse(at),Date.parse(at)]);
+  for(const table of ['runtime_settings','runtime_bindings'])expect(f.app.db.prepare(`SELECT changed_at FROM ${table}`).all()).toEqual([{changed_at:0}]);
   const jobs=f.app.db.prepare('SELECT record FROM runtime_jobs ORDER BY id').all() as {record:string}[];
   expect(jobs.map(r=>JSON.parse(r.record))).toMatchObject([{id:'h-1',member:'guest',project:'pond',state:'uncertain'},{id:'h-2',state:'done'}]);
   expect(JSON.stringify(jobs)).not.toMatch(/PRIVATE|OLD-CREDENTIAL/);

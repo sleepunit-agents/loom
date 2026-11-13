@@ -905,7 +905,7 @@ The coordinator first collects a fresh snapshot with both explicit roots:
 roots). Defaults in the **old** program were `~/.config/loom-box` and
 `~/.local/share/loom-box`. They are documentation, never importer defaults.
 Discovery of any Runtime input without both inventoried roots refuses; an empty
-data directory is explicitly recorded in the manifest. Snapshots predating this
+state or data directory is explicitly recorded in the manifest. An empty state root creates no invented local box. Snapshots predating this
 inventory require a fresh collection. Real snapshots/imports and rollout remain
 coordinator-only, with the owner's presence at the final move.
 

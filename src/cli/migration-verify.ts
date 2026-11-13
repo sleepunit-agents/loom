@@ -25,6 +25,16 @@ const verifiers = ['household','tasks','attention','clock','approvals','changes'
 function normalize(records: Row[]): string {
   return canonicalPlanValue(records.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key, (key==='body'||key==='record') && typeof value==='string' ? JSON.parse(value) : value]))).map(row=>canonicalPlanValue(row)).sort());
 }
+function compareTable(db:Database.Database,table:string,expected:Row[],filter?:(row:Row)=>boolean):Omit<VerificationDifference,'piece'>|undefined {
+  let actual:Row[]|null=null;
+  try {
+    const columns=table==='approvals_approvals'||table==='approvals_rules'?'rowid AS migration_order, *':'*';
+    actual=db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
+    if(filter)actual=actual.filter(filter);
+  } catch {/* A missing schema or invalid record is a difference. */}
+  let equal=false;try{equal=actual!==null&&normalize(actual)===normalize(expected);}catch{/* Corrupt JSON differs. */}
+  if(!equal)return {table,expected:expected.length,actual:actual?.length??null};
+}
 export async function verifyMigration(snapshot: string, destination: string, supplied?: unknown): Promise<VerificationReport> {
   const prepared = prepareMigrationPlan(snapshot,supplied), home = resolve(destination), plan = prepared.plan;
   if (separateDestination(prepared.root,home,plan).length) throw Error('Interrupted key publication');
@@ -61,17 +71,12 @@ export async function verifyMigration(snapshot: string, destination: string, sup
         const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now,join(checked.root,'home'));
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
-          let actual: Row[] | null = null;
-          try {
-            const columns = table==='approvals_approvals'||table==='approvals_rules' ? 'rowid AS migration_order, *' : '*';
-            actual = db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
-            if(table==='attention_asks' && (piece==='secrets'||plan.importers.secrets)) actual=actual.filter(row=>{
+          const filter=table==='attention_asks' && (piece==='secrets'||plan.importers.secrets) ? (row:Row)=>{
               const secret=JSON.parse(row.record as string).source?.kind==='piece' && JSON.parse(row.record as string).source?.id==='secrets';
               return piece==='secrets'?secret:!secret;
-            });
-          } catch { /* missing schema is a difference */ }
-          let equal = false; try { equal = actual!==null && normalize(actual)===normalize(rows); } catch { /* corrupt record is a difference */ }
-          if (!equal) report.differences.push({piece,table,expected:rows.length,actual:actual?.length??null});
+            }:undefined;
+          const difference=compareTable(db,table,rows,filter);
+          if(difference)report.differences.push({piece,...difference});
         }
         if (!receipt.completed.includes(piece)) report.differences.push({piece,table:'coordinator-receipt',expected:1,actual:0});
         if (piece==='household') {
@@ -118,10 +123,8 @@ export async function verifyRuntimeMigration(snapshot:string,home:string,options
       const plan={...prepared.plan,importers:{...prepared.plan.importers,runtime:{...input,options:JSON.parse(source.options)}}};
       const report:VerificationReport={status:'verified',snapshot:prepared.plan.snapshot,plan:migrationPlanChecksum(plan),pieces:['runtime'],missing:[],differences:[]};
       for(const [table,expected] of Object.entries(runtimeImportTables(source))) {
-        let actual:Row[]|null=null;
-        try{actual=db.prepare(`SELECT * FROM ${table}`).all() as Row[];}catch{/* A missing schema is a difference. */}
-        let equal=false;try{equal=actual!==null&&normalize(actual)===normalize(expected);}catch{/* Invalid JSON is a difference. */}
-        if(!equal)report.differences.push({piece:'runtime',table,expected:expected.length,actual:actual?.length??null});
+        const difference=compareTable(db,table,expected);
+        if(difference)report.differences.push({piece:'runtime',...difference});
       }
       prepareMigrationPlan(snapshot,prepared.plan);assertRuntimeCheckpointed(path);
       if(!before.equals(readFileSync(path)))throw Error('Runtime destination changed');

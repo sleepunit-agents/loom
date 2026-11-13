@@ -22,7 +22,7 @@ const object = (value: unknown): Row => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid runtime source object');
   return value as Row;
 };
-const map = (value: unknown): Row => value === undefined ? {} : object(value);
+const optionalObject = (value: unknown): Row => value === undefined ? {} : object(value);
 export const canonicalRuntimeSource = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonicalRuntimeSource).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([k,v]) => `${JSON.stringify(k)}:${canonicalRuntimeSource(v)}`).join(',')}}`;
@@ -64,7 +64,7 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
   }
   const json = (key: string): unknown => JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(files[key],'base64')));
   const state = files['state/state.json'] === undefined ? undefined : object(json('state/state.json'));
-  if (sources.state && !state) throw Error('Runtime state.json required');
+  // An explicitly inventoried empty root supplies no state; never invent a local box.
   if (state && state.v !== 1) throw Error('Unknown runtime state version');
   const conversations = Object.entries(files).filter(([key]) => /^data\/delivery\/conversations\/[^/]+\.json$/.test(key)).map(([key]) => {
     const value = object(json(key));
@@ -100,7 +100,7 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
 export function readRuntimeImport(sources: RuntimeImportSources, supplied: unknown, identities: RuntimeImportIdentities,
   open: (path: string) => Database.Database, controls: { afterSnapshot?: () => void } = {}) {
   const inventory = readRuntimeInventory(sources,open), options = runtimeImportOptions.parse(supplied);
-  const state = inventory.state ?? {}, boxes = map(state.boxes), houses = map(state.houses), agents = map(state.agents), primaries = map(state.primaries);
+  const state = inventory.state ?? {}, boxes = optionalObject(state.boxes), houses = optionalObject(state.houses), agents = optionalObject(state.agents), primaries = optionalObject(state.primaries);
   const exact = (mapping: object, ids: string[]) => {
     if (canonicalRuntimeSource(Object.keys(mapping).sort()) !== canonicalRuntimeSource(ids.sort())) throw Error('Runtime mapping must cover every source id exactly');
   };
@@ -115,14 +115,14 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
   };
   const expected: { [K in keyof RuntimeRecords]: RuntimeRecords[K][] } = {box:[],job:[],settings:[],binding:[]};
   for (const [id,raw] of Object.entries(boxes)) {
-    const b = object(raw), owner = options.boxes[id];
+    const box = object(raw), owner = options.boxes[id];
     if (!owner || !identities.members.includes(owner)) throw Error('Runtime box owner mapping required');
     // Existing ownership may not be silently rewritten by the migration map.
-    if (b.owner !== undefined && b.owner !== owner) throw Error('Runtime box owner differs from source');
-    if(b.mayHost!==undefined&&b.mayHost!=='*')for(const agent of z.array(identity).parse(b.mayHost))knownAgent(agent);
-    for(const agent of z.array(identity).parse(b.lentTo??[]))knownAgent(agent);
-    if(b.local&&b.reportOnly)throw Error('Local runtime box cannot be report-only');
-    expected.box.push(records.box.parse({id,name:b.name??id,owner,local:b.local??false,mayHost:b.mayHost??'*',lentTo:b.lentTo??[],facts:b.facts??[],labels:b.labels??[],alwaysOn:b.local?true:b.alwaysOn??false,reportOnly:b.reportOnly??false,createdAt:stamp(b.created),...(b.lastSeen ? {lastSeen:stamp(b.lastSeen)}:{}),...(b.revoked ? {revokedAt:stamp(b.revoked)}:{})}));
+    if (box.owner !== undefined && box.owner !== owner) throw Error('Runtime box owner differs from source');
+    if(box.mayHost!==undefined&&box.mayHost!=='*')for(const agent of z.array(identity).parse(box.mayHost))knownAgent(agent);
+    for(const agent of z.array(identity).parse(box.lentTo??[]))knownAgent(agent);
+    if(box.local&&box.reportOnly)throw Error('Local runtime box cannot be report-only');
+    expected.box.push(records.box.parse({id,name:box.name??id,owner,local:box.local??false,mayHost:box.mayHost??'*',lentTo:box.lentTo??[],facts:box.facts??[],labels:box.labels??[],alwaysOn:box.local?true:box.alwaysOn??false,reportOnly:box.reportOnly??false,createdAt:stamp(box.created),...(box.lastSeen ? {lastSeen:stamp(box.lastSeen)}:{}),...(box.revoked ? {revokedAt:stamp(box.revoked)}:{})}));
   }
   if (expected.box.filter(b=>b.local).length > 1) throw Error('Multiple runtime local boxes');
   const settingsAgents = [...new Set([...Object.keys(agents),...Object.keys(primaries)])].sort();
@@ -138,11 +138,11 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
   }
   const terminal = new Set(['done','failed','stopped','lost']);
   for (const [id,raw] of Object.entries(houses)) {
-    const h = object(raw), agent = knownAgent(h.agent), box = text(h.box);
-    if (h.id !== id || !Object.hasOwn(boxes,box)) throw Error('Invalid runtime job identity or box');
-    if (!['wanted','starting','running','waiting','stopping','done','failed','stopped','lost','uncertain'].includes(text(h.state))) throw Error('Unknown runtime job state');
+    const house = object(raw), agent = knownAgent(house.agent), box = text(house.box);
+    if (house.id !== id || !Object.hasOwn(boxes,box)) throw Error('Invalid runtime job identity or box');
+    if (!['wanted','starting','running','waiting','stopping','done','failed','stopped','lost','uncertain'].includes(text(house.state))) throw Error('Unknown runtime job state');
     // No imported job is claimable. Active work needs authoritative runner reconciliation.
-    expected.job.push(records.job.parse({id,agent,...scope(options.jobs[id]),box,runner:box,title:'Imported runtime work',state:terminal.has(String(h.state))?h.state:'uncertain',imported:{history:h.writtenOff?'discard':'unknown'},createdAt:stamp(h.created),...(terminal.has(String(h.state))&&h.updated?{endedAt:stamp(h.updated)}:{}),...(h.service?{service:h.service}:{})}));
+    expected.job.push(records.job.parse({id,agent,...scope(options.jobs[id]),box,runner:box,title:'Imported runtime work',state:terminal.has(String(house.state))?house.state:'uncertain',imported:{history:house.writtenOff?'discard':'unknown'},createdAt:stamp(house.created),...(terminal.has(String(house.state))&&house.updated?{endedAt:stamp(house.updated)}:{}),...(house.service?{service:house.service}:{})}));
   }
   for (const c of inventory.conversations) {
     const id = text(c.conversation), audience = scope(options.conversations[id]);

@@ -14,6 +14,7 @@ import { run } from './migrate.js';
 import { createFoundation } from '../core/app.js';
 import { importHousehold } from './household-importer.js';
 import type { IOStreams } from './io.js';
+import { acquireHttpLock } from '../transport/http-lock.js';
 vi.mock('node:fs',async original=>{
   const actual=await original<typeof import('node:fs')>();
   return {...actual,openSync:vi.fn(actual.openSync),readFileSync:vi.fn(actual.readFileSync),readdirSync:vi.fn(actual.readdirSync),lstatSync:vi.fn(actual.lstatSync)};
@@ -114,6 +115,26 @@ it('does not open or enumerate CLI credentials or omitted environment-default ro
   for(const spy of [open,read,list,stat])expect(spy.mock.calls.some(([p])=>String(p).startsWith(f.state)||String(p).startsWith(f.data))).toBe(false);
   await createSnapshot(f.old,join(f.root,'credential-exclusion'),undefined,{runtime:f.state,'runtime-data':f.data});
   for(const spy of [open,read,list])expect(spy.mock.calls.some(([p])=>String(p).startsWith(join(f.data,'logins')))).toBe(false);
+});
+it('standalone import and verify refuse a held daemon gate and uncheckpointed destination WAL',async()=>{
+  const f=await fixture();const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);app.close();
+  const mapping=join(f.root,'mapping.json');writeFileSync(mapping,JSON.stringify(f.options));
+  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
+  const args=['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping];
+  const release=acquireHttpLock(f.home);
+  try {expect(await run(args,io)).toBe(1);await expect(verifyRuntimeMigration(f.snapshot,f.home,f.options)).rejects.toThrow();}
+  finally{release();}
+  const writer=new Database(join(f.home,'loom.db'));writer.pragma('journal_mode=WAL');writer.exec('CREATE TABLE uncheckpointed(value TEXT); INSERT INTO uncheckpointed VALUES (\'committed WAL\')');
+  try {expect(await run(args,io)).toBe(1);await expect(verifyRuntimeMigration(f.snapshot,f.home,f.options)).rejects.toThrow('checkpointed');}
+  finally{writer.close();}
+});
+it('discovers, imports and independently verifies explicitly empty state and data roots without invented defaults',async()=>{
+  const f=await fixture(),state=join(f.root,'empty-state'),data=join(f.root,'empty-data'),snapshot=join(f.root,'empty-snapshot'),home=join(f.root,'empty-new');
+  mkdirSync(state);mkdirSync(data);await createSnapshot(f.old,snapshot,undefined,{runtime:state,'runtime-data':data});
+  const prepared=prepareMigrationPlan(snapshot);expect(prepared.plan.importers.runtime.options).toEqual({boxes:{},jobs:{},conversations:{}});
+  expect(await runMigrationAll(snapshot,home)).toMatchObject({status:'complete'});
+  expect(await verifyMigration(snapshot,home)).toMatchObject({status:'verified'});
+  const db=new Database(join(home,'loom.db'),{readonly:true});try{expect(db.prepare('SELECT * FROM runtime_boxes').all()).toEqual([]);}finally{db.close();}
 });
 it('never probes omitted runtime defaults and refuses supplied empty roots',async()=>{
   const f=await fixture(),target=join(f.root,'inventory-only');
