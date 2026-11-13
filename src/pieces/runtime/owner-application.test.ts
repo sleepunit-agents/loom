@@ -5,8 +5,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { signin, hash } from '../../core/signin/index.js';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { fixture } from '../../fixture.js';
+import { FakeClock, type Viewer, type Sharing, type Db } from '../../core/index.js';
+import { builtinServices } from '../../core/services.js';
+import { fixture, fixtureSharing } from '../../fixture.js';
 import { provenanceStore } from './provenance-store.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { installRuntime } from './index.js';
@@ -16,10 +17,11 @@ import { owningApprovalCards } from '../approvals/role.js';
 const closes:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
-async function setup(custom?: {credentials?:RuntimeCredentials}){
+async function setup(custom?: {credentials?:RuntimeCredentials},access?:Sharing){
  const home=mkdtempSync(join(tmpdir(),'runtime-owner-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));fixture(home);
- const clock=new FakeClock();
- const open=async()=>{const app=await startLoom({home,clock,next:true,stdout:()=>{},...(custom?{install(app){installRuntime(app.db,app.operations,app.live,()=>new SharingDatabase(app.db,home).sharing(),custom);}}:{})});closes.push(app.close);return app;};
+ const clock=new FakeClock();let dbRef:Db;
+ const sharing=access?()=>({...access,services:builtinServices(dbRef)}):undefined;
+ const open=async()=>{const app=await startLoom({home,clock,next:true,stdout:()=>{},...(sharing?{sharing}:{}),install(app){dbRef=app.db;if(custom)installRuntime(app.db,app.operations,app.live,sharing??(()=>new SharingDatabase(app.db,home).sharing()),custom);}});closes.push(app.close);return app;};
  const app=await open(),store=runtimeStore(app.db);
  app.db.transaction(()=>{
   store.put('box',{id:'r1',name:'remote',owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:1,lastSeen:clock.now()-700_000},1);
@@ -54,8 +56,8 @@ it('rejects body-manufactured application fields, survives restart and applies t
  expect(runtimeStore(app.db).read('job','covered')?.writtenOff?.approval).toBe(approval);
 });
 
-async function resetSetup(){
- const f=await setup(),conversation='cv-123456789abc',p=provenanceStore(f.app.db);
+async function resetSetup(access?:Sharing){
+ const f=await setup(undefined,access),conversation='cv-123456789abc',p=provenanceStore(f.app.db);
  f.app.db.transaction(()=>{
   f.store.put('binding',{id:conversation,agent:'art',venue:'fixture',place:'room',job:'covered',home:{harness:'claude',slot:'old-session'}},1);
   for(const id of ['covered','later']){const {changedAt:_,...j}=f.store.read('job',id)!;f.store.put('job',{...j,conversation},1);}
@@ -197,4 +199,24 @@ it('enforces the description character budget independently of the twelve-row bo
  const f=await resetSetup();f.app.db.transaction(()=>{f.p.consumed(f.conversation,['shown-relay','shown-wake','named-wake']);for(let n=0;n<20;n++)f.p.note(f.conversation,'art',{key:`wake-${n}`,sender:{kind:'schedule',for:'-'},at:n+10},['jonathan']);})();
  f.ask();const request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
  expect(request.shown.length).toBeLessThan(12);expect(request.shown.reduce((sum:number,r:{words:string})=>sum+r.words.length+2,0)).toBeLessThanOrEqual(650);
+});
+
+it('accepts the maximum valid outer receipt id using a bounded nested receipt key',async()=>{
+ const f=await resetSetup();expect(f.call('runtime.askPrincipalReset',{agent:'art',conversation:f.conversation},owner,'x'.repeat(200))).toMatchObject({ok:true});
+});
+it.each(['complete','inherited','subset','changed'])('enforces %s household ownership at filing and Allow',async(mode)=>{
+ const access=fixtureSharing();access.members.second={owner:true,agents:mode==='complete'||mode==='changed'?['art']:[]};
+ if(mode==='inherited')access.members.jonathan.agents=[];
+ const f=await resetSetup(access);
+ if(mode==='subset'){expect(f.call('runtime.askPrincipalReset',{agent:'art',conversation:f.conversation}).ok).toBe(false);return;}
+ const approval=f.ask();if(mode==='changed')access.members.second.agents=[];
+ expect(f.call('approvals.answer',{id:approval,action:'allow'}).ok).toBe(mode!=='changed');
+});
+it('preserves unrelated agents and boxes and their central body credentials',async()=>{
+ const f=await setup(),auth=signin(f.app);
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('box','r1')!;f.store.put('box',{...b,id:'r2',name:'other'},1);
+ for(const [id,agent,box] of [['other-agent','mark','r1'],['other-box','art','r2']])f.store.put('job',{id,agent,box,runner:box,title:id,state:'running',createdAt:1},1);
+ auth.tokens.replace({v:1,tokens:[['other-agent','mark'],['other-box','art']].map(([id,agent])=>({role:`agent:${agent}@${id}`,sha256:hash(id),label:id,created:new Date(f.clock.now()).toISOString()}))},{});})();
+ const approval=f.ask();expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});
+ for(const id of ['other-agent','other-box'])expect(f.store.read('job',id)?.state).toBe('running');for(const t of auth.tokens.document()!.tokens)expect(t.revoked).toBeUndefined();
 });

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { jobHeard } from './heartbeat.js';
 /** Owning requests and owner answers share the foundation transaction. The
  * application-only operation is guarded by a closure, never body-supplied card
  * fields. No host IO or dispatch occurs before commit.
@@ -25,7 +27,7 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
   return row?JSON.parse(row.record) as OwnerRequest:undefined;
  };
  const put=(request:OwnerRequest)=>db.prepare('INSERT INTO runtime_owner_requests VALUES (?,?) ON CONFLICT(target) DO UPDATE SET record=excluded.record').run(request.target,JSON.stringify(request));
- const heard=(job:string)=>(db.prepare('SELECT heard_at FROM runtime_job_heartbeats WHERE job=?').get(job) as {heard_at:number}|undefined)?.heard_at;
+ const heard=(job:string)=>jobHeard(db,job);
  const owner=(v:Parameters<typeof mayAct>[0])=>mayAct(v,{type:'runtime.box'},sharing(),'household');
  const revoke=(job:string,now:number)=>{
   if(!credentials)throw new OperationError('unavailable','Central credential revocation is not installed');
@@ -59,7 +61,7 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
     shown.push({key:row.key,words});used+=words.length+2;
    }
    const details=`Conversation ${input.conversation}. No other person is named in it. Waiting and counted as yours if allowed: ${shown.length?shown.map(r=>r.words).join('; '):'nothing'}. Later arrivals are noted normally.`;
-   const r=approvals.call('request',{who:{agent:input.agent,where:"loom's runtime (runtime)"},for:'owner'},{kind:'principal-reset',target,ask:'Count this conversation as your work from now on?',why:'Loom cannot say that the conversation is yours.',if_yes:'The listed waiting work counts as yours and the previous body and session end.',if_no:'Nothing changes.',details},`runtime-reset:${target}:${ctx.receipt!.id}`);
+   const r=approvals.call('request',{who:{agent:input.agent,where:"loom's runtime (runtime)"},for:'owner'},{kind:'principal-reset',target,ask:'Count this conversation as your work from now on?',why:'Loom cannot say that the conversation is yours.',if_yes:'The listed waiting work counts as yours and the previous body and session end.',if_no:'Nothing changes.',details},`runtime-reset:${target}:${createHash('sha256').update(ctx.receipt!.id).digest('hex')}`);
    if(!r.ok)throw new OperationError(r.code,r.message);
    const card=r.value as Approval;
    if(card.kind!=='principal-reset'||card.target!==target||card.details!==details||card.state!=='pending'||card.for!=='owner'||card.who.agent!==input.agent)throw new OperationError('conflict','The original card does not match this request');

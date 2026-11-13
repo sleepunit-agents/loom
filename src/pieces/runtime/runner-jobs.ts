@@ -1,3 +1,4 @@
+import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
 import { assignedRunner } from './control.js';
 /** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
@@ -71,7 +72,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     run(ctx, { job: id, state, build, exit, log }) {
       const before = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
-      db.prepare('INSERT INTO runtime_job_heartbeats(job,heard_at) VALUES (?,?) ON CONFLICT(job) DO UPDATE SET heard_at=excluded.heard_at').run(id,ctx.now);
+      hearJob(db,id,ctx.now);
       if (before.conversation) {
         const rows = db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(id) as {id:string}[];
         provenanceStore(db).consumed(before.conversation, rows.map(row=>row.id));
