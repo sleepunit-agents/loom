@@ -75,6 +75,8 @@ it('rejects inconsistent secret/socket aliases and scope typos; accepts equal re
 it('validates bounded structured grants and refuses values/authority injected as unknown fields', async () => {
   const f = await setup();
   const invalid = [
+    { secrets: 'github=github-store' }, { ports: '7401' }, { tailnets: 'fleet=/run/tailscaled.sock' },
+    { logins: 'claude' }, { scopes: 'github=owner' }, { steers: 'patrick=pond' },
     { nested: 'yes' }, { gpu: 1 }, { repoSecret: 'sub:anthropic' }, { repoSecret: 'x'.repeat(65) },
     { secrets: { name: 'secret value with spaces' } }, { secrets: Object.fromEntries(Array.from({ length: 33 }, (_, n) => [`a${n}`, 'store'])) },
     ...[{ ip: '256.1.1.1', port: 7401 }, { ip: '::1', port: 7401 }, { ip: '127.0.0.1', port: 1023 }, { ip: '0.0.0.0', port: 65536 }, { ip: '127.0.0.1', port: 7401.5 }, { ip: '127.0.0.1', port: 7401, extra: true }].map(port => ({ ports: [port] })),
@@ -124,6 +126,8 @@ it('snapshots the repository secret reference on claim and excludes builds after
   expect(f.call({ repoSecret: 'repo-two' }).ok).toBe(true);
   expect(configuredBuild(job, configuredHouse(f.store.read('settings', 'art')))).toBeUndefined();
   expect(f.call({}).ok).toBe(true);
+  expect(f.store.read('settings', 'art')?.grants?.repoSecret).toBeUndefined();
+  expect(configuredHouse(f.store.read('settings', 'art'))).toEqual({ repo: '/art', houseFile: 'house/house.json' });
   expect(configuredBuild(job, configuredHouse(f.store.read('settings', 'art')))).toBeUndefined();
   expect(f.app.operations.call('direct', runner, 'runtime.claimJob', { job: 'j' }, 'claim').ok).toBe(true);
   expect(f.store.read('job', 'j')?.made?.repoSecret).toBe('repo-one');
