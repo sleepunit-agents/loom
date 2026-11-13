@@ -273,3 +273,53 @@ it('binds a next bridge lifetime to actual persistent holder generation and hous
   for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])
     expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain('BRIDGE-PRIVATE');
 });
+it('runs durable bridge inspection and split sends on the persistent holder, household authority and current service grants',async()=>{
+  const s=await setup(),clock=new FakeClock(),app=await startLoom({home:s.appHome,next:true,clock,secretAuthority:s.authority,stdout:()=>{}});
+  const holder=await startPersistentHolder(s.file);closes.push(async()=>{await holder.close();await app.close();});
+  const mutation=localHolderMutations(s.client),source=localSecretSource({...s.client,socket:s.config.read.socket});
+  const sentinel='ACTUAL-BRIDGE-ADAPTER-VALUE';
+  await expect(mutation.set({member:'pollock',writeId:randomUUID()},'BRIDGE',Buffer.from(sentinel),'add')).rejects.toThrow();
+  await mutation.set({member:'jonathan',writeId:randomUUID()},'BRIDGE',Buffer.from(sentinel),'add');
+  const {SharingDatabase}=await import('../../core/household/sharing.js');
+  const {installSecretServices,secretUseRole}=await import('./service.js');
+  const {venueAdapters}=await import('../bridges/adapters.js');
+  const {Bridges}=await import('../bridges/engine.js');
+  const {venueSchema}=await import('../bridges/model.js');
+  const {installEffects}=await import('../../core/effects.js');
+  const sharing=()=>new SharingDatabase(app.db,s.appHome).sharing();
+  installSecretServices(app.db,app.operations,sharing);
+  const op=(name:string,input:unknown)=>app.operations.call('direct',{kind:'member',id:'jonathan'},name,input,randomUUID());
+  const venue=venueSchema.parse({id:'adapter',platform:'discord',workspace:'100',bot:'200',agent:'art',tokenSecret:'BRIDGE'});
+  expect(op('secrets.describe',{name:'BRIDGE',description:'Bridge'}).ok).toBe(true);
+  expect(op('bridges.putVenues',venue).ok).toBe(true);
+  expect(op('bridges.putLinks',{id:'owner',platform:'discord',workspace:'100',user:'300',person:'jonathan'}).ok).toBe(true);
+  expect(op('bridges.putRoutes',{id:'route',platform:'discord',workspace:'100',channel:'400',primary:'art'}).ok).toBe(true);
+  const requests:string[]=[],posts:string[]=[];
+  let revoke=false;
+  const request:typeof fetch=async(url,init)=>{
+    expect(init?.headers).toMatchObject({Authorization:`Bot ${sentinel}`});requests.push(String(url));
+    if(String(url).endsWith('/messages')) {posts.push(JSON.parse(String(init?.body)).content);if(revoke)expect(op('secrets.revokeService',{service:'bridges',name:'BRIDGE'}).ok).toBe(true);return Response.json({id:'500',channel_id:'400'});}
+    return Response.json(String(url).endsWith('@me')?{id:'200',bot:true}:String(url).endsWith('guilds/100')?{id:'100'}:{id:'400',type:0,guild_id:'100'});
+  };
+  const marker=await source.generation();
+  const adapters=venueAdapters(secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live),{request,lifetime:()=>marker,beforeRead:()=>true});
+  // Explicit fake only for the bridge runtime and its effect gate; platform IO is fake HTTP.
+  const deliveries:string[]=[];let admission=0,expireAt:number|undefined;
+  const effects:ReturnType<typeof installEffects>={status:()=>undefined,onReleased:()=>()=>{},beforeOutside:()=>true,finish:()=>{}};
+  const engine=new Bridges(app,clock,{admit:async()=>{if(++admission===3 && expireAt!==undefined)clock.advance(expireAt-clock.now());return 'allow';},deliver:async i=>{deliveries.push(i.id);return 'delivered';},stop:async()=>{}},adapters,effects);
+  try {
+    await engine.receive(venue.id,{id:'600',channel:'400',user:'300',dm:false,at:'2026-11-13T18:00:00Z',text:'hello',mentions:[]});await engine.flush();expect(requests).toEqual([]);expect(deliveries).toEqual([]);
+    expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE'}).ok).toBe(true);
+    await engine.flush();expect(deliveries).toHaveLength(1);
+    engine.reply({id:'whole',incomingId:deliveries[0],text:'x'.repeat(2100)});await engine.flush();expect(posts.map(p=>p.length)).toEqual([2000,100]);
+    expect(app.db.prepare('SELECT state,remote_id FROM bridges_outbox WHERE id=?').get('whole')).toEqual({state:'sent',remote_id:'500'});
+    revoke=true;engine.reply({id:'partial',incomingId:deliveries[0],text:'y'.repeat(2100)});await engine.flush();expect(posts.map(p=>p.length)).toEqual([2000,100,2000]);
+    expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('partial')).toEqual({state:'uncertain'});await engine.flush();expect(posts).toHaveLength(3);
+    revoke=false;expireAt=clock.now()+1000;admission=0;expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE',expiresAt:expireAt}).ok).toBe(true);
+    engine.reply({id:'expiry',incomingId:deliveries[0],text:'must not post after final admission expiry'});await engine.flush();expect(admission).toBe(3);expect(posts).toHaveLength(3);expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('expiry')).toEqual({state:'uncertain'});
+    // Expiry also ends inspected intake while runtime admission is pending.
+    expireAt=clock.now()+1000;admission=2;expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE',expiresAt:expireAt}).ok).toBe(true);
+    await engine.receive(venue.id,{id:'601',channel:'400',user:'300',dm:false,at:'2026-11-13T18:01:00Z',text:'do not deliver after expiry',mentions:[]});await engine.flush();expect(deliveries).toHaveLength(1);expect(app.db.prepare("SELECT count(*) AS n FROM bridges_inbox WHERE state='pending'").get()).toEqual({n:1});
+    for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(sentinel);
+  } finally {await engine.close();}
+});

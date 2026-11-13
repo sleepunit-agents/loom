@@ -916,3 +916,26 @@ Remaining in this workflow: owner-facing local filing/recovery scheduling contro
 A member window never manufactures a body Caller. New requestLocal/recoverLocal
 writes remain exclusive to an authentically bound agent body. The Clock decision
 reader does not claim to schedule or dispatch local work.
+
+### Owning-window recovery seam
+
+`clock.scheduleLocalFromWindow` is offered only on authenticated member-window
+sockets. It accepts `{approval, mode, when, standing?}` and returns only `{id,due}`.
+The member must be the saved private filing's member and still a household owner
+with give-work access to that agent. The original immutable Caller (including
+people, conversation, project and service), prompt and complete note are passed
+unchanged through the existing one-shot or standing recovery role. No agent token
+becomes an owner, no member is dropped, and legacy owner/no-people filings cannot
+be recovered through this window operation. This is a fresh owner scheduling
+action on their own saved filing, not a proof that the window is the old body.
+
+Current member, agent/project and Clock service operation policy is checked before
+cached or durable acknowledgements. Scheduling, approval use and the window's
+durable acknowledgement commit together; retries beyond the core receipt lifetime
+return that acknowledgement without another use. The original approval's exact
+words, expiry, Deny, standing Off, capacity and outstanding-target checks remain
+in the existing owning recovery roles. Window wrapper receipts are omitted from
+export. No migration or Runtime launch is added.
+
+This is a backend seam only. Clock app filing and recovery scheduling controls
+remain unfinished, and actual private Runtime delivery remains held.

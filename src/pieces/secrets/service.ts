@@ -14,6 +14,8 @@ export interface SecretValueSource { read(name: string): Promise<Uint8Array> }
 export interface SecretUse {
   withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T>;
 }
+/** Trusted immediate authority check for credential callbacks that await other roles. */
+export interface SecretUseAuthority extends SecretUse { mayUse(name: string): boolean }
 /** Separate owner-only service grants use the existing central grants list. */
 export function installSecretServices(db: Db, operations: Operations, sharing: () => Sharing) {
   const input = z.object({ service: secretAgent, name: secretName }).strict();
@@ -44,12 +46,12 @@ export function installSecretServices(db: Db, operations: Operations, sharing: (
  * The callback is trusted credential-using code: it must not log, persist or retain
  * the token (including transformed copies). JS strings cannot be securely erased.
  */
-export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => Sharing, viewer: Viewer, now: () => number, live: Live): SecretUse {
+export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => Sharing, viewer: Viewer, now: () => number, live: Live): SecretUseAuthority {
   const caller = {...viewer};
   const allowed = (name: string) => caller.kind === 'service' && Object.hasOwn(sharing().services, caller.id)
     && grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
     && !!db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name);
-  return { async withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T> {
+  return { mayUse: name => secretName.safeParse(name).success && allowed(name), async withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T> {
     if (!secretName.safeParse(name).success || !allowed(name)) throw new OperationError('denied', 'Secret use denied');
     let bytes: Uint8Array | undefined;
     let attempt: ReturnType<typeof beginSecretUsage> | undefined;

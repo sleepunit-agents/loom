@@ -164,12 +164,12 @@ it('permanently invalidates on the public credential generation even if current 
 });
 it('replays a normalized commit after failed raw consumption through restart without duplicate delivery',async()=>{
  const f=await fixture();const effects=f.app.effects!;const delivered:Incoming[]=[];
- const engine=new Bridges(f.app,f.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},{may:async()=>true,get:async()=> 'fixture'},[{platform:'discord',connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],effects);closes.unshift(()=>engine.close());
+ const engine=new Bridges(f.app,f.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},[{platform:'discord',current:()=>()=>true,connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],effects);closes.unshift(()=>engine.close());
  await f.add();f.app.db.exec("CREATE TRIGGER fail_consume BEFORE UPDATE ON bridges_discord_receipts BEGIN SELECT RAISE(ABORT,'fail'); END;");
  const first=f.drain({receive:engine.receive.bind(engine)});await first.flush();await engine.flush();expect(delivered).toHaveLength(1);expect(f.inbox.pending()).toHaveLength(1);
  await first.close();await engine.close();f.app.db.exec('DROP TRIGGER fail_consume');await f.close();
  const g=await fixture(f.home);const nextEffects=g.app.effects!;
- const next=new Bridges(g.app,g.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},{may:async()=>true,get:async()=> 'fixture'},[{platform:'discord',connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],nextEffects);closes.unshift(()=>next.close());
+ const next=new Bridges(g.app,g.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},[{platform:'discord',current:()=>()=>true,connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],nextEffects);closes.unshift(()=>next.close());
  await g.drain({receive:next.receive.bind(next)}).flush();await next.flush();expect(delivered).toHaveLength(1);expect(g.inbox.pending()).toEqual([]);expect(g.app.db.prepare('SELECT count(*) AS n FROM bridges_inbox').get()).toEqual({n:1});
 });
 

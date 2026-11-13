@@ -160,7 +160,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         changes = configuredSecretHolder(values['secret-holder']);
       } catch { io.stderr('Invalid local secret holder configuration\n'); return 2; }
     }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, secretAuthority });
+    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, bridges:changes ? {source:changes.source} : undefined, secretAuthority });
     io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };

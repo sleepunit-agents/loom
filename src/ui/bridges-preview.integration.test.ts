@@ -29,11 +29,11 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
   const deliveries: Incoming[] = [];
   let posts = 0;
   const adapter: VenueAdapter = {
-    platform: 'discord', async connect() { return { close() {} }; }, async inspect() { return 'allow'; },
+    platform: 'discord', current:()=>()=>true, async connect() { return { close() {} }; }, async inspect() { return 'allow'; },
     async send() { posts++; throw new Error('Fake uncertain transport'); },
   };
   const engine = new Bridges(loom, clock, { async admit() { return 'allow'; }, async deliver(input) { deliveries.push(input); return 'delivered'; }, async stop() {} },
-    { async may() { return true; }, async get() { return 'not-a-credential'; } }, [adapter], loom.effects!);
+    [adapter], loom.effects!);
   const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   try {
     await engine.sync();

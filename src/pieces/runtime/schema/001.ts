@@ -30,6 +30,10 @@ CREATE TABLE runtime_import_sources (path TEXT PRIMARY KEY, content TEXT NOT NUL
 CREATE TABLE runtime_import_documents (collection TEXT NOT NULL, key TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(collection,key));
 CREATE TABLE runtime_import_revisions (id INTEGER PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
 ` }, { number: 7, sql: `
+-- Original accepted nonconversation start intent and bounded attempt chain.
+-- Private: no words or caller identity in live records or operation receipts.
+CREATE TABLE runtime_start_attempts (root TEXT PRIMARY KEY REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)));
+` }, { number: 8, sql: `
 -- Bounded opaque byte archive; never live records or executable authority.
 CREATE TABLE runtime_import_chunks (path TEXT NOT NULL REFERENCES runtime_import_sources(path), part INTEGER NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(path,part));
 ` }];
