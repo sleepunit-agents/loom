@@ -81,7 +81,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   const nowInput = z.union([idInput.strict(), z.object({ agent: text, note: z.string().max(100_000).optional() }).strict()]);
   register('now', nowInput, true, (v, i) => 'id' in i
-    ? !!wake(db, i.id) && act(v, get(i.id), true)
+    ? !!wake(db, i.id) && act(v, get(i.id), true) && create(v, get(i.id))
     : act(v, { agent: i.agent, note: '' }, true) && create(v, { agent: i.agent, note: '' }), (ctx, i) => {
     if (!('id' in i)) return make(ctx, { agent: i.agent, note: i.note || 'woken now from loom',
       prompt: `Woken now: ${ctx.viewer.id} asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.` }, ctx.now, { bypassPause: true });
@@ -116,7 +116,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
   });
-  register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
+  register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
     if (!s.laneDetails) oneOffRoom(s.agent);
     return make(ctx, s, ctx.now, { bypassPause: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
@@ -168,7 +168,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
     w.state = 'firing'; w.attempt = i.attempt; saveWake(ctx, w); event(ctx, w, 'intent');

@@ -62,6 +62,30 @@ describe('durable daemon clock', () => {
     const w = app.value('now', { agent: 'art' }); app.clock.advance(0); await settled();
     expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: 'staging' });
   });
+  it('requires target give-work permission for ordinary schedule run-now', async () => {
+    const access = structuredClone(sharing);
+    access.members.otherOwner = { owner: true, agents: [] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Daily', note: 'daily' });
+    const before = wakes(app.db);
+    expect(app.call('scheduleRun', { id: 'daily' }, { kind: 'member', id: 'otherOwner' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(wakes(app.db)).toEqual(before);
+    expect(app.call('now', { id: before[0].id }, { kind: 'member', id: 'otherOwner' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.call('scheduleRun', { id: 'daily' }).ok).toBe(true);
+  });
+  it('holds member work when target ownership is revoked while project visibility remains', async () => {
+    const access = structuredClone(sharing);
+    access.members.helper = { owner: false, agents: ['art'] };
+    access.projects.pond.members.push('helper');
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
+    const app = await loom({ runtime: { startBody } }, home(), new FakeClock(), access);
+    const w = app.value('in', { agent: 'art', project: 'pond', prompt: 'X', note: 'x', when: '1m' }, { kind: 'member', id: 'helper' });
+    access.members.helper.agents = [];
+    expect(app.value<Wake[]>('list', {}, { kind: 'member', id: 'helper' }).map(w => w.id)).toContain(w.id);
+    app.clock.advance(60_000); await settled();
+    expect(startBody).not.toHaveBeenCalled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: 'permission' });
+  });
   it('shares the one-off cap between timed wakes, parking and ordinary run-now', async () => {
     const app = await loom({ approvals: { check: () => ({ state: 'pending' }), subscribe: () => () => {} } });
     const schedule = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Daily', note: 'daily' });
