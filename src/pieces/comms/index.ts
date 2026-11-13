@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
+import { about, attachedText } from './about.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
@@ -250,9 +251,9 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,
-  input:z.object({agent:id,id:clientId,text,project:id.optional()}),output:ack,
+  input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
-  prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
+  prepare:async i=>{const text=attachedText(i.text,i.about,clock.now());return {words:await key.seal(JSON.stringify({text})),hash:hashText(text)};},
   run(ctx,i,raw) {
    const p=raw as {words:Buffer;hash:string};
    const existing=(db.prepare('SELECT record FROM comms_threads WHERE member=?').all(ctx.viewer.id) as {record:string}[]).map(r=>JSON.parse(r.record) as Thread).find(t=>t.firstId===i.id);

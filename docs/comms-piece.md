@@ -20,7 +20,7 @@ project or the household never grants access to another member's thread.
 | Operation | Input and result |
 | --- | --- |
 | `comms.agents` | Empty input; member identity, owned agent ids and private summaries (unread open-thread count, latest thread, first unread reply line). |
-| `comms.open` | Agent, client id, words, optional project; thread/sequence acknowledgement. |
+| `comms.open` | Agent, client id, words, optional project and attached item pointer; thread/sequence acknowledgement. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
@@ -89,7 +89,7 @@ data does not remove the behavior it delivered.
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
-| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Missing: recipient rule, quoted attachment, validation, about-key matching and five recent owned threads. |
+| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule, about-key matching/five recent owned threads, importer association and attachment UI remain missing. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
 | Push and desktop unread integration | `Comms.announcements(member)`, Attention/frame notification seam | Partial: trusted metadata-only candidates select opener-owned open unread threads, stable latest-reply keys and exact two-minute per-thread foreground suppression. Production member-subscription matching, dispatch dedupe/rate limiting/staging and desktop binding remain missing. |
 | Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following now keeps the reader at the end only while near it, counts appended non-card records while scrolled back and follows their own sends; attachment/ref rendering and broader disconnected/reconnect parity need completion. |
@@ -763,3 +763,28 @@ deleted-job refusal. All 349 affected tests, root TypeScript and diff checking
 pass. No web code changed and no local browser ran. Production metadata/runtime
 binding and the remaining inventory above are still required. Review budgets
 remain backend/security 2/3 and importer 1/3.
+
+
+`comms.open` now accepts an optional `about` object: the item label, a ref or
+page (or both), and optional seen time. It carries pointers only, with no lookup
+or implied access. The legacy label normalization removes hidden controls and
+quote lookalikes, collapses whitespace and caps the label at 120 characters.
+Unsafe pages/pointers, unknown fields and empty labels fail before encryption.
+The first message adds one quoted line identifying the label as the item's own
+text, never an instruction or approval, and asks the agent to look it up now.
+Seen times use the member's supplied time within the legacy five-minute future
+bound, never an invented server timestamp. The combined message must fit 40000
+characters. Messages without an attachment retain their exact words.
+
+The combined words are sealed together and determine first-message retry
+identity; changing or removing the attachment conflicts on the same client id.
+No label, pointer or timestamp is added to plaintext thread/message metadata or
+operation results. Existing page-session/ownership rechecks apply after crypto.
+Six new cases cover formatting and pointer shapes, unsafe input, bounds, stored
+privacy, runtime delivery, restart/retry conflicts, expiry and ownership loss
+during encryption. Before the change a valid attachment disappeared from the
+read message and a malformed attachment succeeded; now all 355 affected tests
+and root TypeScript checking pass. No web code changed or local browser ran.
+Recipient routing, matching existing threads, imported about associations and
+the shell's attachment sheet are still required; this is the first-message
+backend unit only. Review budgets remain backend/security 2/3 and importer 1/3.
