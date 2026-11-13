@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+- Attention next-mode digests now resolve project aliases and venue filing through visible Projects cards for the conversation’s agent.
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
 - Name owned Home cards from live shared-directory People entries and open their exact contact pages.

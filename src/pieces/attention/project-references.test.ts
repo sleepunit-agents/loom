@@ -36,7 +36,7 @@ async function setup(references: DigestReferences = {}) {
 it('resolves aliases, deduplicates canonical names, preserves reference union and immutable private audience', async () => {
   const refs = roles(), { write, call, conversation } = await setup(refs);
   expect(write(['on-pond', 'pond', 'hockey'])).toMatchObject({ ok: true, value: { projects: ['pond', 'hockey'], member: 'jonathan', agent: 'art' } });
-  expect(refs.projects.resolve).toHaveBeenCalledWith(owner, 'on-pond');
+  expect(refs.projects.resolve).toHaveBeenCalledWith(owner, 'on-pond', 'art');
   expect(refs.threadProject).not.toHaveBeenCalled(); expect(refs.projects.byVenue).not.toHaveBeenCalled();
   expect(write(['hockey'], undefined, 'run-2')).toMatchObject({ ok: true });
   expect(write(['pond'])).toMatchObject({ ok: true });
@@ -54,7 +54,7 @@ it('falls back from missing, archived or noncanonical thread projects to exactly
     refs.threadProject.mockReturnValue({ ok: true, value: project });
     expect(write()).toMatchObject({ value: { projects: ['hockey'] } });
   }
-  expect(refs.projects.byVenue).toHaveBeenCalledWith(owner, 'loom:thread-1');
+  expect(refs.projects.byVenue).toHaveBeenCalledWith(owner, 'loom:thread-1', 'art');
   for (const value of [[], ['pond', 'hockey']]) {
     refs.projects.byVenue.mockReturnValue({ ok: true, value });
     expect(write()).toMatchObject({ value: { projects: [] } });
