@@ -71,11 +71,13 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   const tier=(s:string)=>person(s)?.tier;
   // Channels use configured readers/guest venues. DMs and groups require the
   // entire authenticated membership; an empty description is never a channel.
+  if(platform&&!z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/).safeParse(about.venue).success)fail('Platform venue identifier is required');
   if(platform&&!['channel','dm','group'].includes(String(about.kind)))fail('Platform audience kind is required');
   if(platform&&about.kind!=='channel'&&about.members===undefined)fail('The complete roster is required');
   const roster=about.members;
   if(roster!==undefined&&(!Array.isArray(roster)||!roster.length||roster.length>12||new Set(roster).size!==roster.length||!roster.every(s=>slug.safeParse(s).success)))fail('The complete roster is required');
   const members=(roster??[]) as string[];
+  if(platform&&((about.kind==='dm'&&members.length!==1)||(about.kind==='group'&&members.length<2)))fail('Roster size does not match the platform audience');
   for(const s of members)if(tier(s)===undefined)fail('Every member needs a gate tier');
   for(const m of messages)if(m.from.kind==='person'&&members.length&&!members.includes(m.from.slug))fail('Sender is absent from the roster');
   const senders=messages.map(m=>({...m,tier:m.owner===true&&core?3:m.from.kind==='person'?tier(m.from.slug):undefined}));
@@ -111,7 +113,7 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   if(members.length>1)text(`The people here, who all read every reply: ${members.map(s=>`${name(s,person(s))}, tier ${tier(s)}`).join('; ')}. The lowest tier present governs the room: tier ${Math.min(...members.map(s=>tier(s)!))}. What you know about one of them from elsewhere isn't said here unless it already has been.\n`);
   const persons=unique([...members,...messages.flatMap(m=>m.from.kind==='person'?[m.from.slug]:[])]);
   for(const s of persons){const w=wordsOf(person(s)?.restrict);if(w)text(`Standing restriction from your owner for ${s} (your gates): ${w}\n`);}
-  const one=members.length===1?members[0]:undefined;
+  const one=about.kind==='dm'&&members.length===1?members[0]:undefined;
   let grantFor:string|null=null;
   if(one&&tier(one)===2&&!guest&&messages.length&&messages.every(m=>m.from.kind==='person'&&m.from.slug===one)
     &&input.principal?.for===one&&!input.principal.owner&&!input.principal.unknown&&!input.ownerSpoke){

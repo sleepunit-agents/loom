@@ -16,13 +16,13 @@ function input(extra:Partial<BodyPolicyInput>={}):BodyPolicyInput{return {
  principal:{for:'phil'},...extra};}
 const text=(r:Awaited<ReturnType<typeof compileBodyRules>>)=>r.sections.map(p=>'text' in p?p.text:p.file).join('');
 it('compiles gates identity, personal authority, restrictions, cards and repo references',async()=>{
- const r=await compileBodyRules(input({about:{kind:'channel',venue:'D1',members:['phil'],notes:['work']}}),card);
+ const r=await compileBodyRules(input({about:{kind:'dm',venue:'D1',members:['phil'],notes:['work']}}),card);
  expect(r).toMatchObject({guest:false,deny:['mcp__handoff'],grantFor:'phil',members:['phil'],persons:['phil']});
  for(const s of ['phil: tier 2','Your owner (tier 3): Jonathan (jonathan)','Standing restriction','No onterris pushes','Standing authority','Fleet setup','CARD phil','house/slack.md','house/work.md','house/trusted.md'])expect(text(r)).toContain(s);
  expect(text(r)).not.toContain('No spending');
 });
 it('a guest member sets the room floor, tools and cards even when the owner writes',async()=>{
- const r=await compileBodyRules(input({messages:[{from:{kind:'person',slug:'jonathan'}}],about:{kind:'group',members:['jonathan','phil','kim']}}),card);
+ const r=await compileBodyRules(input({messages:[{from:{kind:'person',slug:'jonathan'}}],about:{kind:'group',venue:'G1',members:['jonathan','phil','kim']}}),card);
  expect(r).toMatchObject({guest:true,deny:['mcp__handoff','mcp__mail'],readers:['kim'],grantFor:null});
  for(const s of ['lowest tier present governs the room: tier 1','No onterris pushes','THIS IS A GUEST VENUE','house/guest.md','CARD kim'])expect(text(r)).toContain(s);
  for(const s of ['CARD phil','CARD jonathan','Fleet setup','NEVER TELL'])expect(text(r)).not.toContain(s);
@@ -32,25 +32,25 @@ it.each(['sender','gate-venue','owner-place','adapter','narrowing'])('narrows ev
  if(kind==='sender')m.messages=[{from:{kind:'person',slug:'kim'}}];
  if(kind==='gate-venue')m.about={kind:'channel',venue:'555'};
  if(kind==='owner-place')m.policy={...policy,guest_places:{slack:{'dm:phil':['kim']}}};
- if(kind==='adapter')m.about={kind:'channel',guest:true,readers:['kim']};
+ if(kind==='adapter')m.about={kind:'channel',venue:'C1',guest:true,readers:['kim']};
  if(kind==='narrowing')m.narrowing={guest:true,deny:['mcp__extra'],readers:['kim']};
  const r=await compileBodyRules(m,card);expect(r.guest).toBe(true);expect(r.readers).toEqual(['kim']);expect(r.deny).toContain('mcp__mail');if(kind==='narrowing')expect(r.deny).toContain('mcp__extra');expect(r.grantFor).toBeNull();
 });
 it.each(['deny','floor','readers','card'])('fails closed for missing guest %s',async kind=>{
- const m=input({about:{kind:'channel',guest:true,readers:['kim']}});
+ const m=input({about:{kind:'channel',venue:'C1',guest:true,readers:['kim']}});
  if(kind==='deny')m.policy={...policy,guest_deny:[]};
  if(kind==='floor')m.policy={...policy,briefs:{}};
- if(kind==='readers')m.about={kind:'channel',guest:true};
+ if(kind==='readers')m.about={kind:'channel',venue:'C1',guest:true};
  await expect(compileBodyRules(m,kind==='card'?async()=>null:card)).rejects.toThrow();
 });
 it.each([[],Array.from({length:13},(_,n)=>`p${n}`),['phil','Bad Slug'],['phil','phil'],'phil',['phil',7],['phil','unknown']])('never truncates or drops an invalid roster: %j',async members=>{
- await expect(compileBodyRules(input({about:{kind:'group',members}}),card)).rejects.toThrow();
+ await expect(compileBodyRules(input({about:{kind:'group',venue:'G1',members}}),card)).rejects.toThrow();
 });
 it('refuses a person outside the complete roster',async()=>{
  await expect(compileBodyRules(input({messages:[{from:{kind:'person',slug:'anton'}}]}),card)).rejects.toThrow('absent');
 });
 it('ignores adapter authority, cards, tier and brief lines and source-supplied tiers',async()=>{
- const m=input({about:{kind:'group',members:['anton'],tier:3,grant:'ADAPTER GRANT',restrict:'ADAPTER RESTRICTION',cards:{anton:'ADAPTER CARD'},brief:['ADAPTER BRIEF']},
+ const m=input({about:{kind:'dm',venue:'DANT',members:['anton'],tier:3,grant:'ADAPTER GRANT',restrict:'ADAPTER RESTRICTION',cards:{anton:'ADAPTER CARD'},brief:['ADAPTER BRIEF']},
   messages:[{from:{kind:'person',slug:'anton'},...{tier:3,owner:true}}]});
  const r=await compileBodyRules(m,card);
  expect(text(r)).toContain('anton: tier 2');expect(text(r)).toContain('No spending; No publishing');
@@ -63,9 +63,9 @@ it.each(['relay','owner-spoke','unknown','different-principal','principal-owner'
  if(kind==='unknown')m.principal={for:'phil',unknown:true};
  if(kind==='different-principal')m.principal={for:'anton'};
  if(kind==='principal-owner')m.principal={for:'phil',owner:true};
- if(kind==='group')m.about={kind:'group',members:['phil','anton']};
- if(kind==='guest')m.about={kind:'group',members:['phil'],guest:true,readers:['kim']};
- if(kind==='owner-tier'){m.about={kind:'group',members:['jonathan']};m.messages=[{from:{kind:'person',slug:'jonathan'}}];m.principal={for:'jonathan'};}
+ if(kind==='group')m.about={kind:'group',venue:'G1',members:['phil','anton']};
+ if(kind==='guest')m.about={kind:'dm',venue:'DPHIL',members:['phil'],guest:true,readers:['kim']};
+ if(kind==='owner-tier'){m.about={kind:'dm',venue:'DJON',members:['jonathan']};m.messages=[{from:{kind:'person',slug:'jonathan'}}];m.principal={for:'jonathan'};}
  const r=await compileBodyRules(m,card);expect(r.grantFor).toBeNull();expect(text(r)).not.toContain('Standing authority');
 });
 it('allows unreadable cards only in a non-guest room',async()=>{
@@ -91,7 +91,7 @@ it('changes the session key for changed gates, policy, roster, files, sender or 
  expect(sameBodyRules(before,await compileBodyRules(input(),card))).toBe(true);
  for(const m of [input({policy:{...policy,deny:['mcp__other']}}),input({policy:{...policy,briefs:{...policy.briefs,venues:{slack:'different.md'}}}}),
   input({gates:{...gates,people:{...gates.people,phil:{...gates.people.phil,grant:'Only read'}}}}),
-  input({gates:{...gates,people:{...gates.people,phil:{...gates.people.phil,restrict:'No spending'}}}}),input({about:{kind:'group',members:['phil','anton']}}),
+  input({gates:{...gates,people:{...gates.people,phil:{...gates.people.phil,restrict:'No spending'}}}}),input({about:{kind:'group',venue:'G1',members:['phil','anton']}}),
   input({messages:[{from:{kind:'agent',id:'mark'}}]})])expect(sameBodyRules(before,await compileBodyRules(m,card))).toBe(false);
  expect(sameBodyRules(before,await compileBodyRules(input(),async s=>`Changed ${s}`))).toBe(false);
 });
@@ -102,12 +102,12 @@ it('snapshots all inputs before asynchronous card reads',async()=>{
  release('CARD phil');const r=await pending;expect(r.deny).toEqual(['mcp__handoff']);expect(text(r)).toContain('Fleet setup');expect(text(r)).not.toContain('CHANGED');
 });
 it('rejects overfull readers rather than narrowing an incomplete audience',async()=>{
- await expect(compileBodyRules(input({about:{kind:'channel',guest:true,readers:Array.from({length:13},(_,n)=>`p${n}`)}}),card)).rejects.toThrow();
- const m=input({about:{kind:'channel',guest:true,readers:Array.from({length:12},(_,n)=>`p${n}`)},narrowing:{guest:true,readers:['another'],deny:[]}});
+ await expect(compileBodyRules(input({about:{kind:'channel',venue:'C1',guest:true,readers:Array.from({length:13},(_,n)=>`p${n}`)}}),card)).rejects.toThrow();
+ const m=input({about:{kind:'channel',venue:'C1',guest:true,readers:Array.from({length:12},(_,n)=>`p${n}`)},narrowing:{guest:true,readers:['another'],deny:[]}});
  await expect(compileBodyRules(m,card)).rejects.toThrow('Too many');
 });
 it('never treats inherited object keys as a person or policy place',async()=>{
- await expect(compileBodyRules(input({about:{kind:'group',members:['constructor']},messages:[{from:{kind:'person',slug:'constructor'}}]}),card)).rejects.toThrow('gate tier');
+ await expect(compileBodyRules(input({about:{kind:'dm',venue:'D1',members:['constructor']},messages:[{from:{kind:'person',slug:'constructor'}}]}),card)).rejects.toThrow('gate tier');
 });
 it('malformed supplied gates cannot lose restrictions on a relay',async()=>{
  await expect(compileBodyRules(input({platform:false,gates:{people:{phil:{tier:7}}},messages:[{from:{kind:'agent',id:'mark'}}]}),card)).rejects.toThrow('malformed');
@@ -130,6 +130,26 @@ it('rejects invalid gate keys instead of omitting a guest venue',async()=>{
  await expect(compileBodyRules(input({gates:{people:{'Bad Slug':{tier:1,venues:['555']}}},about:{kind:'channel',venue:'555'}}),card)).rejects.toThrow('malformed');
 });
 it('compiles peer, pair and peer-conduct references from owner gates and policy',async()=>{
- const r=await compileBodyRules(input({about:{kind:'channel',peer:true,pair:'mark'}}),card);
+ const r=await compileBodyRules(input({about:{kind:'channel',venue:'C1',peer:true,pair:'mark'}}),card);
  expect(text(r)).toContain('Mark (mark)');expect(text(r)).toContain('pair channel with mark');expect(text(r)).toContain('house/peer.md');
+});
+
+it('requires the actual venue identifier even when the audience kind and sender are trusted',async()=>{
+ for(const about of [{kind:'channel'},{kind:'dm',members:['phil']},{kind:'group',members:['phil','anton']},{kind:'channel',venue:''}]){
+  await expect(compileBodyRules(input({about}),card)).rejects.toThrow('venue identifier');
+ }
+});
+it('never treats a singleton channel roster as exclusive personal authority',async()=>{
+ const r=await compileBodyRules(input({about:{kind:'channel',venue:'C1',members:['phil']}}),card);
+ expect(r.grantFor).toBeNull();expect(text(r)).not.toContain('Standing authority');
+});
+it('rejects a DM with two people and a group with only one',async()=>{
+ for(const about of [{kind:'dm',venue:'D1',members:['phil','anton']},{kind:'group',venue:'G1',members:['phil']}]){
+  await expect(compileBodyRules(input({about}),card)).rejects.toThrow('Roster size');
+ }
+});
+it('requires every guest card, including the last reader',async()=>{
+ const m=input({about:{kind:'channel',venue:'C1',guest:true,readers:['kim','another']}});
+ const r=await compileBodyRules(m,card);expect(text(r)).toContain('CARD kim');expect(text(r)).toContain('CARD another');
+ await expect(compileBodyRules(m,async s=>s==='another'?null:card(s))).rejects.toThrow('Guest reader card');
 });

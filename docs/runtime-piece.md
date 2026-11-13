@@ -1024,6 +1024,9 @@ Bridges intake/replies and their notifications remain unfinished full-rebuild wo
 installing a public operation. The owning source must supply authenticated
 senders, current gates and policy, complete platform roster and current
 principal history. Platform descriptions explicitly name `kind: channel|dm|group`;
+Every platform description names the actual gate venue identifier.
+A DM has exactly one member and a group has at least two; only a DM can carry
+a person’s exclusive standing authority. Channels never carry that authority.
 DMs and groups require the complete member roster, while channels use owner
 policy and gate venue readers. Missing kind or malformed gate keys refuse.
 Adapter tiers, grants, cards and brief prose cannot supply
