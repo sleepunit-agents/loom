@@ -210,3 +210,28 @@ remain required before the final move. No runner installation or live host
 change accompanies this endpoint. Earlier lifecycle helper descriptions of a
 future runner operation now refer to this facts-only endpoint; the broader
 runner API remains unfinished.
+
+## Runner claim and progress metadata
+
+| Old route | Registry operation | Delivered scope |
+| --- | --- | --- |
+| `claim` | `runtime.claimJob {job}` | Assigned queued job becomes starting; acknowledgement only |
+| `report` | `runtime.reportJob {job, state}` | Claimed job becomes running or waiting; acknowledgement only |
+
+The authenticated runner id must equal both the assigned job runner and its box
+id. The box must still be enrolled and unrevoked. Central `report-job` policy
+also excludes member-private jobs. Claims recheck current ownership/lending,
+host permission and report-only status. Reports remain accepted after hosting
+permission is withdrawn so an already claimed runner can describe progress.
+Unknown and off-assignment jobs share the same denial. No caller can reassign a
+job or set timestamps through this API. Reports use server `changedAt` and only
+publish when metadata changes. Registry receipts make lost-response retries
+safe without making a fresh claim of a starting job succeed.
+
+This is a metadata handshake, not permission to start a container. It returns
+no credentials, input words or results, calls no runner and performs no outside
+effect, including in staging. Input fetch, credential issuance and terminal
+reports with credential revocation remain required on this task before a real
+runner can execute. A runner cannot end, revive or report uncertain/lost work
+through these two operations. The fake runner test seeds queued jobs internally;
+public job creation and `startBody` remain unfinished.
