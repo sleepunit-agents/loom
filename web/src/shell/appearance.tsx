@@ -28,7 +28,10 @@ export default function Appearance({ children }: { children: ReactNode }) {
   useLayoutEffect(() => { if (prefs) wearPreferences(prefs); }, [prefs]);
   const ground = prefs?.ground ?? 'depth';
   return <PixelContext.Provider value={prefs?.pixel ?? true}>
+    <div className="relative isolate min-h-dvh">
+    <span aria-hidden="true" className="loom-wash pointer-events-none fixed inset-0 -z-10" />
     <Suspense fallback={null}>{ground === 'depth' ? <Depth /> : ground === 'contours' ? <Contours /> : null}</Suspense>
     {children}
+    </div>
   </PixelContext.Provider>;
 }
