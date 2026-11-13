@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,9 +42,10 @@ it('registers only installed built-ins, isolates homes and rebuilds authority on
   expect(sharing().services.changes.types).toEqual(['change', 'change-sync']);
   expect(sharing().services.changes.operations).toContain('changes.list');
   expect(fixture().store.sharing().services).toEqual({});
-  const secondConnection = fixture(home);
-  expect(secondConnection.store.sharing().services).toEqual({});
-  secondConnection.app.close();
+  // openDb leases share a connection; use a real independent connection here.
+  const secondConnection = new Database(join(home, 'loom.db'));
+  try { expect(new SharingDatabase(secondConnection, home).sharing().services).toEqual({}); }
+  finally { secondConnection.close(); }
   const sharingServices = sharing().services;
   app.close();
   const reopened = fixture(home);
