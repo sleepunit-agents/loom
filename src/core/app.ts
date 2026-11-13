@@ -7,13 +7,21 @@ import { Operations, failure } from './operations/index.js';
 import { Live, type Authentication } from './live/index.js';
 import { clock as realClock, type Clock } from './clock.js';
 /** No piece imports: the composition root installs pieces through this public registry. */
-export interface Foundation { db: Db; operations: Operations; live: Live; close(): void }
+export interface Foundation { db: Db; operations: Operations; live: Live; onClose(stop: () => void): void; close(): void }
 export function createFoundation({ home, clock = realClock }: { home: string; clock?: Clock }): Foundation {
   const store = openDb(home);
   let live: Live;
   const operations = new Operations(store.db, clock, changes => live.changed(changes));
   live = new Live(clock, operations);
-  return { db: store.db, operations, live, close() { operations.close(); live.close(); store.close(); } };
+  const stops: (() => void)[] = [];
+  let closed = false;
+  return { db: store.db, operations, live, onClose(stop) { if (closed) stop(); else stops.push(stop); }, close() {
+    if (closed) return; closed = true;
+    let error: unknown;
+    for (const stop of stops.reverse()) { try { stop(); } catch (e) { error ??= e; } }
+    try { operations.close(); live.close(); } finally { store.close(); }
+    if (error) throw error;
+  } };
 }
 export function httpDoor(app: Foundation, authenticate: (req: IncomingMessage) => Authentication | undefined) {
   const routes = new Hono<{ Bindings: { authentication: Authentication } }>();

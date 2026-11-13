@@ -20,6 +20,30 @@ one-off dates in the gap are refused. Durations represent elapsed time, so a day
 in a duration means 24 hours. These choices need no host timezone configuration
 or additional package.
 
+## Implemented foundation unit
+
+`installClock` installs the prefixed tables, scoped operations, live `wake`,
+`schedule` and pause records, and daemon timers. The installer returns `close`;
+the composition root registers it with the foundation's `onClose` so timers stop
+before SQLite closes. It is currently installed explicitly by tests only.
+Nothing installs it on the existing production path.
+
+The runtime dependency accepts a durable intent and returns started,
+definitely-not-started, held, or uncertain. Intent commits before the asynchronous
+call. Restart holds any remaining firing intent; stopping the installer prevents
+late completion from writing. Cancellation before invocation suppresses the call;
+cancellation after invocation records that a body may have started. Uncertain
+work cannot be released with fire-now. Known-not-started work alone backs off.
+The default runtime is a staging hold. The small runtime and approvals dependency
+files are temporary role contracts pending the other pieces' implementations.
+
+The current tests exercise these transitions on `startLoom`/`FakeClock`, including
+pause release order, a parked answer and timeout, changed dispatch permission,
+live-record aging, and the next occurrence across Chicago daylight saving.
+CLI parity, lane assignment, vouch/approval workflows, importer, app and final
+new-side composition remain unfinished; the migration still needs cold review
+before any merge.
+
 ## Old surface inventory and intended replacements
 
 The operations below are the implementation checklist, not a claim that all are
