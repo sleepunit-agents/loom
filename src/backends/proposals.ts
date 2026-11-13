@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath } from '../config.js';
+import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { runMigrations } from './migrations.js';
 import { remember } from '../tools/remember.js';
 import type { MemoryRef } from './types.js';
@@ -86,8 +86,8 @@ function hasTable(db: Database, table: string): boolean {
  * table exists. Self-heals a store that predates the proposals migration —
  * migrations are idempotent, so this is safe on any store.
  */
-function openProposalsDb(contextDir: string): Database {
-  const dbPath = resolveSqliteDbPath(contextDir);
+function openProposalsDb(contextDir: string, selection?: MemorySelection): Database {
+  const dbPath = resolveSqliteDbPath(contextDir, selection);
   const db = new BetterSqlite3(dbPath);
   db.pragma('busy_timeout = 5000');
   if (!hasTable(db, 'proposals')) runMigrations(db, { strict: false });
@@ -102,7 +102,7 @@ function openProposalsDb(contextDir: string): Database {
  * title + content + category so the row is at least shaped like a memory.
  * Hard validation is deferred to ratify.
  */
-export function propose(contextDir: string, input: ProposalInput): ProposalRef {
+export function propose(contextDir: string, input: ProposalInput, selection?: MemorySelection): ProposalRef {
   if (typeof input.title !== 'string' || input.title.trim() === '') {
     throw new Error('proposal title is required and cannot be empty');
   }
@@ -113,7 +113,7 @@ export function propose(contextDir: string, input: ProposalInput): ProposalRef {
     throw new Error('proposal category is required and cannot be empty');
   }
 
-  const db = openProposalsDb(contextDir);
+  const db = openProposalsDb(contextDir, selection);
   try {
     const uuid = randomUUID();
     const created = new Date().toISOString();
@@ -143,10 +143,10 @@ export function propose(contextDir: string, input: ProposalInput): ProposalRef {
 }
 
 /** All pending proposals, newest first. */
-export function listProposals(contextDir: string): ProposalRow[] {
-  const dbPath = resolveSqliteDbPath(contextDir);
+export function listProposals(contextDir: string, selection?: MemorySelection): ProposalRow[] {
+  const dbPath = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(dbPath)) return [];
-  const db = openProposalsDb(contextDir);
+  const db = openProposalsDb(contextDir, selection);
   try {
     return db
       .prepare(
@@ -160,10 +160,10 @@ export function listProposals(contextDir: string): ProposalRow[] {
 }
 
 /** Fetch a single proposal by id (any status), or null if not found. */
-export function getProposal(contextDir: string, id: number): ProposalRow | null {
-  const dbPath = resolveSqliteDbPath(contextDir);
+export function getProposal(contextDir: string, id: number, selection?: MemorySelection): ProposalRow | null {
+  const dbPath = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(dbPath)) return null;
-  const db = openProposalsDb(contextDir);
+  const db = openProposalsDb(contextDir, selection);
   try {
     const row = db
       .prepare(
@@ -178,10 +178,10 @@ export function getProposal(contextDir: string, id: number): ProposalRow | null 
 }
 
 /** Delete a pending proposal. Returns false if no pending row with that id. */
-export function rejectProposal(contextDir: string, id: number): boolean {
-  const dbPath = resolveSqliteDbPath(contextDir);
+export function rejectProposal(contextDir: string, id: number, selection?: MemorySelection): boolean {
+  const dbPath = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(dbPath)) return false;
-  const db = openProposalsDb(contextDir);
+  const db = openProposalsDb(contextDir, selection);
   try {
     const result = retryWrite(() =>
       db
@@ -209,8 +209,9 @@ export async function ratifyProposal(
   contextDir: string,
   id: number,
   overrides: ProposalOverrides = {},
+  selection?: MemorySelection,
 ): Promise<MemoryRef> {
-  const proposal = getProposal(contextDir, id);
+  const proposal = getProposal(contextDir, id, selection);
   if (!proposal) throw new UnknownProposalError(id);
 
   const metadata = parseMetadata(proposal.metadata);
@@ -226,10 +227,10 @@ export async function ratifyProposal(
     project: overrides.project ?? proposal.project ?? undefined,
     ttl: overrides.ttl ?? proposal.ttl ?? undefined,
     metadata,
-  });
+  }, selection);
 
   // Committed as canon — drop the staging row.
-  const db = openProposalsDb(contextDir);
+  const db = openProposalsDb(contextDir, selection);
   try {
     retryWrite(() => db.prepare('DELETE FROM proposals WHERE id = ?').run(id));
   } finally {

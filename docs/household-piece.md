@@ -136,7 +136,15 @@ so selected agents keep separate handles while callers selecting the same store
 share one handle. Remember, recall, list, update, forget, prune, similarity, audit,
 archive/restore, merge and revision tools all pass the selection.
 
-This is still a prerequisite: tape, salience, proposals, identity and project-hub
-memory readers need explicit routing separately. No entry point selects this
-configuration yet. Keep the local-and-active isolation guard until the entire
-memory path is explicit; this change does not enable the stdio cutover.
+The same selection now reaches raw tape reads (episodes and conversation
+digests), salience reads/recomputation and the proposal queue, including the
+ratified memory write and staging-row deletion. Identity forwards it to tape,
+Top of Mind and its private project card. Low-level tape/digest options expose
+`memorySelection`; proposal helpers take a final selection argument. People
+metadata selection remains independent. Omission preserves legacy overrides.
+
+This is still a prerequisite: project-hub memory readers and other conversation
+readers/writers need explicit routing separately, and the server's household
+gates still use legacy discovery. No entry point selects this configuration yet.
+Keep the local-and-active isolation guard until the entire memory path is
+explicit; this change does not enable the stdio cutover.

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
+- Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
