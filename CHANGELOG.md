@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+- Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
@@ -22,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
 
+- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
+
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
@@ -30,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
 

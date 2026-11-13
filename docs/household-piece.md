@@ -183,3 +183,38 @@ the project hub forward both selections where needed.
 
 The stdio entry point is still unchanged. This is storage routing, with no new
 app authority, schema change or import requirement.
+
+### Explicit next stdio entrypoint
+
+`loom mcp --next --home /path/to/home [--agent art]` now composes every
+per-server selection from `continuityTarget`. Omitting `--agent` uses the
+row-backed default. `loom --next --home /path/to/home` is the equivalent
+stdio shorthand. For a portable standalone context, use
+`loom mcp --next --context-dir /path/to/context`; it needs no app database.
+An explicit context outside a supplied household home is standalone, as in
+`continuityTarget`. Unknown in-house agents and missing household metadata fail.
+
+These explicit flags supply the target; legacy `LOOM_HOME`, `LOOM_AGENT`,
+`LOOM_CONTEXT_DIR`, memory/knowledge path overrides and `LOOM_IDENTITY` do not
+select it. No import receipt or discovered file enables next stdio. Without
+this opt-in the executable retains its old CLI and stdio behavior, including
+legacy environment resolution. `loom serve --next` remains the daemon command.
+
+The entrypoint reads household metadata once and closes that connection before
+serving MCP. In-process transport acceptance tests run two agents and a
+standalone context together after the old household/token/session JSON has
+been removed, and repeat with contradictory old files. They exercise identity,
+Owners, memory write/list/recall, shared knowledge and directory cards, and
+private relationships; the app database remains byte-identical. Both local
+and active memory/knowledge isolation guards remain in force. App-only tools
+retain the explicit offline refusals described above.
+
+| Old invocation | Explicit new-side invocation |
+| --- | --- |
+| bare `loom` using legacy context/environment discovery | `loom mcp --next --home HOME [--agent AGENT]` |
+| bare `loom` with a standalone context | `loom mcp --next --context-dir CONTEXT` |
+
+During the final coordinated move, update the harness's stdio arguments to the
+explicit new-side invocation after import verification. This PR performs no
+host or harness rollout. Earlier sections describe the incremental reader
+slices; this section supersedes their pending-entrypoint status.

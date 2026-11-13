@@ -28,6 +28,7 @@ import { resolveContextDir } from './config.js';
 import { SUBCOMMANDS } from './cli/subcommands.js';
 import { firstNonGlobalIndex } from './cli/args.js';
 import { findPiece } from './cli/pieces.js';
+import { isNextStdioInvocation, nextStdioConfig } from './continuity/stdio.js';
 
 const CLI_KEYWORDS: ReadonlySet<string> = new Set(SUBCOMMANDS);
 
@@ -45,8 +46,15 @@ function isCliInvocation(argv: string[]): boolean {
 
 export { isCliInvocation };
 
+/** Shared by the executable and in-process transport acceptance tests. */
+export function createStdioServer(args: string[]) {
+  const config = isNextStdioInvocation(args) ? nextStdioConfig(args) : { contextDir: resolveContextDir() };
+  return createLoomServer(config);
+}
+
 async function main() {
-  if (isCliInvocation(process.argv)) {
+  const nextStdio = isNextStdioInvocation(process.argv.slice(2));
+  if (!nextStdio && isCliInvocation(process.argv)) {
     const { runCli } = await import('./cli/index.js');
     const code = await runCli(process.argv.slice(2));
     // Drain stdout before exiting — without this, large outputs (e.g.
@@ -57,8 +65,7 @@ async function main() {
     process.stdout.write('', () => process.exit(code));
     return;
   }
-  const contextDir = resolveContextDir();
-  const { server } = createLoomServer({ contextDir });
+  const { server } = createStdioServer(process.argv.slice(2));
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
