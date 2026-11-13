@@ -167,6 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ends an agent's own sessions when it's done.
 
 ### Added
+
+- Home shows current visible Runtime jobs from their live records, including concurrent work, actual states and boxes, with unavailable states that clear stale titles.
 - Home and Inbox automatically reconcile visible approval/task waits as the signed-in member on arrival and every minute, keeping their counts current without a service grant.
 
 

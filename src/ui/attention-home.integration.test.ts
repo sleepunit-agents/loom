@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
+import { runtimeStore } from '../pieces/runtime/store.js';
 import { PeopleStore } from '../backends/people.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
@@ -34,6 +35,24 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
   const scheduled=loom.operations.call('direct',owner,'clock.in',{agent:'art',when:'2h',prompt:'Private runtime words',note:'Review the next clock slice'},'home-clock');
   expect(scheduled.ok).toBe(true);if(!scheduled.ok)throw Error('Clock fixture failed');
   const wakeId=(scheduled.value as {id:string}).id;
+  // Metadata-only fixture worker: these operations never start a process.
+  const runtime=runtimeStore(loom.db);
+  loom.db.transaction(()=>{
+    runtime.put('box',{id:'fixture-worker',name:'Fixture worker',owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:1},1);
+    for(const agent of ['art','pond-bot'])runtime.put('settings',{id:agent,agent,boxes:['fixture-worker']},1);
+  })();
+  const queue=(agent:string,title:string,scope:object={})=>{
+    const result=loom.operations.call('direct',owner,'runtime.queueBody',{agent,title,brief:'Private Runtime input must never appear on Home',...scope},`home-queue:${++serial}`);
+    expect(result.ok).toBe(true);if(!result.ok)throw Error('Runtime queue fixture failed');return (result.value as {job:string}).job;
+  };
+  const current=queue('art','Inspect the rebuilt household Runtime');
+  queue('art','Inspect the rebuilt household Runtime'); // Concurrent work with the same title stays separate.
+  queue('pond-bot','Visible Pond Runtime work',{project:'pond'});
+  queue('pond-bot','Owner-private Runtime work',{project:'pond',member:'jonathan'});
+  expect(loom.operations.call('direct',owner,'runtime.configureHouse',{agent:'art',house:{repo:'/fixture/art'}},'home-runtime-house').ok).toBe(true);
+  const runner={kind:'runner' as const,id:'fixture-worker'};
+  expect(loom.operations.call('direct',runner,'runtime.claimJob',{job:current},'home-runtime-claim').ok).toBe(true);
+  expect(loom.operations.call('direct',runner,'runtime.reportJob',{job:current,state:'running',log:'Private Runtime log must never appear on Home'},'home-runtime-running').ok).toBe(true);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
@@ -55,6 +74,14 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       expect(await panel.getByRole('heading',{name:'Clock jobs · 1',exact:true}).count()).toBe(1);
       expect(await page.getByText('Private runtime words',{exact:true}).count()).toBe(0);
     }
+    for(const page of [a,b]) {
+      const panel=page.getByRole('region',{name:'Art E Fish runtime jobs',exact:true});
+      await expect.poll(()=>panel.getByRole('heading',{name:'Runtime jobs · 2',exact:true}).count()).toBe(1);
+      expect(await panel.getByRole('heading',{name:'Inspect the rebuilt household Runtime',exact:true}).count()).toBe(2);
+      expect(await panel.getByText('running · Box fixture-worker',{exact:true}).count()).toBe(1);
+      expect(await page.getByText('Private Runtime input must never appear on Home',{exact:true}).count()).toBe(0);
+      expect(await page.getByText('Private Runtime log must never appear on Home',{exact:true}).count()).toBe(0);
+    }
     await a.getByRole('button',{name:'Check again',exact:true}).click();await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     const shots=resolve('artifacts/attention-home');mkdirSync(shots,{recursive:true});
@@ -75,10 +102,20 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       await b.getByRole('region',{name:'Art E Fish clock',exact:true}).scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`home-clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      await b.getByRole('region',{name:'Art E Fish runtime jobs',exact:true}).scrollIntoViewIfNeeded();
+      await b.screenshot({path:join(shots,`home-runtime-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       await b.getByRole('region',{name:'Art E Fish reported work',exact:true}).scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`home-work-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     expect(overflows).toEqual([]);
+    expect(loom.operations.call('direct',runner,'runtime.reportJob',{job:current,state:'waiting'},'home-runtime-waiting').ok).toBe(true);
+    for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Art E Fish runtime jobs',exact:true}).getByText('waiting · Box fixture-worker',{exact:true}).count()).toBe(1);
+    expect(loom.operations.call('direct',runner,'runtime.finishJob',{job:current,state:'done'},'home-runtime-done').ok).toBe(true);
+    for(const page of [a,b]) {
+      const panel=page.getByRole('region',{name:'Art E Fish runtime jobs',exact:true});
+      await expect.poll(()=>panel.getByRole('heading',{name:'Runtime jobs · 1',exact:true}).count()).toBe(1);
+      expect(await panel.getByText('waiting · Box fixture-worker',{exact:true}).count()).toBe(0);
+    }
     expect(loom.operations.call('direct',owner,'clock.pause',{agent:'art'},'home-pause').ok).toBe(true);
     for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Art E Fish clock',exact:true}).getByText('Clock paused',{exact:true}).count()).toBe(1);
     expect(loom.operations.call('direct',owner,'clock.cancel',{id:wakeId},'home-cancel').ok).toBe(true);
@@ -111,6 +148,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await expect.poll(()=>cards(p).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['pond-bot card']);
     expect(await p.getByRole('button',{name:'Pond Bot in People',exact:true}).count()).toBe(0);
     await expect.poll(()=>p.getByRole('heading',{name:'Needs you · 2',exact:true}).count()).toBe(1);
+    const pondRuntime=p.getByRole('region',{name:'pond-bot runtime jobs',exact:true});
+    await expect.poll(()=>pondRuntime.getByRole('heading',{name:'Visible Pond Runtime work',exact:true}).count()).toBe(1);
+    expect(await pondRuntime.getByRole('heading',{name:'Runtime jobs · 1',exact:true}).count()).toBe(1);
+    expect(await p.getByText('Owner-private Runtime work',{exact:true}).count()).toBe(0);
+    expect(await p.getByText('Inspect the rebuilt household Runtime',{exact:true}).count()).toBe(0);
     expect(await p.getByText('Private conversation needs you',{exact:true}).count()).toBe(0);
     expect(await p.getByText('Connecting the next Home panels',{exact:true}).count()).toBe(0);
     expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T08:00:00Z'},'home-close-wait-task').ok).toBe(true);

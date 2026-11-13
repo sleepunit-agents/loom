@@ -4,7 +4,7 @@ import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import type { Ask } from './model';
-import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
+import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
 import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
 import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
@@ -29,6 +29,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const wakes = useRecords<Wake>('wake');
   const clocks = useRecords<Clock>('clock');
   const statuses = useRecords<AgentStatus>('attention.agent');
+  const runtime = useRecords<RuntimeJob>('runtime.job');
   const lock = useRef(false), [busy,setBusy] = useState(false);
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
@@ -54,6 +55,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const work = clockStatus === 'live' ? wakes.records.filter(w => w.agent === agent.id && active(w)) : [];
             const next = agentNext(agent.id, work, paused);
             const jobs = deskJobs(work, paused);
+            const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
             return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
               <header><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
@@ -68,6 +70,15 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                     const wake = work.find(w => w.id === job.wake)!;
                     return <Row key={job.id} title={job.text} status={state(wake, paused)} meta={job.status === 'scheduled' ? time(job.at) : undefined} onClick={()=>go(job.href)} />;
                   })}</List>}
+                </>}
+              </section>
+              <section aria-label={`${agent.name} runtime jobs`} className="grid min-w-0 gap-2">
+                {runtime.status !== 'live' ? <><h3>Runtime jobs</h3><Unavailable status={runtime.status} label="runtime jobs" /></> : <>
+                  <h3>Runtime jobs · {runtimeJobs.length}</h3>
+                  {!runtimeJobs.length ? <p>No current runtime jobs.</p> : <ul className="grid min-w-0 gap-3" aria-label={`${agent.name} current runtime jobs`}>{runtimeJobs.map(job => <li key={job.id} className="min-w-0 border-b pb-2">
+                    <h4>{job.title || job.id}</h4><p>{job.state} · Box {job.box}</p>
+                    <p>Queued <time dateTime={new Date(job.createdAt).toISOString()}>{stamp(job.createdAt)}</time></p>
+                  </li>)}</ul>}
                 </>}
               </section>
               <section aria-label={`${agent.name} reported work`} className="grid min-w-0 gap-3"><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <>
