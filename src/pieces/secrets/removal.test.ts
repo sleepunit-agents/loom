@@ -59,7 +59,7 @@ it('removes all secret scopes and pending access without touching another resour
   expect(readSecretPolicy(app.db)).toEqual({ default: 'auto', secrets: { 'api-key': { grant: 'ask', houses: ['art'], minutes: 30 }, 'other-key': { grant: 'never' } } });
   expect(grantsRole(app.db).mayUse(agent.id, {kind: 'secret', target: 'api-key'}, clock.now(), {house: 'h-2'})).toBe(false);
   expect(changed).toHaveBeenCalledTimes(1);
-  expect(changed.mock.calls[0][0]).toHaveLength(8);
+  expect(changed.mock.calls[0][0]).toHaveLength(9);
   expect(changed.mock.calls[0][0]).toContainEqual({type: 'secret.name', id: 'api-key'});
   expect(changed.mock.calls[0][0]).toContainEqual({type: 'secret.request', id: pending.id});
   expect(call('answer', { id: pending.id, allow: true })).toMatchObject({ ok: false, code: 'conflict' });
@@ -107,7 +107,7 @@ it('rolls metadata and Live back after holder success, retries the same write id
   expect(removed.size).toBe(1); expect(holder.remove).toHaveBeenCalledTimes(2);
   expect(readSecretPolicy(app.db).secrets['api-key']).toEqual({grant: 'never', houses: ['art']});
   expect(changed).toHaveBeenCalledTimes(1);
-  expect(changed.mock.calls[0][0]).toHaveLength(3);
+  expect(changed.mock.calls[0][0]).toHaveLength(4);
   expect(changed.mock.calls[0][0]).toContainEqual({type: 'secret.request', id: pending.id});
 });
 it('removal overrides inherited auto but preserves ask and never policy and separate start mappings', async () => {
@@ -145,6 +145,6 @@ it('suppresses successful holder output and rolls back even after removal and au
   expect(result).toEqual({ok: true, value: {removed: true}});
   expect(JSON.stringify([result, rows(), changed.mock.calls])).not.toContain('HOLDER-OUTPUT-SENTINEL');
   expect(changed).toHaveBeenCalledTimes(1);
-  expect(changed.mock.calls[0][0]).toHaveLength(4);
+  expect(changed.mock.calls[0][0]).toHaveLength(5);
   expect(changed.mock.calls[0][0]).toContainEqual({type: 'secret.request', id: pending.id});
 });

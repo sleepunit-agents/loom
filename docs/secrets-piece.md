@@ -70,3 +70,24 @@ Production local transport, provider account lookup (`resolveGitHub`), staging
 holds and authenticated composition remain required; this increment installs
 nothing in next mode and reads no old files. Agent value delivery remains
 `handSecret`/`handTo` to a runtime sink.
+
+## Value change history
+
+| Old behavior | New behavior |
+| --- | --- |
+| Audit `set` with `how: add/replace` | Value installer commits `secret.change` with action `add` or `replace`. |
+| Audit `removed` | Removal commits action `removed`; the history survives removal and re-addition. |
+| Page change time | Household-only `secrets.history {name}` and `secret.change` Live records. Description edits do not count as value writes. |
+
+Changes contain only stable ID, name, action, authenticated member and daemon time.
+They never include values, descriptions, holder results or raw errors. History is
+committed with metadata and the operation receipt: a rollback emits no history or
+Live change. Repeating a stable member-bound write does not duplicate its history.
+The holder still owns full-input write-ID validation. Unlike the old best-effort
+change audit, failure to persist this metadata fails the operation; the holder
+must acknowledge retries after its own write succeeded. Additive migration 3
+preserves existing metadata and starts empty history; it does not invent old times.
+
+This is change history only. Read/issue/service-use audit, usage summaries and old
+audit import remain required on t-2208. The service-use role still writes no
+metadata. No new installer is wired into next mode by this increment.
