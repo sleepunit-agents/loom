@@ -77,6 +77,7 @@ it('CLI imports only explicit metadata into a stopped imported household, with s
  const release=acquireHttpLock(f.home);try{expect(await run(args,io)).toBe(1);}finally{release();}
  expect(await run(args,io)).toBe(0);expect(await run(args,io)).toBe(0);
  writeFileSync(map,'SECRET_INPUT_CANARY');expect(await run(args,io)).toBe(1);
+ expect(io.stderr.mock.calls.at(-1)).toEqual(['Secrets import refused: identity-options\n']);
  expect(io.stderr.mock.calls.flat().join('')).not.toContain('SECRET_INPUT_CANARY');
 });
 
@@ -97,6 +98,7 @@ it('rejects hardlinked source inputs before SQLite can chmod their destination a
  mkdirSync(f.home);const input=join(f.source,'store.sops.json');linkSync(input,join(f.home,'loom.db'));
  const before=statSync(input).mode;
  expect(await run(['secrets','--home',f.home,'--from',f.source,'--identities',map],io)).toBe(1);
+ expect(io.stderr.mock.calls).toEqual([['Secrets import refused: copied-source\n']]);
  expect(statSync(input).mode).toBe(before);expect(readdirSync(f.home)).toEqual(['loom.db']);
 });
 
@@ -111,4 +113,17 @@ it('standalone and all CLI report only the fixed Secrets check on invalid audit 
  io.stderr.mockClear();
  expect(await run(['all','--snapshot',snapshot,'--home',join(f.dir,'all-home')],io)).toBe(1);
  expect(io.stderr.mock.calls).toEqual([['Secrets import refused: audit-schema\n']]);
+});
+
+it('names malformed identity options and missing source checks without echoing paths or keys',async()=>{
+ const f=await setup(),io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:vi.fn(),stderr:vi.fn()};
+ const map=join(f.dir,'map.json');
+ const args=['secrets','--home',f.home,'--from',f.source,'--identities',map];
+ for(const raw of ['PRIVATE_VALUE',JSON.stringify({PRIVATE_FIELD:'PRIVATE_VALUE'})]){
+  writeFileSync(map,raw);io.stderr.mockClear();
+  expect(await run(args,io)).toBe(1);expect(io.stderr.mock.calls).toEqual([['Secrets import refused: identity-options\n']]);
+ }
+ writeFileSync(map,JSON.stringify(f.plan.importers.secrets.options));io.stderr.mockClear();
+ expect(await run(['secrets','--home',f.home,'--from',join(f.dir,'PRIVATE_PATH'),'--identities',map],io)).toBe(1);
+ expect(io.stderr.mock.calls).toEqual([['Secrets import refused: source-files\n']]);
 });

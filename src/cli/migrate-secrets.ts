@@ -16,10 +16,16 @@ export async function migrateSecrets(argv:string[],io:IOStreams):Promise<number>
   if(!args.values.home||!args.values.from||!args.values.identities){io.stderr(usage);return 2;}
   let release:(()=>void)|undefined;
   try {
-    const options=secretImportOptions.parse(JSON.parse(readFileSync(args.values.identities,'utf8')));
-    const source=realpathSync(args.values.from), destination=canonicalSnapshotPath(resolve(args.values.home));
+    let options;
+    try {options=secretImportOptions.parse(JSON.parse(readFileSync(args.values.identities,'utf8')));}
+    catch {throw new SecretsImportRefusal('identity-options');}
+    let source;
+    try {source=realpathSync(args.values.from);}
+    catch {throw new SecretsImportRefusal('source-files');}
+    const destination=canonicalSnapshotPath(resolve(args.values.home));
     assertSeparateSecretPaths(source,destination);
-    assertCopiedSecretSource(source);
+    try {assertCopiedSecretSource(source);}
+    catch {throw new SecretsImportRefusal('copied-source');}
     release=acquireHttpLock(args.values.home);
     const app=createFoundation({home:args.values.home});
     try {io.stdout(JSON.stringify(importSecrets(app.db,args.values.home,args.values.from,Date.now(),options))+'\n');return 0;}
