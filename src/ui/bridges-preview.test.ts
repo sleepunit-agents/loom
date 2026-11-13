@@ -18,7 +18,7 @@ beforeEach(() => {
   f.call.mockReset(); f.listeners.clear();
   f.snapshots = {
     'bridges.venue': { status: 'live', records: [{ id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'house', bot: '100', enabled: true, connection: 'connected', received: 3, delivered: 2, held: 1 }] },
-    'bridges.route': { status: 'live', records: [{ id: 'route', platform: 'discord', workspace: 'house', channel: '300', primary: 'art', peer: true, guest: false, readers: ['mark'], notes: ['house/rules'] }] },
+    'bridges.route': { status: 'live', records: [{ id: 'route', platform: 'discord', workspace: 'house', channel: '300', primary: 'art', peer: true, guest: false, readers: ['mark'], notes: ['house/rules'], changedAt: 123, connection: 'metadata-only' }] },
     'bridges.send': { status: 'live', records: [{ id: 'reply', venue: 'art-discord', incoming: 'receipt', state: 'pending', created: 0 }] },
     'core.effect': { status: 'live', records: [{ id: 'bridges:reply', kind: 'bridge-send', title: 'Bridge reply via art-discord', state: 'due' }, { id: 'wake', kind: 'wake', title: 'Hidden wake', state: 'due' }] },
   };
@@ -80,10 +80,10 @@ const submit = () => act(async () => { tree!.root.findByType('form').props.onSub
 it('edits all route fields through the existing operation and retains one pending request', async () => {
   const answer = pendingWrite();
   await draw('/p/bridges-preview/item/routes/route');
-  await change('Channel ID', '400'); await change('Parent channel ID', '300'); await change('Primary agent', 'mark');
+  await click('Slack'); await click('Peers enabled'); await change('Workspace ID', 'new-house'); await change('Channel ID', '400'); await change('Parent channel ID', '300'); await change('Primary agent', 'mark');
   await change('Paired webhook ID', '999'); await change('Reader agents', 'art\nmark'); await change('Note references', 'house/rules\nproject/brief');
   await click('Household route'); await submit();
-  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putRoutes', { id: 'route', platform: 'discord', workspace: 'house', channel: '400', parent: '300', primary: 'mark', pair: '999', peer: true, guest: true, readers: ['art', 'mark'], notes: ['house/rules', 'project/brief'] });
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putRoutes', { id: 'route', platform: 'slack', workspace: 'new-house', channel: '400', parent: '300', primary: 'mark', pair: '999', peer: false, guest: true, readers: ['art', 'mark'], notes: ['house/rules', 'project/brief'] });
   expect(button('Save route').props.disabled).toBe(true); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
   await answer({ ok: false, code: 'denied', message: 'Owner required' });
   expect(text()).toContain('denied: Owner required'); expect(button('Save route').props.disabled).toBe(false);
@@ -119,4 +119,42 @@ it.each(['offline', 'denied'] as const)('hides route editing and creation on %s'
   await draw('/p/bridges-preview/item/routes/route');
   await publish('bridges.route', f.snapshots['bridges.route'].records as LiveRecord[], status);
   expect(button('Save route')).toBeUndefined(); expect(button('New route')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
+});
+
+it('blocks a second route or new route while another route write is pending', async () => {
+  const answer = pendingWrite(); await draw('/p/bridges-preview/item/routes/route'); await submit();
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-route/another' })); });
+  await change('Workspace ID', 'T1'); await change('Channel ID', 'D1');
+  expect(button('Save route').props.disabled).toBe(true); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+  await answer({ ok: true, value: { id: 'route' } });
+  expect(button('Save route').props.disabled).toBe(false); await submit(); expect(f.call).toHaveBeenCalledTimes(2);
+});
+it('latches an observed edit and restore until reload, including removal confirmation', async () => {
+  pendingWrite(); await draw('/p/bridges-preview/item/routes/route'); await click('Remove route');
+  const original = f.snapshots['bridges.route'].records[0];
+  await publish('bridges.route', [{ ...original, primary: 'new-agent' }]);
+  await publish('bridges.route', [original]);
+  expect(button('Confirm removal')).toBeUndefined(); expect(button('Remove route').props.disabled).toBe(true);
+  await click('Remove route'); await submit(); expect(f.call).not.toHaveBeenCalled();
+  await click('Try again'); await click('Remove route'); await click('Confirm removal');
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.removeRoutes', { id: 'route' });
+});
+it('New route generates distinct identities and keeps one identity for retries', async () => {
+  const answer = pendingWrite(); const go = vi.fn();
+  await act(async () => { tree = create(h(BridgesApp, { path: '/p/bridges-preview/item/routes/route', go })); });
+  await click('New route'); const first = go.mock.calls[0][0] as string;
+  await act(async () => { tree!.update(h(BridgesApp, { path: first, go })); });
+  await change('Workspace ID', 'T1'); await change('Channel ID', 'D1'); await submit();
+  const id = decodeURIComponent(first.split('/').at(-1)!);
+  expect(id).toMatch(/^[a-f0-9-]{36}$/); expect(f.call.mock.calls[0][1]).toMatchObject({ id });
+  await answer({ ok: false, code: 'unavailable', message: 'Try later' }); await submit();
+  expect(f.call.mock.calls[1][1]).toMatchObject({ id });
+  await click('New route'); expect(go.mock.calls.at(-1)![0]).not.toBe(first);
+});
+it('whitelists operation fields when reopening a newly saved route with live metadata', async () => {
+  pendingWrite(); await draw('/p/bridges-preview/item/new-route/route'); await submit();
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putRoutes', {
+    id: 'route', platform: 'discord', workspace: 'house', channel: '300', parent: undefined, primary: 'art', pair: undefined,
+    peer: true, guest: false, readers: ['mark'], notes: ['house/rules'],
+  });
 });

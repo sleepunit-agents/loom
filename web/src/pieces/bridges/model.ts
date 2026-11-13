@@ -21,3 +21,10 @@ export function sendStatus(send: SendRecord, effect?: EffectRecord): string {
   if (effect?.state === 'released' || effect?.state === 'started') return 'Attempt in progress';
   return send.state === 'held' ? 'Held · review required' : send.state;
 }
+
+export type RouteInput = Pick<RouteRecord, 'id' | 'platform' | 'workspace' | 'channel' | 'parent' | 'primary' | 'pair' | 'peer' | 'guest' | 'readers' | 'notes'>;
+export function routeInput(route: RouteRecord): RouteInput {
+  return { id: route.id, platform: route.platform, workspace: route.workspace, channel: route.channel,
+    parent: route.parent, primary: route.primary, pair: route.pair, peer: route.peer, guest: route.guest,
+    readers: route.readers, notes: route.notes };
+}
