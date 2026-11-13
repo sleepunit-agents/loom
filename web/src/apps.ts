@@ -1,3 +1,4 @@
+import { activityApp } from './pieces/activity/registration';
 import { homeApp, HomeSurface } from './pieces/attention/home-registration';
 import { projectsApp } from './pieces/projects/registration';
 import { knowledgeApp } from './pieces/knowledge/registration';
@@ -20,3 +21,5 @@ apps.push(homeApp);
 apps.push(peopleApp);
 
 apps.push(projectsApp);
+
+apps.push(activityApp);
