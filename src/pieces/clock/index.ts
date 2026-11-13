@@ -10,6 +10,7 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
+import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
 const day = 86400_000;
@@ -47,12 +48,17 @@ function quotaDue(reset: unknown, now: number): number {
   const when = Number.isFinite(parsed) ? parsed : now + 60 * 60_000;
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
-export interface ClockOptions { runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource }
+export interface ClockOptions {
+  runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource;
+  /** Trusted composition opt-in. Safety work acts as each named agent, never an owner. */
+  deadmanAgents?: readonly string[];
+}
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
   registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
   migrate(db, 'clock', schema);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
+  const deadmanAgents = new Set(z.array(text).parse(options.deadmanAgents ?? []));
   let parksChanged = false;
   let closed = false, cancelTimer: (() => void) | undefined;
   const see = (v: Viewer, w: Work, type = 'wake') => maySee(v, scope(w, type), sharing());
@@ -64,11 +70,27 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const output = z.unknown();
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
     operations.register(operation({ name: `clock.${name}`, input, output, write, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
-      run(ctx, i) { if (closed) throw new OperationError('unavailable', 'Clock stopped'); const result = run(ctx, i); if (write) queue(); return result; } }));
+      run(ctx, i) {
+        if (closed) throw new OperationError('unavailable', 'Clock stopped');
+        const result = run(ctx, i);
+        if (write) { for (const agent of deadmanAgents) ensureDeadman(ctx, agent); queue(); }
+        return result;
+      } }));
   }
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
-    const row: Wake = { ...work(w), id: `w-${randomUUID()}`, due, state: 'pending', createdAt: ctx.now, changedAt: ctx.now, by: ctx.viewer, failures: 0, ...extra };
+    work(w);
+    if (!extra.deadman) for (const old of wakes(db).filter(row => row.agent === w.agent && row.deadman && active(row)
+      && row.state !== 'firing' && row.hold !== 'uncertain')) {
+      old.state = 'cancelled'; old.outcome = 'Replaced by real work'; saveWake(ctx, old); event(ctx, old, 'deadman-cleared');
+    }
+    const row: Wake = { ...w, id: `w-${randomUUID()}`, due, state: 'pending', createdAt: ctx.now, changedAt: ctx.now, by: ctx.viewer, failures: 0, ...extra };
     saveWake(ctx, row); event(ctx, row, 'set'); return row;
+  }
+  function ensureDeadman(ctx: Context, agent: string) {
+    const viewer: Viewer = { kind: 'agent', id: agent };
+    const input = { agent, prompt: deadmanPrompt, note: deadmanNote };
+    if (!create(viewer, input) || wakes(db).some(w => w.agent === agent && active(w))) return null;
+    return make({ ...ctx, viewer }, input, ctx.now + day, { deadman: true });
   }
   function next(ctx: Context, s: Schedule, after: number) {
     if (!s.enabled || wakes(db).some(w => w.schedule === s.id && active(w) && w.due > after)) return;
@@ -76,7 +98,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }
   function oneOffRoom(agent: string) {
     // Before runNow was recorded, immediate lane runs carried only bypassPause.
-    const oneOff = (w: Wake) => !w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause);
+    const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
   const timed = workInput.extend({ when: text });
@@ -213,6 +235,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
+  register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
+    && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
   operations.register(operation({ name: 'clock.command', write: true,
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
@@ -220,7 +244,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     run: (ctx,input) => command(operations,ctx.viewer,input),
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id)), (ctx, i) => {
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id))
+    && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
     w.state = 'firing'; w.attempt = i.attempt; saveWake(ctx, w); event(ctx, w, 'intent');
@@ -281,6 +306,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (closed) return;
     disarm();
     const checkAnswers = parksChanged; parksChanged = false;
+    for (const agent of deadmanAgents) if (!wakes(db).some(w => w.agent === agent && active(w)))
+      operations.call('direct', { kind: 'agent', id: agent }, 'clock.deadman', { agent }, randomUUID());
     for (const w of wakes(db).filter(w => (w.state === 'pending' || w.state === 'parked') && (w.due <= clock.now() || w.state === 'parked' && checkAnswers))) {
       if (w.state === 'parked') { const checked = call(w, 'checkPark', { id: w.id }); if (!checked.ok) holdDenied(w); continue; }
       const attempt = randomUUID(), intent = call(w, 'dispatch', { id: w.id, attempt });
