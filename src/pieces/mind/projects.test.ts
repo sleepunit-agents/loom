@@ -69,7 +69,7 @@ it('projects the tasks role first: epic descendants, outside names, waiting, rea
  expect(create('Pond epic',{type:'epic'})).toMatchObject({ok:true});create('Inside',{parent:'t-1'});create('Outside pond task');create('Unrelated');
  app.operations.call('direct',owner,'tasks.update',{id:'t-2',actor:'owner',at:'2026-11-13T10:00:00Z',set:{assignee:'owner',ask:'Approve this?'}},'ask');
  const p=read(app,'art:pond');expect(p.sections[0].key).toBe('tasks');expect(p.waiting.map(i=>i.title)).toEqual(['Inside']);
- const items=p.sections[0].groups?.flatMap(g=>g.items)??[];expect(items.map(i=>i.title)).toEqual(expect.arrayContaining(['Pond epic','Inside','Outside pond task']));expect(items.some(i=>i.title==='Unrelated')).toBe(false);expect(items.find(i=>i.title==='Outside pond task')?.status).toBe('outside the tree');
+ const items=p.sections[0].groups?.flatMap(g=>g.items)??[];expect(items.map(i=>i.title)).toEqual(expect.arrayContaining(['Inside','Outside pond task']));expect(items.some(i=>i.title==='Unrelated')).toBe(false);expect(items.find(i=>i.title==='Outside pond task')?.status).toBe('outside the tree');
 });
 it('does not create missing sources; quiet index skips roles and scoped hubs still compute them',async()=>{
  const missing=join(dir(),'missing.db'),a=source();a.write({slug:'quiet',name:'Quiet',status:'paused'});let calls=0;
@@ -89,7 +89,7 @@ it('updates two windows after outside project writes, and removes expired memory
 it('passes note selectors and original viewer through the new role, preserving bounded metadata and deadlines',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond',links:{notes:['pond','field/research']}});let asked:unknown;
  const all=Array.from({length:25},(_,i)=>({path:`pond/n-${i}`,updated:new Date(Date.parse('2026-11-13T00:00:00Z')+i*1000).toISOString(),expires:Date.parse('2026-11-14T12:00:00Z')}));all.push({...all[0],path:'pond-other/no-match'});
- const app=await fixture(a.database.name,undefined,{notes:{read(v,q){asked={viewer:v,prefixes:q.card.links.notes};const prefixes=q.card.links.notes??[q.card.slug];const rows=all.filter(n=>n.expires>q.now&&prefixes.some(p=>n.path===p||n.path.startsWith(p+'/'))).sort((a,b)=>Date.parse(b.updated)-Date.parse(a.updated));return {available:true,total:rows.length,activity:rows[0]?.updated,expires:rows[0]?.expires,items:rows.slice(0,20).map(n=>({title:n.path,when:n.updated}))};}}});
+ const app=await fixture(a.database.name,undefined,{notes:{read(v,q){asked={viewer:v,prefixes:q.notePrefixes};const prefixes=q.card.links.notes??[q.card.slug];const rows=all.filter(n=>n.expires>q.now&&prefixes.some(p=>n.path===p||n.path.startsWith(p+'/'))).sort((a,b)=>Date.parse(b.updated)-Date.parse(a.updated));return {available:true,total:rows.length,activity:rows[0]?.updated,expires:rows[0]?.expires,items:rows.slice(0,20).map(n=>({title:n.path,when:n.updated}))};}}});
  const p=read(app,'art:pond',partial);expect(asked).toEqual({viewer:partial,prefixes:['pond','field/research']});expect(p.sections.find(s=>s.key==='notes')).toMatchObject({total:25,items:expect.any(Array)});expect(p.sections.find(s=>s.key==='notes')?.items).toHaveLength(20);expect(p.activity).toBe(all[24].updated);
  (app.operations.clock as FakeClock).advance(86400000);expect(read(app,'art:pond').sections.find(s=>s.key==='notes')).toMatchObject({total:0,items:[]});
 });
@@ -125,4 +125,15 @@ it('supplies the default note prefix and derives Lately, waiting and a seven-day
 it('derives Changes open/failing/checking counts, keeping merged items in Lately and waiting out of it',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond'});const app=await fixture(a.database.name,undefined,{changes:{read:()=>({available:true,groups:[{title:'Waiting',waiting:true,items:[{title:'Answer PR',status:'Waiting on you',when:'2026-11-13T11:00:00Z',who:['Pat']}]},{title:'Author',items:[{title:'Red PR',status:'CI red',when:'2026-11-13T10:00:00Z'},{title:'Checking PR',status:'CI running',when:'2026-11-13T09:00:00Z'},{title:'Merged PR',status:'Merged',when:'2026-11-13T08:00:00Z'}]}]})}});
  const p=read(app,'art:pond');expect(p.changes).toEqual({open:3,failing:1,running:1});expect(p.waiting.map(i=>i.title)).toEqual(['Answer PR']);expect(p.lately.map(i=>i.title)).toEqual(['Red PR','Checking PR','Merged PR']);expect(p.people).toEqual(['art','Pat']);expect(p.spark.reduce((a,b)=>a+b,0)).toBe(4);
+});
+it('orders and deduplicates people as agent, People cards, feed authors, then conversation participants',async()=>{
+ const a=source();a.write({slug:'pond',name:'Pond'});const people=new PeopleStore({dbPath:a.database.name});closes.push(()=>people.close());people.write({slug:'friend',name:'Friend',where:{pond:{value:'Maintainer'}}});
+ const app=await fixture(a.database.name,undefined,{changes:{read:()=>({available:true,groups:[{title:'Author',items:[{title:'Change',who:['Author','FRIEND']}]}]})},conversations:{read:()=>({available:true,items:[{title:'Conversation',who:['Participant','author']}]})}});
+ expect(read(app,'art:pond').people).toEqual(['art','Friend','Author','Participant']);
+});
+it('refreshes checked/not-checked/stale wording at the exact field deadline',async()=>{
+ const a=source();a.write({slug:'pond',name:'Pond',where:{now:{value:'On track',verified_at:'2026-11-12T12:00:00Z',stale_after_days:2},next:{value:'Review'}}});const app=await fixture(a.database.name);
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'project.hub',scope:'art:pond'}));const before=JSON.parse((await initial)[0].toString()).records[0];expect(before.fields.find((f:{key:string})=>f.key==='now').state).toBe('checked 1 days ago');expect(before.fields.find((f:{key:string})=>f.key==='next').state).toBe('not checked');
+ (app.operations.clock as FakeClock).advance(86400000);expect(read(app,'art:pond').fields.find(f=>f.key==='now')?.state).toBe('checked 2 days ago');
+ const stale=new Promise<void>(resolve=>{const changed=(raw:Buffer)=>{if(JSON.parse(raw.toString()).record?.fields.some((f:{state:string})=>f.state==='stale for 2 days')){ws.off('message',changed);resolve();}};ws.on('message',changed);});(app.operations.clock as FakeClock).advance(1);await stale;
 });

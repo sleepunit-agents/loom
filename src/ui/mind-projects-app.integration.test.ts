@@ -27,6 +27,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
  cards.write({slug:'pond',name:'Pond',summary:'Environmental response work. Keeping the work together.',goal:'Every field team connected',where:{now:{value:'Reviewing the next release'}},links:{aliases:['on-pond'],epic:'t-1',repos:['sleepunit-agents/pond']}});
  cards.write({slug:'hocket',name:'Hocket',status:'paused',summary:'A music sketchbook.'});other.write({slug:'workshop',name:'Workshop',summary:'Builds for the house.'});
  const people=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});people.write({slug:'casey',name:'Casey Smith',where:{on_pond:{value:'Field coordinator'}}});
+ people.database.exec("CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT,salience REAL); INSERT INTO memories VALUES(1,'m-pond','project','Field update','Complete field update','2026-11-13T10:00:00Z',NULL,'on-pond',0,NULL,1)");
  const app=await startLoom({home,next:true,clock,webRoot:root});
  const owner={kind:'member' as const,id:'owner'};
  const task=(title:string,input={})=>app.operations.call('direct',owner,'tasks.create',{title,actor:'owner',at:'2026-11-13T10:00:00Z',...input},`fixture-${title}`);
@@ -47,6 +48,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
   const headings=await b.locator('article h2').allTextContents();expect(headings.indexOf('Tasks')).toBeLessThan(headings.indexOf('People'));
   expect(await b.locator('article a[href="/p/tasks-preview/task/t-2"]').count()).toBe(1);
   expect(await b.getByText('Conversations service is not available yet.',{exact:true}).count()).toBe(1);
+  await b.getByText('Memories',{exact:true}).click();await b.getByRole('link',{name:'Field update — Complete field update',exact:true}).click();await expect.poll(()=>b.getByRole('heading',{name:'Field update',exact:true}).count()).toBe(1);expect(await b.getByText('Complete field update',{exact:true}).count()).toBe(1);await b.getByRole('button',{name:'Projects',exact:true}).last().click();await expect.poll(()=>b.getByRole('heading',{name:'Pond',exact:true}).count()).toBe(1);
   const shots=resolve('artifacts/projects-app');mkdirSync(shots,{recursive:true});
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){const page=width<640?b:a;await page.setViewportSize({width,height:900});await page.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>page.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await page.screenshot({path:join(shots,`projects-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
   cards.write({slug:'pond',goal:'Updated outside the app'});await expect.poll(()=>b.getByText('Updated outside the app',{exact:true}).count()).toBe(1);await b.reload();await expect.poll(()=>b.getByText('Updated outside the app',{exact:true}).count()).toBe(1);

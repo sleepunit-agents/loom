@@ -42,9 +42,9 @@ memories open a scoped full-body reader inside Projects, using a separate memory
 
 Notes roles must select `card.links.notes` prefixes (default the slug), deduplicate,
 exclude expired notes, return newest twenty and total, plus latest activity and
-next expiry. Conversation roles must select twenty newest project conversations,
+next expiry. The query supplies `notePrefixes` with the default already resolved. Conversation roles must select twenty newest project conversations,
 preserve summary/who/venue/last and member-only asks, and supply destinations in
-the new Comms/Inbox apps. Optional `expires` on a section schedules its next live
+the new Comms/Inbox apps. Their `conversationIds` metadata (at most 200 filed ids) also lets Tasks include work made in these threads, without reading conversations itself. Optional `expires` on a section schedules its next live
 refresh. No legacy conversation or digest IO is used.
 
 Outside project, memory, person, task, change, note and conversation notifications
