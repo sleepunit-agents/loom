@@ -1,3 +1,7 @@
+import type { Foundation } from '../../core/app.js';
+import { signin } from '../../core/signin/index.js';
+import { runtimeStore } from './store.js';
+import { bodyPolicyExecutionHeld } from './policy-store.js';
 /** Runtime's seam for Clock, Comms and venue adapters. No runner or store imports. */
 import type { Operations, Result, Scope, Viewer } from '../../core/index.js';
 import { attentionRole, type AgentStatus } from '../attention/role.js';
@@ -79,4 +83,17 @@ export function runtimeRole(operations: Pick<Operations, 'call' | 'callAsync'>):
     reply: (viewer, input, id) => operations.callAsync('direct', viewer, 'runtime.reply', input, id),
     reportStatus: (viewer, input, id) => attention.reportStatus(viewer, input, id),
   };
+}
+
+/** Exact active body scope for trusted in-process consumers. No caller input or
+ * copied viewer can confer a job. Keep Runtime storage/policy behind its role.
+ */
+export function runtimeHouseContext(app: Foundation, viewer: Viewer): {agent: string; job: string; service?: string} | undefined {
+  const proof = signin(app).body(viewer);
+  if (!proof || viewer.kind !== 'agent' || proof.agent !== viewer.id) return;
+  const store = runtimeStore(app.db), job = store.read('job', proof.job), box = job && store.read('box', job.box);
+  if (!job || job.agent !== proof.agent || job.service !== proof.service || job.imported || job.endedAt !== undefined
+    || !['starting', 'running', 'waiting'].includes(job.state) || !box || box.revokedAt !== undefined
+    || bodyPolicyExecutionHeld(app.db, job.agent)) return;
+  return {agent: job.agent, job: job.id, ...(job.service === undefined ? {} : {service: job.service})};
 }

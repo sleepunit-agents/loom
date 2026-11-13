@@ -221,7 +221,7 @@ it('supports the old tombstone schema without a conversation column without inve
  expect(f.read().skipped).toEqual([{id:cv,reason:'skipped: owning Comms thread deleted'}]);
 });
 
-for(const venue of ['loom','spawn'])it.each(['agent','conversation','place'])('refuses mismatched live '+venue+' Comms %s evidence',change=>{
+for(const venue of ['loom','spawn'])it.each(venue==='loom'?['agent','conversation','place']:['agent','conversation'])('refuses mismatched live '+venue+' Comms %s evidence',change=>{
  const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
  writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue,place:'th:live'}));
  const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='live'");
@@ -247,4 +247,51 @@ it.each([null,cv])('refuses a tombstone for another thread, with conversation %s
  const f=fixture();deletedThread(f);const db=new Database(f.sources.household);
  db.prepare('UPDATE comms_deleted SET id=?,conversation=?').run('unrelated',conversation);db.close();
  expect(f.read).toThrow('owning Comms source');
+});
+
+it.each(['job-h-1862','sp-0123456789abcdef01234567'])('matches spawn handle %s by conversation and preserves its exact place',place=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='th:actual-thread'");db.close();
+ expect(f.read().expected.binding).toEqual([{id:cv,agent:'art',member:'jonathan',venue:'spawn',place}]);
+});
+it.each(['missing','agent','member','conversation','duplicate','deleted'])('refuses %s ownership evidence for an actual spawn handle',change=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place:'job-h-1862'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='th:actual-thread'");
+ if(change==='missing')db.exec('DELETE FROM comms_threads');
+ if(change==='agent')db.exec("UPDATE comms_threads SET agent='other'");
+ if(change==='member')db.exec("UPDATE comms_threads SET member='guest'");
+ if(change==='conversation')db.exec("UPDATE comms_threads SET conversation='cv-ffffffffffff'");
+ if(change==='duplicate')db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('th:another',cv,'art','jonathan',null);
+ if(change==='deleted'){
+  db.exec('CREATE TABLE comms_deleted(id,agent,member,conversation)');
+  db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?)').run('actual-thread','art','jonathan',cv);
+ }
+ db.close();expect(f.read).toThrow('owning Comms source');
+});
+it('matches a full loom th place to its full owning Comms id',()=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'loom',place:'th:actual-thread'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='th:actual-thread'");db.close();
+ expect(f.read().expected.binding).toEqual([{id:cv,agent:'art',member:'jonathan',venue:'loom',place:'th:actual-thread'}]);
+});
+
+it('does not mistake a spawn handle for an unrelated Comms thread id',()=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place:'job-h-1862'}));
+ const db=new Database(f.sources.household);
+ db.exec("UPDATE comms_threads SET id='th:actual-thread'");
+ db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('job-h-1862','cv-ffffffffffff','art','guest',null);db.close();
+ expect(f.read().expected.binding).toEqual([{id:cv,agent:'art',member:'jonathan',venue:'spawn',place:'job-h-1862'}]);
+});
+
+for(const tombstoneId of ['actual-thread','th:actual-thread'])it.each([true,false])('refuses spawn live/deleted conflict at '+tombstoneId+' with conversation column %s',hasConversation=>{
+ const f=fixture(),path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue:'spawn',place:'job-h-1862'}));
+ const db=new Database(f.sources.household);db.exec("UPDATE comms_threads SET id='th:actual-thread'");
+ db.exec('CREATE TABLE comms_deleted(id,agent,member'+(hasConversation?',conversation':'')+')');
+ if(hasConversation)db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?)').run(tombstoneId,'art','jonathan',null);
+ else db.prepare('INSERT INTO comms_deleted VALUES (?,?,?)').run(tombstoneId,'art','jonathan');
+ db.close();expect(f.read).toThrow('owning Comms source');
 });

@@ -164,8 +164,13 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     // Comms places use th:<id>, while the old household tables store the bare id.
     // Older fixtures/stores can retain the full place as the table id.
     const placeId=typeof c.place==='string'&&c.place.startsWith('th:')?c.place.slice(3):undefined;
-    const threads=inventory.privateThreads.filter(t=>t.conversation===id || t.id===c.place || (placeId!==undefined&&t.id===placeId));
-    const deleted=inventory.deletedThreads.filter(t=>t.conversation===id || (placeId!==undefined&&(t.id===placeId || t.id===c.place)));
+    // Spawn places are job-h-N / sp-hex handles, not Comms thread ids.
+    // Their owning thread is identified by conversation; loom also checks its place.
+    const threads=inventory.privateThreads.filter(t=>t.conversation===id || (c.venue!=='spawn'&&(t.id===c.place || (placeId!==undefined&&t.id===placeId))));
+    // Legacy tombstones may have no conversation. Check the resolved owning
+    // thread id too: a spawn handle itself cannot reveal that deletion.
+    const deleted=inventory.deletedThreads.filter(t=>t.conversation===id || (placeId!==undefined&&(t.id===placeId || t.id===c.place))
+      || threads.some(thread=>typeof t.id==='string'&&typeof thread.id==='string'&&t.id.replace(/^th:/,'')===thread.id.replace(/^th:/,'')));
     if(deleted.length) {
       const tombstone=deleted[0];
       if(deleted.length!==1 || threads.length || placeId===undefined || (tombstone.id!==placeId&&tombstone.id!==c.place) || tombstone.agent!==agent || typeof tombstone.member!=='string' || !identities.members.includes(tombstone.member)
@@ -176,7 +181,7 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     }
     if(c.venue==='loom' || c.venue==='spawn' || placeId!==undefined || threads.length) {
       if(!audience.member)throw Error('Private Comms conversation requires a member');
-      if(threads.length!==1 || threads[0].conversation!==id || (threads[0].id!==c.place&&threads[0].id!==placeId)
+      if(threads.length!==1 || threads[0].conversation!==id || (c.venue==='loom'&&threads[0].id!==c.place&&threads[0].id!==placeId)
         || threads[0].agent!==agent || threads[0].member!==audience.member
         || (audience.project!==undefined&&threads[0].project!==audience.project))throw Error('Runtime private audience must match the owning Comms source');
     }

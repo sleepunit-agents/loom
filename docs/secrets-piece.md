@@ -1014,3 +1014,24 @@ Old-to-new addition: old local value writes are explicit authenticated
 reconciliation is a foundation clock job, with no timer or subprocess. This
 ships code only; provisioning files, importing data and activating a holder on
 a real machine remain separate owner-present final-move steps.
+
+### Authenticated house request and status
+
+`secrets.houseRequest {job, name, why, minutes?}` accepts a current central
+Sign-in body credential. `job` is a required assertion matching that credential,
+so retry identity includes the job; it confers no authority. Agent, house and
+service are derived from the exact credential and current Runtime job. The
+UUID job is the new house grant scope; legacy `h-N` scopes remain distinct.
+Copied viewers, agent-only tokens, service/job mismatches, imported or ended
+jobs, revoked boxes and Runtime policy-held execution refuse, including replay.
+No request can supply an agent, scope, service, sink or path. Existing policy,
+carry, deduplication and managed household Attention answer semantics apply.
+The public acknowledgement contains only request ID and stored decision state.
+
+`secrets.houseStatus {id}` checks the same current credential/job/service binding
+and returns only pending, granted, expired, denied, cancelled or revoked. Another
+house's request is indistinguishable from a missing request. Granted requires a
+surviving request-linked exact-scope grant. Both operations read only new stores.
+They replace the metadata request/status part of the old house API; granted-get,
+trusted Runtime sinks and typed house commands remain required on t-2208. No
+value-read endpoint or credential delivery is introduced here.
