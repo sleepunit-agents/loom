@@ -20,7 +20,7 @@ async function setup(preinstalled = false) {
   const home = mkdtempSync(join(tmpdir(), 'clock-vouch-'));
   const source = join(home, 'old'); mkdirSync(join(source, 'art'), {recursive:true});
   writeFileSync(join(source, 'art', 'spool.jsonl'), ids.map(id => JSON.stringify({ id, kind:'wake', for:'-',
-    at:'2026-11-13 07:00:00', created:'2026-11-13 05:00:00', prompt:'Review my queue', note:'unknown work', origin:'agent:art' })).join('\n'));
+    at:'2026-11-13 07:00:00', created:'2026-11-13 05:00:00', prompt:'Review my queue', note:'unknown work', origin:'agent:art', fails:3 })).join('\n'));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const access = fixtureSharing();
   access.services.clock = {types:['approval'],operations:['approvals.piece-request']};
@@ -49,6 +49,7 @@ async function setup(preinstalled = false) {
 const settle = async () => {for(let n=0;n<6;n++)await Promise.resolve();};
 it('adopts unknown imports with the actual owner and retains words, deadline, archival data and retry receipt across restart', async () => {
   const s = await setup(), before = wake(s.app.db,ids[0])!;
+  expect(before.failures).toBe(3);
   const input = {target:`art:${ids[0]}`}, receipt = randomUUID();
   const result = s.call('clock.vouch',input,owner,receipt);
   expect(result).toEqual({ok:true,value:{done:[ids[0]],gone:[]}});
@@ -158,4 +159,17 @@ it('adopts overdue work without bypassing pause, then rechecks authority before 
   s.access.members.jonathan.agents = [];
   s.clock.advance(60_000); await settle();
   expect(wake(s.app.db,ids[0])).toMatchObject({state:'held',hold:'permission'});
+});
+
+it('reports invalid executable imports as gone without rolling back other eligible work on the same card', async () => {
+  const s = await setup();
+  s.change(ids[1],{prompt:undefined,file:'../outside',legacy:{...wake(s.app.db,ids[1])!.legacy,prompt:undefined,prompt_file:'../outside'}});
+  const bad = wake(s.app.db,ids[1])!, card = s.request();
+  const answer = s.call('approvals.answer',{id:card.id,action:'allow'});
+  expect(answer.ok).toBe(true);
+  expect(wake(s.app.db,ids[0])).toMatchObject({state:'pending',by:owner,failures:3});
+  expect(wake(s.app.db,ids[1])).toEqual(bad);
+  const receipt = s.app.db.prepare("SELECT result FROM core_operations WHERE name='clock.vouch'").get() as {result:string};
+  expect(JSON.parse(receipt.result)).toEqual({ok:true,value:{done:[ids[0]],gone:[ids[1]]}});
+  expect(load(s.app.db).approvals.find(a=>a.id===card.id)?.state).toBe('used');
 });

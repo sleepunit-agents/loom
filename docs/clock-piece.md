@@ -593,7 +593,8 @@ assumed unknown. Recurring/parked work, uncertain or attempted dispatches, local
 standing, continuation, placement or other archived capability-bearing work is
 excluded. Missing legacy provenance and known-person/owner imports require their
 separate recovery flow. Archived words can restrict eligibility but never supply
-a Viewer. Current executable words and relative file paths are validated again.
+a Viewer. Current executable words and relative file paths are validated again; invalid
+rows are reported as gone without preventing other eligible rows on the card.
 
 The decision preserves ids, words, deadline, failures and the inert archive, stamps
 `vouched` with the actual owner/time, and records a vouch event. The wake becomes

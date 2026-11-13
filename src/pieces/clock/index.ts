@@ -159,7 +159,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const w = wake(db, id);
       if (!w || !vouchable(w)) { gone.push(id); continue; }
       // Validate current executable words. Archived fields are never restored.
-      newWork(w);
+      try { newWork(w); }
+      catch (e) {
+        if (!(e instanceof OperationError) || e.code !== 'invalid') throw e;
+        gone.push(id); continue;
+      }
       w.by = ctx.viewer; w.state = 'pending'; delete w.hold;
       w.outcome = 'Owner vouched for unknown imported work';
       w.vouched = { by: ctx.viewer.id, at: ctx.now };
