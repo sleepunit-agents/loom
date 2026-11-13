@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Enable household project operations in production with database projects and current file-based members and ownership, shared by the foundation tasks piece.
+
 - Keep agent-created unscoped foundation tasks in their own queue; let the offline tasks importer assign projectless tasks with `--agent`.
 
 - Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.

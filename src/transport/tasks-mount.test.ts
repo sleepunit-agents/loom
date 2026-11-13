@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/index.js';
 import { loadHousehold, createToken } from '../household.js';
+import { HouseholdRows } from '../core/household/rows.js';
 import { startHttpServer } from './http-server.js';
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -29,14 +30,22 @@ it('mounts registered task operations for authenticated daemon sessions, binds v
     cleanup.push(() => client.close()); return client;
   };
   await expect(connect()).rejects.toThrow();
+  // A conflicting database household must not select database authentication.
+  new HouseholdRows(app.db, 'settings').put('household-envelope', { fields: { v: 1 }, agents: [], members: [] });
   const owner = await connect('owner-token');
+  const project = { slug: 'shared', name: 'Shared', repositories: [], members: ['jonathan'], agents: ['art'] };
+  const created = await owner.callTool({ name: 'household.createProject', arguments: { input: project, id: 'project' } });
+  expect(JSON.parse((created.content as {text:string}[])[0].text)).toMatchObject({ ok: true, value: project });
   expect((await owner.listTools()).tools.map(t=>t.name)).toContain('tasks.create');
   const input = { title:'Household task',actor:'art',at:'2026-11-12T00:00:00.000Z' };
   const made = await owner.callTool({name:'tasks.create',arguments:{input,id:'create'}});
   expect(JSON.parse((made.content as {text:string}[])[0].text)).toMatchObject({ok:true,value:{result:{ok:true,id:'t-1'}}});
   const body = await fetch(app.url+'/api/tasks/list',{method:'POST',headers:{authorization:'Bearer owner-token','content-type':'application/json'},body:JSON.stringify({input:{}})}).then(r=>r.json());
   expect(body).toMatchObject({ok:true,value:{result:{entries:[{id:'t-1'}]}}});
-  const art = await connect(agent), listed = await art.callTool({name:'tasks.list',arguments:{input:{}}});
+  const art = await connect(agent);
+  const refused = await art.callTool({ name: 'household.setProjectAgents', arguments: { input: { slug: 'shared', agents: [] }, id: 'agent-project' } });
+  expect(JSON.parse((refused.content as {text:string}[])[0].text)).toMatchObject({ ok: false, code: 'denied' });
+  const listed = await art.callTool({name:'tasks.list',arguments:{input:{}}});
   expect(JSON.parse((listed.content as {text:string}[])[0].text)).toMatchObject({ok:true,value:{result:{entries:[]}}});
   const outsider = await connect(peer);
   expect((await outsider.listTools()).tools.map(t=>t.name)).not.toContain('tasks.list');

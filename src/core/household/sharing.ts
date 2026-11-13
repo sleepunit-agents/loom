@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Db } from '../db/index.js';
 import { OperationError } from '../operations/index.js';
 import type { Sharing } from '../../policy.js';
+import type { Household } from '../../household.js';
 import { HouseholdDatabase } from './document.js';
 import { HouseholdRows } from './rows.js';
 
@@ -17,7 +18,8 @@ export type HouseholdProject = z.infer<typeof projectSchema>;
 
 /** Supplied daemon/importer connection only. No filesystem IO or backend selection. */
 export class SharingDatabase {
-  constructor(private readonly db: Db, private readonly home: string) {}
+  constructor(private readonly db: Db, private readonly home: string,
+    private readonly household: () => Household | null | undefined = () => new HouseholdDatabase(db).household(home)) {}
 
   project(slug: string): HouseholdProject | undefined {
     const raw = new HouseholdRows<unknown>(this.db, 'projects').get(slug);
@@ -32,7 +34,7 @@ export class SharingDatabase {
   /** One snapshot supplies the central policy; project membership never implies ownership. */
   sharing(): Sharing {
     return this.db.transaction(() => {
-      const h = new HouseholdDatabase(this.db).household(this.home);
+      const h = this.household();
       if (!h) return { members: {}, projects: {}, services: {} };
       const projects = new HouseholdRows<unknown>(this.db, 'projects').entries().map(([id]) => {
         const p = this.project(id)!;
@@ -76,8 +78,8 @@ export class SharingDatabase {
     const parsed = projectSchema.safeParse(input);
     if (!parsed.success) throw new OperationError('invalid', 'Invalid household project');
     const p = parsed.data;
-    const h = new HouseholdDatabase(this.db).household(this.home);
-    if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+    const h = this.household();
+    if (!h) throw new OperationError('unavailable', 'Household has not been imported or supplied');
     if (p.members.some(id => !h.members.some(m => m.person === id))) throw new OperationError('invalid', 'Project names an unknown member');
     if (p.agents.some(id => !h.agents.includes(id))) throw new OperationError('invalid', 'Project names an unknown agent');
     return { ...p, repositories: [...new Set(p.repositories)], members: [...new Set(p.members)], agents: [...new Set(p.agents)] };

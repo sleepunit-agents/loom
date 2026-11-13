@@ -35,11 +35,15 @@ open and in-progress tasks stay live. Imported tasks start their live week at im
 Readiness uses the complete graph before visibility filtering, so a hidden blocker
 still blocks without exposing its id. Relations to hidden tasks are omitted on reads.
 
-The production composition temporarily adapts the existing household members and
-ownership to Sharing, with empty project/service maps: legacy metadata has neither.
-The fixture/test composition injects full Sharing. The household foundation must
-supply actual shared projects before project-based production cutover; no local
-project file or second policy store is introduced here.
+The production composition registers `household.createProject`,
+`household.setProjectMembers` and `household.setProjectAgents` on the foundation
+registry. Projects live in loom.db; current members and ownership still come
+from the live file household adapter. Project references are validated against
+that household on every change. Tasks and projects share the same policy view;
+stale project references stop granting access when a member or agent disappears.
+The database household document, tokens and sessions are not imported or selected
+by this composition. Database-only test/importer callers keep their explicit
+SharingDatabase adapter.
 
 ## Coordinator cutover (owner present)
 

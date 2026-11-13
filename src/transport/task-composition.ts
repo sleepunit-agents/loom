@@ -2,14 +2,18 @@
 import type { Foundation } from '../core/app.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { Household, Role } from '../household.js';
+import { installHouseholdProjects } from '../core/household/operations.js';
+import { migrateHouseholdTables } from '../core/household/schema.js';
+import { SharingDatabase } from '../core/household/sharing.js';
 import { installTasks } from '../pieces/tasks/index.js';
 import { registerOperationTools } from './operation-tools.js';
 export function installHouseholdTasks(app: Foundation, household: () => Household | undefined) {
-  if (app.operations.has('tasks.list')) return;
-  installTasks(app.db, app.operations, app.live, () => {
-    const h = household();
-    return { members: Object.fromEntries((h?.members ?? []).map(m => [m.person, { owner: m.agents === '*', agents: m.agents === '*' ? h!.agents : m.agents }])), projects: {}, services: {} };
-  });
+  // Only projects live in SQLite. Members, ownership, tokens and sessions still
+  // use the production file adapter, including after it refreshes or disappears.
+  migrateHouseholdTables(app.db);
+  const sharing = new SharingDatabase(app.db, '', household);
+  if (!app.operations.has('household.createProject')) installHouseholdProjects(app, '', household);
+  if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, () => sharing.sharing());
 }
 export function registerSessionOperations(server: McpServer, app: Foundation | undefined, caller: { role: Role } | undefined, household: () => Household | undefined): void {
   if (!app || !caller) return;

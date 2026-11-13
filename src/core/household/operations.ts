@@ -2,11 +2,12 @@ import { z } from 'zod';
 import type { Foundation } from '../app.js';
 import { operation } from '../operations/index.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
+import type { Household } from '../../household.js';
 import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 
 /** Explicit installation only until importer and all production callers cut over together. */
-export function installHouseholdProjects(app: Foundation, home: string): void {
-  const store = new SharingDatabase(app.db, home);
+export function installHouseholdProjects(app: Foundation, home: string, household?: () => Household | null | undefined): void {
+  const store = new SharingDatabase(app.db, home, household);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
   app.operations.register(operation({
     name: 'household.createProject', write: true, input: projectSchema, output: projectSchema,
