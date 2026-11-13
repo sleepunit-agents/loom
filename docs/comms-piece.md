@@ -83,7 +83,7 @@ data does not remove the behavior it delivered.
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
-| Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; thread batch validation and timing/body limits remain missing. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
+| Activity route, `postActivity` | `Comms.activityCards` and `Comms.post` | Partial: trusted private batches now validate atomically, preserve original tool/timing/deadline and enforce body/detail/plan bounds; runtime capture/redaction and production binding remain missing. The generic trusted `post` path still exists for replies/asks/errors and legacy card callers; it is not the validated activity-batch API. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
@@ -523,3 +523,41 @@ continuing the original following and retention proofs. This is a simulated
 keyboard in Chromium, not a claim of physical iOS-device testing. Current-head
 CI must validate the extension; broader parity and production integration remain
 unfinished, with review budgets unchanged.
+
+
+Private thread activity now has the trusted `Comms.activityCards(agent, thread,
+{run, cards, alive?})` role. A batch accepts 1–50 cards (zero only with an alive
+sample), rejects unknown fields, repeated ids and malformed parts before crypto,
+and commits all cards and heartbeat facts in one transaction. Private card ids
+keep the legacy thread-wide update identity, even across runs; ordinary
+conversation labels retain their separate run/id identity. Production runtime
+capture/redaction and routing to this role remain required; no window or bearer
+operation was added.
+
+Labels, tool/run/state, detail, body, result, plan items and timing are encrypted
+together. Updates preserve sequence, original tool, timestamp and retention
+deadline. Each update replaces optional details, preserving original start/end
+times; returning to running clears the end. Finished text/plan cards use their
+start as their end when supplied. Only Edit/MultiEdit/Write/text may keep a body;
+shell/read bodies are dropped, including a later attempt to change the original
+tool. Detail, body, result, plan, exit and timeout bounds match the legacy
+activity contract. Runtime principal/privacy checks and redaction still belong
+to the production capture boundary.
+
+Crypto runs outside SQLite. Commit rechecks ownership, routing, archive
+generation, closure, exact selected rows and retention. A changed selected row
+or concurrent batch conflicts, and expiry cannot renew or resurrect words.
+Running cards start a working spell; batches keep an existing spell's beat,
+while finished late cards and alive-only updates never restart it. Alive samples
+use the existing monotonic/future/token rules. The first regression failed with
+`activityCards is not a function`; fifteen new cases now cover private storage,
+whole-batch validation/rollback, original-tool body suppression, timing,
+heartbeat/alive, unavailable capabilities, eight crypto races and exact expiry.
+All 339 affected tests and TypeScript checking pass. No web files changed.
+
+The visual-keyboard browser extension passed on `570f8b8be57b0512ebc50f32e35f79f9515a3905`:
+[Comms evidence run](https://github.com/sleepunit-agents/loom/actions/runs/43387911743),
+[12 screenshots](https://github.com/sleepunit-agents/loom/actions/runs/43387911743/artifacts/14020315132).
+It proves the Chromium keyboard simulation and the retained scroll/retention
+assertions on that head, not physical iOS behavior or later heads. Aggregate
+review budgets remain backend/security 2/3 and importer 1/3.

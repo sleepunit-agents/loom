@@ -37,7 +37,15 @@ export interface DeliveryTrace {
  * startedAt is its original epoch-ms start, preserved across capability renewal. */
 export interface ConversationWriteBinding extends ReadBinding { conversation: string; run: string; startedAt: number }
 export interface ConversationCard { id: string; tool: string; summary: string; state: 'running' | 'done' | 'failed' }
+export interface ThreadCard extends ConversationCard {
+ at?: string; end?: string; detail?: string; body?: string; result?: string;
+ exit?: number; limit?: number; parent?: string;
+ items?: {text: string; state: 'done' | 'now' | 'todo'}[];
+}
+export interface ThreadActivity {run: string; cards: readonly ThreadCard[]; alive?: BodyAlive}
 export interface Comms {
+ /** Runtime-checked private cards; whole-batch validation and atomic persistence. */
+ activityCards(agent: string, thread: string, input: ThreadActivity): Promise<{added: number; updated: number}>;
  /** Label-only activity for ordinary conversations. Private venues use post instead. */
  conversationWriter(binding: ConversationWriteBinding): {write(cards: readonly ConversationCard[]): Promise<{added: number; updated: number}>};
  /** One encrypted line per member message; late/duplicate attempts cannot replace progress. */

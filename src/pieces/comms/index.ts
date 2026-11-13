@@ -5,6 +5,7 @@ import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
+import { threadActivity } from './thread-activity.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
@@ -479,6 +480,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+  activityCards:threadActivity({db,clock,key,days,decode,available(agent,place){
+   const t=requireAgent(agent,place);
+   if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   return t;
+  },changed(t,seqs){touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));if(seqs.length)progressChanged(t);}}),
   notice(agent,place,raw) {
    const n=z.object({kind:z.enum(['no-reply','loop']),id:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/)}).strict().parse(raw);
    const name=agent.charAt(0).toUpperCase()+agent.slice(1);

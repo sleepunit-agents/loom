@@ -1141,3 +1141,143 @@ it('supplies authoritative retention deadlines on page and runtime-reader record
  await s.comms.post('art',place,{id:'deadline-card',kind:'card',text:'private step',step:{keepUntil:9999999999999}});
  const card=(await read())[1];expect(card.keepUntil).toBe(Number(card.at)+86400000);
 });
+
+it('atomically writes private activity batches, preserving step identity, tool, timing and deadline',async()=>{
+ const s=await setup(),place=await s.open(),at=s.clock.now(),t0=new Date(at).toISOString();
+ const first=await s.comms.activityCards('art',place,{run:'run-private',cards:[
+  {id:'edit',tool:'Edit',summary:'Private edit',state:'running',at:t0,body:'private diff',detail:'private command',limit:10},
+  {id:'shell',tool:'Bash',summary:'Ran tests',state:'done',body:'must never keep shell output',result:'Tests passed'},
+ ]});
+ expect(first).toEqual({added:2,updated:0});
+ const rows=()=>s.app.db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='card' ORDER BY seq").all(place) as {seq:number;at:number;record:string;words:Buffer|null}[];
+ const before=rows();expect(before).toHaveLength(2);
+ expect(JSON.stringify(before)).not.toMatch(/private diff|private command|Private edit|run-private|Bash|Edit|Tests passed/);
+ s.clock.advance(5000);
+ expect(await s.comms.activityCards('art',place,{run:'run-private',cards:[{id:'edit',tool:'Bash',summary:'Edited',state:'done',body:'replacement diff'}]})).toEqual({added:0,updated:1});
+ const page=await s.call('messages',{thread:place});expect(page).toMatchObject({ok:true});
+ const records=(page as {ok:true;value:Record<string,unknown>[]}).value;
+ const edit=records.find(r=>r.seq===before[0].seq)!;
+ expect(edit).toMatchObject({text:'Edited',tool:'Edit',run:'run-private',state:'done',at,keepUntil:at+14*86400_000,step:{t0,t1:new Date(at+5000).toISOString()}});
+ expect(JSON.stringify(edit)).not.toMatch(/private diff|private command|replacement diff|"limit"/);
+ expect(JSON.stringify(records)).not.toContain('must never keep shell output');
+ expect(rows().map(r=>[r.seq,r.at])).toEqual(before.map(r=>[r.seq,r.at]));
+ expect(await s.comms.activityCards('art',place,{run:'another-run',cards:[{id:'edit',tool:'Edit',summary:'New label',state:'done',body:'new diff'}]})).toEqual({added:0,updated:1});
+ const last=await s.call('messages',{thread:place});expect(JSON.stringify(last)).toContain('new diff');
+});
+
+it('refuses a whole invalid private card batch before crypto or writes',async()=>{
+ let seals=0;const s=await setup({key:k=>({...k,seal:async v=>{seals++;return k.seal(v);}})}),place=await s.open();
+ await s.comms.deliver('art',place,1);seals=0;
+ const good={id:'one',tool:'Edit',summary:'Edit file',state:'running'} as const;
+ const invalid:unknown[]=[[],Array(51).fill(good),[good,good],[good,{...good,id:'bad id'}],[good,{...good,id:'two',tool:'bad tool'}],
+  [good,{...good,id:'two',summary:'bad\nline'}],[good,{...good,id:'two',summary:'\u0085'}],[good,{...good,id:'two',summary:'\u202e'}],
+  [good,{...good,id:'two',state:'unknown'}],[good,{...good,id:'two',unknown:'value'}],
+  [good,{...good,id:'two',detail:'x'.repeat(4001)}],[good,{...good,id:'two',detail:'\x1b[31mcolor'}],
+  [good,{...good,id:'two',body:'x'.repeat(32001)}],[good,{...good,id:'two',body:'\x1b[2J'}],
+  [good,{...good,id:'two',result:'a\nb'}],[good,{...good,id:'two',limit:0}],[good,{...good,id:'two',limit:86401}],
+  [good,{...good,id:'two',exit:1.5}],[good,{...good,id:'two',exit:1000000}],[good,{...good,id:'two',parent:'bad id'}],
+  [good,{...good,id:'two',end:'yesterday'}],[good,{...good,id:'two',items:Array(21).fill({text:'a',state:'now'})}],
+  [good,{...good,id:'two',items:[{text:'a',state:'bad'}]}],
+ ];
+ const snapshot=s.app.db.prepare('SELECT * FROM comms_messages').all();
+ for(const cards of invalid)await expect(s.comms.activityCards('art',place,{run:'body',cards} as never)).rejects.toThrow();
+ for(const raw of [{run:'',cards:[good]},{run:'body',cards:[good],extra:true},{run:'body',cards:[],alive:{at:1,tokens:-1}}])
+  await expect(s.comms.activityCards('art',place,raw as never)).rejects.toThrow();
+ expect(seals).toBe(0);expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(snapshot);
+});
+
+it('keeps private step bodies only for the original allowed tool and retains timing through whole-card replacement',async()=>{
+ const s=await setup(),place=await s.open(),at=s.clock.now(),start=new Date(at-1000).toISOString();
+ const write=(cards:import('./role.js').ThreadCard[])=>s.comms.activityCards('art',place,{run:'body',cards});
+ await write([{id:'shell',tool:'Bash',summary:'Shell',state:'running'},
+  {id:'text',tool:'text',summary:'Words',state:'done',at:start,body:'Private words\n\x1b[31mred\x1b[0m'},
+  {id:'plan',tool:'TodoWrite',summary:'Plan',state:'done',at:start,items:[{text:'Do it',state:'done'}]}]);
+ s.clock.advance(1000);
+ await write([{id:'shell',tool:'Edit',summary:'Shell ended',state:'done',body:'never store changed-tool output',exit:1}]);
+ const read=async()=>{const r=await s.call('messages',{thread:place});return (r as {ok:true;value:Record<string,unknown>[]}).value;};
+ let rows=await read();expect(JSON.stringify(rows)).not.toContain('never store changed-tool output');
+ expect(rows.find(r=>r.tool==='Bash')).toMatchObject({step:{exit:1,t1:new Date(at+1000).toISOString()}});
+ for(const tool of ['text','TodoWrite'])expect(rows.find(r=>r.tool===tool)).toMatchObject({step:{t0:start,t1:start}});
+ expect(rows.find(r=>r.tool==='text')).toMatchObject({step:{body:'Private words\n\x1b[31mred\x1b[0m'}});
+ s.clock.advance(1000);await write([{id:'shell',tool:'Bash',summary:'Again',state:'running'}]);
+ rows=await read();expect(rows.find(r=>r.tool==='Bash')?.step).toEqual({});
+});
+
+for(const boundary of ['ownership','closed','deleted','conversation','project','archived','reopened','row'] as const)
+ it(`fences whole private card batches across suspended crypto (${boundary})`,async()=>{
+  let pause=false,started=()=>{},release=()=>{};
+  const began=new Promise<void>(r=>{started=r;}),waiting=new Promise<void>(r=>{release=r;});
+  const s=await setup({key:k=>({...k,seal:async words=>{expect(s.app.db.inTransaction).toBe(false);if(pause){started();await waiting;}return k.seal(words);}})}),place=await s.open();
+  await s.comms.deliver('art',place,1);
+  const card={id:'step',tool:'Edit',summary:'Before',state:'running'} as const;
+  await s.comms.activityCards('art',place,{run:'body',cards:[card]});
+  pause=true;const writing=s.comms.activityCards('art',place,{run:'body',cards:[{...card,summary:'After'},{...card,id:'second'}]});await began;
+  if(boundary==='ownership')s.setSharing({members:{},projects:{},services:{}});
+  if(boundary==='closed')await s.comms.close();
+  if(boundary==='deleted')await s.call('change',{thread:place,action:'delete'});
+  if(boundary==='archived'||boundary==='reopened')await s.call('change',{thread:place,action:'archive'});
+  if(boundary==='reopened')await s.call('change',{thread:place,action:'unarchive'});
+  if(boundary==='conversation'||boundary==='project'){
+   const row=s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string};
+   s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),[boundary]:'replacement'}),place);
+  }
+  if(boundary==='row')s.app.db.prepare("UPDATE comms_messages SET record='{}',words=NULL WHERE thread=? AND kind='card'").run(place);
+  const snapshot=s.app.db.prepare('SELECT * FROM comms_messages').all();release();
+  await expect(writing).rejects.toThrow();expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(snapshot);
+ });
+
+it('keeps batch writes atomic on later crypto failure and a transaction rollback',async()=>{
+ let fail=false,n=0;const s=await setup({key:k=>({...k,seal:async words=>{if(fail&&++n===2)throw new Error('crypto failed');return k.seal(words);}})}),place=await s.open();
+ await s.comms.deliver('art',place,1);
+ const cards=[{id:'a',tool:'Edit',summary:'a',state:'done'},{id:'b',tool:'Edit',summary:'b',state:'done'}] as const;
+ const before=s.app.db.prepare('SELECT * FROM comms_messages').all();fail=true;
+ await expect(s.comms.activityCards('art',place,{run:'body',cards})).rejects.toThrow('crypto failed');
+ expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);fail=false;
+ s.app.db.exec("CREATE TRIGGER reject_second BEFORE INSERT ON comms_messages WHEN NEW.id='b' BEGIN SELECT RAISE(ABORT,'batch rollback'); END;");
+ await expect(s.comms.activityCards('art',place,{run:'body',cards})).rejects.toThrow();
+ expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+});
+
+it('never renews a private step deadline or resurrects swept words, including expiry during crypto',async()=>{
+ let pause=false,started=()=>{},release=()=>{};
+ const began=new Promise<void>(r=>{started=r;}),waiting=new Promise<void>(r=>{release=r;});
+ const s=await setup({days:1,key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}})}),place=await s.open();
+ await s.comms.deliver('art',place,1);
+ const card={id:'a',tool:'Edit',summary:'Private',state:'running'} as const,at=s.clock.now();
+ await s.comms.activityCards('art',place,{run:'body',cards:[card]});s.clock.advance(86400_000-1);
+ pause=true;const writing=s.comms.activityCards('art',place,{run:'body',cards:[{...card,summary:'Too late',state:'done'}]});await began;
+ // Move wall time without running sweep callbacks, so the commit's deadline check is exercised.
+ s.clock.now=()=>at+86400_000;release();expect(await writing).toEqual({added:0,updated:0});pause=false;
+ s.app.db.prepare("UPDATE comms_messages SET words=NULL,record='{}' WHERE thread=? AND kind='card'").run(place);
+ expect(await s.comms.activityCards('art',place,{run:'later',cards:[card]})).toEqual({added:0,updated:0});
+ const row=s.app.db.prepare("SELECT at,words FROM comms_messages WHERE thread=? AND kind='card'").get(place);expect(row).toEqual({at,words:null});
+});
+
+it('applies private batch heartbeats and monotonic alive samples without restarting a finished turn',async()=>{
+ const s=await setup(),place=await s.open(),at=s.clock.now();await s.comms.deliver('art',place,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const cards=[{id:'a',tool:'Edit',summary:'Editing',state:'running'}] as const;
+ expect(await s.comms.activityCards('art',place,{run:'body',cards,alive:{at,tokens:0}})).toEqual({added:1,updated:0});
+ expect(row()).toMatchObject({working:true,workingSince:at,workingBeat:at,aliveAt:at,aliveTokens:0});
+ const last=row().last;s.clock.advance(1000);
+ await s.comms.activityCards('art',place,{run:'body',cards:[],alive:{at:at+1000}});
+ expect(row()).toMatchObject({working:true,workingSince:at,workingBeat:at+1000,aliveAt:at+1000,aliveTokens:null,last});
+ s.comms.status('art',place,'done');s.clock.advance(1000);
+ await s.comms.activityCards('art',place,{run:'body',cards:[{...cards[0],state:'done'}]});
+ expect(row()).toMatchObject({working:false,workingSince:null,last});
+ await s.comms.activityCards('art',place,{run:'body',cards:[],alive:{at:at+100000,tokens:99}});
+ expect(row()).toMatchObject({working:false,aliveAt:at+1000,aliveTokens:null,last});
+ await s.comms.activityCards('art',place,{run:'body',cards:[],alive:{at,tokens:99}});
+ expect(row()).toMatchObject({aliveAt:at+1000,aliveTokens:null});
+});
+
+it('rejects unavailable private activity capabilities before decrypting or encrypting',async()=>{
+ let crypto=0;const s=await setup({key:k=>({...k,seal:async v=>{crypto++;return k.seal(v);},open:async v=>{crypto++;return k.open(v);}})}),place=await s.open();
+ await s.comms.deliver('art',place,1);crypto=0;
+ const batch={run:'body',cards:[{id:'a',tool:'Edit',summary:'Edit',state:'done'}]} as const;
+ await expect(s.comms.activityCards('other-agent',place,batch)).rejects.toThrow();
+ await expect(s.comms.activityCards('art','missing',batch)).rejects.toThrow();
+ await s.call('change',{thread:place,action:'archive'});
+ await expect(s.comms.activityCards('art',place,batch)).rejects.toThrow();
+ expect(crypto).toBe(0);
+});
