@@ -159,6 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ends an agent's own sessions when it's done.
 
 ### Added
+- Home and Inbox automatically reconcile visible approval/task waits as the signed-in member on arrival and every minute, keeping their counts current without a service grant.
 
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any

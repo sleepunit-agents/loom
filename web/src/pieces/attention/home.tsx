@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
+import { useWaitChecks } from './wait-checks';
 import type { Ask } from './model';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
 import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
@@ -24,6 +25,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const people = useRecords<AgentPerson>('person');
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
+  useWaitChecks(asks);
   const wakes = useRecords<Wake>('wake');
   const clocks = useRecords<Clock>('clock');
   const statuses = useRecords<AgentStatus>('attention.agent');
