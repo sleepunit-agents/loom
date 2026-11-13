@@ -73,7 +73,8 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
   const paths = new Set(manifest.files.map(f => f.path));
   if (paths.has('manifest.json')) throw Error('Manifest cannot inventory itself');
   for (const path of paths) if (path !== posix.normalize(path) || path.startsWith('/') || path.startsWith('../') || path.includes('\\')) throw Error('Noncanonical snapshot path');
-  if (regular.some(p => p !== 'manifest.json' && !paths.has(p))) throw Error('Snapshot contains an unlisted file');
+  const unlisted=regular.find(p => p !== 'manifest.json' && !paths.has(p));
+  if(unlisted!==undefined)throw Error(`Snapshot contains an unlisted file: ${JSON.stringify(unlisted)}`);
   for (const file of manifest.files) {
     const fd = openSync(join(root, file.path), 'r');
     const header = Buffer.alloc(16);

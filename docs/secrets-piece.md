@@ -975,3 +975,42 @@ recovery for confirmed mutations. Caller retry remains necessary for unconfirmed
 writes; no cancellation, timeout release or negative-receipt fence is introduced.
 Normal root composition, authenticated house flows/trusted sinks, Changes/Bridges
 accounting, full typed Settings parity and final move/staging evidence remain.
+
+### Explicit daemon mutation composition
+
+Normal next startup may opt in with `--secret-writes /absolute/private/writes.json`
+paired with `--secret-authority /absolute/private/authority.json`. It does not
+start the holder or generate keys. The holder remains a separately managed
+process. With no mutation configuration, value forms stay unavailable.
+The existing `--secret-holder` config remains the independent read path for
+Changes and Bridges.
+
+The private mutation file has exactly `holder` and `retryKeys`. `holder` has
+absolute `socket`, `ca`, `cert`, `key` paths and the holder certificate's
+`servername`. `retryKeys` has an absolute `active` path and a `previous` array of
+absolute paths, retaining every previously bound daemon retry key. These are
+references to private files, never literal key or credential values. The holder
+pins the daemon certificate and calls the separate authority socket, which
+checks the actual current household owner in the database. Missing authority,
+unsafe key files or missing historical keys refuse startup.
+
+Root installation loads and binds the retry ring, installs asynchronous set and
+remove, and schedules positive receipt recovery on the foundation clock. It uses
+the same trusted Attention source for atomic removal cancellation. Only this
+explicit configuration makes Settings value forms available.
+
+In staging, every admitted holder id gets a `secret-write` effect before even
+its receipt lookup. A due hold makes zero holder calls. After owner release,
+exact caller retries can send the originally admitted input; the recovery job
+only probes receipts and never resends a mutation. Started or interrupted
+(`uncertain`) effects retain that release for the same journal-bound holder id
+across restarts. A historical effect can stay uncertain after receipt recovery;
+the journal's complete state is the authoritative completion record. A negative
+receipt never releases the reservation. Shutdown refuses late holder replies
+before touching effects or the database, preserving recovery on restart.
+
+Old-to-new addition: old local value writes are explicit authenticated
+`secrets.set`/`secrets.remove` API calls through this composition; daemon
+reconciliation is a foundation clock job, with no timer or subprocess. This
+ships code only; provisioning files, importing data and activating a holder on
+a real machine remain separate owner-present final-move steps.

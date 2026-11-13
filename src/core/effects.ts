@@ -4,7 +4,7 @@ import { migrate, type Db } from './db/index.js';
 import { operation, OperationError } from './operations/index.js';
 import { mayAct, maySee, type Sharing } from '../policy.js';
 import type { Foundation } from './app.js';
-export type EffectKind = 'wake' | 'bridge-send' | 'body-start' | 'push';
+export type EffectKind = 'wake' | 'bridge-send' | 'body-start' | 'push' | 'secret-write';
 export interface Effect { id: string; kind: EffectKind; title: string; state: 'due' | 'released' | 'started' | 'done' | 'uncertain' }
 const read = (db: Db, id: string) => db.prepare('SELECT * FROM core_effects WHERE id=?').get(id) as Effect | undefined;
 export function installEffects(app: Foundation, sharing: () => Sharing, staging: boolean) {
