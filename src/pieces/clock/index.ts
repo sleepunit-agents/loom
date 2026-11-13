@@ -1,5 +1,5 @@
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
-import { filedLocal, localWords, installLocalFiling } from './local-filing.js';
+import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
 import { command } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
@@ -108,6 +108,14 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
+  function localTargetRoom(target:string,standing:boolean,except?:string) {
+    if(wakes(db).some(w=>w.id!==except && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
+      && (standing || standingBinding(db,w.id)))) invalid('A standing local target already has outstanding work');
+  }
+  function existingLocalTargetRoom(w:Wake) {
+    const filing=w.approval && filedLocal(db,w.approval);
+    if(filing) localTargetRoom(filing.target,!!standingBinding(db,w.id),w.id);
+  }
   // Only authenticated runtime composition may recover an approval's words.
   // No public input can claim Caller. Public client wiring waits for that seam.
   const localInput = z.object({caller:callerSchema.strict(),approval:z.string().regex(/^a-[0-9a-f]{8}$/),
@@ -140,15 +148,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         || serviceOf(i.caller.who)!==serviceOf(filing.caller.who)
         || i.prompt!==undefined && i.prompt!==filing.prompt || i.note!==undefined && i.note!==filing.note)
         throw new OperationError('denied','Local recovery requires the original words, scope and caller');
-      const words=localWords(filing.prompt,filing.note);
-      if(words.digest!==filing.digest || filing.target!==`${i.caller.who.agent}:${words.digest.slice(0,16)}`)
-        throw new OperationError('denied','Local filing digest differs');
+      const words=localFilingWords(filing);
       const due=calendar(()=>i.mode==='at'?parseAt(i.when,ctx.now):parseIn(i.when,ctx.now));
       if(due<=ctx.now) invalid('Wake must be in the future');
       oneOffRoom(i.caller.who.agent);
-      if(wakes(db).some(w=>active(w) && w.approval && filedLocal(db,w.approval)?.target===filing.target
-        && (standing || standingBinding(db,w.id))))
-        invalid('A standing local target already has outstanding work');
+      localTargetRoom(filing.target,standing);
       const owning=approvalsRole(operations,'clock');
       const expected={target:filing.target,digest:words.digest,details:words.details,caller:{...filing.caller,who:{...filing.caller.who}}};
       const result=standing ? owning.localStanding(i.caller,{approval:i.approval,mode:'use',expected},randomUUID()) : approvalsRole(operations,'clock').call('use-local',i.caller,{id:i.approval,
@@ -266,6 +270,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       prompt: `Woken now: ${ctx.viewer.id} asked for a wake from loom's Clock page, with no lane. Look at what deserves attention: your work queue, recent loom memory, Your call, the state of the machine. Do something useful or file what you find.` }, ctx.now, { bypassPause: true });
     const w = get(i.id); if (w.state === 'firing' || w.state === 'fired' || w.state === 'cancelled') invalid('Wake already dispatched or cancelled');
     if (w.hold === 'uncertain') invalid('Uncertain dispatch needs reconciliation before another body can start');
+    existingLocalTargetRoom(w);
     w.state = 'pending'; w.due = ctx.now; w.bypassPause = true; w.runNow ??= false; delete w.hold; saveWake(ctx, w); return w;
   });
   const agentInput = z.object({ agent: text });
@@ -363,6 +368,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
+    existingLocalTargetRoom(w);
     checkStandingWake(db,operations,w);
     w.state = 'firing'; w.attempt = i.attempt; saveWake(ctx, w); event(ctx, w, 'intent');
     const s = w.schedule && schedule(db, w.schedule); if (s && !wakes(db).some(other => other.id !== w.id && other.schedule === s.id && active(other) && other.due > w.due)) {

@@ -203,3 +203,18 @@ it('keeps a firing target occupied while runtime has not reported its outcome',a
   expect(load(s.app.db).standing[0].uses).toBe(1);expect(wakes(s.app.db)).toHaveLength(1);
   finish({state:'started',body:'body'});await settle();expect(recover(s,id).ok).toBe(true);
 });
+
+it('refuses rearming failed standing work while its replacement owns the active target',async()=>{
+  const s=await setup({startBody:async()=>({state:'not-started',reason:'fixture'})}),id=idOf(s);allow(s,id);
+  const old=value<{id:string}>(recover(s,id));
+  for(let n=0;n<6;n++) {
+    s.clock.advance(wakes(s.app.db).find(w=>w.id===old.id)!.due-s.clock.now());await settle();
+  }
+  expect(wakes(s.app.db).find(w=>w.id===old.id)!.state).toBe('failed');
+  const next=value<{id:string}>(recover(s,id));
+  expect(s.app.operations.call('direct',owner,'clock.now',{id:old.id},randomUUID()).ok).toBe(false);
+  expect(wakes(s.app.db).find(w=>w.id===old.id)!.state).toBe('failed');
+  value(s.app.operations.call('direct',owner,'clock.cancel',{id:next.id},randomUUID()));
+  expect(s.app.operations.call('direct',owner,'clock.now',{id:old.id},randomUUID()).ok).toBe(true);
+  expect(recover(s,id).ok).toBe(false);
+});
