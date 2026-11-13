@@ -108,3 +108,47 @@ it('updates safe Live sessions at the expiry boundary without a new write',async
   const changed=once(ws,'message');f.clock.advance(1000);const update=JSON.parse((await changed)[0].toString());expect(update.record.sessions[0].ended).toBe(true);
   expect(f.s.session(cookie)).toBeUndefined();
 });
+it('does not infer ancestry from a reused label and resolves safe origin metadata by digest',async()=>{
+  const f=await setup(),old=hash('old-operator'),child=hash('independent-child');
+  f.s.tokens.change(x=>{x.push({role:'owner',member:'jonathan',label:'operator',sha256:old,revoked:'2026-01-01',created:'2026-01-01'},{role:'owner',member:'jonathan',label:'unbound-old-child',sha256:child,passkey:hash('child-id'),from:'operator',created:'2026-01-01'},{role:'owner',member:'jonathan',label:'digest-child',sha256:hash('digest-child'),passkey:hash('digest-child-id'),from_sha256:old,created:'2026-01-01'});});
+  const list=f.call('token.list');expect(list.ok).toBe(true);if(!list.ok)throw Error();
+  expect(list.value).toEqual(expect.arrayContaining([expect.objectContaining({label:'digest-child',from:'operator',member:'jonathan',passkey:true,created:'2026-01-01'})]));
+  expect(f.call('token.revoke',{label:'operator',withPasskeys:true},'reused')).toEqual({ok:true,value:{revoked:1,passkeys:0,devices:0}});
+  expect(f.s.token(child)).toEqual({viewer:owner});expect(f.s.token(hash('digest-child'))).toEqual({viewer:owner});
+});
+it('lists populated session metadata in recency order including ended sessions',async()=>{
+  const f=await setup(),secret=hash('operator-bearer');
+  const first=f.s.createSession(secret,{device:'Phone',label:'daily',via:'link'}),second=f.s.createSession(secret,{device:'HeadlessChrome',label:'screens',via:'passkey'});
+  f.s.sessions.change(x=>{x.sessions[hash(first)].issuedAt=f.s.now()-100;x.sessions[hash(first)].seenAt=f.s.now()-1;x.sessions[hash(second)].issuedAt=f.s.now()-6*3600;});
+  const answer=f.call('sessions.list');expect(answer.ok).toBe(true);if(!answer.ok)throw Error();
+  expect(answer.value).toEqual([
+    {ref:hash(first).slice(0,16),issuedAt:f.s.now()-100,seenAt:f.s.now()-1,expiresAt:(f.s.now()-100+30*86400)*1000,device:'Phone',label:'daily',via:'link',agent:false,token:'operator',member:'jonathan',ended:false},
+    {ref:hash(second).slice(0,16),issuedAt:f.s.now()-6*3600,expiresAt:f.clock.now(),device:'HeadlessChrome',label:'screens',via:'passkey',agent:true,token:'operator',member:'jonathan',ended:true},
+  ]);
+});
+it('withDevices alone removes root devices and keeps descendant passkeys working',async()=>{
+  const f=await setup(),root=hash('operator-bearer'),child=hash('child');
+  f.s.tokens.change(x=>x.push({role:'owner',member:'jonathan',label:'child',sha256:child,passkey:hash('credential'),from_sha256:root,created:'2026-01-01'}));
+  const a=f.s.createSession(root),b=f.s.createSession(child);
+  f.s.sessions.change(x=>{x.passkeys={child:{id:'child',secret:child,publicKey:'key',counter:0,alg:-7,label:'child',created:0}};x.push={subs:{a:{session:hash(a),token:root,at:0,sub:{endpoint:'a',keys:{auth:'a',p256dh:'a'}}},b:{session:hash(b),token:child,at:0,sub:{endpoint:'b',keys:{auth:'b',p256dh:'b'}}}}};});
+  expect(f.call('token.revoke',{label:'operator',withDevices:true},'devices')).toEqual({ok:true,value:{revoked:1,passkeys:1,devices:1}});
+  expect(f.s.session(b)).toBeDefined();expect(f.s.sessions.read().passkeys?.child).toBeDefined();expect(Object.keys(f.s.sessions.read().push!.subs!)).toEqual(['b']);
+});
+it('marks every API response uncacheable, including early authentication and validation failures',async()=>{
+  const f=await setup();
+  for(const [body,auth,status] of [['{}',false,401],['{',true,400],['{}',true,400],['{"input":{},"id":4}',true,400],['{"input":{}}',true,200],['x'.repeat(1024*1024+1),true,413]] as const){
+    const r=await fetch(f.app.url+'/api/token/list',{method:'POST',headers:{'content-type':'application/json',...(auth?{authorization:'Bearer operator-bearer'}:{})},body});expect(r.status).toBe(status);expect(r.headers.get('cache-control')).toBe('no-store');await r.body?.cancel();
+  }
+});
+it('sends empty Live snapshots to nonowners and removes retained records after ownership ends',async()=>{
+  const f=await setup();
+  const open=async(token:string)=>{const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:`Bearer ${token}`}});cleanup.push(()=>ws.terminate());await once(ws,'open');return ws;};
+  for(const [role,member] of [['owner','pollock'],['agent:art',undefined],['runner:box',undefined],['service:clock',undefined]] as const){
+    if(role==='runner:box'||role==='service:clock')f.call('signin.setPrincipal',{kind:role.split(':')[0],id:role.split(':')[1],active:true},role);
+    const token=role+'-token';f.s.tokens.change(x=>x.push({label:role+'-'+member,role,...(member?{member}:{}),sha256:hash(token),created:'2026-01-01'}));
+    const ws=await open(token);ws.send(JSON.stringify({kind:'subscribe',type:'signin.admin'}));expect(JSON.parse((await once(ws,'message'))[0].toString()).records).toEqual([]);
+  }
+  const ws=await open('operator-bearer');ws.send(JSON.stringify({kind:'subscribe',type:'signin.admin'}));expect(JSON.parse((await once(ws,'message'))[0].toString()).records[0].tokens).not.toHaveLength(0);
+  const {HouseholdDatabase}=await import('../household/document.js');f.app.db.transaction(()=>new HouseholdDatabase(f.app.db).change('',raw=>{raw.members=[{person:'jonathan',role:'member',agents:['art']},{person:'pollock',role:'owner',agents:'*'}];}))();
+  const removed=once(ws,'message');f.app.live.changed([{type:'core.access',id:'household'}]);expect(JSON.parse((await removed)[0].toString()).records).toEqual([]);
+});

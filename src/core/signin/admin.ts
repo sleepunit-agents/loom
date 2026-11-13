@@ -12,7 +12,10 @@ import { accessResponses, accessCommands } from './commands.js';
 export function installAccessAdmin(app:Foundation) {
   const s=signin(app);
   const owner:Operation['may']=v=>v.kind==='member'&&s.owner(v.id);
-  const safeToken=(t:ReturnType<typeof s.tokens.list>[number])=>({label:t.label,role:t.role,created:t.created,passkey:!!t.passkey,...(t.member?{member:t.member}:{}),...(t.expires?{expires:t.expires}:{}),...(t.revoked?{revoked:t.revoked}:{}),...(t.last_used?{last_used:t.last_used}:{}),...(t.from?{from:t.from}:{})});
+  const safeToken=(t:ReturnType<typeof s.tokens.list>[number])=>{
+    const from=t.from_sha256?s.tokens.list().find(p=>p.sha256===t.from_sha256)?.label??t.from:t.from;
+    return ({label:t.label,role:t.role,created:t.created,passkey:!!t.passkey,...(t.member?{member:t.member}:{}),...(t.expires?{expires:t.expires}:{}),...(t.revoked?{revoked:t.revoked}:{}),...(t.last_used?{last_used:t.last_used}:{}),...(from?{from}:{})});
+  };
   function register<I>(piece:'token'|'sessions',op:Omit<Operation<I>,'output'|'cli'|'may'>) {
     const name=op.name.split('.')[1],responses:Record<string,z.ZodType>=accessResponses[piece];
     app.operations.register({...op,may:owner,output:responses[name],cli:accessCommands(piece).find(c=>c.name===name)});
@@ -23,7 +26,7 @@ export function installAccessAdmin(app:Foundation) {
     return Object.entries(s.sessions.read().sessions).map(([id,x])=>{
       const t=tokens.find(t=>t.sha256===x.secret),resolved=s.token(x.secret),agent=x.agent===true||/^HeadlessChrome\b/.test(x.device??'');
       return {ref:id.slice(0,16),issuedAt:x.issuedAt,expiresAt:Math.min((x.issuedAt+(agent?6*3600:30*86400))*1000,t?.expires?Date.parse(t.expires):Infinity),...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.device?{device:x.device}:{}),...(x.label?{label:x.label}:{}),...(x.via?{via:x.via}:{}),agent,...(t?{token:t.label}:{}),...(resolved?.viewer.kind==='member'?{member:resolved.viewer.id}:{}),ended:!resolved||resolved.viewer.kind!=='member'||now>=x.issuedAt+(agent?6*3600:30*86400)};
-    });
+    }).sort((a,b)=>(b.seenAt??b.issuedAt)-(a.seenAt??a.issuedAt));
   };
   register('token',{name:'token.list',input:z.object({}).strict(),run:listTokens});
   register('sessions',{name:'sessions.list',input:z.object({}).strict(),run:listSessions});
@@ -63,7 +66,7 @@ export function installAccessAdmin(app:Foundation) {
       const roots=tokens.filter(t=>t.label===i.label&&!t.revoked&&(!t.expires||Date.parse(t.expires)>ctx.now));
       if(!roots.length)throw new OperationError('not-found','No live token has that label');
       const digests=new Set(roots.map(t=>t.sha256)),descendants=new Set<string>();
-      let grew=true;while(grew){grew=false;for(const t of tokens){if(!t.passkey||digests.has(t.sha256))continue;const parent=t.from_sha256?digests.has(t.from_sha256):tokens.some(p=>digests.has(p.sha256)&&p.label===t.from);if(parent){digests.add(t.sha256);descendants.add(t.sha256);grew=true;}}}
+      let grew=true;while(grew){grew=false;for(const t of tokens){if(!t.passkey||digests.has(t.sha256))continue;const parent=!!t.from_sha256&&digests.has(t.from_sha256);if(parent){digests.add(t.sha256);descendants.add(t.sha256);grew=true;}}}
       const affected=i.withPasskeys?digests:new Set(roots.map(t=>t.sha256));
       for(const t of tokens)if(affected.has(t.sha256)&&!t.revoked){t.revoked=new Date(ctx.now).toISOString();revoked++;}
       s.sessions.change(f=>{
