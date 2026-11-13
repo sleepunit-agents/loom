@@ -37,13 +37,10 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
       if (response.status >= 500 && attempt < 3) { await response.body?.cancel().catch(() => {}); await runtime.retry(100 * (attempt + 1)); continue; }
       if (!response.ok) return fail('Request refused');
       const answer: unknown = await response.json();
-      if (!answer || typeof answer !== 'object' || !('ok' in answer)) return fail('Invalid daemon response');
-      if (answer.ok !== true || !('value' in answer)) return fail('Operation refused');
-      // Setup writes acknowledge only an id. Never print arbitrary server fields.
-      const result = z.object({ id: z.string() }).strict().safeParse(answer.value);
-      if (!result.success) return fail('Invalid daemon response');
-      if (result.data.id !== (input as Record<string, unknown>).id) return fail('Invalid daemon response');
-      io.stdout(JSON.stringify(result.data, null, 2) + '\n');
+      // Both envelope and acknowledgement are closed shapes; print only the requested id.
+      const result = z.object({ ok: z.literal(true), value: z.object({ id: z.string() }).strict() }).strict().safeParse(answer);
+      if (!result.success || result.data.value.id !== (input as Record<string, unknown>).id) return fail('Invalid daemon response');
+      io.stdout(JSON.stringify(result.data.value, null, 2) + '\n');
       return 0;
     } catch { if (attempt === 3) return fail('loom daemon is unavailable'); }
     await runtime.retry(100 * (attempt + 1));

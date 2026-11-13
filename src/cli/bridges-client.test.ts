@@ -99,6 +99,16 @@ it('requires an explicit origin and token, refuses redirects, and never prints s
     const result = await app.run(['removeVenues','{}'], async () => Response.json(value)); expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.stderr).not.toContain('fixture-token');
   }
 });
+it('refuses extra acknowledgement and envelope fields independently of the requested id', async () => {
+  const app = await setup();
+  for (const answer of [
+    { ok: true, value: { id: 'v1', unexpected: 'fixture-token' } },
+    { ok: true, value: { id: 'v1' }, unexpected: 'fixture-token' },
+  ]) {
+    expect(await app.run(['removeVenues', '{"id":"v1"}'], async () => Response.json(answer))).toMatchObject({ code: 1, stdout: '', stderr: 'loom-bridges: Invalid daemon response\n' });
+  }
+  expect(await app.run(['removeVenues', '{"id":"v1"}'], async () => Response.json({ ok: true, value: { id: 'v1' } }))).toMatchObject({ code: 0, stdout: '{\n  "id": "v1"\n}\n' });
+});
 it('retries server errors with the same id and offers offline help without any transport', async () => {
   const app = await setup(); let calls = 0;
   for (const status of [500, 502, 503, 504]) {
