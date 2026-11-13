@@ -997,6 +997,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
 
+- Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
