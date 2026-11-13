@@ -13,6 +13,87 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('creates a private background spawn with its supplied conversation, brief and atomic parent links',async()=>{
+ const metadata=new Map<string,{agent:string;venue:string;version:string;label?:string}>([['cv-job',{agent:'art',venue:'spawn',version:'one',label:'Private job'}]]);
+ const s=await setup({conversation:id=>metadata.get(id)});const parent=await s.open();await s.comms.deliver('art',parent,1);
+ const before=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(parent) as {record:string}).record);
+ metadata.set(before.conversation,{agent:'art',venue:'loom',version:'one',label:'Parent discussion'});
+ const deliveries=s.deliveries.length;
+ const created=await s.comms.spawn('art',{conversation:'cv-job',text:'Secret assigned brief',parent:before.conversation,run:'run-job'});
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(created.thread) as {record:string}).record);
+ expect(t).toMatchObject({member:'jonathan',conversation:'cv-job',title:'Private job',titledBy:'agent',working:false,readSeq:0,nextSeq:3});expect(t.firstId).toMatch(/^[a-z2-7]{16}$/);
+ const rows=s.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? ORDER BY seq').all(created.thread) as {sender:string;record:string;words:Buffer}[];
+ expect(rows[0]).toMatchObject({sender:'art',record:JSON.stringify({delivery:'delivered'})});
+ expect(JSON.stringify(rows)).not.toContain('Secret assigned brief');expect(JSON.stringify(rows)).not.toContain('run-job');
+ const messages=await s.call('messages',{thread:created.thread});expect(messages.ok).toBe(true);
+ const decoded=(messages as {ok:true;value:{text:string}[]}).value;
+ expect(decoded[0].text).toBe('Secret assigned brief');expect(decoded[1].text).toContain('Parent discussion');expect(decoded[1].text).toContain('run-job');
+ const parentMessages=await s.call('messages',{thread:parent});expect(JSON.stringify(parentMessages)).toContain('Spawned job:');expect(JSON.stringify(parentMessages)).toContain('cv-job');
+ expect(await s.call('messages',{thread:created.thread},{kind:'member',id:'other'})).toMatchObject({ok:false});
+ const socket=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>socket.terminate());await once(socket,'open');
+ const received=once(socket,'message');socket.send(JSON.stringify({kind:'subscribe',type:'thread',scope:'all'}));const snapshot=JSON.parse((await received)[0].toString());
+ expect(snapshot.records.find((r:{id:string})=>r.id===created.thread)).toMatchObject({background:true,job:{joined:false}});
+ expect(s.deliveries).toHaveLength(deliveries);expect(s.ends).toHaveLength(0);
+ expect(s.comms.describe('art',created.thread).brief[0]).toContain('conversation:cv-job');
+});
+it('keeps the first spawn across concurrent calls, restart and word expiry without crypto or activity',async()=>{
+ let unavailable=false;const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one'}),key:k=>({...k,seal:async words=>{if(unavailable)throw new Error('key unavailable');return k.seal(words);}})});
+ const [a,b]=await Promise.all([s.comms.spawn('art',{conversation:'cv-job',text:'First brief'}),s.comms.spawn('art',{conversation:'cv-job',text:'Second brief'})]);expect(a).toEqual(b);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:1});
+ await s.restart();const before=s.app.db.prepare('SELECT record FROM comms_threads').get();unavailable=true;
+ expect(await s.comms.spawn('art',{conversation:'cv-job',text:'Changed retry'})).toEqual(a);expect(s.app.db.prepare('SELECT record FROM comms_threads').get()).toEqual(before);
+ s.clock.advance(14*86400_000);expect(await s.comms.spawn('art',{conversation:'cv-job',text:'Expired retry'})).toEqual(a);
+ expect(s.app.db.prepare('SELECT words FROM comms_messages').get()).toEqual({words:null});expect(s.deliveries).toHaveLength(0);
+});
+it('assigns a spawn to the owning parent member, otherwise the first explicit agent owner',async()=>{
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one'})});
+ const opened=await s.call('open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'Other owner parent'},{kind:'member',id:'other'});expect(opened.ok).toBe(true);
+ const p=(opened as {ok:true;value:{thread:string}}).value.thread;const cv=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(p) as {record:string}).record).conversation;
+ const a=await s.comms.spawn('art',{conversation:'cv-child',text:'Child',parent:cv});
+ expect((s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(a.thread))).toEqual({member:'other'});
+ const b=await s.comms.spawn('art',{conversation:'cv-other',text:'Unparented'});expect(s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(b.thread)).toEqual({member:'jonathan'});
+});
+for(const boundary of ['metadata','owner','closed','parent','archive','delete'] as const)it(`refuses an in-flight spawn after ${boundary} changes with no partial links`,async()=>{
+ let pause=false,entered!:()=>void,release!:()=>void;const start=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>release=r);
+ const metadata=new Map<string,{agent:string;venue:string;version:string}>([['cv-job',{agent:'art',venue:'spawn',version:'one'}]]);
+ const s=await setup({conversation:id=>metadata.get(id),key:k=>({...k,seal:async words=>{expect(s.app.db.inTransaction).toBe(false);if(pause){entered();await wait;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);metadata.set(t.conversation,{agent:'art',venue:'loom',version:'one'});
+ pause=true;const pending=s.comms.spawn('art',{conversation:'cv-job',text:'Private job brief',parent:t.conversation});await start;
+ if(boundary==='metadata')metadata.set('cv-job',{agent:'art',venue:'spawn',version:'two'});
+ if(boundary==='owner')s.setSharing({...s.getSharing(),members:{...s.getSharing().members,jonathan:{owner:true,agents:[]}}});
+ if(boundary==='closed')await s.comms.close();
+ if(boundary==='parent'){t.conversation='cv-replaced';s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),place);}
+ if(boundary==='archive'||boundary==='delete')await s.call('change',{thread:place,action:boundary});
+ const before=s.app.db.prepare('SELECT * FROM comms_messages').all();release();await expect(pending).rejects.toThrow('Spawn unavailable');expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+ expect(s.app.db.prepare("SELECT 1 FROM comms_threads WHERE json_extract(record,'$.conversation')='cv-job'").get()).toBeUndefined();
+});
+it('rejects invalid spawn metadata and deleted jobs before sealing, and rolls back parent append failures',async()=>{
+ let seals=0;const metadata=new Map<string,{agent:string;venue:string;version:string}>([['cv-job',{agent:'art',venue:'spawn',version:'one'}]]);
+ const s=await setup({conversation:id=>metadata.get(id),key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ for(const cv of [undefined,{agent:'other',venue:'spawn',version:'one'},{agent:'art',venue:'loom',version:'one'},{agent:'art',venue:'spawn',version:''}]){
+  if(cv)metadata.set('cv-bad',cv);else metadata.delete('cv-bad');await expect(s.comms.spawn('art',{conversation:'cv-bad',text:'Brief'})).rejects.toThrow('Spawn unavailable');
+ }expect(seals).toBe(0);
+ const parent=await s.open();await s.comms.deliver('art',parent,1);const cv=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(parent) as {record:string}).record).conversation;
+ s.app.db.exec(`CREATE TRIGGER fail_spawn BEFORE INSERT ON comms_messages WHEN NEW.kind='reply' BEGIN SELECT RAISE(ABORT,'injected'); END`);
+ await expect(s.comms.spawn('art',{conversation:'cv-job',text:'Brief',parent:cv})).rejects.toThrow('injected');expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
+ s.app.db.exec('DROP TRIGGER fail_spawn');const job=await s.comms.spawn('art',{conversation:'cv-job',text:'Brief'});await s.call('change',{thread:job.thread,action:'delete'});const before=seals;
+ await expect(s.comms.spawn('art',{conversation:'cv-job',text:'Resurrection'})).rejects.toThrow('Spawn unavailable');expect(seals).toBe(before);
+});
+it('keeps spawn words private for an ordinary parent and uses commit time after crypto',async()=>{
+ let advance=false;const s=await setup({conversation:id=>({agent:'art',venue:id==='cv-job'?'spawn':'terminal',version:'one',label:'Link [name]'}),key:k=>({...k,seal:async words=>{if(advance)s.clock.advance(1000);return k.seal(words);}})});
+ advance=true;const job=await s.comms.spawn('art',{conversation:'cv-job',text:'Assigned job',parent:'cv-terminal'});
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(job.thread) as {record:string}).record);expect(t.opened).toBe(s.clock.now());
+ const messages=await s.call('messages',{thread:job.thread});expect(JSON.stringify(messages)).toContain('/p/comms-preview/conversation/cv-terminal');
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
+ expect(s.comms.announcements('jonathan')).toEqual([]);
+});
+it('does not grant a spawn to household owners without explicit agent ownership or expose a public spawn operation',async()=>{
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one'})});
+ s.setSharing({...s.getSharing(),members:{jonathan:{owner:true,agents:[]},other:{owner:true,agents:[]}}});
+ await expect(s.comms.spawn('art',{conversation:'cv-job',text:'Brief'})).rejects.toThrow('Spawn unavailable');
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
+ expect(await s.call('spawn',{conversation:'cv-job',text:'Brief'})).toMatchObject({ok:false});
+});
 it('keeps the first spawn report by reference across message ids, restart and expiry without crypto or new activity',async()=>{
  let failSeal=false;const s=await setup({key:k=>({...k,seal:async words=>{if(failSeal)throw new Error('key unavailable');return k.seal(words);}})});
  const place=await s.open();await s.comms.deliver('art',place,1);

@@ -65,7 +65,7 @@ data does not remove the behavior it delivered.
 
 | Old surface | New home | State / remaining behavior |
 | --- | --- | --- |
-| `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list, pins/unread ranking and separate Background work grouping work; spawn creation and aggregate unread UI remain missing. |
+| `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list, pins/unread ranking and separate Background work grouping work; trusted spawn creation exists; production runtime binding and aggregate unread UI remain missing. |
 | `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend rejects ids outside that format before encryption or writes. |
 | `/comms/agents`, `agentsComms` | `comms.agents` | Backend present: owned ids plus latest open thread, count of unread open threads and first unread line (160 graphemes). Desk UI binding remains. Summaries recheck ownership, exact thread/message snapshots and retention after crypto; read results are never persisted in retry storage. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
@@ -81,8 +81,8 @@ data does not remove the behavior it delivered.
 | Adapter `reconcile` | Runtime role | Partial: message recovery supports accepted/not-accepted/unknown runtime receipts with snapshot/ownership/retention checks; production binding and full continuation/deleted/deadline semantics remain missing. |
 | Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
-| Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Partial: authoritative spawn metadata groups assigned jobs separately until a member message promotes them; runtime spawn creation preserving the supplied conversation and brief/parent remains missing. Final reports now deduplicate by stable spawn reference. |
-| Watching / Join in | Thread app and runtime role | Present with supplied authoritative job metadata: unjoined jobs show Watching instead of composer/Stop. Join in is local to the keyed reader; only a member message persists promotion. Opening, joining and leaving invoke no runtime control. Production spawn creation/binding remains missing. |
+| Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Partial: authoritative spawn metadata groups assigned jobs separately until a member message promotes them; trusted `Comms.spawn` preserves the supplied conversation, encrypted brief and parent links; production runtime binding remains missing. Final reports now deduplicate by stable spawn reference. |
+| Watching / Join in | Thread app and runtime role | Present with supplied authoritative job metadata: unjoined jobs show Watching instead of composer/Stop. Join in is local to the keyed reader; only a member message persists promotion. Opening, joining and leaving invoke no runtime control. Production runtime binding remains missing. |
 | Activity route, `postActivity` | `Comms.activityCards` and `Comms.post` | Partial: trusted private batches now validate atomically, preserve original tool/timing/deadline and enforce body/detail/plan bounds; runtime capture/redaction and production binding remain missing. The generic trusted `post` path still exists for replies/asks/errors and legacy card callers; it is not the validated activity-batch API. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
@@ -734,3 +734,32 @@ reference. They now cover first-wins storage, restart, expiry, concurrency,
 thread isolation, exact reference shape, non-reply handling and revoked/rerouted
 in-flight receipts. Spawn creation, parent links, production runtime binding and
 continuation receipts remain required. Review budgets are unchanged.
+
+
+The trusted `Comms.spawn(agent, {conversation, text, parent?, run?})` now creates
+a job thread from authoritative same-agent spawn metadata. It preserves the
+supplied conversation instead of generating a normal Comms conversation. The
+first message is an encrypted, already-delivered agent brief, so assignment
+remains background until the member writes. Creation invokes no runtime start
+or end. The parent thread's member wins when they still own the agent; otherwise
+the first explicit agent owner receives an unparented job. Household-owner status
+alone never grants it. An authoritative optional label supplies the agent title.
+
+The job's deterministic first id and thread identity make concurrent creation and
+restart idempotent. Existing jobs retain their first brief, even when retries
+change words; expired words stay expired and deleted jobs cannot be recreated.
+Parent links and the brief are encrypted before one synchronous transaction. A
+private parent gets a job link; the child gets a parent link (ordinary parents
+use the scoped conversation activity URL). Run details appear only in ciphertext.
+Commit rechecks original conversation metadata/version, member ownership, parent
+routing/lifecycle and tombstones. Changed or revoked inputs leave no partial
+thread or links; unrelated parent activity is permitted. New rows use commit time.
+
+The new regression fails with `spawn is not a function` when this role is removed.
+Twelve cases cover supplied routing, background/Watching classification, private
+briefs/links, owner selection, no public operation or runtime calls, concurrent
+creation, restart, exact expiry, ordinary parents, crypto races, rollback and
+deleted-job refusal. All 349 affected tests, root TypeScript and diff checking
+pass. No web code changed and no local browser ran. Production metadata/runtime
+binding and the remaining inventory above are still required. Review budgets
+remain backend/security 2/3 and importer 1/3.

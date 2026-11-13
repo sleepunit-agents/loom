@@ -6,6 +6,7 @@ import { thread, saveThread, append, messageRows, messageId, type Thread, type M
 import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
+import { spawnCreator } from './spawn.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
@@ -502,6 +503,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+  spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:t=>{touched(t);progressChanged(t);}}),
   announcements(member) {
    if(closed)return [];
    // Read routing facts only: no ciphertext is selected or decrypted for push.

@@ -47,7 +47,10 @@ export interface ThreadActivity {run: string; cards: readonly ThreadCard[]; aliv
 export interface ReplyAnnouncement {
  key: string; member: string; agent: string; open: true; title: string; body: string; url: string;
 }
+export interface SpawnThread { conversation: string; text: string; parent?: string; run?: string }
 export interface Comms {
+ /** Trusted runtime creation only; supplied authoritative spawn conversation is preserved. */
+ spawn(agent: string, input: SpawnThread): Promise<{thread: string}>;
  /** Trusted frame role only. Recompute immediately before push; do not cache across awaits.
   * The sender must match subscriptions to member, deduplicate key and pass staging hold. */
  announcements(member: string): ReplyAnnouncement[];
