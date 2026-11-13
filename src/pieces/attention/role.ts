@@ -1,5 +1,5 @@
 /** The desk's seam. Other pieces raise/resolve asks here, never in their own tables. */
-import type { Operations, Result, Scope, Viewer } from '../../core/index.js';
+import type { Context, Operations, Result, Scope, Viewer } from '../../core/index.js';
 
 export type WaitsOn = { approval: string } | { task: string };
 export interface Question {
@@ -25,6 +25,8 @@ export type AskAnswer =
   | { kind: 'yes' | 'no' | 'done' | 'dismiss' }
   | { kind: 'words'; text: string };
 export interface Ask extends RaiseAsk {
+  /** An in-process source owns application of the answer; fail closed if absent. */
+  sourceManaged?: true;
   state: 'open' | 'answered' | 'resolved';
   createdAt: number;
   changedAt: number;
@@ -60,4 +62,15 @@ export function attentionRole(operations: Pick<Operations, 'call'>): Attention {
     get: (viewer, input) => operations.call('direct', viewer, 'attention.get', input),
     reportStatus: (viewer, input, id) => operations.call('direct', viewer, 'attention.reportStatus', input, id),
   };
+}
+
+/** Trusted daemon composition only. These capabilities never cross registry doors.
+ * Source asks are household-only and answered in the enclosing write transaction.
+ */
+export interface HouseholdAskSource {
+  raise(ctx: Context, input: Omit<Question, 'waits_on'> & { id: string }): void;
+  resolve(ctx: Context, id: string, reason: string): void;
+}
+export interface AttentionSources {
+  register(name: string, answer: (ctx: Context, ask: Ask) => void): HouseholdAskSource;
 }
