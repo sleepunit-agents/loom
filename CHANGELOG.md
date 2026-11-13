@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
+- Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
