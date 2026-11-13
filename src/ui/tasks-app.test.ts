@@ -80,7 +80,7 @@ it('opens imported task ids from encoded links and refuses malformed escapes',as
 import { taskId, taskSegment } from '../../web/src/pieces/tasks/route';
 it.each(['.','..','legacy/task %','~id','t-1'])('opens imported %s after browser URL normalization',async id=>{
  const path=new URL(`/p/tasks-preview/task/${taskSegment(id)}`,'https://fixture.invalid').pathname;
- expect(taskId(path)).toBe(id);f.snapshot={records:[task(id,{description:'Exact imported reader'})],status:'live'};
+ expect(taskId(path)).toBe(id);if(id==='t-1')expect(path).toBe('/p/tasks-preview/task/t-1');f.snapshot={records:[task(id,{description:'Exact imported reader'})],status:'live'};
  await draw(h(TasksApp,{path}));expect(text()).toContain('Exact imported reader');await act(async()=>tree.unmount());
 });
 it('fetches an aged-out task selected by URL and hides details after the live snapshot changes',async()=>{

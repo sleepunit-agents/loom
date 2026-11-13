@@ -23,7 +23,7 @@ export function installCommsWork(o:Options) {
     const blocked=t.status!=='closed'&&blockers.has(t.id);
     const waiting=t.status!=='closed'&&t.assignee!==undefined&&Object.hasOwn(o.sharing().members,t.assignee)&&o.sharing().members[t.assignee].owner;
     items.push({ref:t.id,title:t.title.slice(0,200),from:'tasks',made:true,status:blocked?'Blocked':waiting?(t.assignee===viewer.id?'Waiting on you':`Waiting on ${t.assignee}`):t.status==='open'?'Open':t.status==='in_progress'?'In progress':t.closeReason==='cancelled'?'Cancelled':'Done',
-     ...(blocked?{tone:'bad' as const}:waiting?{tone:'warn' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/~${encodeURIComponent(t.id)}`});
+     ...(blocked?{tone:'bad' as const}:waiting?{tone:'warn' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/${/^t-\d+$/.test(t.id)?t.id:`~${encodeURIComponent(t.id)}`}`});
    }
   } catch {failed.push('Tasks');}
   try {

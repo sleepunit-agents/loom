@@ -107,7 +107,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(created).toMatchObject({ok:true,value:{result:{ok:true}}});
   const task=(created as {ok:true;value:{result:{id:string}}}).value.result.id;
   await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
-  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/~${task}`);
+  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/${task}`);
   const blocker=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Blocking fixture work',agent:'art',actor:'art',at:new Date(clock.now()).toISOString()},'fixture-blocker');
   expect(blocker).toMatchObject({ok:true,value:{result:{ok:true}}});
   const blockerId=(blocker as {ok:true;value:{result:{id:string}}}).value.result.id;

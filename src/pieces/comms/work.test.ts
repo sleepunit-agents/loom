@@ -45,7 +45,7 @@ async function setup() {
 it('returns made-here visible tasks and live status without private words or retry receipts',async()=>{
  const s=await setup();s.task('t-1');s.task('t-2',s.conversation,'hidden');s.task('t-3','cv-000000000000');
  const result=await s.call('work',{thread:s.thread});
- expect(result).toMatchObject({ok:true,value:{items:[{ref:'t-1',title:'Work t-1',status:'Open',made:true,from:'tasks',url:'/p/tasks-preview/task/~t-1'}],failed:[]}});
+ expect(result).toMatchObject({ok:true,value:{items:[{ref:'t-1',title:'Work t-1',status:'Open',made:true,from:'tasks',url:'/p/tasks-preview/task/t-1'}],failed:[]}});
  expect(JSON.stringify(result)).not.toMatch(/Private words|Work t-2|Work t-3/);
  expect(s.app.db.prepare("SELECT * FROM core_operations WHERE name='comms.work'").all()).toEqual([]);
 });
