@@ -108,3 +108,8 @@ it('refuses unknown host/loan agents and duplicate preferences',()=>{
   f.state.boxes.r1.mayHost=['art'];f.state.boxes.r1.lentTo=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
   f.state.boxes.r1.lentTo=['art'];f.state.primaries.art=['r1','r1'];f.save();expect(f.read).toThrow('Duplicate runtime preference');
 });
+it('never imports or verifies automatic start authority from old source archives',()=>{
+ const f=fixture();f.run();expect(f.app.db.prepare('SELECT * FROM runtime_start_attempts').all()).toEqual([]);
+ f.app.db.prepare('INSERT INTO runtime_start_attempts VALUES (?,?)').run('h-1','{}');
+ expect(compareRuntimeImport(f.app.db,runtimeImportTables(f.read()))).toBe(false);
+});

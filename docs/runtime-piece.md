@@ -941,6 +941,32 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 | `.git`, `node_modules`, lock/SQLite coordination files, special files and out-of-root aliases | Existing collector exclusions, recorded in the snapshot manifest; committed SQLite WAL contents use the backup API |
 | `LOOM_RUNTIME_KEYS_DIR` (default `~/.local/state/loom-runtime/keys`), per-house native-history mounts, runner-local harness logins | Separately inventory on the workers before the final move; old bearer keys are not new credentials and host history is not silently adopted |
 
+### Source basis for the repository and delivery disposition
+
+The installed Runtime source and catalog pin inspected for this decision is
+[`a2c33d724e1d64964cde1d65298c793ef8e86551`](https://github.com/sleepunit-agents/loom-box/tree/a2c33d724e1d64964cde1d65298c793ef8e86551).
+[`src/box.mjs` checkout/syncMirror](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L214-L250)
+creates `data/repos/<agent>.git` with `clone --mirror`, sets the remote and fetches
+with `--prune`, then clones a separate working tree for each house. Other mirror
+uses only inspect commits/build trees; the house receives the mirror through
+[`dirs.mirror`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L605-L624),
+whose mount is explicitly
+[`read-only`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/house.mjs#L307).
+This source has no writer of house work into those mirrors. The directory-only
+root rule is based on that ownership, never its size. A regular file named
+`repos`, nested unrelated `repos` directories and house workdirs remain archived.
+The offline direct reader applies the same root rule before enumerating it.
+
+By contrast,
+[`src/delivery.mjs`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L1-L31)
+keeps durable conversation queues, delivery receipts and sealed continuity slots;
+[slot publication and restoration](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L3240)
+is not a remote cache. Retain **all** delivery bytes privately by streaming,
+including unknown files, without activating old queues or principal evidence.
+Worker-local unpushed work/history still requires its separate final-move
+inventory; dropping the fetched mirror does not waive that obligation.
+No Runtime data or credentials were read to make this decision.
+
 All imported jobs carry an import fence: assigned runners get `stop:true` and
 `history:unknown`, or `history:discard` for an old written-off job. No fake new
 approval id is attached to the old marker. Claims/reports cannot revive uncertain
@@ -969,28 +995,58 @@ archive namespaces are excluded from other pieces' discovery, so an opaque file
 called `comms.salt`, `memories.db` or `changes.json` remains a Runtime archive file.
 
 
-### Source basis for the repository and delivery disposition
+## Bounded nonconversation start attempts
 
-The installed Runtime source and catalog pin inspected for this decision is
-[`a2c33d724e1d64964cde1d65298c793ef8e86551`](https://github.com/sleepunit-agents/loom-box/tree/a2c33d724e1d64964cde1d65298c793ef8e86551).
-[`src/box.mjs` checkout/syncMirror](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L214-L250)
-creates `data/repos/<agent>.git` with `clone --mirror`, sets the remote and fetches
-with `--prune`, then clones a separate working tree for each house. Other mirror
-uses only inspect commits/build trees; the house receives the mirror through
-[`dirs.mirror`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L605-L624),
-whose mount is explicitly
-[`read-only`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/house.mjs#L307).
-This source has no writer of house work into those mirrors. The directory-only
-root rule is based on that ownership, never its size. A regular file named
-`repos`, nested unrelated `repos` directories and house workdirs remain archived.
-The offline direct reader applies the same root rule before enumerating it.
+Next mode now owns automatic retries for newly accepted nonprivate manual/spawn
+`runtime.startBody` work without a conversation. The original caller and complete
+start intent are private owning data in `runtime_start_attempts`, created with
+the first job. Old jobs/imported archives and `queueBody` are never enrolled.
+Clock, Comms and general venue conversations keep their own generation/binding
+contracts and are excluded; adopting bounded retries into those owning sources
+remains required before full t-2209 completion and general delivery usability.
 
-By contrast,
-[`src/delivery.mjs`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L1-L31)
-keeps durable conversation queues, delivery receipts and sealed continuity slots;
-[slot publication and restoration](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L3240)
-is not a remote cache. Retain **all** delivery bytes privately by streaming,
-including unknown files, without activating old queues or principal evidence.
-Worker-local unpushed work/history still requires its separate final-move
-inventory; dropping the fetched mirror does not waive that obligation.
-No Runtime data or credentials were read to make this decision.
+Only the assigned runner's `finishJob` with `startFailure: not-started` schedules
+a retry. This attestation means the runner fenced its claim against ever starting,
+including late asynchronous launch completion. An ordinary failed exit, silence,
+unknown input release, lost runner, or timer expiry cannot schedule a replacement.
+The failed job and its revoked body credentials remain terminal. No old body,
+principal, home or native history is carried into the next attempt.
+
+The three waits are 1, 4 and 10 minutes, matching old `delivery.mjs`'s bounded
+start backoff. Each attempt has a fresh deterministic job id and its own one-time
+input/staging effect. The fourth definitively failed attempt exhausts the chain.
+A transaction commits each new job, input and owning pointer together. Restart
+recovers the original deadline; replaying the finish receipt never moves it.
+Local storage failure rolls back and backs off five seconds rather than spinning.
+
+Before retrying, Runtime rechecks the original caller with central `mayCreate`
+and `give-work` policy, the exact failed attempt's configured house, and current
+placement ownership, lending and host eligibility. The replacement retains its
+expected house in startRequest; a later setup change blocks claim, and input
+release rechecks the claimed house again. A withdrawn permission, changed
+house, recovery/import fence or unavailable placement holds the chain. No owner
+approval is fabricated and there is no release/revival operation in this unit.
+A held or exhausted chain remains inspectable and cannot silently restart.
+The exact original model, brief, title, explicit box and project remain the
+accepted intent. An explicit box is pinned to the initially resolved id; a
+revoked id never falls back to another box with the same display name. A renamed
+original box keeps its identity. Owner setup changes do not create different work under that intent.
+
+`runtime.startProgress {job: <original job>}` returns only the root/current ids,
+attempt number, state and optional deadline, filtered by central job scope.
+`startBody` replay still acknowledges the original id; use progress to find the
+current attempt. Successful/ordinary terminal completion settles the chain.
+
+| Old command/job | New behavior in this unit |
+| --- | --- |
+| `delivery.mjs` `startFails` / `retryAt` tick | Durable bounded nonconversation start deadlines in the daemon Clock, no systemd poller |
+| Runner definitive pre-start failure | Authenticated assigned `runtime.finishJob` with atomic credential revocation and retry scheduling |
+| Delivery retry status | `runtime.startProgress`, ids/state only; source notices and conversation integration remain owning delivery work |
+| Transient old-store polling | No old transport on next mode; local retry transaction failures back off five seconds without consuming an attempt |
+
+This is a reversible code change before cutover, with no running-home changes.
+Importer verification requires the new attempt table to remain empty: archived
+old failures do not become new automatic starts. External execution/history,
+original queued-delivery reconciliation, owner gate/policy adoption, trusted
+Bridges intake/replies and their notifications remain unfinished full-rebuild work.
+

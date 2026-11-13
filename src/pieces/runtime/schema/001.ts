@@ -29,4 +29,8 @@ CREATE TABLE runtime_import_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE runtime_import_sources (path TEXT PRIMARY KEY, content TEXT NOT NULL);
 CREATE TABLE runtime_import_documents (collection TEXT NOT NULL, key TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(collection,key));
 CREATE TABLE runtime_import_revisions (id INTEGER PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+` }, { number: 7, sql: `
+-- Original accepted nonconversation start intent and bounded attempt chain.
+-- Private: no words or caller identity in live records or operation receipts.
+CREATE TABLE runtime_start_attempts (root TEXT PRIMARY KEY REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)));
 ` }];
