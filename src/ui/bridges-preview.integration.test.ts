@@ -73,6 +73,10 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
       await b.setViewportSize({ width, height: 900 });
       await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
       await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      await b.locator('.loom-split__reader').evaluate(el => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        for (let pane: HTMLElement | null = el as HTMLElement; pane; pane = pane.parentElement) pane.scrollTop = 0;
+      });
       await b.screenshot({ path: join(shots, `bridges-route-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
       const geometry = await b.locator('.loom-split').evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth }));
       expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
