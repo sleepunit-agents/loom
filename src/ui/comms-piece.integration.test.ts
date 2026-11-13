@@ -106,6 +106,10 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   // Scroll following uses new sequence identities, including when Live stays capped at 100.
   const messages=b.getByLabel('Thread messages');
   const gap=()=>messages.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight);
+  // Clicking the older Send again control may have scrolled back. Card-only
+  // arrivals correctly preserve that position; establish following explicitly.
+  await messages.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});
+  await expect.poll(gap).toBeLessThanOrEqual(80);
   // The standalone app must own a real scroller on phone and desktop alike;
   // gap=0 alone would also pass for a message area grown to its entire content.
   for(const width of [390,1280,1920]){
@@ -113,7 +117,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    await expect.poll(()=>messages.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeGreaterThan(80);
    expect(await messages.evaluate(el=>el.clientHeight)).toBeGreaterThan(0);
    await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).evaluate(el=>el.closest('form')!.getBoundingClientRect().bottom)).toBeLessThanOrEqual(900);
-   await expect.poll(gap).toBeLessThanOrEqual(80);
+   await expect.poll(gap,{message:`following after resize to ${width}px`}).toBeLessThanOrEqual(80);
   }
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});

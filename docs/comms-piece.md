@@ -498,3 +498,9 @@ caused by reflow preserve the decision made before the resize; the resize
 observer follows only when that decision was already to follow. A viewport
 change during a React render uses the same saved decision. The browser requires
 an end gap of at most 80 pixels after each width, not just after all resizes.
+
+The resize proof also establishes its own initial following position: clicking
+an older Send again control can scroll the reader back, and the subsequent
+card-only arrivals correctly preserve that choice. It now scrolls to the end
+and dispatches scroll before the width checks, then separately scrolls back for
+the incoming-reply/no-jump assertion. No follow assertion was removed.
