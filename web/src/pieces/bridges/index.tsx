@@ -55,17 +55,17 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
     : view === 'routes' ? routes.records.map(r => ({ id: r.id, title: r.channel, meta: `${r.platform} · ${r.workspace}`, status: r.primary ? `Primary: ${r.primary}` : 'No primary' }))
     : view === 'sends' ? sends.records.map(s => ({ id: s.id, title: s.id, meta: s.venue, status: sendStatus(s, held.find(e => e.id === `bridges:${s.id}`)) }))
     : held.map(e => ({ id: e.id, title: e.title, meta: e.id, status: e.state === 'uncertain' ? 'Uncertain · review required' : e.state }));
-  const reader = !ready ? null : venue ? <article className="grid min-w-0 gap-4 break-words p-5">
+  const reader = !ready ? null : venue ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
     <h1 className="text-2xl font-semibold">{venue.agent} · {venue.platform}</h1><p>{venue.enabled ? venue.connection : 'Disabled'}</p>
     <p>Workspace: {venue.workspace}</p><p>Bot: {venue.bot}</p>
     <section><h2>Last 24 hours</h2><p>{venue.received} received · {venue.delivered ?? 0} delivered · {venue.held ?? 0} held</p></section>
     <p>Connection settings are configured separately. Status reflects the last saved connection update.</p>
-  </article> : route ? <article className="grid min-w-0 gap-4 break-words p-5">
+  </article> : route ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
     <h1 className="text-2xl font-semibold">Route {route.channel}</h1><p>{route.platform} · {route.workspace}</p>
     <p>Primary: {route.primary ?? 'None'}</p>{route.parent && <p>Parent: {route.parent}</p>}
     <p>{route.guest ? 'Guest route' : 'Household route'} · {route.peer ? 'Peers enabled' : 'Peers disabled'}</p>
     <p>Readers: {route.readers.join(', ') || 'None listed'}</p>
-  </article> : send || effect ? <article className="grid min-w-0 gap-4 break-words p-5">
+  </article> : send || effect ? <article className="grid min-w-0 gap-4 [overflow-wrap:anywhere] p-5">
     <h1 className="text-2xl font-semibold">{send ? 'Reply send' : effect!.title}</h1>
     {send && <><p>{send.id}</p><p>{sendStatus(send, effect)}</p><p>Connection: {send.venue}</p><p>Receipt: {send.incoming}</p></>}
     {(send?.state === 'uncertain' || effect?.state === 'uncertain') ? <p>Delivery may have partially succeeded. Review it on the venue before deciding what to do. This page cannot resend it.</p>

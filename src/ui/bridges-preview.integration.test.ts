@@ -72,8 +72,9 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
       await b.setViewportSize({ width, height: 900 });
       await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
       await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
-      expect(await b.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await b.screenshot({ path: join(shots, `bridges-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+      const geometry = await b.locator('.loom-split').evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth, overflowing: [...el.querySelectorAll('*')].filter(n => n.scrollWidth > n.clientWidth + 1).map(n => ({ tag: n.tagName, class: n.className, client: n.clientWidth, scroll: n.scrollWidth })).slice(0, 12) }));
+      expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
     }
     await a.getByRole('button', { name: 'Release this send', exact: true }).click();
     await expect.poll(() => loom.db.prepare('SELECT state FROM core_effects').get()).toEqual({ state: 'released' });
