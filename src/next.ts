@@ -50,6 +50,7 @@ import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
+import { installHouseSecrets } from './pieces/secrets/house.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
 import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
@@ -159,6 +160,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:i=>conversations.privateStart(i)||bridgeBodies.privateStart(i) });
+  if (!app.operations.has('secrets.houseRequest')) installHouseSecrets(app);
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);
     const approvals = changesApprovals(app.operations);
