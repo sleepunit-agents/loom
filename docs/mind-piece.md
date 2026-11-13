@@ -302,3 +302,15 @@ member/private scope and return metadata links only. Without it, People says the
 service is unavailable, rather than claiming there are no conversations.
 Final coordinator composition must wire that role when available. No host rollout
 or source discovery is included.
+
+People's project references have no dead preview URLs: composition supplies a
+project destination only when `mind.projectsList` is installed. Until the separate
+Projects unit of t-2207 lands, the screen names each authorized linked project and
+says the app is unavailable. That unit must register
+`/p/projects-preview/project/<encoded-agent:slug>` or update this composition
+callback to its final canonical route. Internal links use shell navigation;
+window-local draft/request state also survives the shell docking/remounting People.
+Neither drafts nor calls persist across page reloads. Contact staleness preserves
+the existing default of fourteen days and strict greater-than boundary. Partial
+creation completion preserves the original source receipt expiry in both sources
+and the core; it never renews the thirty-day window.

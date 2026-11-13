@@ -1,4 +1,5 @@
 import { afterEach,expect,it } from 'vitest';
+import { z } from 'zod';
 import { mkdtempSync,rmSync,existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { installTouched } from '../../core/touched/index.js';
 import { startLoom } from '../../foundation.js';
-import { FakeClock,type Sharing,type Viewer } from '../../core/index.js';
+import { FakeClock,operation,type Sharing,type Viewer } from '../../core/index.js';
 import { ProjectsStore } from '../../backends/projects.js';
 import { PeopleStore } from '../../backends/people.js';
 import { createPersonHalf } from '../../backends/people-creation.js';
@@ -126,7 +127,8 @@ it('passes the authenticated viewer to the new conversation role and keeps priva
   }
 });
 it('does not include memory evidence or project cards in a person-only service grant',async()=>{
-  const d=source(),a=source();a.write({slug:'friend',name:'Friend'});
+  const d=source(),a=source();a.write({slug:'friend',name:'Friend',where:{private_hub:{value:'participant'}}});
+  const projects=new ProjectsStore({dbPath:a.database.name});closes.push(()=>projects.close());projects.write({slug:'private-hub',name:'Private project'});
   a.database.exec("CREATE TABLE memories(created TEXT,category TEXT,title TEXT,content TEXT,metadata TEXT,archived INTEGER,expires_at TEXT); INSERT INTO memories VALUES('2026-11-13T00:00:00.000Z','user','Private memory','Secret evidence','{\"person\":\"friend\"}',0,NULL)");
   sharing.services.reader={types:['person'],operations:['mind.personRead']};
   try {
@@ -156,11 +158,34 @@ it('projects owner roles and authorized alias-linked projects, refreshing after 
   const frame=JSON.parse((await change)[0].toString()) as {record:PersonRecord};expect(frame.record.projects).toEqual([expect.objectContaining({slug:'project-two'})]);
 });
 it('changes a live contact field from fresh to stale at its exact deadline',async()=>{
-  const d=source(),a=source();d.write({slug:'friend',name:'Friend',where:{github:{value:'friend',verified_at:'2026-11-12T12:00:00.000Z',stale_after_days:2}}});
+  const d=source(),a=source();d.write({slug:'friend',name:'Friend',where:{github:{value:'friend',verified_at:'2026-11-12T12:00:00.000Z',stale_after_days:2},email:{value:'friend@example.com',verified_at:'2026-10-31T12:00:00.000Z'}}});
   const app=await fixture(d.database.name,a.database.name);
   const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');
   const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'person',scope:'commons:friend'}));
   expect(JSON.parse((await initial)[0].toString()).records[0].fields[0].state).toBe('fresh');
   const changed=once(ws,'message');(app.operations.clock as FakeClock).advance(86400000);
-  expect(JSON.parse((await changed)[0].toString()).record.fields[0].state).toBe('stale');
+  expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:friend'})).toMatchObject({value:{fields:[{state:'fresh'},{state:'fresh'}]}});
+  (app.operations.clock as FakeClock).advance(1);
+  expect(JSON.parse((await changed)[0].toString()).record.fields.map((f:{state:string})=>f.state)).toEqual(['stale','stale']);
+});
+
+it('keeps the original thirty-day expiry after a partial retry and allows id reuse only after that expiry',async()=>{
+  const d=source(),a=source();let fail=true;
+  const app=await fixture(d.database.name,a.database.name,undefined,(db,input,now,half)=>{if(fail&&half==='relationship')throw Error('injected');createPersonHalf(db,input,now,half);});
+  const clock=app.operations.clock as FakeClock,expires=clock.now()+30*86400000;
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'First'},'expiry')).toMatchObject({code:'unavailable'});
+  clock.advance(86400000);fail=false;
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'First'},'expiry')).toMatchObject({ok:true});
+  for(const db of [d.database,a.database])expect(db.prepare('SELECT expires FROM mind_operation_receipts WHERE id=?').get('expiry')).toEqual({expires});
+  expect(app.db.prepare('SELECT expires FROM core_operations WHERE id=?').get('expiry')).toEqual({expires});
+  clock.advance(29*86400000);
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'Second'},'expiry')).toMatchObject({ok:true});
+});
+it('reserves partial creation ids against unrelated writes across a restart',async()=>{
+  const d=source(),a=source();let app=await fixture(d.database.name,a.database.name,undefined,(_db,_input,_now,half)=>{if(half==='relationship')throw Error('injected');createPersonHalf(_db,_input,_now,half);});
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'Reserved'},'global-id')).toMatchObject({code:'unavailable'});await app.close();
+  app=await fixture(d.database.name,a.database.name);let writes=0;
+  app.operations.register(operation({name:'unrelated.write',write:true,input:z.object({}),output:z.unknown(),may:()=>true,run:()=>{writes++;return {};}}));
+  expect(app.operations.call('direct',owner,'unrelated.write',{},'global-id')).toMatchObject({code:'conflict'});expect(writes).toBe(0);
+  expect(app.operations.call('direct',owner,'mind.personAdd',{name:'Reserved'},'global-id')).toMatchObject({ok:true});
 });

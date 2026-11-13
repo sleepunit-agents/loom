@@ -84,7 +84,8 @@ export function installNext(app: Foundation, options: NextOptions) {
   }
 
   if (!app.operations.has('mind.peopleList')) {
-    const reader = installMindPeople(app.operations, app.live, { directory: inventory?.commons.people, agents: inventory?.agents ?? [], sharing });
+    const reader = installMindPeople(app.operations, app.live, { directory: inventory?.commons.people, agents: inventory?.agents ?? [], sharing,
+      projectHref: (agent, slug) => app.operations.has('mind.projectsList') ? `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}` : undefined });
     app.onClose(() => reader.close());
     const agent = new HouseholdDatabase(app.db).household(options.home)?.default;
     const actions = installMindPeopleActions(app.operations, { directory: inventory?.commons.people,

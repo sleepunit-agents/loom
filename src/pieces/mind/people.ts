@@ -9,7 +9,7 @@ export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
 export function installMindPeople(operations: Operations, live: Live, options: {
-  conversations?: PeopleConversations; directory?: string; agents: Array<{ agent: string; memories: string }>; sharing(): Sharing;
+  projectHref?(agent:string,slug:string):string|undefined; conversations?: PeopleConversations; directory?: string; agents: Array<{ agent: string; memories: string }>; sharing(): Sharing;
 }) {
   const sources = new Map<string, Database>();
   try {
@@ -55,12 +55,12 @@ export function installMindPeople(operations: Operations, live: Live, options: {
         const where={...card.where,...(rel?(JSON.parse(rel.card_json) as PersonCard).where:{})};
         for(const project of store.prepare('SELECT card_json FROM projects WHERE archived_at IS NULL').all() as {card_json:string}[]) {
           const p=JSON.parse(project.card_json) as {slug:string;name:string;status:string;links:{aliases?:string[]}};
-          if(agentId===slug || [p.slug,...(p.links.aliases??[])].some(key=>Object.hasOwn(where,key.replace(/-/g,'_')))) projects.push({agent:agentId,slug:p.slug,name:p.name,status:p.status});
+          if(agentId===slug || [p.slug,...(p.links.aliases??[])].some(key=>Object.hasOwn(where,key.replace(/-/g,'_')))) projects.push({agent:agentId,slug:p.slug,name:p.name,status:p.status,...(options.projectHref?.(agentId,p.slug)?{href:options.projectHref(agentId,p.slug)}:{})});
         }
       }
       const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: field.label ?? (Array.isArray(field.value) ? field.value.join(', ') : String(field.value)),
         ...(field.source ? {source:field.source} : {}), ...(field.verified_at ? {verifiedAt:field.verified_at} : {}),
-        state: !field.verified_at ? 'unverified' as const : field.stale_after_days !== undefined && now >= Date.parse(field.verified_at)+field.stale_after_days*86400000 ? 'stale' as const : 'fresh' as const }));
+        state: !field.verified_at ? 'unverified' as const : now > Date.parse(field.verified_at)+(field.stale_after_days??14)*86400000 ? 'stale' as const : 'fresh' as const }));
       return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,
         projects,...(!agent && Object.hasOwn(options.sharing().members,slug) ? {ownership:options.sharing().members[slug]}:{}),
         kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== asked ? {mergedFrom:asked} : {}) };
@@ -79,7 +79,7 @@ export function installMindPeople(operations: Operations, live: Live, options: {
     refreshOn:c => c.type==='person' || c.type==='memory' || c.type==='project',
     expires(record) {
       const r=record as unknown as PersonRecord, now=operations.clock.now();
-      const deadlines=Object.values(r.card.where ?? {}).flatMap(f => f.verified_at && f.stale_after_days !== undefined ? [Date.parse(f.verified_at)+f.stale_after_days*86400000] : []);
+      const deadlines=Object.values(r.card.where ?? {}).flatMap(f => f.verified_at ? [Date.parse(f.verified_at)+(f.stale_after_days??14)*86400000+1] : []);
       const db=r.agent && sources.get(r.agent);
       if (db && has(db,'memories')) {
         const next=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE archived=0 AND json_extract(metadata,'$.person')=? AND expires_at>?`).get(r.slug,new Date(now).toISOString()) as {at:string|null};

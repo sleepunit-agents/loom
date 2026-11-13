@@ -8,6 +8,6 @@ export interface PersonRecord {
   kind: 'person' | 'agent'; evidence: PersonEvidence[]; newer: number;
   fields: Array<{ key: string; value: string; source?: string; verifiedAt?: string; state: 'fresh' | 'stale' | 'unverified' }>;
   ownership?: {owner:boolean;agents:string[]};
-  projects:Array<{agent:string;slug:string;name:string;status:string}>;
+  projects:Array<{agent:string;slug:string;name:string;status:string;href?:string}>;
   mergedFrom?: string;
 }

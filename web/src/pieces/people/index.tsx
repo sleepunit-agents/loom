@@ -5,21 +5,24 @@ import { contacts, contactLink, type Person } from './model';
 const idle={pending:false,status:'done' as const};
 const noop=()=>()=>{};
 const blank={name:'',summary:'',channel:'',handle:''};
+/** One People tile per window; keep drafts/calls when the shell docks its reader. */
+export const peopleSession={draft:blank,request:undefined as Call|undefined,adding:false};
 interface Access {[key:string]:unknown;id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean}
 function Reader({person,relationships,conversations,conversationStatus,go}:{person:Person;relationships:Person[];conversations:{available:boolean;rows:{id:string;title:string;href:string}[]}|undefined;conversationStatus:string;go?:(path:string)=>void}) {
+  const internal=(event:React.MouseEvent<HTMLAnchorElement>,href:string)=>{if(go&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();go(href);}};
   const fields=(p:Person)=><dl className="grid gap-3">{p.fields.map(f=><div key={f.key}><dt>{f.key}</dt><dd>{contactLink(f.key,p.card.where[f.key]?.value) ? <a className="underline" href={contactLink(f.key,p.card.where[f.key]?.value)}>{f.value}</a>:f.value} · {f.state}{f.verifiedAt && ` · verified ${f.verifiedAt.slice(0,10)}`}{f.source && <p>Source: {f.source}</p>}</dd></div>)}</dl>;
   const facts=(p:Person)=><dl className="grid gap-2">{Object.entries(p.card.how??{}).map(([key,value])=><div key={key}><dt>{key}</dt><dd>{Array.isArray(value)?value.join(', '):String(value)}</dd></div>)}</dl>;
   return <article className="grid gap-5 p-5"><header><p>{person.kind==='agent'?'Agent':'Person'}</p><h1 className="text-2xl font-semibold">{person.name}</h1>{person.card.summary && <p>{person.card.summary}</p>}{person.mergedFrom && <p>{person.mergedFrom} was merged into {person.slug}.</p>}</header>
-    {person.ownership && <section><h2>Owns</h2><p>{person.ownership.owner?'The household and every agent':person.ownership.agents.join(', ')}</p><a className="underline" href="/p/sharing-preview">Open Sharing</a></section>}
+    {person.ownership && <section><h2>Owns</h2><p>{person.ownership.owner?'The household and every agent':person.ownership.agents.join(', ')}</p><a className="underline" href="/p/sharing-preview" onClick={e=>internal(e,'/p/sharing-preview')}>Open Sharing</a></section>}
     <section><h2>How to reach them</h2>{person.fields.length?fields(person):<p>No contact details recorded.</p>}</section>
     <section><h2>Facts</h2>{facts(person)}</section>
     <section><h2>Relationships</h2>{relationships.length?relationships.map(p=><section key={p.id} className="grid gap-3 border-t py-3"><h3>{p.agent}</h3>{p.card.summary && <p>{p.card.summary}</p>}<p>Updated {p.updated.slice(0,10)} · {p.newer} memories newer than this card</p>{facts(p)}{p.fields.length>0&&fields(p)}
       {p.card.may.length>0&&<div><h4>Recorded permissions</h4>{p.card.may.map((m,i)=><p key={i}>{m.text} · {m.source}</p>)}<p>These records do not grant access.</p></div>}
       <h4>Evidence</h4>{p.evidence.length?p.evidence.map((e,i)=><details key={i}><summary>{e.title} · {e.created.slice(0,10)}</summary><p className="whitespace-pre-wrap">{e.content}</p><p>{e.category}</p></details>):<p>No active evidence recorded.</p>}
     </section>):<p>No relationship cards available to you.</p>}</section>
-    <section><h2>Projects</h2>{person.projects.length?person.projects.map(p=><p key={`${p.agent}:${p.slug}`}><a className="underline" href={`/p/projects-preview/project/${encodeURIComponent(`${p.agent}:${p.slug}`)}`}>{p.name}</a> · {p.status} · {p.agent}</p>):<p>No linked projects.</p>}</section>
+    <section><h2>Projects</h2>{person.projects.length?person.projects.map(p=><p key={`${p.agent}:${p.slug}`}><>{p.href?<a className="underline" href={p.href} onClick={e=>internal(e,p.href!)}>{p.name}</a>:p.name}</> · {p.status} · {p.agent}{!p.href&&<> · Projects app is not available yet.</>}</p>):<p>No linked projects.</p>}</section>
     <section><h2>Conversations</h2>{conversationStatus==='offline'||conversationStatus==='denied'?<Error text={conversationStatus==='denied'?'You don’t have access to these conversations.':'Connection lost. Conversations will return when connected.'}/>:!conversations?<Loading label="Opening conversations…"/>:!conversations.available?<p>Conversation service is not available yet.</p>:conversations.rows.length?conversations.rows.map(c=><p key={c.id}><a className="underline" href={c.href} onClick={e=>{if(go && !e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go(c.href);}}}>{c.title}</a></p>):<p>No conversations of yours with this contact.</p>}</section>
-    <section><h2>Access</h2><p>Contact details and relationship notes do not grant access.</p><a className="underline" href="/p/sharing-preview">Open Sharing</a></section>
+    <section><h2>Access</h2><p>Contact details and relationship notes do not grant access.</p><a className="underline" href="/p/sharing-preview" onClick={e=>internal(e,'/p/sharing-preview')}>Open Sharing</a></section>
   </article>;
 }
 export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}) {
@@ -32,7 +35,10 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
   const access=useRecords<Access>('people.access'), feed=useRecords<Person>('person');
   const permission=access.status==='live'?access.records[0]:undefined;
   const [folder,setFolder]=useState('all'),[query,setQuery]=useState(''),[agent,setAgent]=useState('');
-  const [adding,setAdding]=useState(false),[draft,setDraft]=useState(blank),[request,setRequest]=useState<Call>();
+  const [adding,setAddingState]=useState(peopleSession.adding),[draft,setDraftState]=useState(peopleSession.draft),[request,setRequestState]=useState(peopleSession.request);
+  const setAdding=(value:boolean)=>{peopleSession.adding=value;setAddingState(value);};
+  const setDraft=(value:typeof blank)=>{peopleSession.draft=value;setDraftState(value);};
+  const setRequest=(value:Call|undefined)=>{peopleSession.request=value;setRequestState(value);};
   const answer=useSyncExternalStore(request?.subscribe??noop,request?.getSnapshot??(()=>idle));
   const all=contacts(feed.records,'all','',''), shown=contacts(feed.records,folder,query,agent);
   const detail=useRecords<Person>('person',selected?`commons:${selected}`:'');
@@ -43,7 +49,8 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
   if(access.status==='loading')return <Loading label="Opening people…"/>;
   if(access.status!=='live')return unavailable(access.status);
   if(!permission?.allowed)return unavailable('denied');
-  const form=<form aria-label="Add a person" className="grid gap-4 p-5" onSubmit={e=>{e.preventDefault();if(!permission.canAdd||answer.pending||answer.result?.ok||(answer.result?.ok===false&&answer.result.code==='unavailable'))return;setRequest(call('mind.personAdd',draft));}}><h1>Add a person</h1><p>Contact details are shared. Their summary belongs to the default agent’s relationship.</p><fieldset className="grid gap-3" disabled={!permission.canAdd||answer.pending||answer.result?.ok===true||(answer.result?.ok===false&&answer.result.code==='unavailable')}>
+  const saveFrozen=answer.pending||answer.result?.ok===true||(answer.result?.ok===false&&answer.result.code==='unavailable');
+  const form=<form aria-label="Add a person" className="grid gap-4 p-5" onSubmit={e=>{e.preventDefault();if(!permission.canAdd||saveFrozen)return;setRequest(call('mind.personAdd',draft));}}><h1>Add a person</h1><p>Contact details are shared. Their summary belongs to the default agent’s relationship.</p><fieldset className="grid gap-3" disabled={!permission.canAdd||saveFrozen}>
     <label>Name<Input required maxLength={80} value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/></label>
     <label>Who they are<Textarea maxLength={1200} value={draft.summary} onChange={e=>setDraft({...draft,summary:e.target.value})}/></label>
     <label>Reach them on<select value={draft.channel} onChange={e=>setDraft({...draft,channel:e.target.value})}><option value="">Not yet</option>{['slack','discord','email','phone','github'].map(c=><option key={c}>{c}</option>)}</select></label>

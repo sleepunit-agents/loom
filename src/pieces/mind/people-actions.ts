@@ -40,15 +40,16 @@ export function installMindPeopleActions(operations:Operations,options:{director
       const slug=input.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64);
       if(!slug) throw new OperationError('invalid','A person needs a name that makes an address');
       const person={...input,slug,actor:ctx.viewer.id}, receipt=ctx.receipt!,result={slug,slugs:[slug]};
+      const expires=Math.min(receipt.expires,...sources.flatMap(db=>{const old=prior(db,ctx);return old?[old.expires]:[];}));
       if(!prior(sources[0],ctx) && sources[1].prepare('SELECT 1 FROM people WHERE slug=?').get(slug)) throw new OperationError('conflict','A relationship card already exists for that name');
       for(const [index,db] of sources.entries()) db.transaction(()=>{
         db.prepare('DELETE FROM mind_operation_receipts WHERE expires<=?').run(ctx.now);
         if(prior(db,ctx)) return;
         options.create(db,person,ctx.now,index===0?'directory':'relationship');
-        db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),receipt.expires);
+        db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),expires);
       }).immediate();
       ctx.changed('person',`commons:${slug}`);ctx.changed('person',`${options.agent}:${slug}`);
-      return result;
+      return new RecoveredWrite(result,expires);
     },
   }));
   return {close(){sources.forEach(db=>db.close());}};

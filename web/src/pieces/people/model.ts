@@ -8,7 +8,7 @@ export function contacts(records:readonly Person[],folder:string,query:string,ag
     if(group) group.relationships.push(p);else groups.set(p.slug,{person:p,relationships:[p]});
   }
   const needle=query.trim().toLocaleLowerCase();
-  return [...groups.values()].filter(g=>(folder==='all'||g.person.kind===folder)&&(!agent||g.relationships.some(p=>p.agent===agent))&&`${g.person.name} ${g.person.slug} ${g.person.card.summary??''}`.toLocaleLowerCase().includes(needle)).sort((a,b)=>a.person.name.localeCompare(b.person.name));
+  return [...groups.values()].filter(g=>(folder==='all'||g.person.kind===folder)&&(!agent||g.relationships.some(p=>p.agent===agent))&&`${g.person.name} ${g.person.slug} ${g.person.card.summary??''} ${g.relationships.map(p=>`${p.agent} ${records.find(r=>!r.agent&&r.slug===p.agent)?.name??''}`).join(' ')}`.toLocaleLowerCase().includes(needle)).sort((a,b)=>a.person.name.localeCompare(b.person.name));
 }
 export function contactLink(channel:string,value:unknown):string|undefined {
   if(typeof value!=='string') return;
