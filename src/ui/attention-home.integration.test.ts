@@ -86,7 +86,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await expect.poll(()=>b.getByRole('heading',{name:'Art the Fish',exact:true}).count()).toBe(1);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await member.grantPermissions(['local-network-access'],{origin:loom.url});
     const p=await member.newPage();await signIn(p,'pollock');await p.goto(loom.url);
-    await expect.poll(()=>cards(p).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['Pond Bot card']);
+    await expect.poll(()=>cards(p).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['pond-bot card']);
+    expect(await p.getByRole('button',{name:'Pond Bot in People',exact:true}).count()).toBe(0);
     await expect.poll(()=>p.getByRole('heading',{name:'Needs you · 2',exact:true}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you',{exact:true}).count()).toBe(0);
     expect(await p.getByText('Connecting the next Home panels',{exact:true}).count()).toBe(0);
