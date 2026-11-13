@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
+
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.

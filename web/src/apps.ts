@@ -1,7 +1,7 @@
 import { settingsApp } from './pieces/settings/registration';
 import { setupApp } from './pieces/household/registration';
 import { activityApp } from './pieces/activity/registration';
-import { homeApp, HomeSurface, RailSurface } from './pieces/attention/home-registration';
+import { homeApp, HomeSurface, RailSurface, BarSurface } from './pieces/attention/home-registration';
 import { projectsApp } from './pieces/projects/registration';
 import { knowledgeApp } from './pieces/knowledge/registration';
 import { sharingApp } from './pieces/sharing/registration';
@@ -19,7 +19,7 @@ export const apps = [tasksApp, approvalsApp, sharingApp, changesApp, knowledgeAp
 export const appAt = (path: string) => apps.find(app => path === app.path || path.startsWith(`${app.path}/`));
 
 /** Home's piece may supply these ordinary record-driven surfaces; the shell fetches nothing. */
-export const shellSurfaces: import('./shell').ShellSurfaces = { Home: HomeSurface, Rail: RailSurface };
+export const shellSurfaces: import('./shell').ShellSurfaces = { Home: HomeSurface, Rail: RailSurface, Bar: BarSurface };
 apps.push(homeApp);
 
 apps.push(peopleApp);
