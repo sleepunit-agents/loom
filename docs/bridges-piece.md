@@ -47,6 +47,34 @@ for retry; malformed/unknown outcomes hold without retry until deliberately repa
 Production composition must map the runtime registry Result into these outcomes and
 must preserve authenticated caller identity; that integration remains on t-2210.
 
+## Discord intake
+
+`discordMessage` validates one gateway message against the receiving workspace and
+channel metadata before returning a bridge Message. It accepts default and reply
+events, rejects the receiving bot's own posts and system events, and preserves event
+time. DMs require the absence of a guild. Threads require a known parent and are
+labelled from the parent channel, never from Discord's starter-derived thread name.
+Attachment names and URLs remain textual descriptions; this function fetches nothing.
+
+The Message `mentions` field means explicit, resolved summons. Discord user mentions
+must occur in both content and the resolved mention list; managed role mentions must
+occur in both content and resolved roles and map to a configured bot in the workspace.
+An automatic reply ping cannot summon an agent or suppress a primary. The normalizer
+does not grant admission: the existing engine still resolves People links and asks
+runtime. The injected gateway transport must call this function; production socket
+connections, durable resume checkpoints, paired webhook identity and stop/presence
+effects remain unfinished on t-2210. No live connection uses this helper yet.
+
+| Old Discord routing case | New intake / routing coverage |
+| --- | --- |
+| Explicit user/managed-role summons; reply pings | discordMessage + discord.test.ts |
+| No summons → primary; peer-only mention suppresses primary | addressed + discord.test.ts |
+| Known bot peer in peer route only | addressed + discord.test.ts |
+| Thread parent ignore/only, safe thread label | discordMessage/addressed + discord.test.ts |
+| DM identity and original event timestamp | discordMessage + engine event-time validation |
+| Guest/reader admission and tiers | runtime admission, unchanged; not inferred by intake |
+| Paired webhook and webhook-peer identity | Pending adapter identity work; no new support claimed |
+
 Reply text is kept in the outbox, never exposed as traffic metadata. A send exception
 is treated as uncertain, even if a venue might have rejected it before posting.
 Inbox and outbox records retain their receiving bot identity; changing a venue
