@@ -711,12 +711,12 @@ metadata and publish changes in that same transaction, preserving its original
 receipt deadline. Receipt, recovery and permission checks run again after awaited
 preparation, so another write that commits during preparation still wins.
 
-This is a prerequisite, not a holder write protocol. Preparation receives no
-durable reservation: two fresh calls can both prepare, authentication can end
+Preparation alone is not a holder write protocol. Without an `admit` hook it
+receives no durable reservation: two fresh calls can both prepare, authentication can end
 during the await, and the later loom transaction can roll back. Do not put holder
-mutations in `prepare` on the strength of the preflight check. Production async
-set/remove still need durable full-input binding, concurrency/uncertain-result
-handling and metadata reconciliation after holder success plus loom rollback.
+mutations in `prepare` on the strength of the preflight check. The explicitly
+composed async installer below adds admission and retry reconciliation; production
+startup still needs persistent keys and daemon reconciliation before enabling it.
 Settings value forms remain unavailable in normal next mode.
 
 ## Committed holder receipt lookup
@@ -767,3 +767,39 @@ Source refusals name a fixed check: `copied-source`, `identity-options`,
 the error. Destination failures identify `destination-paths`, `destination-state`,
 `destination-lock`, or `destination-open`; internal exception messages remain hidden. This is an offline
 parser repair only; it performs no live import or holder/Settings activation.
+
+## Durable async mutation admission
+
+`installAsyncSecretValues` registers async set/remove against the production
+holder mutation interface; it is explicitly composed and is not enabled by
+normal next startup yet. Core's optional synchronous `admit` hook commits its
+reservation before `prepare` begins. Admission may store metadata only, cannot
+publish changes, and requires its own outer transaction. Preparation receives
+that exact core viewer/id, operation and keyed full-input fingerprint.
+
+Secrets retains a non-expiring journal binding that full identity to the member,
+caller write UUID, a separately generated unique holder UUID, name, action,
+admission sequence, durable commit order and commit timestamp. The always-installed global recovery
+guard prevents another operation from borrowing a reserved core id, even when
+a restart has no configured holder. A caller's UUID cannot borrow an existing
+holder receipt. No value or unkeyed value hash is stored. Pending and committed
+writes hold one global durable lock; a later write cannot overtake unreconciled
+metadata, even for another name. This deliberately serializes rare owner writes
+so uncertain holder commits cannot be reordered by receipt observation. Identical concurrent calls share preparation within the daemon; holder
+idempotency handles overlap across daemon lifetimes.
+
+After a holder acknowledgement (or positive receipt lookup for the admitted
+holder UUID), the journal records commit evidence separately from core's final
+transaction. Recovery applies metadata/history and completes the reservation
+atomically with the core acknowledgement. A failed metadata transaction keeps
+the name locked and recovers on the identical retry. Completed retries never
+reapply old metadata after later replacement/removal. Missing receipt evidence,
+transport failure, expired core result, lost authentication or permission never
+free a reservation. Current owner policy gates recovery. No background worker
+or timer is installed by this slice.
+
+Normal Settings value forms remain disabled. Persistent daemon key loading and
+rotation, holder identity/receipt-key rotation, daemon retry and reconciliation
+without caller plaintext, production root composition, trusted runtime sinks and
+house APIs, Changes/Bridges composition and the final move remain required on
+t-2208. This slice changes no installed configuration or live secret store.
