@@ -11,7 +11,7 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Needs you and owned compact agent cards beside work | Registered Attention Rail surface; roster, directory names, status, open asks and private thread metadata from existing live records |
 | Clicking a rail agent | First unread open thread, else latest open thread, else Comms; asks open the exact Inbox reader |
 | Reply counts and first reply words | Current thread feed offers unread **flags**; show unread thread counts explicitly. Reply-word previews await an owning metadata role; do not decrypt whole message feeds for a rail |
-| Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Pixel-sheet assets remain a separate slice; no old file lookup or invented sprite |
+| Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Imported pixel sheets now travel with the offline household import and are served from the new database; no old file lookup or invented sprite |
 | Per-device dock/rail hide modes, rail accordion and Comms companion portal | Follow-up desk slice; the existing 64px rail reservation under 1280 remains a compact agent strip |
 | Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
@@ -36,8 +36,27 @@ back to a neutral initial immediately.
 
 Home and the rail reuse the lazy drawn Face component: an open ask means
 waiting on you, a working report means working, a waiting report means thinking,
-and an offline report means needs a look. Unavailable status is neutral. This
-slice adds no write operation, schema, job or importer: Household's existing
-lossless importer already retains `marks` and `faces`. Pixel sprite metadata,
-safe new-home asset serving/import and the Pixel faces preference remain the
-next slice; drawn faces here do not claim to replace Jonathan's supplied sheets.
+and an offline report means needs a look. Unavailable status is neutral. The initial drawn-face slice (#1056) added no write operation, schema, job or
+importer: Household's lossless importer already retained `marks` and `faces`.
+The pixel-face slice below extends that importer for the supplied sheets.
+
+### Imported pixel faces
+
+The offline household importer now includes each registered agent's sprite
+manifest and its named PNG sheets. It checks bounded regular files within the
+source home, PNG dimensions against animation rows, and includes the bytes in
+the source checksum, transaction and content comparison. Artwork occupies
+`agent-sprite:<agent>` rows in `household_settings`; no table or policy changes.
+A fresh staging home must be rebuilt through the importer to acquire artwork;
+a previously imported home's receipt still refuses a changed source.
+
+`household.agentDisplay` includes only the sprite's version, facings and URL.
+Authenticated `/faces/<agent>/manifest.json` and manifest-named sheets read the
+new database and recheck existing central agent visibility on every request.
+They are never cached by HTTP or the service worker. Home and the rail reuse
+PixelFace, including its existing animation, reduced-motion and drawn fallback,
+and honor the member's Pixel faces preference. No runtime lookup of old artwork
+and no artwork is generated or bundled by this change. Fixture comparison boards
+without imported sheets continue to show drawn faces; they are not evidence of
+Jonathan's real artwork. Its visual acceptance follows a coordinator-managed
+staging rebuild, outside this implementation's authorized host scope.

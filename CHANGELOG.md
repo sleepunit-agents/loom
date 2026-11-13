@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
+- Import registered agents’ pixel sheets with the household, serve them from the new database with current agent visibility, and honor Pixel faces on Home and the rail.
+
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
 
 - Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.

@@ -1,3 +1,4 @@
+import { spriteDisplay } from './sprites.js';
 import type { Foundation } from '../app.js';
 import { maySee } from '../../policy.js';
 import { FACE_EYES, FACE_SHAPES, MARKS } from '../../household.js';
@@ -25,7 +26,9 @@ export function installHouseholdDisplay(app: Foundation, home: string) {
     read(id, viewer) {
       if (!maySee(viewer, { agent: id, type: 'household.agentDisplay' }, sharing.sharing())) return;
       const raw = household.document();
-      return raw && agentDisplay(raw, id);
+      const display = raw && agentDisplay(raw, id);
+      const sprite = display && spriteDisplay(app.db, id);
+      return display && { ...display, ...(sprite ? { sprite } : {}) };
     },
     inScope: (_record, scope) => scope === undefined,
   });
