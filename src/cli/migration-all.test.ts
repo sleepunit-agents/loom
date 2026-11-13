@@ -18,6 +18,7 @@ import { run } from './migrate.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
+import { loadKey } from '../pieces/comms/crypto.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import { createMigrationRegistry, MigrationRegistry } from './migration-registry.js';
 import { conversationId } from '../pieces/attention/conversations.js';
@@ -304,4 +305,28 @@ it('returns the generic CLI refusal for an asynchronous importer rejection witho
   expect(io.stderr.mock.calls.flat().join('')).not.toContain(secret);
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual([]);
   const unlock=acquireHttpLock(f.home); unlock();
+});
+
+it('recovers only the source-identical root Comms publication pair under a matching migration receipt', async () => {
+  for (const kind of ['valid', 'external', 'bytes', 'receipt', 'nested', 'extra']) {
+    const f = await fixture();
+    await loadKey(f.old);
+    const root = join(f.dir, 'key-snapshot'); await createSnapshot(f.old, root);
+    await runMigrationAll(root, f.home);
+    const key = join(f.home, 'comms.key');
+    writeFileSync(key, readFileSync(join(root, 'home/comms.key')), { mode: 0o600 });
+    const temp = join(f.home, `.comms.key-import-${randomUUID()}`); linkSync(key, temp);
+    if (kind === 'external') linkSync(key, join(f.dir, 'outside'));
+    if (kind === 'bytes') writeFileSync(key, 'different');
+    if (kind === 'receipt') rmSync(join(f.home, '.migration-all.json'));
+    if (kind === 'nested') { mkdirSync(join(f.home, 'nested')); fs.renameSync(temp, join(f.home, 'nested', temp.split('/').at(-1)!)); }
+    if (kind === 'extra') { writeFileSync(join(f.home, 'extra'), 'x'); linkSync(join(f.home, 'extra'), join(f.home, 'extra-alias')); }
+    if (kind === 'valid') {
+      expect((await runMigrationAll(root, f.home)).status).toBe('complete');
+      expect(statSync(key).nlink).toBe(1); expect(fs.existsSync(temp)).toBe(false);
+    } else {
+      const before = bytes(f.home);
+      await expect(runMigrationAll(root, f.home)).rejects.toThrow(); expect(bytes(f.home)).toEqual(before);
+    }
+  }
 });

@@ -51,12 +51,20 @@ export function separateDestination(root: string, home: string, plan: MigrationP
   if (existsSync(target)) walk(target, targets, true);
   if ([...targets].some(id => sources.has(id)) || ancestors(target).some(p => sources.has(inode(p))) || ancestors(source).some(p => targets.has(inode(p)))) throw Error('Aliased destination');
   if (!linked.length) return [];
-  // Household's durable key publisher links a complete temp file to the final name.
-  // A killed process can leave both names; accept only that exact, source-identical pair.
-  const key = join(target, 'ui-cookie.key');
-  const temp = linked.find(path => dirname(path) === target && /^\.ui-cookie\.key-import-[0-9a-f-]{36}$/.test(basename(path)));
-  if (linked.length !== 2 || !linked.includes(key) || !temp || inode(temp) !== inode(key) || lstatSync(key).nlink !== 2 || !readFileSync(key).equals(readFileSync(join(source,'home/ui-cookie.key'))) || !readReceipt(target,plan)) throw Error('Hard-linked destination');
-  return [temp];
+  // Durable key publishers may die after linking a complete file. Accept only
+  // the exact root pair(s), identical to the corresponding verified snapshot key.
+  if (!readReceipt(target, plan)) throw Error('Hard-linked destination');
+  const remaining = new Set(linked), leftovers: string[] = [];
+  for (const name of ['ui-cookie.key', 'comms.key']) {
+    const key = join(target, name);
+    if (!remaining.has(key)) continue;
+    const pattern = name === 'ui-cookie.key' ? /^\.ui-cookie\.key-import-[0-9a-f-]{36}$/ : /^\.comms\.key-import-[0-9a-f-]{36}$/;
+    const temps = [...remaining].filter(path => dirname(path) === target && pattern.test(basename(path)));
+    if (temps.length !== 1 || inode(temps[0]) !== inode(key) || lstatSync(key).nlink !== 2 || !readFileSync(key).equals(readFileSync(join(source, 'home', name)))) throw Error('Hard-linked destination');
+    remaining.delete(key); remaining.delete(temps[0]); leftovers.push(temps[0]);
+  }
+  if (remaining.size) throw Error('Hard-linked destination');
+  return leftovers;
 }
 export function readReceipt(home: string, plan: MigrationPlan): Receipt | undefined {
   const path = join(home, receiptName);
