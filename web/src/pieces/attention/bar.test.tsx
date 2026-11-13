@@ -44,3 +44,11 @@ it('shows server time and status on desktop and clears stale time',async()=>{
  expect(tree.root.findAllByProps({'aria-label':'12:41 PM, America/Chicago time'})).toHaveLength(0);
  expect(tree.root.findByProps({'aria-label':'Loom time unavailable'})).toBeTruthy();
 });
+
+it('clears working-agent count when just the roster becomes unavailable',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.snapshots['attention.ownedAgent']={...f.snapshots['attention.ownedAgent'],status:'offline'};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tree.root.findAllByProps({'aria-label':'1 of 1 agents at work'})).toHaveLength(0);
+ expect(tree.root.findByProps({'aria-label':'Agent status unavailable'})).toBeTruthy();
+});

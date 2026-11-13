@@ -17,9 +17,10 @@ export function BarClock() {
   const words = text && minute ? serverTime(minute.at, minute.timezone, true) : 'Loom time unavailable';
   return <span className="next-system-clock loom-sys__clock" title={words} aria-label={words}><span aria-hidden="true">{text || '—:—'}</span></span>;
 }
-export function BarStatus({ roster, statuses, live, go }: { roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; live: boolean; go(path:string):void }) {
+export function BarStatus({ roster, statuses, available, live, go }: { roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; available: boolean; live: boolean; go(path:string):void }) {
   const working = roster.filter(a=>latestStatus(statuses,a.id)?.state==='working').length;
-  const agents = statuses.length ? `${working} of ${roster.length} agents at work` : 'Agent status unavailable';
+  const known = available && roster.every(a=>latestStatus(statuses,a.id)!==undefined);
+  const agents = known ? `${working} of ${roster.length} agents at work` : 'Agent status unavailable';
   const signal = live ? 'Live: connected to loom' : 'Live updates unavailable';
   return <span className="next-system-icons loom-sys__icons" role="group" aria-label="Status">
     <span role="img" tabIndex={0} className="loom-sys__icon" data-dim={!live?'':undefined} aria-label={signal}>
@@ -28,7 +29,7 @@ export function BarStatus({ roster, statuses, live, go }: { roster: readonly Own
     </span>
     <a className="loom-sys__icon" href="/p/home-preview" aria-label={agents} onClick={e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();go('/p/home-preview');}}>
       <svg {...glyph} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"><circle cx={6} cy={5.5} r={2.5}/><path d="M1.75 13.5a4.25 4.25 0 0 1 8.5 0M10.5 3.2a2.5 2.5 0 0 1 0 4.6M12 9.6a4.25 4.25 0 0 1 2.25 3.9"/></svg>
-      <span className="loom-sys__n loom-data" aria-hidden="true">{statuses.length?working:'?'}</span><span className="loom-sys__tip" aria-hidden="true">{agents}</span>
+      <span className="loom-sys__n loom-data" aria-hidden="true">{known?working:'?'}</span><span className="loom-sys__tip" aria-hidden="true">{agents}</span>
     </a>
   </span>;
 }
