@@ -1,3 +1,4 @@
+import { bridgeRuntime } from './pieces/runtime/bridges.js';
 import { randomUUID } from 'node:crypto';
 import { installStartRetries } from './pieces/runtime/start-retries.js';
 import { runtimeOwnerApplication } from './pieces/runtime/owner-application.js';
@@ -121,6 +122,9 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
+  const bridgeBodies=bridgeRuntime(app,sharing,v=>signin(app).agent(v));
+  conversations.connectBridges(bridgeBodies);
+  app.onClose(bridgeBodies.close);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
     localAgent:()=>new HouseholdDatabase(app.db).household(options.home)?.default ?? 'agent',
@@ -140,7 +144,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:conversations.privateStart });
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:i=>conversations.privateStart(i)||bridgeBodies.privateStart(i) });
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);
     const approvals = changesApprovals(app.operations);
@@ -209,10 +213,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
       if(attempt?.key!==key){if(attempt)effects.finish(attempt.id);attempt={key,id:`bridges:inspect:${randomUUID()}`};readAttempts.set(v.id,attempt);}
       return effects.status(attempt.id)==='started' || effects.beforeOutside({id:attempt.id,kind:'bridge-send',title:'Inspect bridge recipients'});
     }});
-    // Runtime's installed conversation path currently serves private Comms only.
-    // This explicit missing-role fake refuses admission until its bridge role lands.
-    const unavailable:BridgeRuntime={admit:async()=> 'wait',deliver:async()=> 'held',stop:async()=>{throw Error('Bridge runtime unavailable');}};
-    const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??unavailable,adapters,effects);
+    const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??bridgeBodies.runtime,adapters,effects);
+    bridgeBodies.connect(engine);
     const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));
     const name=options.bridges.name??((v,user)=>{
       const person=personFor(app.db,v,user);if(!person)return;
@@ -224,7 +226,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const stopCredentials=credentials.observe(()=>{serial++;void engine.flush();});
     const stopLive=app.live.observe(changes=>{if(changes.some(c=>c.type==='secret.name'||c.type==='secret.grant'))serial++;if(changes.some(c=>['bridges.venue','bridges.route','bridges.link','bridges.send','secret.name','secret.grant'].includes(c.type)))void engine.flush();});
     void engine.flush();
-    bridgeDaemons.set(app,{async close(){closed=true;stopCredentials();stopLive();const pending=[slack.close(),discord.close(),engine.close()];credentials.close();await Promise.all(pending);for(const attempt of readAttempts.values())effects.finish(attempt.id);}});
+    bridgeDaemons.set(app,{async close(){closed=true;bridgeBodies.close();stopCredentials();stopLive();const pending=[slack.close(),discord.close(),engine.close()];credentials.close();await Promise.all(pending);for(const attempt of readAttempts.values())effects.finish(attempt.id);}});
   }
   if (!app.operations.has('runtime.startProgress')) installStartRetries(app,sharing);
   installAttentionMaintenance(app);
@@ -238,7 +240,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     app.onClose(()=>{void conversations.close();void comms.close();});
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
-    {valid:conversations.validInput,issue:(agent,job)=>signin(app).issueBody(agent,job)});
+    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job)});
   if (options.secretAuthority && !secretAuthorities.has(app)) {
     const current = () => new SharingDatabase(app.db, options.home).sharing();
     secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>

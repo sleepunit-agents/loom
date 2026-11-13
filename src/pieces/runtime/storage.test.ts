@@ -28,7 +28,7 @@ it('installs empty metadata collections in next mode without pretending executio
   const { app, call } = await setup();
   for (const name of ['listBoxes', 'listJobs', 'listSettings', 'listBindings']) expect(call(name)).toEqual({ ok: true, value: { records: [] } });
   expect(app.operations.call('direct', owner, 'runtime.startBody', {}, 'start')).toMatchObject({ ok: false, code: 'invalid' });
-  expect(app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 8 });
+  expect(app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 9 });
 });
 it('does not install runtime tables or operations in legacy mode', async () => {
   const { app, call } = await setup(undefined, false);
@@ -86,7 +86,7 @@ it('persists records across restart, preserves timestamps on no-ops and rolls ba
   const second = await setup(first.home);
   expect(second.store.read('box', box.id)).toEqual({ ...box, changedAt: 10 });
   expect(second.store.ids('job')).toEqual([]);
-  expect(second.app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 8 });
+  expect(second.app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 9 });
 });
 it('rejects extra words/credentials, mismatched settings ids and duplicate conversation keys', async () => {
   const { app, store } = await setup();
