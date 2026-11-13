@@ -61,7 +61,7 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
     },
   }));
   operations.register(operation({ name: 'attention.digests', input: z.object({ conversation: key, limit: z.number().int().min(1).max(500).default(100) }).strict(), output: z.unknown(),
-    may: (v, i) => { const c = conversation(i.conversation); return !!c && maySee(v, { type: 'attention.digest', ...c }, sharing()); },
+    may: (v, i) => { const c = conversation(i.conversation); return !!c && maySee(v, { type: 'attention.digest', ...c }, sharing()) && (v.kind !== 'service' || mayAct(v, { type: 'attention.digest', ...c }, sharing(), 'act', 'attention.digests')); },
     run: (_ctx, i) => all(i.conversation).sort((a, b) => b.order - a.order).slice(0, i.limit),
   }));
   live.register({ name: 'attention.digest', ids: () => (db.prepare('SELECT id FROM attention_digests ORDER BY id').all() as { id: string }[]).map(r => r.id),

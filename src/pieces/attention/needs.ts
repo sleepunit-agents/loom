@@ -170,28 +170,9 @@ export function refsIn(s: string): string[] {
   return out.slice(0, MAX_NEEDS_REFS);
 }
 
-/**
- * What a stored digest asks: its object when it was written as one, else its string as it was (refs read from its
- * words; an approval it names, when it names exactly one, is what it waits on: the card it asked the owner to allow).
- */
-export function needsOfRow(r: { needs_owner: string | null; needs_owner_href?: string | null; needs_owner_json?: string | null }): NeedsOwner | null {
-  if (r.needs_owner === null) return null;
-  if (r.needs_owner_json) {
-    try { return JSON.parse(r.needs_owner_json) as NeedsOwner; } catch { /* a string, then */ }
-  }
-  const refs = refsIn(r.needs_owner);
-  const approvals = refs.filter((x) => APPROVAL.test(x));
-  return { ask: r.needs_owner, refs, ...(r.needs_owner_href ? { href: r.needs_owner_href } : {}), ...(approvals.length === 1 ? { waits_on: { approval: approvals[0] } } : {}), legacy: true };
-}
-
 /** How the owner answers an ask: as it says, else a yes/no question when it says what happens either way. */
 export function answersOf(n: NeedsOwner): NeedsAnswers {
   if (n.answers) return n.answers;
   return !n.legacy && (n.if_yes || n.if_no) ? 'yes-no' : 'words';
 }
 
-/** The owner's Yes or No, as the words the agent's conversation gets: the answer, the ask, and its own line for it. */
-export function yesNoText(n: NeedsOwner, answer: 'yes' | 'no'): string {
-  const line = answer === 'yes' ? n.if_yes : n.if_no;
-  return `${answer === 'yes' ? 'Yes' : 'No'}, to: ${n.ask}${line ? `\nIf ${answer}, you said: ${line}` : ''}`;
-}

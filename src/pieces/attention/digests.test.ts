@@ -11,7 +11,7 @@ import { digestId } from './digests.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const alice: Viewer = { kind: 'member', id: 'alice' }, art: Viewer = { kind: 'agent', id: 'art' };
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] } }, projects: { shared: { members: ['alice'], agents: ['art'] } }, services: { reader: { types: ['attention.digest'], operations: [] }, writer: { types: ['attention.digest'], operations: ['attention.writeDigest'] } } });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] }, dave: { owner: false, agents: [] } }, projects: { shared: { members: ['alice', 'carol'], agents: ['art'] }, beta: { members: ['dave'], agents: [] } }, services: { reader: { types: ['attention.digest'], operations: [] }, listed: { types: ['attention.digest'], operations: ['attention.digests'] }, writer: { types: ['attention.digest'], operations: ['attention.writeDigest'] } } });
 const conversation = conversationId('art', 'relay', 'test');
 const question = { ask: 'Continue with the change?', if_yes: 'I finish it.', if_no: 'I stop.', refs: ['t-40'] };
 async function setup(scope = {}) {
@@ -94,5 +94,66 @@ it('requires all central grants for nested ask writes and leaves no partial dige
   expect(write({ needs_owner: question }, 'run-1', service)).toMatchObject({ code: 'denied' });
   expect(app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
   expect(write({}, 'run-1', service)).toMatchObject({ ok: true });
-  expect(call('digests', { conversation }, { kind: 'service', id: 'reader' })).toMatchObject({ value: [{ run: 'run-1' }] });
+  expect(call('digests', { conversation }, { kind: 'service', id: 'reader' })).toMatchObject({ code: 'denied' });
+  expect(call('digests', { conversation }, { kind: 'service', id: 'listed' })).toMatchObject({ value: [{ run: 'run-1' }] });
+});
+it('preserves authored fields on replacement and pins the legacy hash vector', async () => {
+  const { write, call } = await setup();
+  expect(digestId(conversation, 'run-1')).toBe('dg-29237ec06e2f');
+  const fields = { summary: '  First summary.  ', asks: ['  First ask  '], decisions: ['First decision'], tasks: ['t-40'] };
+  expect(write(fields)).toMatchObject({ value: { summary: 'First summary.', asks: ['First ask'], decisions: ['First decision'], tasks: ['t-40'] } });
+  expect(call('digests', { conversation })).toMatchObject({ value: [{ summary: 'First summary.', asks: ['First ask'], decisions: ['First decision'], tasks: ['t-40'] }] });
+  const replacement = { summary: 'Replacement.', asks: ['New ask'], decisions: ['New decision'], tasks: ['t-41'] };
+  expect(write(replacement)).toMatchObject({ value: replacement });
+  expect(call('digests', { conversation })).toMatchObject({ value: [replacement] });
+});
+it('bounds digest collection defaults, explicit limits and invalid limits', async () => {
+  const { write, call } = await setup();
+  for (let n = 0; n < 102; n++) expect(write({}, `run-${n}`)).toMatchObject({ ok: true });
+  const defaults = call('digests', { conversation });
+  if (!defaults.ok) throw new Error('read failed');
+  expect(defaults.value).toHaveLength(100);
+  expect(call('digests', { conversation, limit: 1 })).toMatchObject({ value: [{ run: 'run-101' }] });
+  const max = call('digests', { conversation, limit: 500 });
+  if (!max.ok) throw new Error('read failed');
+  expect(max.value).toHaveLength(102);
+  for (const limit of [0, 501, 1.5]) expect(call('digests', { conversation, limit })).toMatchObject({ code: 'invalid' });
+});
+it('inherits policy project independently from replaceable digest reference projects', async () => {
+  const { write, call, types } = await setup({ project: 'shared' });
+  expect(write({ projects: ['alpha'], needs_owner: question })).toMatchObject({ value: { project: 'shared', projects: ['alpha'] } });
+  expect(call('get', { id: `${digestId(conversation, 'run-1')}:1` })).toMatchObject({ value: { project: 'shared' } });
+  expect(write({ projects: ['beta'] })).toMatchObject({ value: { project: 'shared', projects: ['beta'] } });
+  expect(call('conversation', { id: conversation })).toMatchObject({ value: { project: 'shared', projects: ['beta'] } });
+  expect(types.get('attention.digest')!.read(digestId(conversation, 'run-1'), art)).toMatchObject({ project: 'shared' });
+  expect(call('digests', { conversation }, { kind: 'member', id: 'carol' })).toMatchObject({ value: [{ project: 'shared' }] });
+  expect(call('digests', { conversation }, { kind: 'member', id: 'dave' })).toMatchObject({ code: 'denied' });
+  expect(types.get('attention.digest')!.read(digestId(conversation, 'run-1'), { kind: 'member', id: 'dave' })).toBeUndefined();
+});
+it('rolls back earlier nested resolutions when a later resolution refuses', async () => {
+  const { app, call, write } = await setup();
+  write({ needs_owner: question, projects: ['alpha'] });
+  write({ needs_owner: question, projects: ['beta'] }, 'run-2');
+  const before = ['attention_asks', 'attention_digests', 'attention_conversations', 'core_operations'].map(table => app.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  const changed = vi.spyOn(app.live, 'changed');
+  const original = app.operations.call.bind(app.operations); let resolves = 0;
+  const intercept = vi.spyOn(app.operations, 'call').mockImplementation((door, viewer, name, input, id) => {
+    if (name === 'attention.resolve' && ++resolves === 2) return failure('denied', 'Resolution refused');
+    return original(door, viewer, name, input, id);
+  });
+  expect(write({ needs_owner: null, projects: ['gamma'] })).toMatchObject({ code: 'denied' });
+  expect(resolves).toBe(2); intercept.mockRestore();
+  expect(['attention_asks', 'attention_digests', 'attention_conversations', 'core_operations'].map(table => app.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
+  expect(changed).not.toHaveBeenCalled();
+  expect(call('get', { id: `${digestId(conversation, 'run-2')}:1` })).toMatchObject({ value: { state: 'open' } });
+});
+it('restores an open ask when a subsequent nested raise is refused', async () => {
+  const { app, write, call } = await setup();
+  write({ needs_owner: question });
+  const original = app.operations.call.bind(app.operations);
+  const intercept = vi.spyOn(app.operations, 'call').mockImplementation((door, viewer, name, input, id) => name === 'attention.raise' ? failure('denied', 'Raise refused') : original(door, viewer, name, input, id));
+  expect(write({ needs_owner: question, projects: ['new'] })).toMatchObject({ code: 'denied' });
+  intercept.mockRestore();
+  expect(call('get', { id: `${digestId(conversation, 'run-1')}:1` })).toMatchObject({ value: { state: 'open' } });
+  expect(call('digests', { conversation })).toMatchObject({ value: [{ revision: 1, projects: [] }] });
 });
