@@ -13,6 +13,7 @@ import type { RecordType } from '../../core/live/index.js';
 import { OperationError } from '../../core/index.js';
 import { venueSchema, routeSchema, type Message, type Venue } from './model.js';
 import { addressed } from './routing.js';
+import { eventTime } from './time.js';
 const sharing: Sharing = {members:{jonathan:{owner:true,agents:['art','mark']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['pond-bot']}},services:{}};
 const owner = {kind:'member',id:'jonathan'} as const;
 const roots: string[] = [], closes: (()=>Promise<void>)[] = [];
@@ -34,7 +35,7 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   const adapter=new FakeVenue(platform), deliveries=new Map<string,Incoming>(), stops: unknown[]=[];
   let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
   const admitted: string[]=[];
-  const runtime: BridgeRuntime={async admit(input){admitted.push(input.person);return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');},async stop(i){stops.push(i);}};
+  const runtime: BridgeRuntime={async admit(input){admitted.push(input.person);return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');return 'delivered';},async stop(i){stops.push(i);}};
   const secrets: BridgeSecrets={async may(){return secretAllowed;},async get(_agent,name){secretGets.push(name);return 'token-value-do-not-store';}};
   const engine=new Bridges(app,clock,runtime,secrets,[adapter],effects);
   const close=async()=>{await engine.close();await app.close();}; closes.push(close);
@@ -45,10 +46,39 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
     expect(op('putLinks',{id:'person',platform,workspace:'house',user:'200',person:'jonathan'}).ok).toBe(true);
     expect(op('putRoutes',{id:'channel',platform,workspace:'house',channel:'300',primary:'art'}).ok).toBe(true);
   }
-  const message=(overrides: Partial<Message>={}): Message=>({id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
-  return {admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
+  const message=(overrides: Partial<Message>={}): Message=>({at:'2026-11-12T17:00:00.123456Z',label:'House chat',id:'m1',channel:'300',user:'200',text:'hi',mentions:[],dm:false,...overrides});
+  return {runtime,admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
 describe('in-process bridge delivery',()=>{
+  it('preserves event time and label through durable receipt, restart and duplicate receipt',async()=>{
+    const f=await fixture(); f.setGate('wait');
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    await f.close(); closes.splice(closes.indexOf(f.close),1);
+    const next=await fixture('discord',false,f.home); await next.engine.sync();
+    expect([...next.deliveries.values()][0]).toMatchObject({at:'2026-11-12T17:00:00.123Z',label:'House chat'});
+    await next.engine.receive(next.venue.id,next.message({at:'2026-11-13T00:00:00Z',label:'changed'})); await next.engine.flush();
+    expect(next.deliveries.size).toBe(1);
+    expect([...next.deliveries.values()][0]).toMatchObject({at:'2026-11-12T17:00:00.123Z',label:'House chat'});
+  });
+  it.each(['refused','held','retry'] as const)('handles runtime %s without consuming a turn as delivered',async outcome=>{
+    const f=await fixture(); f.runtime.deliver=async()=>outcome;
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state,message FROM bridges_inbox').get()).toEqual({
+      state:outcome==='refused'?'dropped':outcome==='held'?'held':'pending',
+      message:outcome==='refused'?'{}':JSON.stringify(f.message()),
+    });
+    expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+    f.runtime.deliver=async input=>{f.deliveries.set(input.id,input);return 'delivered';};
+    f.clock.advance(5000); await f.engine.flush();
+    expect(f.deliveries.size).toBe(outcome==='retry'?1:0);
+  });
+  it('holds malformed event metadata durably instead of inventing an event time',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message({at:'bad'})); await f.engine.flush();
+    expect(f.deliveries.size).toBe(0);
+    expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'invalid event time'});
+    f.clock.advance(5000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+  });
+
   it.each(['discord','slack'] as const)('%s receives, routes, delivers and replies once',async platform=>{
     const f=await fixture(platform); await f.engine.sync(); expect(f.adapter.connections).toBe(1);
     await f.adapter.callbacks!.message(f.message()); await f.engine.flush();
@@ -214,5 +244,19 @@ describe('in-process bridge delivery',()=>{
       expect(f.app.operations.call('direct',viewer,'bridges.putVenues',f.venue,'change').ok).toBe(false);
       expect(f.app.operations.call('direct',viewer,'bridges.putLinks',{id:'link',platform:'discord',workspace:'house',user:'x',person:'jonathan'},'link').ok).toBe(false);
     }
+  });
+});
+
+describe('platform event timestamps',()=>{
+  it('normalizes offsets and truncates microseconds without rounding',()=>{
+    expect(eventTime('slack','unused','2026-11-12T11:12:13.999999-06:00')).toBe('2026-11-12T17:12:13.999Z');
+    expect(eventTime('slack','1794503533.000999')).toBe('2026-11-12T17:12:13.000Z');
+    expect(eventTime('discord',String((BigInt(Date.parse('2026-11-12T17:12:13.123Z'))-1420070400000n)<<22n))).toBe('2026-11-12T17:12:13.123Z');
+  });
+  it('refuses malformed or missing event ids and invalid supplied dates',()=>{
+    for (const at of ['bad','2026-02-30T00:00:00Z','2026-11-12T24:00:00Z','2026-11-12',''])
+      expect(eventTime('slack','1794503533.123456',at)).toBeUndefined();
+    for (const id of ['','-1','1.5','18446744073709551616']) expect(eventTime('discord',id)).toBeUndefined();
+    expect(eventTime('slack','not-a-ts')).toBeUndefined();
   });
 });
