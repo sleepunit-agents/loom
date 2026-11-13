@@ -8,7 +8,7 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { installComms } from './index.js';
 import { loadKey, type WordsKey } from './crypto.js';
-import { stagingHold } from './role.js';
+import { stagingHold, HeldEffect } from './role.js';
 import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
@@ -816,6 +816,71 @@ for(const reason of ['archive','expiry','ownership'] as const)it(`settles stale 
   expect(decrypts).toBe(before);expect(s.deliveries).toEqual([]);
   expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record).delivery).toBe('failed');
  }
+});
+it('recovers a persisted fresh send after pre-runtime staging failure without a receipt adapter',async()=>{
+ let released=false;
+ const s=await setup({hold:async f=>{if(!released)throw new Error('gate unavailable');return f();}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toHaveLength(0);
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record)).toMatchObject({delivery:'failed',attempted:false});
+ released=true;await s.restart();await s.comms.reconcileDeliveries();
+ expect(s.deliveries).toHaveLength(1);
+});
+it('keeps uncertainty after a fenced retry fails before runtime',async()=>{
+ let failOpen=false,lookups=0,attempts=0;
+ const s=await setup({key:k=>({...k,open:async words=>{if(failOpen)throw new Error('crypto unavailable');return k.open(words);}}),
+  receipt:async()=>{lookups++;return lookups===1?'not-accepted':'unknown';},deliver:async()=>{attempts++;throw new Error('uncertain');}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ failOpen=true;await s.comms.deliver('art',place,1);failOpen=false;
+ await s.comms.deliver('art',place,1);
+ expect(lookups).toBe(2);expect(attempts).toBe(1);
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record)).toMatchObject({delivery:'failed',attempted:true});
+});
+it('persists the runtime boundary before calling out and never downgrades a runtime failure to held',async()=>{
+ let saved:unknown,attempts=0;
+ const s=await setup({deliver:async d=>{attempts++;saved=JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=?').get(d.thread,d.seq) as {record:string}).record);throw new HeldEffect('runtime outcome uncertain');}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ expect(saved).toMatchObject({delivery:'sending',attempted:true});
+ expect(s.comms.trace('art',place).messages[0].delivery).toBe('failed');
+ await s.restart();await s.comms.deliver('art',place,1);await s.comms.reconcileDeliveries();
+ expect(attempts).toBe(1);
+});
+it('coalesces direct and operation retries throughout receipt lookup and runtime acceptance',async()=>{
+ let released=false,lookups=0,attempts=0,resolveReceipt:(v:'not-accepted')=>void=()=>{},releaseRuntime:()=>void=()=>{},entered:()=>void=()=>{};
+ const began=new Promise<void>(r=>{entered=r;}),waiting=new Promise<void>(r=>{releaseRuntime=r;});
+ const s=await setup({hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),
+  receipt:async()=>{lookups++;return new Promise(r=>{resolveReceipt=r;});},deliver:async()=>{attempts++;entered();await waiting;}});
+ const input={agent:'art',id:'abcdefghijklmnop',text:'retry words'};
+ const opened=await s.call('open',input),place=(opened as {ok:true;value:{thread:string}}).value.thread;
+ await s.comms.deliver('art',place,1);
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'failed'}),place);released=true;
+ const direct=s.comms.deliver('art',place,1);
+ await s.call('open',input);const recovery=s.comms.reconcileDeliveries();
+ expect(lookups).toBe(1);expect(attempts).toBe(0);
+ resolveReceipt('not-accepted');await began;
+ await s.call('open',input);const another=s.comms.deliver('art',place,1);
+ expect(lookups).toBe(1);expect(attempts).toBe(1);
+ releaseRuntime();await Promise.all([direct,recovery,another]);
+ expect(s.deliveries).toHaveLength(1);
+});
+for(const route of ['open','send','direct'] as const)for(const receipt of ['accepted','not-accepted','unknown','error','absent'] as const)it(`fences duplicate delivery through ${route} (${receipt})`,async()=>{
+ let attempts=0,lookups=0,decrypts=0;
+ const s=await setup({key:k=>({...k,open:async words=>{decrypts++;return k.open(words);}}),
+  deliver:async()=>{attempts++;throw new Error('acceptance uncertain');},
+  receipt:receipt==='absent'?undefined:async()=>{lookups++;if(receipt==='error')throw new Error('lookup unavailable');return receipt;}});
+ const input={agent:'art',id:'abcdefghijklmnop',text:'retry words'};
+ const opened=await s.call('open',input);expect(opened.ok).toBe(true);
+ const place=(opened as {ok:true;value:{thread:string}}).value.thread;
+ await s.comms.deliver('art',place,1);
+ let seq=1;
+ if(route==='send') {await s.call('send',{thread:place,id:'bcdefghijklmnopq',text:'retry words'});seq=2;await s.comms.deliver('art',place,seq);}
+ const before=attempts,openedBefore=decrypts,lookupsBefore=lookups;
+ if(route==='direct')await s.comms.deliver('art',place,seq);
+ else {expect((await s.call(route,route==='open'?input:{thread:place,id:'bcdefghijklmnopq',text:'retry words'})).ok).toBe(true);await s.comms.deliver('art',place,seq);}
+ expect(lookups-lookupsBefore).toBe(receipt==='absent'?0:1);
+ expect(attempts-before).toBe(receipt==='not-accepted'?1:0);
+ expect(decrypts-openedBefore).toBe(receipt==='not-accepted'?1:0);
+ expect(s.comms.trace('art',place).messages.find(m=>m.seq===seq)?.delivery).toBe(receipt==='accepted'?'delivered':'failed');
 });
 for(const state of ['sending','failed'] as const)for(const receipt of ['accepted','not-accepted','unknown','error','absent'] as const)it(`checks receipts before a window resend (${state}, ${receipt})`,async()=>{
  let released=false,decrypts=0,lookups=0;

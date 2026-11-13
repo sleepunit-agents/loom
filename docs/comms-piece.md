@@ -251,3 +251,23 @@ reconcile other outstanding sends, as startup recovery already does.
 This does not implement final-start retry. Duplicate open/send acknowledgements
 still use sendAfter and need the same uncertainty audit before release; the
 trusted direct deliver capability also requires disciplined callers.
+
+
+Initial delivery and every retry entry point now share a per-message pending slot,
+including duplicate `comms.open` / `comms.send` acknowledgements and trusted
+`Comms.deliver`. New rows persist `attempted:false`; inside the staging callback,
+before runtime is called, the row atomically becomes sending with `attempted:true`.
+Fresh rows can recover after a crash before runtime without an adapter. Existing
+rows lacking that marker remain uncertain. Held pre-runtime refusals can resume;
+all other uncertain retries require a routing-only receipt fence inside the same
+pending slot. Accepted settles without decryption, authoritative not-accepted
+permits a staged attempt, and unknown/error/missing adapters leave it untouched.
+An error after runtime entry cannot downgrade uncertainty to held, including a
+runtime `HeldEffect`; failures before a fenced replay also preserve uncertainty.
+
+Nineteen new cases cover duplicate open/send/direct retries across five receipt
+outcomes, overlapping direct/operation/recovery attempts during receipt and runtime
+waits, persisted pre-runtime recovery, runtime-boundary ordering and uncertainty
+after crypto failure. The initial fifteen duplicate tests all failed before the
+fix (lookup bypassed, or absent adapter blindly replayed). Production runtime
+binding and final-start Send again still require the work listed above.

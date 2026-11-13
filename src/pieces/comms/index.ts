@@ -147,11 +147,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const task=performDelivery(agent,place,seq).finally(()=>pending.delete(marker));pending.set(marker,task);return task;
  }
  async function performDelivery(agent:string,place:string,seq:number) {
-  let snapshot:MessageRow|undefined;
+  let snapshot:MessageRow|undefined,runtimeEntered=false;
   try {
    const original=requireAgent(agent,place);
-   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
-   if (!row) return;
+   const found=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
+   if (!found) return;
+   let row:MessageRow=found;
    if (JSON.parse(row.record).delivery==='delivered') return;
    snapshot=row;
    const checked=()=>{
@@ -163,16 +164,34 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     return t;
    };
    checked();
+   const state=JSON.parse(row.record);
+   // Fresh persisted rows and staging refusals have not reached runtime. Every
+   // other retry must fence prior acceptance while owning the same pending slot.
+   if(state.delivery!=='held' && state.attempted!==false) {
+    if(!o.runtime.receipt)return;
+    let receipt:'accepted'|'not-accepted'|'unknown';
+    try {receipt=await o.runtime.receipt({thread:place,agent,member:original.member,conversation:original.conversation,seq,...(original.project?{project:original.project}:{})});}
+    catch {return;}
+    checked();
+    if(receipt==='accepted'){settle(place,seq,'delivered',row);return;}
+    if(receipt!=='not-accepted')return;
+   }
    const plain=await key.open(row.words!);const words=JSON.parse(row.record).encoding==='text'?{text:plain}:JSON.parse(plain) as {text:string};
    // Bind decrypted words to their original routing and exact message, including
    // the receipt. A later replacement must never receive words or our settlement.
    checked();
    await o.hold(async()=> {
     const t=checked();
+    // Commit uncertainty before the external call: a crash here must consult a
+    // receipt, even when runtime accepted but its acknowledgement was lost.
+    settle(place,seq,'sending',row,true);
+    row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow;
+    snapshot=row;
+    runtimeEntered=true;
     await o.runtime.deliver({thread:place,agent,member:t.member,conversation:t.conversation,seq,text:words.text,...(t.project?{project:t.project}:{})});
    },{id:`comms-deliver:${place}:${seq}`,kind:'body-start',title:'Deliver a Comms message'});
    settle(place,seq,'delivered',row);
-  } catch(error) { if(snapshot)settle(place,seq,error instanceof HeldEffect?'held':'failed',snapshot); }
+  } catch(error) { if(snapshot)settle(place,seq,error instanceof HeldEffect&&!runtimeEntered?'held':'failed',snapshot); }
 
  }
  let recovery:Promise<void>|undefined;
@@ -191,32 +210,15 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(!row.words||row.at+days*day<=clock.now()||t.archived!==null||!see({kind:'member',id:t.member},t)) {
     // An active delivery owns its receipt until it completes.
     if(!pending.has(messageId(row.thread,row.seq)))settle(row.thread,row.seq,'failed');
-   } else if(JSON.parse(row.record).delivery==='held') {
-    // HeldEffect means the gate refused before invoking runtime. Other states
-    // may have crossed the boundary: they need runtime receipt reconciliation.
-    await deliver(t.agent,t.id,row.seq);
-   } else if(o.runtime.receipt&&!pending.has(messageId(row.thread,row.seq))) {
-    // Lookup is routing-only. Never decrypt uncertain sends just to inspect a receipt.
-    let receipt:'accepted'|'not-accepted'|'unknown';
-    try {receipt=await o.runtime.receipt({thread:t.id,agent:t.agent,member:t.member,conversation:t.conversation,seq:row.seq,...(t.project?{project:t.project}:{})});}
-    catch {continue;}
-    if(closed)return;
-    const current=thread(db,t.id);
-    const saved=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(t.id,row.seq);
-    // Another delivery/lifecycle owns any changed snapshot while lookup awaited.
-    if(pending.has(messageId(t.id,row.seq))||JSON.stringify(current)!==JSON.stringify(t)||JSON.stringify(saved)!==JSON.stringify(row))continue;
-    if(row.at+days*day<=clock.now()||!see({kind:'member',id:t.member},current)) {settle(t.id,row.seq,'failed');continue;}
-    if(receipt==='accepted')settle(t.id,row.seq,'delivered');
-    else if(receipt==='not-accepted')await deliver(t.agent,t.id,row.seq);
-   }
+   } else await deliver(t.agent,t.id,row.seq);
   }
  }
- function settle(place:string,seq:number,delivery:string,expected?:MessageRow) {
+ function settle(place:string,seq:number,delivery:string,expected?:MessageRow,attempted?:boolean) {
   if(closed)return;
   const t=thread(db,place); if(!t)return;
   const row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow|undefined;
   if(!row || expected && JSON.stringify(row)!==JSON.stringify(expected))return;
-  db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({...JSON.parse(row.record),delivery}),place,seq);
+  db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({...JSON.parse(row.record),delivery,...(attempted===undefined?{}:{attempted})}),place,seq);
   touched(t,seq);
  }
  function sendAfter(input:unknown,answer: {ok:true;value:unknown}|{ok:false}) {
@@ -239,7 +241,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(db.prepare('SELECT 1 FROM comms_deleted WHERE id=?').get(place))return fail('conflict','This thread was deleted');
    const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${createHash('sha256').update(`${i.agent}\0loom\0${place}`).digest('hex').slice(0,12)}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false};
    saveThread(db,t);
-   const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending'})});
+   const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})});
    ctx.changed('thread',place);ctx.changed('message',messageId(place,seq));return {thread:place,seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
@@ -249,7 +251,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   run(ctx,i,raw) {
    const t=thread(db,i.thread)!; if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    const p=raw as {words:Buffer;hash:string};let value;
-   try {value=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending'})});} catch {return fail('conflict','Message id already used');}
+   try {value=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})});} catch {return fail('conflict','Message id already used');}
    ctx.changed('thread',t.id);ctx.changed('message',messageId(t.id,value.seq));return {thread:t.id,seq:value.seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
