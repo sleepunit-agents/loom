@@ -876,3 +876,21 @@ fallback. The Projects role still verifies the slug is canonical, live and belon
 to the conversation agent. This replaces the old trusted `threadProject` digest
 argument with a role lookup; it does not install Comms, create keys, send replies or
 complete Runtime/private-reply composition. No new schema or permission rule.
+
+## Page-session window capability
+
+The central next-mode sign-in resolver now marks its validated cookie-session
+result with `Authentication.window: true`. This permits an installed Comms
+piece to use the real page socket without a test-only authentication resolver.
+Bearer authentication takes precedence over cookies and never confers this
+capability; headers and operation input cannot opt into it. Cookie socket
+upgrades still require a same-origin Origin, and session/token revocation and
+expiry continue to invalidate the capability. Private operations recheck that
+validity after asynchronous decryption before returning words.
+
+The integration fixture installs Comms with fake runtime/attention roles and
+real central authentication, then opens/reads a private thread over its socket.
+It checks bearer operation/subscription denial, page subscription, revocation,
+expiry, CSRF and revocation during private decryption. This is the authentication
+prerequisite only: `installNext` still needs Comms composition, its private runtime
+reference path, trusted metadata, Attention and staging-release reconciliation.

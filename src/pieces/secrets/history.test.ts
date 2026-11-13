@@ -20,7 +20,7 @@ async function setup() {
     const register=a.live.register.bind(a.live);
     vi.spyOn(a.live,'register').mockImplementation(type=>{ if(type.name==='secret.change') history=type; register(type); });
     installSecrets(a.db,a.operations,a.live,sharing);
-    installSecretValues(a.db,a.operations,sharing,holder);
+    installSecretValues(a.db,a.operations,sharing,holder,Buffer.alloc(32, 1));
   }}); closes.push(app.close);
   let seq=0;
   const call=(name:string,input:unknown, viewer:Viewer={kind:'member',id:'jonathan'}, id=`history-${++seq}`)=>app.operations.call('direct',viewer,`secrets.${name}`,input,id);

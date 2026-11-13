@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
+- Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
@@ -24,10 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Apply member appearance choices live in the next shell, with controls for look, reduced motion, contrast and zoom.
 
 - Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
+- Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
+- Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
 - Add next-mode member-private Appearance and Accessibility preference operations and Live records, preserving imported choices across owner changes.
 
@@ -45,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
 - Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
 - Let the owner review and count eligible unknown imported wakes as their work in the Clock app, retaining saved words, due times and current authority checks.
+- Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
 - Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
@@ -1039,6 +1043,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Settings
 
 - Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
+
+- Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
 ## [0.16.1] - 2026-10-25
 

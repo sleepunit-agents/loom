@@ -1,0 +1,14 @@
+.desk-agent-rail{display:grid;align-content:start;gap:12px;min-width:0;height:100%;overflow:auto;padding:0 0 12px 10px;border-left:1px solid var(--v-border);font-size:13px;overflow-wrap:anywhere}
+.desk-rail-needs{display:grid;gap:8px;text-align:left;padding:12px;background:color-mix(in srgb,var(--v-blue) 7%,var(--v-canvas));border-top:2px solid var(--v-blue);color:var(--v-text)}
+.desk-rail-kicker{display:block;font:500 10px var(--loom-font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-text-3)}
+.desk-rail-card{padding:14px 12px;background:color-mix(in srgb,var(--v-canvas) 88%,transparent);border:1px solid var(--v-border);display:grid;gap:10px}
+.desk-rail-agent{display:flex;align-items:center;gap:12px;text-align:left;min-width:0}
+.desk-rail-agent strong{font:600 18px var(--font-display);display:block}
+.desk-rail-state{font-size:11px;color:var(--v-text-2)}
+.desk-rail-mark{flex:none;display:grid;place-items:center;width:48px;height:48px;background:color-mix(in srgb,var(--v-pink) 12%,var(--v-paper));color:var(--v-pink);border:1px solid color-mix(in srgb,var(--v-pink) 45%,var(--v-border));font:600 24px var(--font-display);clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.desk-rail-work{color:var(--v-text-2);line-height:1.5}
+.desk-rail-ask{display:grid;gap:5px;text-align:left;border-left:2px solid var(--v-yellow);padding:8px 10px;background:color-mix(in srgb,var(--v-yellow) 6%,transparent)}
+.desk-rail-thread{text-align:left;font-size:11px;color:var(--v-blue);padding-top:8px;border-top:1px solid var(--v-border)}
+.desk-agent-rail button:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+/* The shell already reserves a 64px strip below 1280. Keep it useful without squeezing text. */
+@container rail (max-width:100px){.desk-agent-rail{padding-left:5px}.desk-rail-card{padding:7px 0;border:0;background:none}.desk-rail-agent{justify-content:center}.desk-rail-agent>span:last-child,.desk-rail-work,.desk-rail-ask,.desk-rail-thread{display:none}.desk-rail-needs{padding:6px;font-size:10px}.desk-rail-needs>span:nth-child(2){display:none}.desk-rail-kicker{letter-spacing:0;font-size:9px}}

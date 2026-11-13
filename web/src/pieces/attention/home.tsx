@@ -60,6 +60,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
             return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
               <header><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
+              <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
@@ -88,6 +89,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />
                 <ReportedItems title="Watching" empty="No watched items reported." items={status.watched} go={go} />
               </>}</>}</section>
+              </div>
             </section>;
           })}
         </div>}
