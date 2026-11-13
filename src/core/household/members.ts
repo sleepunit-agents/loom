@@ -38,7 +38,10 @@ export function changeHouseholdMember(db: Db, home: string, person: string, agen
   }
   household.change(home, raw => {
     const old = Array.isArray(raw.members) ? raw.members as Array<Record<string, unknown>> : h.members;
-    raw.members = members.map(m => ({ ...old.find(old => old.person === m.person), ...m }));
+    raw.members = members.map(m => {
+      const row = old.find(old => old.person === m.person);
+      return m.person === person ? { ...row, ...m } : row ?? m;
+    });
   });
   return members;
 }

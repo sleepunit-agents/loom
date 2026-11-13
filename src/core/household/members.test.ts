@@ -31,6 +31,9 @@ async function setup() {
 
 it('adds, changes and removes members only through household-owner policy on all doors', async () => {
   const { app, home, household } = await setup();
+  app.db.transaction(() => household.change(home, raw => {
+    (raw.members as Array<Record<string, unknown>>)[1].agents = ['pond-bot', 'pond-bot'];
+  }))();
   const before = household.document();
   for (const operation of ['household.setMember', 'household.removeMember']) {
     for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
@@ -161,9 +164,12 @@ it('evicts removed-member records from an open window after commit', async () =>
 });
 
 it('refuses a removed member over HTTP and closes their authenticated socket immediately', async () => {
-  const {app,tokens}=await setup();
+  const {app,tokens,home}=await setup();
   const {createHash}=await import('node:crypto'), bearer='fixture-member-bearer';
   tokens.change(rows=>rows.push({sha256:createHash('sha256').update(bearer).digest('hex'),role:'owner',member:'pollock',label:'Pollock',created:'2026-01-01'}));
+  const browserId='f'.repeat(64),s=signin(app);
+  new HouseholdRows(app.db,'sessions').put(createHash('sha256').update(browserId).digest('hex'),{secret:createHash('sha256').update(bearer).digest('hex'),issuedAt:s.now()});
+  expect(s.session(browserId)?.viewer).toEqual({kind:'member',id:'pollock'});
   const headers={authorization:`Bearer ${bearer}`,'content-type':'application/json'};
   const response=()=>fetch(`${app.url}/api/tasks/list`,{method:'POST',headers,body:JSON.stringify({input:{}})});
   expect((await response()).status).toBe(200);
@@ -172,4 +178,11 @@ it('refuses a removed member over HTTP and closes their authenticated socket imm
   expect(app.operations.call('direct',owner,'household.removeMember',{person:'pollock'},'remove-pollock')).toMatchObject({ok:true});
   await closed;
   expect((await response()).status).toBe(401);
+  expect(s.session(browserId)).toBeUndefined();
+  expect(new SharingDatabase(app.db,home).sharing().projects.pond.members).not.toContain('pollock');
+  expect(app.operations.call('direct',owner,'household.setMember',{person:'pollock',agents:['pond-bot']},'readd-pollock')).toMatchObject({ok:true});
+  expect((await response()).status).toBe(200);
+  expect(s.session(browserId)?.viewer).toEqual({kind:'member',id:'pollock'});
+  expect(new SharingDatabase(app.db,home).sharing().projects.pond.members).toContain('pollock');
+  expect(signin(app).token(createHash('sha256').update(bearer).digest('hex'))?.viewer).toEqual({kind:'member',id:'pollock'});
 });
