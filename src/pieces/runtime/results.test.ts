@@ -57,12 +57,17 @@ it('reports output through real runner bearer HTTP, atomically completes and rev
 it('keeps a bounded tail and the old short refusal headline, preserving omitted fields and clearing explicit empty logs', async () => {
   const f = await setup(); f.put('j');
   expect(f.read()).toEqual({ ok: true, value: { job: 'j', result: null } });
-  for (const log of ['x'.repeat(6000), "the box couldn't start it: missing service\n" + 'output\n'.repeat(1000), "the box couldn't start it: " + 'x'.repeat(300) + '\n' + 't'.repeat(5000), 'z'.repeat(4000)]) {
+  const headline = "the box couldn't start it: missing service";
+  for (const [log, expected] of [
+    ['x'.repeat(6000), 'x'.repeat(4000)],
+    [headline + '\n' + 'a'.repeat(5000), headline + '\n' + 'a'.repeat(3957)],
+    ["the box couldn't start it: " + 'x'.repeat(300) + '\n' + 't'.repeat(5000), 't'.repeat(4000)],
+    ['z'.repeat(4000), 'z'.repeat(4000)],
+  ]) {
     expect(f.call('reportJob', { job: 'j', state: 'running', log, exit: -1 }).ok).toBe(true);
     const kept = jobResults(f.app.db).read('j')!.log!;
     expect(kept).toHaveLength(4000);
-    const first = log.split('\n')[0];
-    expect(kept).toBe(first.startsWith("the box couldn't start it: ") && first.length < 300 && log.length > 4000 ? first + '\n' + log.slice(-(4000 - first.length - 1)) : log.slice(-4000));
+    expect(kept).toBe(expected);
   }
   expect(f.call('reportJob', { job: 'j', state: 'waiting', log: '' }).ok).toBe(true);
   expect(jobResults(f.app.db).read('j')).toEqual({ exit: -1, log: '' });
@@ -125,8 +130,10 @@ it('preserves current output on old receipt replay across restart and signals on
   expect(f.call('reportJob', input, undefined, 'old')).toEqual({ ok: true, value: { job: 'j', state: 'running' } });
   expect(changed.mock.calls.flat(2)).not.toContain('first');
   expect(changed.mock.calls.some(([refs]) => refs.some(r => r.type === 'runtime.job' && r.id === 'j'))).toBe(true);
+  const unchanged = f.store.read('job', 'j');
   changed.mockClear(); f.clock.advance(10);
   expect(f.call('reportJob', input).ok).toBe(true);
+  expect(f.store.read('job', 'j')).toEqual(unchanged);
   expect(changed.mock.calls.flatMap(([refs]) => refs).filter(r => r.type === 'runtime.job')).toEqual([]);
   f.call('reportJob', { job: 'j', state: 'waiting', log: 'new' });
   await f.restart();
@@ -149,14 +156,18 @@ it('rejects malformed output, unknown authority and invalid progress builds with
 });
 it('upgrades metadata-only storage, survives interrupted migration and remains inside the staging process', async () => {
   const f = await setup(true); f.put('j'); const before = f.store.read('job', 'j');
+  f.app.db.prepare('INSERT INTO runtime_inputs (job,brief,needs) VALUES (?,?,?)').run('j', 'private input', JSON.stringify(['gpu']));
+  const inputs = f.app.db.prepare('SELECT * FROM runtime_inputs').all();
   expect(() => jobResults(f.app.db).put('j', { log: 'outside' })).toThrow('transaction');
   f.app.db.exec("DROP TABLE runtime_results; DELETE FROM core_migrations WHERE piece='runtime' AND number=3");
   f.app.db.exec("CREATE TRIGGER abort_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' BEGIN SELECT RAISE(ABORT, 'interrupted'); END");
   expect(() => migrate(f.app.db, 'runtime', schema)).toThrow('interrupted');
   expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name='runtime_results'").get()).toBeUndefined();
   expect(f.store.read('job', 'j')).toEqual(before);
+  expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual(inputs);
   f.app.db.exec('DROP TRIGGER abort_migration');
   await f.restart(); expect(f.store.read('job', 'j')).toEqual(before); expect(f.read()).toMatchObject({ value: { result: null } });
+  expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual(inputs);
   expect(() => f.app.db.transaction(() => { jobResults(f.app.db).put('j', { log: 'interrupted' }); throw Error('interrupted'); })()).toThrow('interrupted');
   expect(f.read()).toMatchObject({ value: { result: null } });
   expect(f.call('finishJob', { job: 'j', state: 'done', log: 'staged' }).ok).toBe(true);

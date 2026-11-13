@@ -228,7 +228,7 @@ job or set timestamps through this API. Reports use server `changedAt` and only
 publish when metadata changes. Registry receipts make lost-response retries
 safe without making a fresh claim of a starting job succeed.
 
-This is a metadata handshake, not permission to start a container. It returns
+This is a metadata handshake, not permission to start a container. Its acknowledgement returns
 no credentials, input words or results, calls no runner and performs no outside
 effect, including in staging. Input fetch, credential issuance and terminal
 reports with credential revocation remain required on this task before a real
@@ -258,7 +258,7 @@ transaction; a failure or asynchronous credential role rolls everything back.
 An after-commit `core.access` change invalidates existing authentication handles.
 An installer without central credentials fails unavailable before changing data.
 
-This is completion metadata only. Exit codes, log/result words, builds, native
+Completion now also accepts the bounded exit/log fields described below. Native
 history collection, cooperative stop, written-off jobs and service restarts
 remain to be implemented with their owning lifecycle operations. `stopped` and
 `lost` are not accepted here: there is no stop-intent or write-off protocol yet.
