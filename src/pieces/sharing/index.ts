@@ -3,7 +3,7 @@ import { installHouseholdProjects } from '../../core/household/operations.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { migrateHouseholdTables } from '../../core/household/schema.js';
-import { mayAct } from '../../policy.js';
+import { mayAct } from '../../core/index.js';
 
 /** Next-side composition only: all metadata comes from loom.db, including an empty home. */
 export function installSharing(app: Foundation, home: string) {
