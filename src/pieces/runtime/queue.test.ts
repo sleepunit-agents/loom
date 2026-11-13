@@ -46,7 +46,12 @@ it('requires give-work and separately authorizes every supplied scope', async ()
   expect(f.call({ member: 'pollock' })).toMatchObject({ ok: false, code: 'denied' });
   expect(f.call({ agent: 'missing' })).toMatchObject({ ok: false, code: 'denied' });
   expect(f.store.ids('job')).toEqual([]);
-  expect(f.call({ member: 'jonathan' })).toMatchObject({ ok: true });
+  const privateJob = f.jobOf(f.call({ member: 'jonathan', project: 'pond' }));
+  expect(f.store.read('job', privateJob)?.member).toBe('jonathan');
+  const visible = (viewer: Viewer) => f.app.operations.call('direct', viewer, 'runtime.listJobs', {});
+  expect(visible({ kind: 'member', id: 'jonathan' })).toMatchObject({ ok: true, value: { records: [{ id: privateJob, member: 'jonathan' }] } });
+  for (const viewer of [{ kind: 'member', id: 'pollock' }, { kind: 'agent', id: 'art' }, { kind: 'runner', id: 'a' }] as Viewer[])
+    expect(visible(viewer)).toEqual({ ok: true, value: { records: [] } });
 });
 it('rechecks placement and capabilities and never creates partial requests on a refusal', async () => {
   const f = await setup();
