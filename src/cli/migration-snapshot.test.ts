@@ -385,3 +385,56 @@ test('captured approval rules or audit without approvals.json refuse plan instea
     rmSync(to,{recursive:true});rmSync(join(approvals,name));
   }
 });
+
+test('explicit Secrets root copies only importer files privately, with inventory and confined aliases', async () => {
+  const {root,home,to}=fixture(), secrets=join(root,'old-secrets');mkdirSync(secrets);
+  const values: Record<string,string> = {
+    'store.sops.json':'{"API":"ENC[AES256_GCM,data:FIXTURE_ONLY,type:str]","sops":{}}',
+    'policy.json':'{"v":1,"secrets":{}}', 'requests.json':'{"v":1,"requests":{}}', 'audit.jsonl':'',
+  };
+  for (const [name,value] of Object.entries(values)) writeFileSync(join(secrets,name),value);
+  writeFileSync(join(secrets,'holder.key'),'UNRELATED_FIXTURE_KEY');
+  writeFileSync(join(secrets,'unrelated'),'NOT_IMPORTER_DATA');
+  const out:string[]=[],io={stdout:(s:string)=>out.push(s),stderr:(s:string)=>out.push(s),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await migrateSnapshot(['--from',home,'--to',to,'--secrets',secrets,'--dry-run'],io)).toBe(0);
+  const inventory=JSON.parse(out.join(''));
+  expect(inventory.copies.filter((f:{path:string})=>f.path.startsWith('secrets/')).map((f:{path:string})=>f.path).sort()).toEqual(Object.keys(values).map(n=>'secrets/'+n).sort());
+  expect(out.join('')).not.toContain('FIXTURE_ONLY');expect(out.join('')).not.toContain(root);expect(existsSync(to)).toBe(false);
+  out.length=0;
+  expect(await migrateSnapshot(['--from',home,'--to',to,'--secrets',secrets],io)).toBe(0);
+  const manifest=readSnapshot(to);
+  for (const [name,value] of Object.entries(values)) {
+    expect(readFileSync(join(to,'secrets',name),'utf8')).toBe(value);
+    expect(readFileSync(join(secrets,name),'utf8')).toBe(value);
+    expect(statSync(join(to,'secrets',name)).mode&0o777).toBe(0o600);
+  }
+  expect(statSync(join(to,'secrets')).mode&0o777).toBe(0o700);
+  expect(manifest.skipped).toContainEqual(expect.objectContaining({path:'secrets/holder.key'}));
+  rmSync(to,{recursive:true});
+  rmSync(join(secrets,'policy.json'));writeFileSync(join(secrets,'internal-data'),values['policy.json']);symlinkSync('internal-data',join(secrets,'policy.json'));
+  rmSync(join(secrets,'requests.json'));const outside=join(root,'outside-requests');writeFileSync(outside,values['requests.json']);symlinkSync(outside,join(secrets,'requests.json'));
+  rmSync(join(secrets,'audit.jsonl'));symlinkSync('missing',join(secrets,'audit.jsonl'));
+  const {createServer}=await import('node:net');const server=createServer();
+  // A required importer filename occupied by a live socket must never be read.
+  rmSync(join(secrets,'store.sops.json'));
+  await new Promise<void>(resolve=>server.listen(join(secrets,'store.sops.json'),resolve));
+  try {
+    const aliases=await createSnapshot(home,to,undefined,{secrets});
+    expect(readFileSync(join(to,'secrets/policy.json'),'utf8')).toBe(values['policy.json']);
+    expect(aliases.followed).toContainEqual({path:'secrets/policy.json',realPath:'secrets/internal-data'});
+    for(const [path,rule] of [['requests.json','symlink outside source home'],['audit.jsonl','dangling or unresolved symlink'],['store.sops.json','special file (socket, pipe or device)']]) expect(aliases.skipped).toContainEqual({path:'secrets/'+path,rule,bytes:null});
+    expect(JSON.stringify(aliases)).not.toContain(outside);
+  } finally {await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
+});
+
+test('explicit Secrets input refuses missing, wrong-type and overlapping sources without destination writes',async()=>{
+  const {root,home,to}=fixture(),file=join(root,'file');writeFileSync(file,'PRIVATE_ROOT_CANARY');
+  for(const secrets of [join(root,'missing'),file,to]) {
+    const out:string[]=[],io={stdout:(s:string)=>out.push(s),stderr:(s:string)=>out.push(s),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+    expect(await migrateSnapshot(['--from',home,'--to',to,'--secrets',secrets],io)).toBe(1);
+    expect(existsSync(to)).toBe(false);expect(out.join('')).not.toContain(root);expect(out.join('')).not.toContain('PRIVATE_ROOT_CANARY');
+  }
+  const secrets=join(root,'secrets');mkdirSync(secrets);
+  await expect(createSnapshot(home,join(secrets,'snapshot'),undefined,{secrets})).rejects.toThrow('separate');
+  expect(readdirSync(secrets)).toEqual([]);
+});

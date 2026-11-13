@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
+
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
 - Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.

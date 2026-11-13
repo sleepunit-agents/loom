@@ -7,6 +7,7 @@ External stores are explicit, read-only inputs:
 loom migrate snapshot --from <old-home> --tasks <taskstore.db> \
   --clock <old-WAKE_DATA> --wake <Art/.wake> \
   --approvals <old-approvals-directory> --changes <v1-Changes-snapshot.json> \
+  --secrets <old-secrets-directory> \
   --to <fresh-directory> --dry-run
 ```
 
@@ -25,6 +26,15 @@ exports live data itself.
 | Art's flat `.wake` | `clock/art/` |
 | Approvals directory (`approvals.json`, `rules.json`, `audit.jsonl`) | `approvals/` |
 | Changes v1 export | `changes/changes.json` |
+| Secrets directory (`store.sops.json`, `policy.json`, `requests.json`, `audit.jsonl`) | `secrets/` |
+
+The old Secrets default is `~/.config/loom-secrets`, outside loom's home,
+overridden by `LOOM_SECRETS_DIR`. Supply the inventoried path explicitly here;
+the generic snapshot CLI never reads that default or environment variable. It copies
+the four importer files without decryption; unrelated holder keys/programs are skipped.
+The Secrets metadata importer and independent verifier must be present in the pinned
+release for plan/all/verify coverage. Copying ciphertext does not activate a holder or
+import credential values into the database.
 
 Clock collection retains only the importer-read files (including archival logs,
 filed approvals, sessions, vouch and places). Art's flat files join the other
