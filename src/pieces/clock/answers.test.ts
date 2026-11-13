@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,8 +8,10 @@ import { FakeClock, type Viewer } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
 import { installAttention } from '../attention/index.js';
 import { secretGrantAttention } from '../secrets/attention.js';
-import { installSecrets } from '../secrets/index.js';
+import { installSecrets, grantsRole } from '../secrets/index.js';
 import { wake, type Wake } from './store.js';
+import { installClock } from './index.js';
+import { createFoundation } from '../../core/app.js';
 import { clockAnswers } from './dependencies/answers.js';
 
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
@@ -57,7 +59,12 @@ it('reads a Deny after restart and times out a pending card with distinct instru
   expect(wake(s.app.db, denied.id)?.prompt).toContain('answer to '+first.id+': denied');
   expect(wake(s.app.db, denied.id)?.prompt).not.toContain('approvals use');
   const second = s.request(); const pending = s.park(second.id);
-  s.clock.advance(86400_000); await settle();
+  const deadline = pending.wait!.until;
+  s.clock.advance(12*3600_000); await settle(); await s.restart();
+  expect(wake(s.app.db,pending.id)?.wait?.until).toBe(deadline);
+  s.clock.advance(deadline-s.clock.now()-1); await settle();
+  expect(wake(s.app.db,pending.id)?.state).toBe('parked');
+  s.clock.advance(1); await settle();
   expect(wake(s.app.db,pending.id)).toMatchObject({state:'held',wait:{answer:'pending'}});
   expect(wake(s.app.db,pending.id)?.prompt).toContain('No answer to '+second.id+' after 24h');
 });
@@ -83,13 +90,20 @@ it('composes real secret request answers without exposing secret names or granti
   s.value('secrets.describe',{name:'api-key',description:'Private secret name'});
   const request = s.value<{id:string}>('secrets.requestHouse',{agent:'art',target:'api-key',scope:{house:'h-1'},why:'work',minutes:2},agent);
   const parked = s.park(request.id);
-  s.value('attention.answer',{id:request.id,answer:{kind:'yes'}}); await s.flush();
+  s.value('attention.answer',{id:request.id,answer:{kind:'yes'}});
+  const grants = s.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all();
+  expect(grants).toHaveLength(1);
+  await s.flush();
   expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'allowed'}});
   expect(wake(s.app.db,parked.id)?.prompt).toContain('request it again');
   const reader = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
   expect(reader.check(request.id,agent)).toEqual({state:'allowed'});
   expect(wake(s.app.db,parked.id)?.prompt).not.toContain('api-key');
   expect(reader.check(request.id,{kind:'agent',id:'mark'})).toBeUndefined();
+  expect(s.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all()).toEqual(grants);
+  const may = grantsRole(s.app.db);
+  expect(may.mayUse('art',{kind:'secret',target:'api-key'},s.clock.now(),{house:'h-1'})).toBe(true);
+  expect(may.mayUse('art',{kind:'secret',target:'api-key'},s.clock.now(),{house:'h-2'})).toBe(false);
   expect(s.value('secrets.may',{agent:'art',kind:'secret',target:'api-key'},agent)).toEqual({allow:false});
 });
 
@@ -121,4 +135,38 @@ it('reads a real secret Deny after restart without reopening its household ask',
   expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'denied'}});
   expect(wake(s.app.db,parked.id)?.prompt).not.toContain('request it again');
   expect(s.value('attention.get',{id:request.id})).toMatchObject({answer:{kind:'no'}});
+});
+
+it('keeps wake authority while answer visibility differs from a privileged viewer', async () => {
+  const s = await setup(); const card = s.request(); const parked = s.park(card.id);
+  // Construct a current private approval scope after the park was filed. Clock
+  // work is still agent-visible; the answer is now only visible to its member.
+  const row = s.app.db.prepare('SELECT record FROM approvals_approvals WHERE id=?').get(card.id) as {record:string};
+  s.app.db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),member:'jonathan'}),card.id);
+  s.value('approvals.answer',{id:card.id,action:'allow'});
+  const answers = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
+  expect(answers.check(card.id,agent)).toBeUndefined();
+  expect(answers.check(card.id,owner)?.state).toBe('allowed');
+  expect(s.call('clock.checkPark',{id:parked.id},agent).ok).toBe(true);
+  await s.flush(); expect(wake(s.app.db,parked.id)?.state).toBe('parked');
+  s.clock.advance(parked.wait!.until-s.clock.now()); await settle();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',hold:'staging',wait:{answer:'unknown'}});
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
+});
+
+it('Clock close disposes its composed observer before the foundation closes', () => {
+  const home = mkdtempSync(join(tmpdir(),'loom-clock-answer-close-'));
+  const app = createFoundation({home,clock:new FakeClock()});
+  try {
+    const answers = clockAnswers(app.db,app.operations,app.live,fixtureSharing);
+    const notified = vi.fn(); const disposed = vi.fn();
+    const subscribe = (changed:()=>void) => {
+      const off = answers.subscribe(()=>{notified();changed();});
+      return () => {disposed();off();};
+    };
+    const jobs = installClock(app.db,app.operations,app.live,fixtureSharing,{approvals:{...answers,subscribe}});
+    app.live.changed([{type:'approval',id:'a-test'}]); expect(notified).toHaveBeenCalledTimes(1);
+    jobs.close(); jobs.close(); expect(disposed).toHaveBeenCalledTimes(1);
+    app.live.changed([{type:'approval',id:'a-test'}]); expect(notified).toHaveBeenCalledTimes(1);
+  } finally {app.close();rmSync(home,{recursive:true,force:true});}
 });
