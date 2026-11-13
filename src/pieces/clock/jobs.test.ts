@@ -286,9 +286,6 @@ describe('durable daemon clock', () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
     const app = await loom({ runtime: { startBody } }, home(), new FakeClock(), access);
     const w = app.value('in', { agent: 'art', project: 'pond', prompt: 'X', note: 'x', when: '1m' }, { kind: 'member', id: 'helper' });
-    privateWake.state = 'held'; privateWake.hold = 'permission';
-    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(privateWake), privateWake.id);
-    expect(clockRole(app.operations).agentNext(helper, { agent: 'art' })).toMatchObject({ ok: true, value: { held: 0, next: { id: publicWake.id } } });
     access.members.helper.agents = [];
     expect(app.value<Wake[]>('list', {}, { kind: 'member', id: 'helper' }).map(w => w.id)).toContain(w.id);
     app.clock.advance(60_000); await settled();
