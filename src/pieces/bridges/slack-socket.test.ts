@@ -14,6 +14,14 @@ class FakeSocket extends EventEmitter {
   frame(data: unknown) { this.emit('message', Buffer.from(JSON.stringify(data)), false); }
   hello() { this.emit('open'); this.frame({type:'hello'}); }
 }
+class TrackingClock extends FakeClock {
+  active = new Set<object>();
+  override at(time: number, fn: () => void) {
+    const key = {}; this.active.add(key);
+    const cancel = super.at(time, () => { this.active.delete(key); fn(); });
+    return () => { this.active.delete(key); cancel(); };
+  }
+}
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0)) close(); });
 async function settled() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
@@ -149,6 +157,34 @@ describe('Slack Socket Mode transport', () => {
     expect(s.terminate).toHaveBeenCalledOnce(); f.clock.advance(1000); await settled();
     expect(f.sockets).toHaveLength(2); expect(f.withValue).toHaveBeenCalledTimes(2);
   });
+  it('keeps ACK writes within the queue bound when outbound callbacks stall', async () => {
+    const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
+    let sent!: () => void;
+    s.send.mockImplementation((_text, callback) => { sent = () => callback(); });
+    s.frame(envelope()); await settled(); expect(f.receive).toHaveBeenCalledOnce();
+    s.frame(envelope('two')); await settled();
+    expect(f.receive).toHaveBeenCalledOnce(); expect(s.send).toHaveBeenCalledOnce();
+    sent(); await settled(); expect(f.receive).toHaveBeenCalledTimes(2); expect(s.send).toHaveBeenCalledTimes(2);
+    for (let i=0; i<64; i++) s.frame(envelope(`extra-${i}`));
+    await settled(); expect(s.terminate).toHaveBeenCalledOnce(); expect(s.send).toHaveBeenCalledTimes(2);
+  });
+  it('does not ACK a receipt finishing after disconnect and reconnect', async () => {
+    let commit!: () => void;
+    const f = fixture({receive:() => new Promise<void>(resolve => { commit = resolve; })});
+    await settled(); const s = f.sockets[0]; s.hello(); s.frame(envelope()); await settled();
+    // A closing real socket need not change readyState until after termination.
+    s.terminate.mockImplementationOnce(() => {});
+    s.frame({type:'disconnect'}); f.clock.advance(1000); await settled();
+    expect(f.sockets).toHaveLength(2); f.sockets[1].hello();
+    commit(); await settled(); expect(s.send).not.toHaveBeenCalled(); expect(f.sockets[1].send).not.toHaveBeenCalled();
+  });
+  it.each(['retry','heartbeat','deadline'])('cancels all scheduled timers on close during %s', async phase => {
+    const clock = new TrackingClock(); const f = fixture({clock}); await settled(); const s = f.sockets[0];
+    if (phase === 'retry') s.emit('close');
+    if (phase === 'heartbeat') s.hello();
+    expect(clock.active.size).toBeGreaterThan(0); f.transport.close();
+    expect(clock.active.size).toBe(0);
+  });
   it('handles ACK failure and consumes unsupported interactions without delivery', async () => {
     const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
     s.frame({type:'interactive',envelope_id:'i'}); await settled(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).toHaveBeenCalledOnce();
@@ -159,14 +195,19 @@ describe('Slack Socket Mode transport', () => {
     let app = await startLoom({home});
     try {
       app.db.exec('CREATE TABLE socket_fixture (id TEXT PRIMARY KEY, content TEXT)');
+      let commit!: () => void;
+      const gate = new Promise<void>(resolve => { commit = resolve; });
       const receive = vi.fn(async (p: Record<string,unknown>) => {
+        await gate;
         const event = p.event;
         if (!event || typeof event !== 'object' || !('ts' in event) || typeof event.ts !== 'string') throw Error('Invalid fixture event');
         app.db.transaction(() => app.db.prepare('INSERT OR IGNORE INTO socket_fixture VALUES (?,?)').run(event.ts,JSON.stringify(p)))();
       });
       const f = fixture({receive}); await settled(); const s = f.sockets[0]; s.hello();
       s.send.mockImplementation((_text, callback) => { expect(app.db.inTransaction).toBe(false); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:1}); callback(); });
-      s.frame(envelope()); await settled(); expect(receive).toHaveBeenCalledWith(payload); expect(s.send).toHaveBeenCalledOnce();
+      s.frame(envelope()); await settled();
+      expect(s.send).not.toHaveBeenCalled(); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:0});
+      commit(); await settled(); expect(receive).toHaveBeenCalledWith(payload); expect(s.send).toHaveBeenCalledOnce();
       f.transport.close(); await app.close(); app = await startLoom({home});
       const g = fixture({receive}); await settled(); g.sockets[0].hello(); g.sockets[0].frame(envelope('new-envelope-id')); await settled();
       expect(g.sockets[0].send).toHaveBeenCalledOnce(); expect(app.db.prepare('SELECT * FROM socket_fixture').all()).toEqual([{id:payload.event.ts,content:JSON.stringify(payload)}]);

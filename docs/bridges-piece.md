@@ -338,7 +338,7 @@ definite denial. The durable engine's transient intake budget still applies.
 It acquires the app-level credential through the supplied service `SecretUse` on
 **each** `apps.connections.open` call, checks staging before acquisition and dial,
 refuses redirects and non-Slack WSS targets, and keeps the returned ticket private.
-The HTTP response is bounded at 16 KiB, frames at 1 MiB, and queued envelopes at 64.
+The HTTP response is bounded at 16 KiB, frames at 1 MiB, and queued envelopes at 64, including ACK writes awaiting their socket callback.
 Connection/hello deadlines are 15 seconds; a 30-second ping requires a pong within
 10 seconds. Failures refresh the URL with exponential backoff from 1 to 60 seconds;
 a successful Slack hello resets backoff. Shutdown cancels timers, aborts the open

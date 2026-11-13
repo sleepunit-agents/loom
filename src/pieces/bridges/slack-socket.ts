@@ -119,7 +119,9 @@ export function slackSocket(options: SlackSocketOptions): { close(): void } {
             // Unsupported interactive/slash payloads are deliberately consumed.
             // Never ACK a failed write or work finishing on an obsolete socket.
             if (!closed && epoch === generation && socket.readyState === WebSocket.OPEN)
-              socket.send(JSON.stringify({ envelope_id: frame.envelope_id }), error => { if (error) disconnect(epoch); });
+              await new Promise<void>((resolve, reject) => {
+                socket.send(JSON.stringify({ envelope_id: frame.envelope_id }), error => error ? reject(error) : resolve());
+              });
           }).catch(() => disconnect(epoch)).finally(() => { pending--; });
         } catch { disconnect(epoch); }
       });
