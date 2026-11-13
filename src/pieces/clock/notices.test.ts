@@ -14,13 +14,14 @@ const agent: Viewer = { kind: 'agent', id: 'art' };
 const sharing = () => ({ members: { jonathan: { owner: true, agents: ['art'] }, guest: { owner: false, agents: ['art'] } }, projects: {}, services: {} });
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-async function setup(home = mkdtempSync(join(tmpdir(), 'clock-notices-'))) {
+async function setup(home = mkdtempSync(join(tmpdir(), 'clock-notices-')), next = false, runtime?: { startBody(): Promise<StartResult> }) {
   if (!homes.includes(home)) homes.push(home);
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, install(app) {
+  const app = await startLoom({ home, clock, next, sharing, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
+    if (next) return;
     const sources = installAttention(app.db, app.operations, app.live, sharing);
     const notices = sources.register('clock', () => {});
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { notices });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { notices, runtime });
     app.onClose(jobs.close);
   } });
   let closed = false; const close = async () => { if (!closed) { closed = true; await app.close(); } }; closes.push(close);
@@ -95,4 +96,31 @@ it('rolls back the outcome with a failed notice write', async () => {
   const row = JSON.parse((a.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(w.id) as {record:string}).record);
   expect(row).toMatchObject({ state: 'firing', failures: 2 });
   expect(a.notices()).toHaveLength(0);
+});
+
+it('composes household notices on the real next side without a fixture installer', async () => {
+  const a = await setup(undefined, true);
+  const w = a.outcome(a.set(), { state: 'not-started', code: 'quota', reason: 'PRIVATE QUOTA' });
+  expect(w.state).toBe('pending');
+  expect(a.notices()).toHaveLength(1);
+  const id = a.notices()[0].id;
+  expect(a.call('attention.answer', { id, answer: { kind: 'done' } }).ok).toBe(true);
+  expect(a.call('clock.list', {})).toMatchObject({ ok: true, value: [expect.objectContaining({ state: 'pending', failures: 0 })] });
+});
+
+it('publishes from the actual asynchronous daemon outcome path once per threshold', async () => {
+  let calls = 0;
+  const a = await setup(undefined, false, { async startBody() { calls++; return { state: 'not-started', reason: 'PRIVATE ERROR' }; } });
+  let w = a.set();
+  for (let n = 1; n <= 6; n++) {
+    // Drain the documented promise chain; no wall-clock sleeps or child process.
+    const due = w.due;
+    const clock = a.app.operations.clock as FakeClock;
+    clock.advance(due - clock.now());
+    for (let step = 0; step < 6; step++) await Promise.resolve();
+    w = JSON.parse((a.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(w.id) as {record:string}).record);
+    expect(w.failures).toBe(n);
+    expect(a.notices()).toHaveLength(n < 3 ? 0 : n < 6 ? 1 : 2);
+  }
+  expect(calls).toBe(6); expect(w.state).toBe('failed');
 });
