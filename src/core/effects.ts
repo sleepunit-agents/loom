@@ -39,6 +39,7 @@ export function installEffects(app: Foundation, sharing: () => Sharing, staging:
       return allowed;
     },
     finish(id: string, certain = true) {
+      if (app.db.inTransaction) throw new Error('Outside effects must finish after commit');
       app.db.prepare("UPDATE core_effects SET state=? WHERE id=? AND state='started'").run(certain ? 'done' : 'uncertain', id);
       app.live.changed([{ type: 'core.effect', id }]);
     },

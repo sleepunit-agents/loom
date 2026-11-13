@@ -138,10 +138,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const { homedir } = await import('node:os');
     const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
     const hosts = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
-    if (hosts.length !== 1) { io.stderr('--next currently requires one bind host\n'); return 2; }
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts[0], port });
+    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port });
     io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };

@@ -18,7 +18,7 @@ export type NextSessionResolver = (req: IncomingMessage) => Authentication | und
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
 export function nextSessionResolver(_app: Foundation): NextSessionResolver { return () => undefined; }
 export interface NextOptions {
-  home: string; staging?: boolean; host?: string; port?: number; webRoot?: string;
+  home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
 }
 export function installNext(app: Foundation, options: NextOptions) {
@@ -55,25 +55,41 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     const asset = pathname.startsWith('/app/');
     const file = asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
     if (!file.startsWith(root + sep) || !existsSync(file)) return c.notFound();
-    return new Response(!asset && app.operations.has('example.put') ? readFileSync(file,'utf8').replace('<html ', '<html data-fixture="true" ') : readFileSync(file), { headers: {
+    const body = asset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
+    return new Response(body, { headers: {
       'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
       'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
     } });
   });
-  const http = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.url?.startsWith('/api/')) return api(req, res);
-    void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
-  });
-  const detach = app.live.attach(http, auth);
+  const servers: ReturnType<typeof createServer>[] = [];
+  const detaches: (() => void)[] = [];
+  const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
+  if (!hosts.length) throw new Error('next mode needs a bind host');
+  let port = options.port ?? 0;
+  const close = async () => {
+    detaches.forEach(detach => detach());
+    await Promise.all(servers.map(http => {
+      http.closeAllConnections();
+      return new Promise<void>(ok => http.close(() => ok()));
+    }));
+  };
   try {
-    await new Promise<void>((ok, no) => { http.once('error', no); http.listen(options.port ?? 0, options.host ?? '127.0.0.1', ok); });
-  } catch (e) { detach(); throw e; }
-  const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('no next address');
-  return { url: `http://${options.host ?? '127.0.0.1'}:${address.port}`, async close() {
-    detach(); http.closeAllConnections();
-    await new Promise<void>((ok, no) => http.close(e => e ? no(e) : ok()));
-  } };
+    for (const host of [...new Set(hosts)]) {
+      const http = createServer((req: IncomingMessage, res: ServerResponse) => {
+        const origin = req.headers.origin;
+        if (origin && origin !== `${'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`) { res.writeHead(403); res.end(); return; }
+        if (req.url?.startsWith('/api/')) return api(req, res);
+        void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
+      });
+      servers.push(http); detaches.push(app.live.attach(http,auth));
+      await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
+      const address = http.address();
+      if (!address || typeof address === 'string') throw new Error('no next address');
+      port = address.port;
+    }
+  } catch (error) { await close(); throw error; }
+  const host = hosts[0].includes(':') ? `[${hosts[0]}]` : hosts[0];
+  return { url: `http://${host}:${port}`, close };
 }

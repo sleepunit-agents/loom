@@ -1,5 +1,5 @@
 /** The address and its browser history are the sole owner of app paths and tile state. */
-import { admit, promote, type AppTile, type Rect } from '../tiling/layout';
+import { admit, promote, underMinimum, capFor, type AppTile, type Rect } from '../tiling/layout';
 import type { Fit } from '../tiling/fit';
 export interface AppRegistration { id: string; title: string; path: string; fit: Fit }
 export interface Tile { id: string; trail: string[]; at: number; minimized?: boolean; pinned?: boolean; used: number }
@@ -40,24 +40,30 @@ export class DeskRouter {
   private subscribers = new Set<() => void>();
   private serial = 0;
   constructor(readonly apps: readonly AppRegistration[], private browser: Pick<Window,'location'|'history'|'addEventListener'|'removeEventListener'>) {
-    this.route = readRoute(browser.location.href, apps);
-    browser.addEventListener('popstate', this.pop);
+    this.route = this.read();
+    this.serial = Math.max(0,...this.route.tiles.map(t => t.used));
   }
-  private pop = () => { this.route = readRoute(this.browser.location.href, this.apps); this.emit(); };
+  private read(): DeskRoute {
+    const address = readRoute(this.browser.location.href,this.apps);
+    const saved = this.browser.history.state?.loomNext as DeskRoute | undefined;
+    if (saved && Array.isArray(saved.tiles) && saved.tiles.every(t => this.apps.some(a => a.id===t.id) && Array.isArray(t.trail) && t.trail.every(p => typeof p==='string') && Number.isInteger(t.at) && t.at>=0 && t.at<t.trail.length) && writeRoute(saved)===writeRoute(address)) return saved;
+    return address;
+  }
+  private pop = () => { this.route = this.read(); this.emit(); };
   close = () => this.browser.removeEventListener('popstate', this.pop);
   getSnapshot = () => this.route;
-  subscribe = (fn: () => void) => { this.subscribers.add(fn); return () => { this.subscribers.delete(fn); }; };
+  subscribe = (fn: () => void) => { this.subscribers.add(fn); this.browser.addEventListener('popstate',this.pop); return () => { this.subscribers.delete(fn); if(!this.subscribers.size) this.close(); }; };
   private emit() { this.subscribers.forEach(fn => fn()); }
   private save(route: DeskRoute, replace = false) {
     this.route = route;
-    this.browser.history[replace ? 'replaceState' : 'pushState'](null, '', writeRoute(route)); this.emit();
+    this.browser.history[replace ? 'replaceState' : 'pushState']({loomNext:route}, '', writeRoute(route)); this.emit();
   }
   asTiles(tiles = this.route.tiles): AppTile[] { return tiles.filter(t => !t.minimized).map(t => ({ id: t.id, name: this.apps.find(a => a.id === t.id)!.title, fit: this.apps.find(a => a.id === t.id)!.fit, pinned: t.pinned })); }
   open(id: string, area?: Rect, screen = 1920, from?: string) {
     const app = this.apps.find(a => a.id === id); if (!app) return;
     const old = this.route.tiles.find(t => t.id === id);
     if (old && !old.minimized) { this.focus(id); return; }
-    const added = old ? { ...old, minimized: false, used: ++this.serial } : { id, trail: [app.path], at: 0, used: ++this.serial };
+    const added: Tile = old ? { ...old, minimized: false, used: ++this.serial } : { id, trail: [app.path], at: 0, used: ++this.serial };
     const others = this.route.tiles.filter(t => t.id !== id);
     const tile = { id, name: app.title, fit: app.fit, pinned: added.pinned };
     const result = admit(this.asTiles(others), tile, area ?? { x:0,y:0,w:1920,h:900 }, screen, { from: from ? { tile: from } : undefined, usedAt: Object.fromEntries(others.map(t => [t.id,t.used])) });
@@ -82,6 +88,19 @@ export class DeskRouter {
   big(id: string) {
     const order = promote(this.asTiles(),id);
     this.save({ ...this.route, tiles: [...order.map(t => ({ ...this.route.tiles.find(o => o.id === t.id)!,pinned:t.pinned })), ...this.route.tiles.filter(t => t.minimized)] });
+  }
+  fit(area: Rect, screen: number) {
+    const tiles = this.route.tiles.map(t => ({...t})); const notices: string[]=[];
+    for (;;) {
+      const active = this.asTiles(tiles); const under = underMinimum(active,area,screen);
+      if (active.length<=capFor(screen) && !under) break;
+      const eligible = tiles.filter(t=>!t.minimized&&!t.pinned&&t.id!==this.route.focused);
+      if(!eligible.length) break;
+      const gone=eligible.reduce((a,b)=>b.used<a.used?b:a); gone.minimized=true;
+      notices.push(`${this.apps.find(a=>a.id===gone.id)!.title} went to the dock to keep tiles usable.`);
+    }
+    if(notices.length) this.save({...this.route,tiles},true);
+    return notices;
   }
   home() { this.save({ tiles: this.route.tiles.map(t => ({ ...t,minimized:true,pinned:false })) }); }
 }

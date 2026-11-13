@@ -14,7 +14,8 @@ function Screen({ app, tile, router }: { app: RegisteredApp; tile: Tile; router:
   const View = app.Screen;
   return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
-export default function Shell({ apps }: { apps: readonly RegisteredApp[] }) {
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }> }
+export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
   // Pick a shell once. Resizing relays layout room, never replaces its navigation owner.
@@ -32,8 +33,9 @@ export default function Shell({ apps }: { apps: readonly RegisteredApp[] }) {
   useEffect(() => () => router.close(),[router]);
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
-  const rail = apps.find(a => (a as RegisteredApp & { surface?: string }).surface === 'home');
-  const workArea = { ...area,w:Math.max(1,area.w - (rail && visible.length ? railWidth(width)+10 : 0)) };
+  const { Home, Rail } = surfaces;
+  const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railWidth(width)||64)+10 : 0)) };
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[area.w,area.h,width,phone,router,!!Rail]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
   const open = (id: string) => {
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width);
@@ -53,7 +55,8 @@ export default function Shell({ apps }: { apps: readonly RegisteredApp[] }) {
   return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'}>
     <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>
     <div ref={ground} className="next-ground">
-      {!visible.length && <Empty title="Your desk" text="Open an app from the dock." />}
+      {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
+      {!phone && Rail && visible.length>0 && <aside className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}
       {(phone ? focused ? [focused] : [] : visible).map(tile => {
         const app = apps.find(a => a.id === tile.id)!;
         const box = boxes[tile.id];
