@@ -6,7 +6,7 @@ import { clock as realClock, type Clock } from '../clock.js';
 import { z } from 'zod';
 import type { Viewer } from '../../policy.js';
 import { operation, type Operations, type Change } from '../operations/index.js';
-const change = z.object({ type: z.string().min(1).max(80), id: z.string().min(1).max(2048) }).strict();
+import { touchChange as change, touchReader } from './protocol.js';
 export const touchSocketPath = (directory: string) => join(directory, '.loom-live', 'touched.sock');
 export const hasTouchedListener = (directory: string) => existsSync(touchSocketPath(directory));
 export interface TouchSource {
@@ -28,18 +28,17 @@ export async function listenForTouches(operations: Operations, source: TouchSour
   const clients = new Set<Socket>();
   const server = createServer(socket => {
     clients.add(socket); socket.setTimeout(1000, () => socket.destroy());
-    let body = '', handled = false;
+    const read = touchReader();
+    let handled = false;
     socket.on('error', () => socket.destroy());
     socket.on('close', () => clients.delete(socket));
     socket.on('data', chunk => {
       if (handled) return;
-      body += chunk.toString();
-      if (Buffer.byteLength(body) > 4096) { socket.destroy(); return; }
-      if (!body.includes('\n')) return;
-      handled = true;
       try {
-        const parsed = change.safeParse(JSON.parse(body.slice(0, body.indexOf('\n'))));
-        const target = parsed.success ? source.resolve(parsed.data) : undefined;
+        const parsed = read(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (!parsed) return;
+        handled = true;
+        const target = source.resolve(parsed);
         const answer = target ? operations.call('direct', source.viewer, 'core.touched', target) : { ok: false };
         socket.end(JSON.stringify(answer) + '\n');
       } catch { socket.destroy(); }

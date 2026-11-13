@@ -8,9 +8,9 @@ export function identities(value: unknown, fields: ReadonlySet<string>): string[
   const walk = (v: unknown, identity = false): void => {
     if (typeof v === 'string') { if (identity) ids.add(v); return; }
     if (Array.isArray(v)) { for (const item of v) walk(item, identity); return; }
-    if (v && typeof v === 'object') for (const [key, item] of Object.entries(v)) {
-      if (fields.has(key)) walk(item, true);
-      else if (['pages', 'losers'].includes(key)) walk(item);
+    if (v && typeof v === 'object') for (const key of Object.keys(v)) {
+      if (fields.has(key)) walk((v as Record<string, unknown>)[key], true);
+      else if (['pages', 'losers'].includes(key)) walk((v as Record<string, unknown>)[key]);
     }
   };
   walk(value); return [...ids];

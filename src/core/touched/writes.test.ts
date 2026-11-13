@@ -74,3 +74,9 @@ it('does not inspect a mutation result without a daemon', async () => {
   notifyWrites(store, join(dir, 'memories.db'), 'memory', ['write'], ['ref']);
   expect(store.write()).toBe(result);
 });
+
+it('does not evaluate excluded body or metadata properties while collecting identities', async () => {
+  const { identities } = await import('./writes.js');
+  const result = { slug: 'right', get body() { throw new Error('body read'); }, get metadata() { throw new Error('metadata read'); } };
+  expect(identities(result, new Set(['slug']))).toEqual(['right']);
+});
