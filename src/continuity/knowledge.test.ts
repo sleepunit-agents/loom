@@ -111,3 +111,22 @@ it('explicit knowledge selection bypasses the legacy environment override', () =
   expect(resolveKnowledgeDbPath(selected.contextDir, selected)).toBe(selected.knowledgePath);
   expect(resolveKnowledgeDbPath(selected.contextDir, null)).toBe(join(selected.contextDir, 'knowledge.db'));
 });
+
+it('explicit isolation cannot be bypassed by a memory environment override', () => {
+  const home = fixture(), selected = readContinuityHousehold(home, 'art');
+  mkdirSync(join(home, 'commons'), { recursive: true });
+  writeFileSync(join(selected.contextDir, 'memories.db'), 'same inode');
+  linkSync(join(selected.contextDir, 'memories.db'), selected.knowledgePath);
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', join(home, 'unrelated.db'));
+  expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir, selected)).toThrow('hard-linked');
+  linkSync(join(selected.contextDir, 'memories.db'), join(selected.contextDir, 'knowledge.db'));
+  expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir, null)).toThrow('hard-linked');
+});
+
+it('explicit isolation still protects the active legacy memory override', () => {
+  const home = fixture(), selected = readContinuityHousehold(home, 'art');
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', selected.knowledgePath);
+  expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir, selected)).toThrow('same as memory');
+  vi.stubEnv('LOOM_KNOWLEDGE_DB_PATH', selected.knowledgePath);
+  expect(() => assertKnowledgePathsNotCoLocated(selected.contextDir)).toThrow('same as memory');
+});

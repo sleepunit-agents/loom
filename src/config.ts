@@ -138,8 +138,16 @@ export function resolveTelemetryDir(contextDir: string): string {
  * database path. If they resolve to the same file (or inode), throw.
  */
 export function assertKnowledgePathsNotCoLocated(contextDir: string, selection?: KnowledgeSelection): void {
-  const memPath = resolveSqliteDbPath(contextDir);
   const knPath = resolveKnowledgeDbPath(contextDir, selection);
+  const memoryPaths = new Set([resolveSqliteDbPath(contextDir)]);
+  // Explicit continuity must protect its local memory store even while legacy
+  // memory tools still honor an environment override. Keep checking that
+  // active legacy store too until memory composition is fully explicit.
+  if (selection !== undefined) memoryPaths.add(resolve(contextDir, 'memories.db'));
+  for (const memPath of memoryPaths) assertKnowledgeMemoryPathsSeparate(memPath, knPath);
+}
+
+function assertKnowledgeMemoryPathsSeparate(memPath: string, knPath: string): void {
 
   if (memPath === knPath) {
     throw new Error(
