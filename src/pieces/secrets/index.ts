@@ -94,6 +94,25 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       savePolicy(ctx, policy); return policy;
     },
   }));
+  // Edit one startup membership against current policy, never a browser snapshot.
+  operations.register(operation({ name: 'secrets.startup', write: true,
+    input: z.object({ name, agent, on: z.boolean() }).strict(), output: secretPolicy,
+    may: v => owner(v, 'secrets.startup'), run(ctx, input) {
+      if (!read<SecretName>(db, 'secrets_names', input.name)) return failure('not-found', 'Secret name not found');
+      const held = sharing();
+      const registered = Object.values(held.members).some(m => m.agents.includes(input.agent))
+        || Object.values(held.projects).some(p => p.agents.includes(input.agent));
+      if (input.on && !registered) return failure('not-found', 'Agent not registered');
+      const current = readSecretPolicy(db);
+      const rule = Object.hasOwn(current.secrets, input.name) ? current.secrets[input.name] : {};
+      if (input.on && rule.grant === 'never') return failure('conflict', 'Policy never gives this secret out');
+      const houses = new Set(rule.houses ?? []);
+      if (input.on) houses.add(input.agent); else houses.delete(input.agent);
+      const policy = { ...current, secrets: { ...current.secrets, [input.name]: { ...rule, houses: [...houses].sort() } } };
+      if (!secretPolicy.safeParse(policy).success) return failure('invalid', 'Startup policy exceeds capacity');
+      savePolicy(ctx, policy); return policy;
+    },
+  }));
   operations.register(operation({ name: 'secrets.policy', write: true, input: secretPolicy, output: secretPolicy,
     may: v => owner(v, 'secrets.policy'), run(ctx, input) {
       savePolicy(ctx, input); return input;

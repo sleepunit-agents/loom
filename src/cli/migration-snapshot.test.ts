@@ -263,3 +263,125 @@ test('directory pruning and SQLite sidecar rules do not discard ordinary keys wi
   for(const suffix of ['-journal','-wal','-shm'])expect(manifest.skipped).toContainEqual(expect.objectContaining({path:'keys/source'+suffix,rule:'SQLite coordination file (backup API reads committed data)'}));
   expect(manifest.skipped).toContainEqual({path:'keys/state.lock',rule:'lock file',bytes:4});
 });
+
+test('external roots reach plan, all and independent verify without changing source or snapshot bytes', async () => {
+  const { root, home, to } = fixture();
+  writeFileSync(join(home, 'household.json'), JSON.stringify({v:1,agents:['art','mark'],default:'art',owner:'jonathan'}));
+  const clock = join(root,'old-clock'), wake = join(root,'old-wake'), approvals = join(root,'old-approvals'), changes = join(root,'old-changes.json');
+  mkdirSync(join(clock,'mark'),{recursive:true}); mkdirSync(wake); mkdirSync(approvals);
+  writeFileSync(join(clock,'lanes.json'),'{}');
+  writeFileSync(join(clock,'mark/schedules.json'),JSON.stringify({morning:{at:'08:31',days:'',prompt:'Mark fixture'}}));
+  writeFileSync(join(wake,'schedules.json'),JSON.stringify({evening:{at:'19:31',days:'',prompt:'Art fixture'}}));
+  writeFileSync(join(approvals,'approvals.json'),JSON.stringify({v:1,approvals:{}}));
+  writeFileSync(join(approvals,'rules.json'),JSON.stringify({v:1,rules:[{kind:'merge',scope:'github:sleepunit-agents/*',tier:'do',by:'jonathan',at:'2026-11-12T00:00:00Z'}]}));
+  const { change } = await import('../pieces/changes/fixture.js');
+  writeFileSync(changes,JSON.stringify({v:1,changes:[change()]}));
+  const roots = {clock,wake,approvals,changes};
+  const sourceBytes = [join(clock,'lanes.json'),join(clock,'mark/schedules.json'),join(wake,'schedules.json'),join(approvals,'approvals.json'),join(approvals,'rules.json'),changes].map(p=>[p,readFileSync(p)] as const);
+  const output: string[] = [];
+  const dry = {io:{stdout:(s:string)=>output.push(s),stderr:(s:string)=>output.push(s),stdin:Readable.from([]),stdinIsTTY:false,env:{}},out:()=>output.join('')};
+  expect(await migrateSnapshot(['--from',home,'--to',to,...Object.entries(roots).flatMap(([k,v])=>[`--${k}`,v]),'--dry-run'],dry.io)).toBe(0);
+  expect(existsSync(to)).toBe(false);
+  expect(JSON.parse(dry.out()).copies.map((f:{path:string})=>f.path)).toEqual(expect.arrayContaining(['clock/mark/schedules.json','clock/art/schedules.json','approvals/approvals.json','changes/changes.json']));
+  await createSnapshot(home,to,undefined,roots);
+  const { prepareMigrationPlan } = await import('./migration-plan.js');
+  const plan = prepareMigrationPlan(to).plan;
+  expect(plan.importers.clock.paths).toEqual(['clock']);
+  expect(plan.importers.approvals.paths).toEqual(['approvals']);
+  expect(plan.importers.changes.paths).toEqual(['changes/changes.json']);
+  const before = readSnapshot(to).files.map(f=>[f.path,readFileSync(join(to,f.path))] as const);
+  const { runMigrationAll } = await import('./migration-all.js');
+  const { verifyMigration } = await import('./migration-verify.js');
+  const destination = join(root,'new-home');
+  expect((await runMigrationAll(to,destination,plan)).status).toBe('complete');
+  expect((await verifyMigration(to,destination,plan))).toMatchObject({status:'verified',differences:[],pieces:expect.arrayContaining(['clock','approvals','changes'])});
+  const db = new Database(join(destination,'loom.db'));
+  expect(db.prepare('SELECT id FROM clock_schedules ORDER BY id').all()).toEqual([{id:'art/evening'},{id:'mark/morning'}]);
+  expect(db.prepare('SELECT count(*) AS n FROM approvals_rules').get()).toEqual({n:1});
+  expect(db.prepare('SELECT count(*) AS n FROM changes_changes').get()).toEqual({n:1});
+  db.prepare('DELETE FROM clock_schedules').run(); db.close();
+  expect((await verifyMigration(to,destination,plan))).toMatchObject({status:'different',differences:expect.arrayContaining([expect.objectContaining({piece:'clock',table:'clock_schedules'})])});
+  for (const [p,bytes] of sourceBytes) expect(readFileSync(p)).toEqual(bytes);
+  for (const [p,bytes] of before) expect(readFileSync(join(to,p))).toEqual(bytes);
+});
+
+test('external roots refuse overlap, missing inputs and colliding clock agents before creating destination', async () => {
+  const {root,home,to} = fixture(); const clock=join(root,'clock'),wake=join(root,'wake');
+  mkdirSync(join(clock,'art'),{recursive:true});mkdirSync(wake);
+  writeFileSync(join(clock,'art/schedules.json'),'{}');writeFileSync(join(wake,'schedules.json'),'{}');
+  for (const roots of [{clock,wake},{clock:join(root,'missing')},{clock:to},{changes:clock}]) {
+    await expect(createSnapshot(home,to,undefined,roots)).rejects.toThrow();
+    expect(existsSync(to)).toBe(false);
+  }
+  await expect(createSnapshot(home,join(clock,'snapshot'),undefined,{clock})).rejects.toThrow('separate');
+});
+
+test('flat wake file aliases retain importer-visible names and archived-only sources are verified', async () => {
+  const {root,home,to} = fixture();
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const wake=join(root,'wake');mkdirSync(wake);
+  writeFileSync(join(wake,'data.json'),'{}');symlinkSync('data.json',join(wake,'schedules.json'));
+  await createSnapshot(home,to,undefined,{wake});
+  expect(readFileSync(join(to,'clock/art/schedules.json'),'utf8')).toBe('{}');
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  rmSync(to,{recursive:true});rmSync(join(wake,'schedules.json'));rmSync(join(wake,'data.json'));
+  writeFileSync(join(wake,'wake.log'),'archival-only fixture');
+  await createSnapshot(home,to,undefined,{wake});
+  expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  const {runMigrationAll} = await import('./migration-all.js'); const {verifyMigration} = await import('./migration-verify.js');
+  const dest=join(root,'new-home');await runMigrationAll(to,dest);
+  expect((await verifyMigration(to,dest)).status).toBe('verified');
+  const db=new Database(join(dest,'loom.db'));db.prepare("UPDATE clock_meta SET value='corrupt' WHERE key='legacy-snapshot'").run();db.close();
+  expect((await verifyMigration(to,dest))).toMatchObject({status:'different',differences:expect.arrayContaining([expect.objectContaining({piece:'clock',table:'clock_meta'})])});
+});
+
+test('identical physical clock inputs still collide across roots and invalid explicit Changes refuses planning', async () => {
+  const {root,home,to} = fixture(); const clock=join(root,'clock');mkdirSync(join(clock,'art'),{recursive:true});
+  writeFileSync(join(clock,'art/schedules.json'),'{}');
+  await expect(createSnapshot(home,to,undefined,{clock,wake:join(clock,'art')})).rejects.toThrow('collide');expect(existsSync(to)).toBe(false);
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const changes=join(root,'export.json');writeFileSync(changes,'{"v":2,"changes":[]}');
+  await createSnapshot(home,to,undefined,{changes});
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(()=>prepareMigrationPlan(to)).toThrow('Invalid explicit Changes');
+});
+
+test('plan refuses explicit clock metadata without agent files and malformed Changes records before all', async () => {
+  const {root,home,to} = fixture();
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const clock=join(root,'clock');mkdirSync(clock);writeFileSync(join(clock,'lanes.json'),'{"preserve":"archive"}');
+  await createSnapshot(home,to,undefined,{clock});
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(()=>prepareMigrationPlan(to)).toThrow('no agent files');rmSync(to,{recursive:true});
+  const changes=join(root,'export.json');const {change}=await import('../pieces/changes/fixture.js');
+  for (const records of [[{}], [change({id:'wrong'})], [change(),change()]]) {
+    writeFileSync(changes,JSON.stringify({v:1,changes:records}));await createSnapshot(home,to,undefined,{changes});
+    expect(()=>prepareMigrationPlan(to)).toThrow();rmSync(to,{recursive:true});
+  }
+  expect(existsSync(join(root,'new-home'))).toBe(false);
+});
+
+test('clock directory aliases preserve logical agent claims and refuse collisions before destination creation', async () => {
+  const {root,home,to}=fixture();const clock=join(root,'clock'),wake=join(root,'wake');
+  mkdirSync(join(clock,'data/art'),{recursive:true});mkdirSync(wake);
+  writeFileSync(join(clock,'data/art/schedules.json'),'{}');symlinkSync('data/art',join(clock,'art'));
+  writeFileSync(join(wake,'schedules.json'),'{}');
+  await expect(createSnapshot(home,to,undefined,{clock,wake})).rejects.toThrow('collide');expect(existsSync(to)).toBe(false);
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  await createSnapshot(home,to,undefined,{clock});
+  expect(readFileSync(join(to,'clock/art/schedules.json'),'utf8')).toBe('{}');
+  const {prepareMigrationPlan}=await import('./migration-plan.js');expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  const {runMigrationAll}=await import('./migration-all.js');const {verifyMigration}=await import('./migration-verify.js');
+  await runMigrationAll(to,join(root,'new-home'));expect((await verifyMigration(to,join(root,'new-home'))).status).toBe('verified');
+});
+
+test('captured approval rules or audit without approvals.json refuse plan instead of disappearing', async () => {
+  const {root,home,to}=fixture();writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const approvals=join(root,'approvals');mkdirSync(approvals);const {prepareMigrationPlan}=await import('./migration-plan.js');
+  for(const name of ['rules.json','audit.jsonl']) {
+    writeFileSync(join(approvals,name),name==='rules.json'?'{"v":1,"rules":[]}':'archival audit');
+    await createSnapshot(home,to,undefined,{approvals});expect(()=>prepareMigrationPlan(to)).toThrow('approvals source is incomplete');
+    rmSync(to,{recursive:true});rmSync(join(approvals,name));
+  }
+});

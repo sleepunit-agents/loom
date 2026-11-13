@@ -10,7 +10,7 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
-import { vouchable, askable, vouchDetails } from './vouch.js';
+import { vouchable, askable, automaticVouch, vouchDetails, vouchWords } from './vouch.js';
 import type { VouchFiling } from './dependencies/filing.js';
 import { vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
@@ -158,17 +158,18 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }, (_ctx, i) => {
     const target = vouchOf(i.target)!;
     const rows = target.ids.map(get);
+    if (rows.some(row => row.project !== rows[0].project)) invalid('Ask about one project scope at a time');
     for (const row of rows) {
       if (!askable(row)) invalid('Only eligible unknown imports without evidence of another person steering may be asked about');
       newWork(row);
     }
     if (!options.vouchFiling) throw new OperationError('unavailable', 'Clock approval filing is not composed');
-    const result = options.vouchFiling.request(target.agent, i.target, vouchDetails(rows));
+    const result = options.vouchFiling.request(target.agent, i.target, vouchDetails(rows), rows[0].project);
     if (!result.ok) throw new OperationError(result.code, result.message);
     const card = result.value as { id: string; state: string };
     return { id: card.id, state: card.state, target: i.target };
   });
-  register('vouch', z.object({ target: text }).strict(), true, (v, i) => {
+  register('vouch', z.object({ target: text, expectedScope: z.object({project:text.optional(), member:text.optional()}).strict().optional() }).strict(), true, (v, i) => {
     const target = vouchOf(i.target);
     if (!target || i.target.length > 200 || !mayAct(v, {}, sharing(), 'household')) return false;
     // Check every existing row, including rows that cannot be adopted. Missing
@@ -176,6 +177,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return target.ids.every(id => { const w = wake(db, id); return !w || w.agent === target.agent && see(v, w) && create(v, w); });
   }, (ctx, i) => {
     const target = vouchOf(i.target)!;
+    if (i.expectedScope && target.ids.some(id => {
+      const w = wake(db,id);
+      return w && (w.project !== i.expectedScope!.project || w.member !== i.expectedScope!.member);
+    })) invalid('The saved work scope changed; review the work again');
     const done: string[] = [], gone: string[] = [];
     for (const id of target.ids) {
       const w = wake(db, id);
@@ -356,6 +361,21 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   function pump() {
     if (closed) return;
     disarm();
+    // Selection restricts archived imports; it never creates an authenticated Viewer.
+    // Filing runs in Approvals' transaction, and cannot adopt or dispatch any row.
+    if (options.vouchFiling?.group) {
+      const rows = wakes(db).filter(w => {
+        const viewer: Viewer = {kind:'agent',id:w.agent};
+        if (w.project !== undefined || w.legacy?.project !== undefined || !vouchOf(`${w.agent}:${w.id}`) || !askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
+        try { newWork(w); return true; }
+        catch (e) { if (e instanceof OperationError && e.code === 'invalid') return false; throw e; }
+      });
+      for (const agent of new Set(wakes(db).map(w=>w.agent))) {
+        options.vouchFiling.group(agent,rows.filter(w=>w.agent===agent).map(w=>({
+          ...vouchWords(w), automatic:automaticVouch(w),
+        })));
+      }
+    }
     const checkAnswers = parksChanged; parksChanged = false;
     for (const agent of deadmanAgents) if (!nonempty(agent))
       operations.call('direct', { kind: 'agent', id: agent }, 'clock.deadman', { agent }, randomUUID());
@@ -370,6 +390,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       });
     }
     const due = wakes(db).filter(w => w.state === 'pending' || w.state === 'parked').map(w => w.due);
+    if (options.vouchFiling?.group && wakes(db).some(w=>vouchable(w))) due.push(clock.now() + 60_000);
     if (due.length) { disarm(); cancelTimer = clock.at(Math.min(...due), pump); }
   }
   function holdDenied(w: Wake, uncertain = false) {

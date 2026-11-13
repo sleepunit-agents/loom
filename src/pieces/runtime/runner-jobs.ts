@@ -1,6 +1,7 @@
+import { assignedRunner } from './control.js';
 /** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
 import { z } from 'zod';
-import { operation, OperationError, mayAct, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
 import { canHost } from './boxes.js';
 import { jobRecord, type RuntimeRecords } from './records.js';
 import { runtimeStore } from './store.js';
@@ -11,11 +12,7 @@ const input = z.object({ job: z.string().min(1).max(200) }).strict();
 const output = z.object({ job: z.string(), state: jobRecord.shape.state });
 export function installRunnerJobs(db: Db, operations: Operations, sharing: () => Sharing, credentials?: RuntimeCredentials) {
   const store = runtimeStore(db), results = jobResults(db);
-  function assigned(viewer: Viewer, id: string): boolean {
-    const job = store.read('job', id), box = job && store.read('box', job.box);
-    return viewer.kind === 'runner' && !!job && !!box && box.id === viewer.id && box.revokedAt === undefined
-      && mayAct(viewer, { ...job, type: 'runtime.job' }, sharing(), 'report-job');
-  }
+  const assigned=(viewer:Viewer,id:string)=>assignedRunner(store,viewer,id,sharing());
   function save(ctx: { now: number; changed(type: string, id: string): void }, id: string, state: RuntimeRecords['job']['state']) {
     const { changedAt: _, ...job } = store.read('job', id)!;
     if (store.put('job', { ...job, state }, ctx.now)) ctx.changed('runtime.job', id);

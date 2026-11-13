@@ -1,3 +1,4 @@
+import './home.css';
 import { useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
@@ -36,10 +37,10 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
-  return <div className="h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
-    <div className="p-4"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
+  return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
+    <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
-        <section aria-label="Needs you" className="grid min-w-0 gap-2">
+        <section aria-label="Needs you" className="desk-home-needs grid min-w-0 gap-2">
           {asks.status !== 'live' ? <Unavailable status={asks.status} label="asks" /> : <>
             <h2 className="text-lg font-semibold">Needs you · {open.length}</h2>
             {open.length ? <List label="First three asks">{open.slice(0,3).map(ask=><Row key={ask.id} layout="stack" title={ask.ask} meta={ask.why} status={ask.agent ?? 'Household'} onClick={()=>go(inboxPath(ask))} />)}</List> : <p>All clear.</p>}
@@ -47,7 +48,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
           </>}
         </section>
         {busy && <p role="status">An answer is still being checked or recorded. Other answers wait.</p>}
-        {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
+        {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
           {orderedAgents(agents).map(agent=>{
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
             const receipt = asks.status === 'live' ? asks.records.filter(ask=>ask.agent===agent.id && ask.answer).sort((a,b)=>b.answer!.at-a.answer!.at || a.id.localeCompare(b.id))[0] : undefined;
@@ -58,8 +59,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const next = agentNext(agent.id, work, paused);
             const jobs = deskJobs(work, paused);
             const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
-            return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
-              <header><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
+            return <section key={agent.id} aria-label={`${agent.name} card`} className="desk-home-card grid min-w-0 gap-3">
+              <header className="desk-home-identity"><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}

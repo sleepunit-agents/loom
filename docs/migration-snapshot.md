@@ -1,6 +1,45 @@
 # Snapshot for the move
 
 Run `loom migrate snapshot --from <old-home> --tasks <taskstore.db> --to <new-directory>`.
+External stores are explicit, read-only inputs:
+
+```sh
+loom migrate snapshot --from <old-home> --tasks <taskstore.db> \
+  --clock <old-WAKE_DATA> --wake <Art/.wake> \
+  --approvals <old-approvals-directory> --changes <v1-Changes-snapshot.json> \
+  --to <fresh-directory> --dry-run
+```
+
+Remove `--dry-run` only after reviewing the inventory. No external locations are
+inferred from the machine running the command. Omitted roots are not covered;
+a supplied missing root is refused. `--changes` accepts a regular v1 snapshot
+file at any name, copying it to `changes/changes.json`; plan refuses an invalid
+explicit export instead of silently omitting it. It never runs the old piece or
+exports live data itself.
+
+| Old location | Snapshot input for plan, all and verify |
+| --- | --- |
+| Old home | `home/` |
+| Taskstore | `tasks/store.db` |
+| WAKE_DATA (`lanes.json`, `fire`, agent directories) | `clock/` |
+| Art's flat `.wake` | `clock/art/` |
+| Approvals directory (`approvals.json`, `rules.json`, `audit.jsonl`) | `approvals/` |
+| Changes v1 export | `changes/changes.json` |
+
+Clock collection retains only the importer-read files (including archival logs,
+filed approvals, sessions, vouch and places). Art's flat files join the other
+agents in the copied clock root. Colliding paths from the two clock locations
+are refused before destination creation, even if the bytes agree: the coordinator
+must resolve the source inventory rather than choose implicitly. No old commands,
+programs or lock files are carried as executable work. Existing importer behavior
+still holds imported wakes for provenance review and disables schedules.
+
+Every external directory is its own symlink confinement boundary. Internal aliases
+use regular copied bytes; dangling/outside aliases and special files are recorded
+as skips. External inventory labels are relative to their snapshot prefix; home
+labels retain their original format. All roots share the private destination,
+completion manifest, SQLite backup, overlap and redacted-error protections below.
+
 The tasks argument is optional when no separate taskstore exists. The destination must
 not exist and must be separate from the source. It contains `home/`, optional
 `tasks/store.db`, and `manifest.json` (the completion marker).

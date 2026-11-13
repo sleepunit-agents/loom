@@ -9,14 +9,15 @@ import { SharingDatabase } from './core/household/sharing.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import type { Sharing } from './core/index.js';
-import { installNext, listenNext, type NextOptions } from './next.js';
+import { installNext, listenNext, closeNext, type NextOptions } from './next.js';
 import { listenOperator, firstSignin, prepareOperatorHome } from './core/signin/operator.js';
 import { ownHome } from './core/daemon-home.js';
 import type { OutsideEffects } from './core/effects.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, changes, clockDeadmanAgents }: {
+export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, changes, bridges, clockDeadmanAgents }: {
   stdout?: (text: string) => void;
   changes?: NextOptions['changes'];
+  bridges?: NextOptions['bridges'];
   clockDeadmanAgents?: NextOptions['clockDeadmanAgents'];
   home: string; clock?: Clock; sharing?: () => Sharing;
   next?: boolean; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
@@ -29,13 +30,13 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   const release = next ? await ownHome(home) : async () => {};
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
-  const closeApp = async () => { try { app.close(); } finally { await release(); } };
+  const closeApp = async () => { try { await closeNext(app); } finally { try { app.close(); } finally { await release(); } } };
   let effects: OutsideEffects | undefined;
-  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, changes, clockDeadmanAgents };
+  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, changes, bridges, clockDeadmanAgents };
   if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);
-    if (next) effects = installNext(app, nextOptions);
+    if (next) effects = await installNext(app, nextOptions);
     else if (!listen) {
       if (!app.operations.has('household.createProject')) installSharing(app, home);
       const access = sharing ?? (() => new SharingDatabase(app.db, home).sharing());

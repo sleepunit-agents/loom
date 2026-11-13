@@ -1,3 +1,4 @@
+import { groupVouch } from './group-vouch.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type LiveRecord } from '../../core/index.js';
@@ -58,7 +59,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
         }
         if (config.piece) {
           if(viewer.kind!=='service'||!mayAct(viewer,{type:'approval'},sharing(),'act',name)) return false;
-          if(verb === 'piece-request') {
+          if(verb === 'piece-request' || verb === 'piece-group-vouch') {
             const caller=context(viewer,input,operations.clock.now(),true).caller;
             // The service may file for its authenticated agent, whose attached
             // project must also pass the central creation rule.
@@ -128,6 +129,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&visible(v,a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
   // Services share the same registration, validation and scope checks as body operations.
   register('piece-request',true,(s,i,c)=>request(s,i,c),{piece:true});
+  register('piece-group-vouch',true,(s,i,c)=>groupVouch(s,i,c),{piece:true});
   register('piece-use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c),{piece:true});
   register('piece-withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c),{piece:true});
   register('piece-rule',false,readRules,{piece:true});

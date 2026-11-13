@@ -16,6 +16,9 @@ export function approvalsRole(operations: Operations, service: string) {
     call(verb: 'request'|'use'|'withdraw'|'rule'|'tell', caller: Caller, input: Record<string,unknown>, id?: string) {
       return operations.call('direct',viewer,`approvals.piece-${verb}`,{...input,caller},id);
     },
+    groupVouch(caller: Caller, candidates: unknown, id: string) {
+      return operations.call('direct',viewer,'approvals.piece-group-vouch',{caller,candidates},id);
+    },
     standing(caller: Caller, input: Record<string,unknown>, id: string) {
       return operations.call('direct',viewer,'approvals.standing',{...input,caller},id);
     },
@@ -36,3 +39,5 @@ export function approvalAnswers(db: Db, sharing: () => Sharing, now: () => numbe
 /** Owning target grammar and synchronous application contract for consumers. */
 export { vouchOf } from './targets.js';
 export type { ApprovalApplication } from './apply.js';
+
+export { vouchDetails, type VouchWords } from './vouch-details.js';

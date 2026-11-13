@@ -77,6 +77,8 @@ function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now
     <section><h2>Who may use it</h2>{grants.filter(g=>g.kind==='secret'&&g.target===name.id).map(g=><p key={g.id}>{g.agent} · {grantLabel(g,policy,now)} · {grantScopeLabel(g)} · {date(g.expiresAt)}</p>)}
       <p>Request policy: {rule?.grant??policy.default}. Requests last at most {rule?.minutes??60} minutes.</p>
       <p>At startup: {rule?.grant==='never'?'Blocked by Never policy':rule?.houses?.join(', ')||'No agents'}</p>
+      <p>Startup access is separate from requests. Removing it affects future starts; running houses may retain delivered values.</p>
+      <div className="grid gap-2">{[...new Set([...agents,...(rule?.houses??[])])].sort().map(agent=><label className="flex gap-2" key={agent}><input type="checkbox" checked={!!rule?.houses?.includes(agent)} disabled={!enabled||write.blocked||rule?.grant==='never'&&!rule?.houses?.includes(agent)} onChange={e=>write.send('secrets.startup',{name:name.id,agent,on:e.target.checked})}/>Allow {agent} at startup{!agents.includes(agent)&&' (no longer registered)'}</label>)}</div>
       {rule?.grant===undefined&&policy.default==='auto'&&<p>Automatic access comes from the default request policy.</p>}
       <div className="grid gap-2">{agents.map(agent=><label className="flex gap-2" key={agent}><input type="checkbox" checked={automaticRequest(policy,name.id,agent)} disabled={!enabled||write.blocked||rule?.grant==='never'||rule?.grant===undefined&&policy.default==='auto'} onChange={e=>write.send('secrets.always',{name:name.id,agent,on:e.target.checked})}/>Always allow {agent} when asked</label>)}</div>
     </section>

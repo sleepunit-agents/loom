@@ -29,14 +29,14 @@ async function setup() {
   mkdirSync(join(home, 'agents/art'), {recursive: true});
   const projects = new ProjectsStore({dbPath: join(home, 'agents/art/memories.db')});
   projects.write({slug: 'pond', name: 'Pond'}); projects.write({slug: 'other', name: 'Other'});
-  const app = await startLoom({home, next: true, clock: new FakeClock(), stdout: () => {}});
-  cleanup.push(async () => { await app.close(); projects.close(); rmSync(home, {recursive: true, force: true}); });
   const key = await loadKey(home), decrypt = vi.spyOn(key, 'open');
-  const sharing = () => new SharingDatabase(app.db, home).sharing();
-  // Install the real arrived role after next mode: no default key or delivery is added.
-  const comms = installComms({...app, clock: app.operations.clock, key, sharing,
-    runtime: {async deliver() { throw new Error('Held'); }, async end() {}},
-    hold: async () => { throw new Error('Held'); }, attention: attentionRole(app.operations)});
+  let comms!: ReturnType<typeof installComms>;
+  const app = await startLoom({home, next: true, clock: new FakeClock(), stdout: () => {}, install: app => {
+    comms = installComms({...app, clock: app.operations.clock, key, sharing: () => new SharingDatabase(app.db, home).sharing(),
+      runtime: {async deliver() { throw new Error('Held'); }, async end() {}},
+      hold: async () => { throw new Error('Held'); }, attention: attentionRole(app.operations)});
+  }});
+  cleanup.push(async () => { await app.close(); projects.close(); rmSync(home, {recursive: true, force: true}); });
   cleanup.push(() => comms.close());
   let seq = 0;
   const call = (verb: string, input: unknown, viewer = owner, id = `attention-comms-${++seq}`) => app.operations.call('direct', viewer, `attention.${verb}`, input, id);

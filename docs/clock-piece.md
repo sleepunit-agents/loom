@@ -12,13 +12,15 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
-At the documentation audit base `6c5f566`, runtime exposes `queueBody` and role
-bindings for `startBody`/`deliver`, but does not install executable operations for
-the latter. Queue acceptance is not a confirmed body start. Next mode therefore
-keeps Clock's default held runtime. Task t-2201 explicitly depends on t-2209 for
-executable dispatch and authenticated conversation/continuation resolution.
+At base `27a1e59`, runtime installs `runtime.startBody` and next mode composes
+Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
+only after agent house configuration and waits for runner-confirmed running or
+waiting state. Queue acceptance alone is never reported as started. Missing
+features (lane files, continuations, slots, approvals, local wakes) remain held;
+private body delivery and account selection are refused. Conversation delivery
+and authenticated continuation resolution remain blocked on t-2209.
 
-Independent work remains: automatic ask-vouch grouping; exact local-approval filing/recovery,
+Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
 mutation/join, original schedule principal narrowing, API 40/conversation 20 and
@@ -95,7 +97,7 @@ an operation does not imply executable runtime dispatch.
 | `wake schedule set/rm/list/run` | `clock.scheduleSet`, `clock.scheduleRemove`, `clock.schedules`, `clock.scheduleRun` |
 | `wake lane set/assign/rm/list/text` | schedule rows carrying lane text and assignment; corresponding `clock.lane*` operations |
 | `wake vouch`, `vouch-approved` action | `clock.vouch`, opt-in owner client, app action, and atomic Approvals application |
-| `wake ask-vouch` | `clock.askVouch`, the generated client and the single-wake app action file exact selections; automatic grouping remains unfinished |
+| `wake ask-vouch` | `clock.askVouch`, the generated client and the single-wake app action file exact selections; daemon candidates use owning atomic grouping |
 | `wake relay`, `wake relays` | same refusal directing the caller to runtime; already removed upstream |
 | `wake reap`, legacy session reaper | dropped from Clock: runtime owns body lifecycle; executable runtime dispatch remains blocked |
 | `wake bundle export/import` | coordinated core backup/import, not an independently encrypted child program |
@@ -275,7 +277,7 @@ the command inventory above, the source has these domain obligations:
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
 | `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Local filing/recovery/standing integration remains unfinished; a local marker or free approval id is not a grant. |
-| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Owner adoption of eligible unknown plain imports and atomic owner-applied Allow are implemented, with owner client and app actions. Ask filing, grouping, denial suppression and other imported recovery remain unfinished. |
+| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Owner adoption of eligible unknown plain imports and atomic owner-applied Allow are implemented, with owner client and app actions. Explicit/automatic asking and owning denial suppression are implemented; other imported recovery remains unfinished. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Explicit configured-agent fixed 24-hour safety wakes are implemented below; default configuration is empty and no owner Viewer is synthesized. |
 | Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notices are implemented through the Attention source described below. |
 | Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices, scoped Next/jobs reads and live Home agent-card composition are implemented. |
@@ -566,9 +568,8 @@ Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
 request again; it never carries a house grant forward. Other resource questions
 report that their piece applied the access and ask the body to check it; they
 never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
-approval or grants access, and runtime dispatch remains held until its owning
-implementation is composed. Local-wake filing/recovery/standing remains unfinished. Owner-vouch application
-is composed separately as described below; ask-vouch filing remains unfinished. This composition replaces the
+approval or grants access, and dispatch uses the runtime bridge described under Remaining work and evidence. Local-wake filing/recovery/standing remains unfinished. Owner-vouch application
+and explicit/automatic ask-vouch filing are composed separately as described below. This composition replaces the
 previously missing next-mode approval parking seam.
 
 
@@ -658,7 +659,7 @@ with target create authority. Its confirmation retains the saved words and due t
 explains overdue dispatch and pause, and sends the existing operation through the
 window’s retained retry receipt. The live `canVouch` hint is advisory; the mutation
 rechecks authority and eligibility. Provenance-held work has no Run now button.
-Automatic grouped asking, other imported adoption/recovery, and runtime-authenticated
+Other imported adoption/recovery and runtime-authenticated
 provenance remain unfinished on t-2201. No live import, configuration or dispatch
 is enabled by this slice.
 
@@ -667,9 +668,11 @@ is enabled by this slice.
 `clock.askVouch {target}` and `ask-vouch <id> [<id> …]` let the authenticated
 assignee agent or current household owner request adoption of selected eligible
 unknown imports. Every row must remain visible and pass current create policy.
-Private/member-scoped and project-scoped imports are also refused by this filing
-path: an agent-scoped approval cannot carry their saved words. Scope-preserving
-filing remains future work. Known-person, steered, other-agent and capability-bearing imports are refused;
+Private/member-scoped imports remain refused by this filing path. Project-scoped
+imports may be explicitly selected together only when all rows share one project,
+with current visibility and creation checks for both agent and project. Their
+approval retains that project; archived project metadata must be absent or match
+the current scope. A mixed project selection refuses before filing. Known-person, steered, other-agent and capability-bearing imports are refused;
 archived words supply no authority. The target uses the same canonical grammar
 and bounds as owner vouch. Clock generates the question and lists every id and
 saved due time within Approvals' details cap. Each line includes a saved-note and
@@ -686,9 +689,9 @@ applies and spends atomically through the previously shipped Clock application.
 The command refuses `--approval`. A retained outer request receipt covers retry
 of the command or operation after a lost response.
 
-This unit supports explicit selections only. Automatic candidate grouping,
-replacement of an unanswered grouped card and waiting overflow remain unfinished. Old service-side delayed filing is replaced for this
-explicit path by a synchronous local transaction; no polling body is needed.
+The explicit operation supports exact selections; the daemon also groups candidates as
+described below. Old service-side delayed filing is replaced for this explicit path
+by a synchronous local transaction; no polling body is needed.
 
 The Clock app exposes “Ask owner to count this work” for an eligible visible
 single wake under the same authenticated assignee/owner and create checks. Its
@@ -698,3 +701,50 @@ retry receipt; feedback names the card and its returned state. Work stays held
 until owner Allow. The viewer-specific `canAskVouch` display hint grants no
 authority; the operation rechecks eligibility and policy. Ineligible scoped,
 steered, capability-bearing and malformed imports do not offer the action.
+
+## Automatic owner-vouch grouping
+
+The daemon checks held unknown imports on startup, after Clock writes, and every
+minute while vouchable imports remain. Automatic candidates additionally require
+archived `origin: agent:<assignee>` and `for_why: none`, with no people, member or
+project scope in either current fields or archived metadata. Unsupported imported
+ids stay held and are excluded from automatic batches. These hints only restrict selection; they never authenticate a
+Viewer. Current executable validation and central agent see/create policy still
+apply. Explicit asking remains available for eligible missing/unverified reasons.
+
+Clock passes current eligible rows to the owning direct-only
+`approvals.piece-group-vouch` operation through its composed filing role. Approvals
+filters its permanent Deny history, keeps allowed cards intact, and atomically
+replaces unanswered Clock cards when a new selected candidate appears. Previously
+explicitly asked ids remain candidates while eligible. A partially stale card is
+kept while some listed work remains and no new selected id enters; an empty card
+is withdrawn. Other filers' pending/allowed cards remain intact and their ids are
+excluded. No Clock-side card or denial ledger exists.
+
+Sorted groups hold up to twelve ids within the existing 200-character target cap
+(fewer UUID ids fit); overflow waits for a later pass after the current card is
+answered. The owning renderer reserves every id and saved due first, then shares the
+remaining details budget across executable excerpts and notes. Explicitly asked
+ids take priority over new automatic candidates at capacity; separate explicit
+cards remain intact when all their eligible ids cannot fit into one group. A missing role or
+service access fails closed and is retried by the next daemon check. Filing never
+changes the held work; only the existing owner Allow application adopts it. No
+old stores, polling subprocesses or systemd jobs are involved.
+
+
+### Project-scoped explicit review
+
+Project work stays out of automatic groups, including previously explicitly asked
+project ids. Its explicit card uses the existing owning request, permanent Deny
+suppression and retained client receipt. The existing Clock reader action uses
+the same live eligibility hint and operation; no new client grammar or screen is
+needed. Agent access alone does not expose the project's card details. An owner
+still needs target give-work authority, and the owning filing service independently
+checks that the assignee agent can create approval records in the project.
+
+On owner Allow the Clock application supplies the card's exact project/member
+scope. If any existing selected wake has moved scope, the answer, application and
+spend roll back. Approvals refuses reuse of a pending/allowed exact target whose
+scope differs. No archived scope authenticates a principal; private work remains
+held for a separate recovery flow. Local-wake filing/recovery still needs the
+runtime's authenticated caller provenance and is not implemented by this unit.

@@ -67,6 +67,11 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
       if (['pending','allowed'].includes(stateOf(a,now))) denied(`${a.id} already covers ${both.join(' ')}: withdraw or apply it first`);
     }
   }
+  // A typed wake decision cannot be reused after its target moves scope.
+  if (kind === 'vouch-wake' && s.approvals.some(a => a.kind === kind && a.target === target
+    && a.who.agent === caller.who.agent && ['pending','allowed'].includes(stateOf(a,now))
+    && (a.project !== caller.project || a.member !== undefined)))
+    denied('An existing decision prevents this request');
   for (const a of s.approvals) if ((!c.canRead || c.canRead(a)) && a.kind === kind && a.target === target && maySpend(a.who,caller.who) && samePrincipal(a,caller) && ['pending','allowed'].includes(stateOf(a,now))) {
     const last = newest(s,a);
     if (stateOf(a,now) === 'allowed' && last?.state === 'denied' && last.decided! > (a.decided ?? '')) continue;

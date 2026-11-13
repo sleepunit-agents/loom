@@ -17,13 +17,13 @@ import { installRunnerReports } from './runner.js';
 import type { RuntimeCredentials } from './credentials.js';
 const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
 /** Control metadata. Execution is installed separately with its runner implementation. */
-export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: { credentials?: RuntimeCredentials } = {}) {
+export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: { credentials?: RuntimeCredentials; privateStart?: Parameters<typeof installStartBody>[3] } = {}) {
   registerBuiltinService(operations, 'runtime', ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding']);
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);
   installQueueBody(db, operations, sharing);
-  installStartBody(db, operations, sharing);
+  installStartBody(db, operations, sharing, options.privateStart);
   installHouseConfiguration(db, operations, sharing);
   installHouseGrants(db, operations, sharing);
   installBuildStatus(db, operations, sharing);
