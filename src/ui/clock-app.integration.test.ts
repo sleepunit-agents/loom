@@ -36,6 +36,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     const jobs = installClock(app.db,app.operations,app.live,sharing, {vouchFiling:clockVouchFiling(app.operations),approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}}); app.onClose(jobs.close);
   },authenticate: req => auth?.resolve(req)});
   auth = signin(loom);
+  loom.db.transaction(()=>auth!.tokens.replace({v:1,tokens:[]},{}))();
   function session(member: string) {
     const bearer = randomBytes(32).toString('hex');
     auth!.tokens.change(tokens => tokens.push({role:'owner',member,label:`browser-${member}`,sha256:hash(bearer),created:new Date(clock.now()).toISOString()}));
