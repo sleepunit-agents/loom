@@ -60,6 +60,26 @@ it('the real CLI refuses a held daemon lock before creating a key and its result
  expect(await migrateComms(['--home',to,'--from',s.from],io)).toBe(0);expect(output).toContain('checksum');expect(output+error).not.toContain('older private words');expect(output+error).not.toContain('private output');
 });
 
+for(const sameKey of [true,false])for(const pointer of ['ref:t-123456789','page:tasks/private-item'])it(`imports private attachment associations (${sameKey?'same key':'rekey'}, ${pointer.split(':')[0]})`,async()=>{
+ const s=await source(),to=home();
+ const household=new Database(join(s.from,'household.db'));
+ try{household.exec('ALTER TABLE comms_threads ADD COLUMN about_key TEXT');household.prepare('UPDATE comms_threads SET about_key=?').run(pointer);}finally{household.close();}
+ if(sameKey)copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const key=await loadKey(to),clock=new FakeClock(Date.parse('2026-11-12T02:00:00Z'));
+ const app=createFoundation({home:to,clock});cleanup.push(()=>app.close());
+ await importComms(app.db,s.from,to);
+ const stored=(app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record;
+ expect(stored).not.toContain(pointer);
+ expect(JSON.parse(stored)).not.toHaveProperty('about_key');
+ expect(JSON.parse(stored).aboutHash).toBe(key.hash(`about\0${pointer}`));
+ const comms=installComms({...app,clock,key,sharing:()=>({members:{jonathan:{agents:['art']},other:{agents:['art']}},projects:{},services:{}}),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),attention:{answer:()=>({ok:true,value:{}})}});
+ cleanup.push(()=>{void comms.close();});
+ const input={agent:'art',...(pointer.startsWith('ref:')?{ref:pointer.slice(4)}:{page:pointer.slice(5)})};
+ expect(await app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.about',input,undefined,true)).toMatchObject({ok:true,value:{threads:[{id:'th:old',title:'Title'}]}});
+ expect(await app.operations.callAsync('socket',{kind:'member',id:'other'},'comms.about',input,undefined,true)).toMatchObject({ok:true,value:{threads:[]}});
+ expect(await importComms(app.db,s.from,to)).toMatchObject({imported:false});
+});
+
 for(const sameKey of [true,false])it(`seals imported work and answer metadata and expires it with words (${sameKey?'same key':'rekey'})`,async()=>{
  const s=await source(),to=home();
  if(sameKey)copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
