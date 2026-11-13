@@ -62,6 +62,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   for(const page of [a,b])await page.evaluate(()=>{Reflect.deleteProperty(document,'visibilityState');Reflect.deleteProperty(document,'hasFocus');document.dispatchEvent(new Event('visibilitychange'));});
   // Body activity comes from the thread subscription; it must disappear when the turn ends.
   const activeRow=b.locator('[data-split-row]').filter({hasText:'New thread with art'});
+  expect(await activeRow.locator('.comms-agent-letter').textContent()).toBe('A');
+  expect(await activeRow.locator('.comms-agent-letter').getAttribute('aria-hidden')).toBe('true');
   await expect.poll(()=>activeRow.getByLabel('Thread activity time').getAttribute('datetime')).toBe(new Date(JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).last).toISOString());
   expect(await activeRow.getByLabel('Thread activity time').textContent()).toContain('CT');
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
@@ -105,7 +107,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
-  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
+  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-list'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
   await capture('comms',true);
   await b.setViewportSize({width:390,height:900});
   await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');

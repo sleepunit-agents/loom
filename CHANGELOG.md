@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show each Comms thread’s agent letter beside its title in the list.
+
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
 - Show Comms thread activity times in CT and live working state in the thread list.
 - Resolve next-mode Approvals callers from central authenticated body proof and current private Runtime/Comms membership, preserving service-house identity.
