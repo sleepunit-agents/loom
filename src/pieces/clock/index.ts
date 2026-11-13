@@ -105,8 +105,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => see(ctx.viewer, s, 'schedule')));
   register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || act(v, s, !!s.laneDetails) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
-    for (const w of wakes(db).filter(w => w.schedule === s.id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; saveWake(ctx, w); }
-    db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { id: s.id };
+    removeSchedule(ctx, s); return { id: s.id };
   });
   register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
@@ -120,7 +119,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     text: text.optional(), source: text.optional(), local: z.boolean().optional(), note: z.string().max(100_000).optional(), model: text.optional(), slot: laneName.optional() });
   const cancelLaneWork = (ctx: Context, w: Wake, reason: string) => { w.state = 'cancelled'; w.outcome = reason; saveWake(ctx, w); event(ctx, w, 'cancel'); };
   const cancelOccurrences = (ctx: Context, id: string) => {
-    for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing')) cancelLaneWork(ctx, w, 'Lane changed');
+    for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing' && w.hold !== 'uncertain')) cancelLaneWork(ctx, w, 'Lane changed');
+  };
+  const removeSchedule = (ctx: Context, s: Schedule) => {
+    cancelOccurrences(ctx, s.id); db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id);
   };
   function setLane(ctx: Context, i: z.infer<typeof laneSetInput>) {
     const old = schedule(db, laneId(i.name));
@@ -138,7 +140,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       laneDetails: details, laneVersion: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
     cancelOccurrences(ctx, s.id);
     // A file-backed lane replaces a self-chained one-off only on its assignee's clock.
-    if (details.source) for (const w of wakes(db).filter(w => w.agent === s.agent && !w.schedule && w.file === details.source && active(w) && w.state !== 'firing')) {
+    if (details.source) for (const w of wakes(db).filter(w => w.agent === s.agent && w.by.kind === 'agent' && w.by.id === s.agent && !w.schedule && w.file === details.source && w.state === 'pending')) {
       cancelLaneWork(ctx, w, 'Replaced by household lane');
     }
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
@@ -150,7 +152,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('laneSet', laneSetInput, true, maySetLane, setLane);
   register('laneAssign', laneInput.extend({ agent: text }), true, maySetLane, (ctx, i) => { getLane(i.name); return setLane(ctx, i); });
   register('laneRemove', laneInput, true, (v, i) => { const s = schedule(db, laneId(i.name)); return mayAct(v, {}, sharing(), 'household') && (!s || create(v, s)); }, (ctx, i) => {
-    const s = getLane(i.name); cancelOccurrences(ctx, s.id); db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { name: i.name };
+    const s = getLane(i.name); removeSchedule(ctx, s); return { name: i.name };
   });
   register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));

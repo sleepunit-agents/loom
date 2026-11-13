@@ -147,6 +147,12 @@ describe('durable daemon clock', () => {
       for (const [verb, input] of [['laneRemove', { name: 'upkeep' }], ['scheduleRemove', { id: s.id }], ['scheduleRun', { id: s.id }]] as const)
         expect(app.call(verb, input, { kind: 'member', id: 'otherOwner' })).toMatchObject({ ok: false, code: 'denied' });
     } finally { delete access.members.otherOwner; }
+    expect(app.call('laneAssign', { name: 'upkeep', agent: 'unknown' })).toMatchObject({ ok: false, code: 'denied' });
+    for (const viewer of [{ kind: 'agent', id: 'art' }, { kind: 'member', id: 'delegate' }] as const) {
+      access.members.delegate = { owner: false, agents: ['art'] };
+      expect(app.call('laneAssign', { name: 'upkeep', agent: 'art' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+      expect(app.call('laneRemove', { name: 'upkeep' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    }
     const before = schedules(app.db);
     for (const patch of [{ days: 'someday' }, { at: '25:00' }, { source: '../secret.md' }, { slot: 'Bad Slot' }]) {
       expect(app.call('laneSet', { name: 'upkeep', ...patch })).toMatchObject({ ok: false, code: 'invalid' });
@@ -156,15 +162,18 @@ describe('durable daemon clock', () => {
   });
   it('preserves full long lane text and replaces only same-agent self-chained file work', async () => {
     const access = structuredClone(sharing); access.members.jonathan.agents.push('bo');
-    const app = await loom({}, home(), new FakeClock(), access);
+    const app = await loom({ approvals: { check: () => ({ state: 'pending' }), subscribe: () => () => {} } }, home(), new FakeClock(), access);
     const foreign = app.value('in', { agent: 'bo', file: 'routines/tidy.md', note: 'foreign chain', when: '2h' });
-    const own = app.value('in', { agent: 'art', file: 'routines/tidy.md', note: 'self chain', when: '2h' });
+    const own = app.value('in', { agent: 'art', file: 'routines/tidy.md', note: 'self chain', when: '2h' }, { kind: 'agent', id: 'art' });
+    const member = app.value('in', { agent: 'art', file: 'routines/tidy.md', note: 'member work', when: '2h' });
+    const parked = app.value('park', { agent: 'art', file: 'routines/tidy.md', note: 'waiting', on: 'a-123' }, { kind: 'agent', id: 'art' });
     const other = app.value('in', { agent: 'art', file: 'routines/other.md', note: 'other', when: '2h' });
     const text = 'x'.repeat(9000);
     const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '06:05', text, source: 'routines/tidy.md' });
     app.value('laneSet', { name: 'upkeep', note: 'new note' });
     expect(schedules(app.db)[0].laneDetails?.source).toBe('routines/tidy.md');
     expect(wake(app.db, foreign.id)?.state).toBe('pending');
+    expect(wake(app.db, member.id)?.state).toBe('pending'); expect(wake(app.db, parked.id)?.state).toBe('parked');
     expect(s.prompt!.length).toBeLessThan(1000); expect(s.prompt).toContain('wake lane text upkeep');
     expect(app.value('laneText', { name: 'upkeep' })).toEqual({ text });
     expect(wake(app.db, own.id)?.state).toBe('cancelled'); expect(wake(app.db, other.id)?.state).toBe('pending');
@@ -234,6 +243,19 @@ describe('durable daemon clock', () => {
     result.resolve({ state: 'not-started', reason: 'runner offline' }); await settled();
     expect(wake(app.db, firing.id)).toMatchObject({ state: 'cancelled', outcome: 'Superseded lane did not start: runner offline' });
     expect(wakes(app.db).filter(w => w.state === 'pending' && w.agent === 'art')).toEqual([]);
+  });
+  it.each(['laneAssign', 'laneRemove', 'scheduleRemove'] as const)('preserves uncertain lane intent and attribution through %s', async verb => {
+    const access = structuredClone(sharing); access.members.jonathan.agents.push('bo');
+    const clock = new FakeClock(Date.parse('2026-03-07T09:00:00Z'));
+    const app = await loom({ runtime: { async startBody() { return { state: 'uncertain', reason: 'response lost' }; } } }, home(), clock, access);
+    const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    clock.advance(31*60_000); await settled();
+    const uncertain = wakes(app.db).find(w => w.hold === 'uncertain')!;
+    expect(uncertain).toBeDefined();
+    app.value(verb, { name: 'upkeep', agent: 'bo', id: s.id });
+    expect(wake(app.db, uncertain.id)).toEqual(uncertain);
+    expect(app.call('now', { id: uncertain.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toHaveLength(verb === 'laneAssign' ? 1 : 0);
   });
   it('removes terminal wakes from the live scope exactly a day later', async () => {
     const app = await loom(), w = app.set(); app.value('cancel', { id: w.id });

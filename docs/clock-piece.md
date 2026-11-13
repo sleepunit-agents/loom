@@ -180,3 +180,11 @@ cancels a run-now occurrence that has not dispatched. Run-now requires the same
 target give-work policy as other lane administration. A database abort fixture
 interrupts reassignment after occurrence cancellation and verifies full rollback
 of both wake and schedule rows.
+
+Reassignment and removal preserve held-uncertain intents verbatim, including
+original attribution and outcome: those bodies still need runtime reconciliation.
+File-lane adoption conservatively replaces only pending one-offs created by the
+assignee agent itself. Member-created work and parked approvals remain intact;
+this deliberately narrows the legacy local clock's broad same-file replacement,
+because a matching path alone does not establish that a member's work was a
+self-chain. Members can explicitly cancel that work through the normal operation.
