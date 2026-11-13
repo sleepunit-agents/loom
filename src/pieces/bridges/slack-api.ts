@@ -47,6 +47,23 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
     return result;
   }
   return {
+    /** Point-in-time bot-token evidence for composition, never an admission grant
+     * or a credential lease. Recreate/revalidate after setup or credential changes.
+     * Bot user identity (U/W) and bot identity (B) are deliberately distinct. */
+    async authenticate(venue: Venue): Promise<{ workspace: string; bot: string; app: string } | 'wait'> {
+      venue = { ...venue };
+      if (venue.platform !== 'slack' || !venue.enabled || !id(venue.workspace) || !id(venue.bot)) return 'wait';
+      try {
+        const auth = await call(venue, 'auth.test', {});
+        if (auth.team_id !== venue.workspace || auth.user_id !== venue.bot
+          || typeof auth.bot_id !== 'string' || !/^B[A-Z0-9]{1,199}$/.test(auth.bot_id)) return 'wait';
+        const info = await call(venue, 'bots.info', { bot: auth.bot_id, team_id: venue.workspace });
+        const bot = info.bot;
+        if (!object(bot) || bot.id !== auth.bot_id || bot.user_id !== venue.bot || bot.deleted !== false
+          || typeof bot.app_id !== 'string' || !/^A[A-Z0-9]{1,199}$/.test(bot.app_id)) return 'wait';
+        return { workspace: venue.workspace, bot: venue.bot, app: bot.app_id };
+      } catch { return 'wait'; }
+    },
     /** Returns platform evidence only. Runtime still admits each linked human.
      * Unknown flags and incomplete pagination fail closed as wait.
      */
