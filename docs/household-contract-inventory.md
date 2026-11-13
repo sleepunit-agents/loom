@@ -87,6 +87,7 @@ in [core/services.ts](../src/core/services.ts).
 | Old work | Current next replacement or gap |
 | --- | --- |
 | Household init/add/commons/artwork commands and household form actions | No periodic job in the old implementation; perform explicit operations or offline migration, not a daemon poller |
+| Token/session last use | Accepted next-mode HTTP/MCP admission, session status and incoming Live messages record throttled row-backed usage; pure validity checks and idle sockets do not |
 | Browser/session/token expiry checks | Sign-in enforces expiry at authentication; session-cap eviction happens at session creation. Link creation prunes expired links. No separate household expiry timer is installed |
 | Legacy HTTP push watch | **Pending** next notification job; do not start old `pushWatch` from next mode |
 | Legacy HTTP backup tick launching `loom backup tick` | **Pending** next backup job; do not call the detached old program from next mode |

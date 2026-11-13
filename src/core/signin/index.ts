@@ -87,28 +87,50 @@ export class Signin {
   }
   csrf(id: string) { return createHmac('sha256',this.key).update(`loom-next-csrf|${id}`).digest('hex'); }
   checkCsrf(req: IncomingMessage, value: string) { const id=cookieId(req); return !!id && eq(value,this.csrf(id)); }
-  session(id: string): BrowserSession | undefined {
+  session(id: string, recordUse = false): BrowserSession | undefined {
     const s=this.sessions.get('sessions',hash(id)); if (!s) return;
     const max=s.agent || /^HeadlessChrome\b/.test(s.device ?? '') ? HOURS : MONTH;
     if (this.now() >= s.issuedAt+max) return;
     const t=this.token(s.secret); if (!t || t.viewer.kind!=='member') return;
+    if (recordUse) this.used(s.secret,id);
     return {s,...t,expiresAt:Math.min((s.issuedAt+max)*1000,t.expiresAt ?? Infinity)};
   }
-  resolve(req: IncomingMessage): Authentication | undefined {
+  /** Usage is diagnostic, never authority. Pure token/session checks do not call this. */
+  private used(digest: string, id?: string): void {
+    let changed=false;
+    try {
+      changed=this.app.db.transaction(()=>{
+        let changed=false;
+        const now=this.app.operations.clock.now();
+        const rows=new HouseholdRows<string>(this.app.db,'token_use');
+        const last=Date.parse(rows.get(digest) ?? '');
+        if (!Number.isFinite(last) || now-last>=60_000) {
+          this.tokens.touch(digest,new Date(now).toISOString()); changed=true;
+        }
+        if (id && this.sessions.touch(hash(id),this.now())) changed=true;
+        return changed;
+      }).immediate();
+    } catch { /* Busy or unavailable diagnostics must not reject an otherwise valid credential. */ }
+    if (changed) queueMicrotask(()=>this.app.live.changed([{type:'signin.admin',id:'household'}]));
+  }
+  resolve(req: IncomingMessage, transport?: 'upgrade'): Authentication | undefined {
     const bearer=/^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
     if (bearer) {
       const digest=hash(bearer[1]), t=this.token(digest); if (!t) return;
       const valid=()=>{const current=this.token(digest);return !!current && current.viewer.kind===t.viewer.kind && current.viewer.id===t.viewer.id;};
-      return {...t,valid};
+      if (transport!=='upgrade') this.used(digest);
+      return {...t,valid,activity:()=>{if(valid())this.used(digest);}};
     }
     const id=cookieId(req); if (!id) return;
     const s=this.session(id); if (!s) return;
     // Cookie socket upgrades always need an Origin, unlike nonbrowser bearer callers.
-    if (req.headers.upgrade && (!req.headers.origin || !sameOrigin(req))) return;
+    if (transport==='upgrade' && (!req.headers.origin || !sameOrigin(req))) return;
     if (!['GET','HEAD','OPTIONS'].includes(req.method ?? 'GET') && !this.checkCsrf(req,String(req.headers['x-loom-csrf'] ?? ''))) return;
     // Only this validated page-session branch confers the socket window capability.
     // Bearer callers never gain it, including when they also send a cookie.
-    return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid:()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;}};
+    const valid=()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;};
+    if (transport!=='upgrade') this.used(s.s.secret,id);
+    return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid,activity:()=>{if(valid())this.used(s.s.secret,id);}};
   }
   createSession(secret: string, meta: { label?: string; signedInAt?: number; agent?: true; via?: 'link'|'passkey'; device?: string } = {}) {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');

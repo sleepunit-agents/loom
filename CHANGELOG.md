@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
 
+- Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
+- Reconcile authoritative runner-fenced start failures into generation-matched private Comms notices, enabling member retry without automatically repeating an uncertain execution.
 
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
@@ -1067,6 +1069,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
+
+- Record token and session last use on the new side, including activity in open windows.
 
 ## [0.16.1] - 2026-10-25
 

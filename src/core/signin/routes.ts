@@ -17,7 +17,7 @@ export function signinRoutes(app: Foundation) {
     return c.json(result,result.ok?200:result.code==='denied'?403:400);
   });
   routes.get('/auth/session',c=>{
-    const id=cookieId(c.env.incoming), current=id?s.session(id):undefined;
+    const id=cookieId(c.env.incoming), current=id?s.session(id,true):undefined;
     return current?c.json({viewer:current.viewer,csrf:s.csrf(id!)}):c.json({viewer:null});
   });
   routes.get('/login/:code',c=>{
@@ -34,7 +34,7 @@ export function signinRoutes(app: Foundation) {
   routes.post('/logout',async c=>{
     const id=cookieId(c.env.incoming);const body=await c.req.json().catch(()=>({}));
     if(!id||!s.session(id)||!s.checkCsrf(c.env.incoming,String(body._csrf ?? c.req.header('x-loom-csrf') ?? '')))return c.json({error:'Reload and try again'},403);
-    s.end(id);c.header('set-cookie',s.cookie('',c.env.incoming));return c.json({ok:true});
+    s.session(id,true);s.end(id);c.header('set-cookie',s.cookie('',c.env.incoming));return c.json({ok:true});
   });
   for(const path of ['/login/passkey/options','/login/passkey','/passkeys/options','/passkeys']) routes.post(path,async c=>{
     const rp=relyingParty(process.env);if(!rp||new URL(rp.origin).host!==c.req.header('host'))return c.json({error:'Passkeys are not set up at this address'},404);
@@ -45,8 +45,8 @@ export function signinRoutes(app: Foundation) {
     }
     const id=cookieId(c.env.incoming);
     if(!id||!s.checkCsrf(c.env.incoming,String(body._csrf ?? ''))||!s.fresh(id))return c.json({error:'Sign in again before adding a passkey'},403);
-    if(path==='/passkeys/options')return c.json(s.registrationOptions(id,rp));
-    s.register(id,body,rp);return c.json({ok:true});
+    if(path==='/passkeys/options'){const options=s.registrationOptions(id,rp);s.session(id,true);return c.json(options);}
+    s.register(id,body,rp);s.session(id,true);return c.json({ok:true});
   });
   return routes;
 }
