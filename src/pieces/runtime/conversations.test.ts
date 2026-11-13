@@ -205,7 +205,7 @@ it('follows an authorized thread filing change without losing delivery or creati
  expect(await f.post(body,'runtime.reply',{id:'after-filing',text:'Reply immediately after filing'})).toMatchObject({ok:true});
  expect(await f.post(body,'runtime.conversationStatus',{})).toMatchObject({ok:true});
  expect(await f.socket('comms.send',{thread,id:'cdefghijklmnopqr',text:'PRIVATE after filing'})).toMatchObject({ok:true});
- const read=await f.post(body,'runtime.readConversation',{});expect(read.ok).toBe(true);expect(JSON.stringify(read)).toContain('PRIVATE after filing');
+ const read=await f.post(body,'runtime.readConversation',{});expect(read.ok,read.ok?undefined:JSON.stringify(read)).toBe(true);expect(JSON.stringify(read)).toContain('PRIVATE after filing');
  expect(runtimeStore(f.app.db).read('job',job)?.project).toBe('pond');
  expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
  const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
