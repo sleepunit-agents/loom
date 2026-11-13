@@ -95,8 +95,9 @@ it('refuses wrong ownership of the file and parent and a nonregular FIFO before 
  vi.mocked(fs.lstatSync).mockImplementationOnce(p=>{const stat=realFs.lstatSync(p);return Object.assign(stat,{uid:stat.uid+1});});attempt();expect(readSync).not.toHaveBeenCalled();
  // Fake a FIFO at the opened descriptor; no child process or blocking FIFO open.
  // Opening a real FIFO without O_NONBLOCK would wait before fstat could reject it.
- vi.mocked(openSync).mockImplementationOnce((p,flags,mode)=>{expect((flags as number)&constants.O_NONBLOCK).not.toBe(0);return realFs.openSync(p,flags,mode);});
- vi.mocked(fstatSync).mockImplementationOnce(fd=>{const stat=realFs.fstatSync(fd);return Object.assign(stat,{isFile:()=>false,isFIFO:()=>true});});attempt();expect(readSync).not.toHaveBeenCalled();
+ let fifoFlags=0;
+ vi.mocked(openSync).mockImplementationOnce((p,flags,mode)=>{fifoFlags=flags as number;return realFs.openSync(p,flags,mode);});
+ vi.mocked(fstatSync).mockImplementationOnce(fd=>{const stat=realFs.fstatSync(fd);return Object.assign(stat,{isFile:()=>false,isFIFO:()=>true});});attempt();expect(fifoFlags&constants.O_NONBLOCK).not.toBe(0);expect(readSync).not.toHaveBeenCalled();
 });
 it('caps reads and erases the bounded buffer when the file grows after fstat',async()=>{
  const {root,path}=home(),app=await open(root),h=holder();const captured:Buffer[]=[];let total=0;
