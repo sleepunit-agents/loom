@@ -162,13 +162,14 @@ it('cancels a stalled request at 1.5 seconds before retrying the same write', as
 it('shows only legacy summary fields from the daemon, without a write receipt', async () => {
   const { app, home, run } = await setup();
   const household = new HouseholdDatabase(app.db);
-  app.db.transaction(() => household.change(home, raw => { raw.default = 'mark'; raw.extra = { private: 'do not expose' }; }))();
+  expect(JSON.parse((await run(['show', '{}'])).stdout)).toEqual({ home, agents: ['art', 'mark', 'pond-bot'], default: 'art' });
+  app.db.transaction(() => household.change(home, raw => { raw.default = 'mark'; raw.owner = 'legacy-owner'; raw.extra = { private: 'do not expose' }; }))();
   writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['wrong'], default: 'wrong', owner: 'wrong' }));
   const before = app.db.prepare('SELECT * FROM core_operations').all();
   const result = await run(['show', '{}']);
   expect(result).toMatchObject({ code: 0, stderr: '' });
   const h = household.household(home)!;
-  expect(JSON.parse(result.stdout)).toEqual({ home, agents: h.agents, default: 'mark', ...(h.owner ? { owner: h.owner } : {}) });
+  expect(JSON.parse(result.stdout)).toEqual({ home, agents: h.agents, default: 'mark', owner: 'legacy-owner' });
   expect(JSON.parse(result.bodies[0])).toEqual({ input: {} });
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   expect(await run(['show', '{"actor":"jonathan"}'])).toMatchObject({ code: 1, stdout: '' });
