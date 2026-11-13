@@ -2,6 +2,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseTokenDocument } from '../household.js';
+import { readSecretImport, type SecretImportOptions } from '../pieces/secrets/import-source.js';
+import { parseHouseholdDocument } from '../household.js';
 import { readTasksImport } from '../pieces/tasks/importer.js';
 import { readAttentionImport, type ImportScopes } from '../pieces/attention/importer.js';
 import { readClockImport } from '../pieces/clock/importer.js';
@@ -58,9 +60,18 @@ function householdTables(from: string, now: number): Tables {
 }
 import { createHash } from 'node:crypto';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
-export async function expectedTables(piece: string, paths: string[], options: unknown, now: number): Promise<Tables> {
+export async function expectedTables(piece: string, paths: string[], options: unknown, now: number, householdHome?: string): Promise<Tables> {
   switch (piece) {
     case 'household': return householdTables(paths[0],now);
+    case 'secrets': {
+      if(!householdHome)throw Error('Source household required');
+      const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
+      const e=readSecretImport(paths[0],now,options as SecretImportOptions,{agents:h.agents,members:h.members.map(m=>m.person)});
+      const records=(rs:{id:string}[])=>rs.map(r=>({id:r.id,record:json(r)}));
+      return {secrets_names:records(e.records),secrets_requests:records(e.requests),secrets_grants:e.grants.map(g=>({id:g.id,agent:g.agent,kind:g.kind,target:g.target,record:json(g)})),
+        secrets_changes:records(e.changes),secrets_uses:e.uses.map(u=>({id:u.id,name:u.name,record:json(u)})),attention_asks:records(e.asks),
+        secrets_meta:[{key:'policy',value:json(e.policy)},{key:'legacy-snapshot',value:json(e.legacy)},{key:'source-checksum',value:e.checksum},{key:'source-options',value:e.options}]};
+    }
     case 'tasks': {
       const {expected,checksum,mapping,agent} = readTasksImport(paths[0],now,options as Parameters<typeof readTasksImport>[2],openSnapshotSqlite);
       return {tasks_tasks:expected.tasks.map((t,ord)=>({ord,id:t.id,record:json(t),changed_at:now})), tasks_links:expected.links.map((l,ord)=>({ord,record:json(l)})), tasks_meta:[{key:'seq',value:String(expected.seq)},{key:'source-checksum',value:checksum},{key:'source-projects',value:mapping},{key:'source-agent',value:agent}]};
