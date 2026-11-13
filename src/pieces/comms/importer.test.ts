@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync, copyFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -183,7 +183,7 @@ it('closes supplied source handles on open and read failures and never falls bac
    calls.push(path);
    if(calls.length===2&&failOpen)throw Error('snapshot open failed');
    const db=new Database(path,{readonly:true,fileMustExist:true});opened.push(db);
-   if(calls.length===2&&!failOpen)db.close();
+   if(calls.length===2&&!failOpen)vi.spyOn(db,'prepare').mockImplementation(()=>{throw Error('snapshot read failed');});
    return db;
   };
   await expect(importComms(app.db,s.from,to,{},open)).rejects.toThrow();
@@ -191,4 +191,32 @@ it('closes supplied source handles on open and read failures and never falls bac
   expect(opened.every(db=>!db.open)).toBe(true);
   expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
  }
+});
+
+
+it('keeps the default reader read-only and sees committed rows in live WAL',async()=>{
+ const s=await source(),to=home();copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const household=new Database(join(s.from,'household.db'));
+ cleanup.push(()=>household.close());
+ s.db.pragma('journal_mode = WAL');household.pragma('journal_mode = WAL');
+ s.db.prepare('UPDATE comms_messages SET sender=? WHERE seq=1').run('wal-member');
+ household.prepare('UPDATE comms_threads SET title=?').run('WAL title');
+ expect(readFileSync(join(s.from,'comms.db-wal')).length).toBeGreaterThan(0);
+ expect(readFileSync(join(s.from,'household.db-wal')).length).toBeGreaterThan(0);
+ const seen=new Set<string>(),prepare=Database.prototype.prepare;
+ const spy=vi.spyOn(Database.prototype,'prepare').mockImplementation(function(this:Database.Database,...args:Parameters<Database.Database['prepare']>){
+  if(this.name===join(s.from,'comms.db')||this.name===join(s.from,'household.db')) {
+   expect(this.readonly).toBe(true);seen.add(this.name);
+   const table=this.name.endsWith('/comms.db')?'comms_messages':'comms_threads';
+   expect(()=>prepare.call(this,`DELETE FROM ${table}`).run()).toThrow(/readonly/);
+  }
+  return prepare.apply(this,args);
+ });
+ try {
+  const app=createFoundation({home:to});cleanup.push(()=>app.close());
+  expect(await importComms(app.db,s.from,to)).toMatchObject({imported:true});
+  expect(seen).toEqual(new Set([join(s.from,'comms.db'),join(s.from,'household.db')]));
+  expect(JSON.parse((app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record).title).toBe('WAL title');
+  expect(app.db.prepare('SELECT sender FROM comms_messages WHERE seq=1').get()).toEqual({sender:'wal-member'});
+ } finally {spy.mockRestore();}
 });
