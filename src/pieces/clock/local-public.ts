@@ -10,9 +10,13 @@ import { operation, OperationError, type Operations, type Sharing, type Viewer, 
 import { localOwner, sameLocalCaller, type Caller } from '../approvals/role.js';
 import { clockLocalFiling, clockLocalRecovery, clockLocalStanding } from './role.js';
 const text=z.string().min(1).max(100_000);
+function authenticatedCaller(viewer:Viewer,agent:string,s:Sharing,resolve:((viewer:Viewer)=>Caller|undefined)|undefined) {
+ const c=resolve?.(viewer);
+ return viewer.kind==='agent' && viewer.id===agent && c?.who.agent===agent && localOwner(c,s)?c:undefined;
+}
 export function localPublicPolicy(operations:Operations,sharing:()=>Sharing,resolve:((viewer:Viewer)=>Caller|undefined)|undefined,v:Viewer,i:{agent:string;approval?:string;standing?:boolean}) {
- const c=resolve?.(v),s=sharing();
- if(v.kind!=='agent'||v.id!==i.agent||c?.who.agent!==i.agent||!localOwner(c,s))return false;
+ const s=sharing(),c=authenticatedCaller(v,i.agent,s,resolve);
+ if(!c)return false;
  const service={kind:'service' as const,id:'clock'},agent={kind:'agent' as const,id:i.agent};
  const scope={agent:i.agent,project:c.project};
  const clockOp=i.approval?(i.standing?'clock.localStandingSchedule':'clock.localSchedule'):'clock.localRequest';
@@ -27,8 +31,8 @@ export function localPublicPolicy(operations:Operations,sharing:()=>Sharing,reso
 }
 export function installLocalPublic(operations:Operations,sharing:()=>Sharing,resolve?: (viewer:Viewer)=>Caller|undefined) {
   const caller=(viewer:Viewer,agent:string)=>{
-    const c=resolve?.(viewer);
-    if(viewer.kind!=='agent' || viewer.id!==agent || c?.who.agent!==agent || !localOwner(c,sharing()))
+    const c=authenticatedCaller(viewer,agent,sharing(),resolve);
+    if(!c)
       throw new OperationError('denied','Local work requires a household owner’s authenticated conversation');
     return c;
   };
