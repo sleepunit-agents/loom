@@ -1,0 +1,131 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import Database from 'better-sqlite3';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync, linkSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { generateIdentity, Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
+import { openHolderStore, type HolderStore } from './holder-store.js';
+
+const homes: string[] = [], stores: HolderStore[] = [];
+afterEach(() => { for (const s of stores.splice(0)) s.close(); for (const h of homes.splice(0)) rmSync(h, {recursive:true, force:true}); vi.restoreAllMocks(); });
+const who = (member = 'jonathan') => ({member, writeId:randomUUID()});
+const value = (text = 'HOLDER-STORE-VALUE-SENTINEL') => Buffer.from(text);
+async function setup() {
+  const home = mkdtempSync(join(tmpdir(), 'holder-store-')); homes.push(home);
+  const identity = join(home, 'identity'), key = join(home, 'fingerprint-key');
+  writeFileSync(identity, await generateIdentity(), {mode:0o600}); writeFileSync(key, randomBytes(32), {mode:0o600});
+  const open = async () => { const s = await openHolderStore(home, identity, key); stores.push(s); return s; };
+  return {home, identity, key, open, s:await open()};
+}
+async function text(s: HolderStore, name = 'api-key') {
+  const b = await s.read(name); try {return Buffer.from(b).toString();} finally {b.fill(0);}
+}
+
+it('restarts with atomic receipts; old retries never overwrite a later replacement or remove a re-addition', async () => {
+  const f = await setup(); let s = f.s;
+  const add = who(), replace = who(), remove = who();
+  await s.set(add, 'api-key', value(), 'add'); s.close(); s = await f.open();
+  await s.set(add, 'api-key', value(), 'add'); expect(await text(s)).toBe(value().toString());
+  await s.set(replace, 'api-key', value('replacement'), 'replace');
+  await s.set(add, 'api-key', value(), 'add'); expect(await text(s)).toBe('replacement');
+  s.remove(remove, 'api-key'); s.close(); s = await f.open();
+  s.remove(remove, 'api-key'); await expect(s.read('api-key')).rejects.toThrow('Secret holder storage unavailable');
+  await s.set(who(), 'api-key', value('new'), 'add'); s.remove(remove, 'api-key');
+  expect(await text(s)).toBe('new');
+  await s.set(replace, 'api-key', value('replacement'), 'replace'); expect(await text(s)).toBe('new');
+});
+it('binds full input, action and member, independent of registry operation IDs', async () => {
+  const {s} = await setup(), id = who();
+  await s.set(id, 'api-key', value(), 'add');
+  for (const [name, bytes, mode] of [
+    ['other', value(), 'add'], ['api-key', value('changed'), 'add'], ['api-key', value(), 'replace'],
+  ] as const) await expect(s.set(id, name, bytes, mode)).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect(() => s.remove(id, 'api-key')).toThrow(/^Secret holder storage unavailable$/);
+  // Same UUID from a different authenticated member is a distinct operation.
+  await s.set({...id,member:'amelia'}, 'api-key', value('other-member'), 'replace');
+  expect(await text(s)).toBe('other-member');
+  const remove = who(); s.remove(remove, 'api-key');
+  expect(() => s.remove(remove, 'other')).toThrow();
+  await expect(s.set(remove, 'api-key', value(), 'add')).rejects.toThrow();
+});
+it('rolls back ciphertext and receipt together on storage failure, then permits the exact retry', async () => {
+  const {s, home} = await setup(), id = who();
+  const db = new Database(join(home, 'holder.db'));
+  try {
+    db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON holder_receipts BEGIN SELECT RAISE(ABORT, 'PRIVATE-ERROR'); END");
+    await expect(s.set(id, 'api-key', value(), 'add')).rejects.toThrow(/^Secret holder storage unavailable$/);
+    expect(db.prepare('SELECT * FROM holder_values').all()).toEqual([]);
+    expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual([]);
+    db.exec('DROP TRIGGER fail_receipt'); await s.set(id, 'api-key', value(), 'add');
+    db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON holder_receipts BEGIN SELECT RAISE(ABORT, 'PRIVATE-ERROR'); END");
+    const remove = who(); expect(() => s.remove(remove, 'api-key')).toThrow(/^Secret holder storage unavailable$/);
+    expect(await text(s)).toBe(value().toString());
+    expect(db.prepare('SELECT count(*) AS n FROM holder_receipts').get()).toEqual({n:1});
+    db.exec('DROP TRIGGER fail_receipt'); s.remove(remove, 'api-key');
+    expect(db.prepare('SELECT * FROM holder_values').all()).toEqual([]);
+  } finally {db.close();}
+});
+it('snapshots caller input before awaiting and resolves concurrent identical writes only once across handles', async () => {
+  const f = await setup(), other = await f.open(), id = who(), input = value();
+  const caller = {...id}; const first = f.s.set(caller, 'api-key', input, 'add');
+  input.fill(0); caller.member = 'changed'; caller.writeId = randomUUID();
+  await Promise.all([first, other.set(id, 'api-key', value(), 'add')]);
+  expect(await text(f.s)).toBe(value().toString());
+  const db = new Database(join(f.home, 'holder.db'));
+  try {expect(db.prepare('SELECT member,write_id FROM holder_receipts').all()).toEqual([{member:id.member,write_id:id.writeId}]);}
+  finally {db.close();}
+});
+it('keeps plaintext out of disk, receipts and console output on success and failure; erases its input copy', async () => {
+  const {s,home} = await setup();
+  const logs = [vi.spyOn(console,'log'),vi.spyOn(console,'error'),vi.spyOn(console,'warn')];
+  const encrypt = vi.spyOn(Encrypter.prototype,'encrypt'); const input=value();
+  await s.set(who(), 'api-key', input, 'add');
+  const owned = encrypt.mock.calls[0][0] as Uint8Array;
+  expect(owned).not.toBe(input); expect([...owned].every(n=>n===0)).toBe(true);
+  expect(input.toString()).toBe(value().toString());
+  await expect(s.set(who(), 'api-key', value(), 'add')).rejects.toThrow();
+  expect(logs.flatMap(l=>l.mock.calls)).toEqual([]);
+  for (const file of readdirSync(home)) expect(readFileSync(join(home,file)).includes(value())).toBe(false);
+  s.close(); for (const file of readdirSync(home)) expect(readFileSync(join(home,file)).includes(value())).toBe(false);
+});
+it('enforces add/replace, input limits and close without retaining successful receipts for failed operations', async () => {
+  const {s} = await setup();
+  await expect(s.set(who(), 'missing', value(), 'replace')).rejects.toThrow();
+  for(const bytes of [Buffer.alloc(0),Buffer.alloc(65537)]) await expect(s.set(who(), 'api-key', bytes, 'add')).rejects.toThrow();
+  await expect(s.set(who(), '../bad', value(), 'add')).rejects.toThrow();
+  await expect(s.set({...who(),writeId:'bad'}, 'api-key', value(), 'add')).rejects.toThrow();
+  const max=Buffer.alloc(65536,65); await s.set(who(), 'api-key', max, 'add');
+  const read=await s.read('api-key');expect(Buffer.from(read)).toEqual(max);read.fill(0);
+  s.close();s.close(); await expect(s.read('api-key')).rejects.toThrow();
+  await expect(s.set(who(),'api-key',value(),'add')).rejects.toThrow();expect(()=>s.remove(who(),'api-key')).toThrow();
+});
+it('refuses changed identity or fingerprint key on restart', async () => {
+  const f=await setup();await f.s.set(who(),'api-key',value(),'add');f.s.close();
+  const key=readFileSync(f.key), identity=readFileSync(f.identity);
+  writeFileSync(f.key,randomBytes(32));await expect(f.open()).rejects.toThrow();writeFileSync(f.key,key);
+  writeFileSync(f.identity,await generateIdentity());await expect(f.open()).rejects.toThrow();writeFileSync(f.identity,identity);
+  expect(await text(await f.open())).toBe(value().toString());
+});
+it('rejects oversized age payload before decrypt and clears owned input on encryption failure', async () => {
+  const f=await setup();
+  const encrypt=new Encrypter();encrypt.addRecipient(await identityToRecipient(readFileSync(f.identity,'utf8')));
+  const oversized=await encrypt.encrypt(Buffer.alloc(65537,65));
+  const db=new Database(join(f.home,'holder.db'));
+  try {db.prepare('INSERT INTO holder_values VALUES (?,?)').run('oversized',oversized);} finally {db.close();}
+  const decrypt=vi.spyOn(Decrypter.prototype,'decrypt');
+  await expect(f.s.read('oversized')).rejects.toThrow();expect(decrypt).not.toHaveBeenCalled();
+  let owned:Uint8Array|undefined;
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementationOnce(async bytes=>{owned=bytes as Uint8Array;throw Error(value().toString());});
+  await expect(f.s.set(who(),'api-key',value(),'add')).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect(owned).toBeDefined();expect([...owned!].every(n=>n===0)).toBe(true);
+});
+it('refuses public, symlinked or hardlinked database files and public key or directory', async () => {
+  const f=await setup();f.s.close();const path=join(f.home,'holder.db');
+  chmodSync(path,0o644);await expect(f.open()).rejects.toThrow(/^Secret holder storage unavailable$/);chmodSync(path,0o600);
+  const link=join(f.home,'db-link');linkSync(path,link);await expect(f.open()).rejects.toThrow();rmSync(link);
+  const saved=readFileSync(path);rmSync(path);writeFileSync(link,saved,{mode:0o600});symlinkSync(link,path);
+  await expect(f.open()).rejects.toThrow();rmSync(path);writeFileSync(path,saved,{mode:0o600});
+  chmodSync(f.key,0o644);await expect(f.open()).rejects.toThrow();chmodSync(f.key,0o600);
+  chmodSync(f.home,0o755);await expect(f.open()).rejects.toThrow();chmodSync(f.home,0o700);
+});
