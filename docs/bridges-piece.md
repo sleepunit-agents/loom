@@ -217,8 +217,9 @@ stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
 the existing put operation remains last-write-wins, without an atomic revision check.
 The daemon continues to enforce the existing household-owner policy for every write.
-Uncertain-send disposition and held intake
-repair remain required work before the full rebuild is complete. No live
+Confirmed uncertain-send dismissal is available below; runtime-held intake repair
+runs on restart as described above. Transient retry expiry remains required before
+the full rebuild is complete. No live
 connections start merely by opening this app or installing next-mode metadata.
 
 The CI-only `bridges-preview.integration.test.ts` uses two windows and fake venue IO
