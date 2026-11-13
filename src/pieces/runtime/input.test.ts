@@ -121,7 +121,7 @@ it('preserves consumed release across restart and refuses changed capabilities b
   expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:false,code:'denied'});
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
   f.box({facts:['gpu:5090']});
-  expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:true});
+  expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:true,value:{needs:['gpu']}});
   await f.app.close();
   const app = await startLoom({home:f.home,clock:f.clock,next:true,stdout:()=>{}});cleanups.push(app.close);
   expect(await app.operations.callAsync('direct',{kind:'runner',id:'a'},'runtime.takeInput',{job:'j'})).toMatchObject({ok:false,code:'conflict'});
