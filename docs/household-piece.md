@@ -406,3 +406,38 @@ Ground, sound, pixel faces/icons, haptics and one-window layout still require
 shell integration. Their stored backend choices remain supported; this menu
 does not claim those features are complete. Setup screenshots remain a separate
 delivery under t-2203.
+
+## Household Setup preview
+
+`/p/setup-preview` is the household owner's member/agent administration screen.
+It subscribes to the existing owner-only `household.sharing` record and
+`household.project` feed and calls the same household operations as the generated
+client. The sharing projection now includes the default agent and a whitelist
+of each member's person, role and owned agents; arbitrary imported membership
+fields and credentials are excluded. No permission rule changes.
+
+The screen edits ownership, adds/removes members, replaces a member's project
+list, registers an already prepared agent context and edits GitHub attribution.
+Ownership and removal forms require an explicit confirmation. A successful
+change appears in other windows through Live. Loading/disconnection disables
+writes, loss of owner access removes the forms, and errors appear on the page.
+An uncertain write blocks further changes and retains its original retry handle
+even if the app is docked or navigated away from in that window.
+
+| Existing action | Setup control |
+| --- | --- |
+| `member-set`, `member-remove` | Add member, Save ownership, Remove member |
+| Member's project assignments | Save projects |
+| Register existing agent context | Register existing agent |
+| Agent account attribution | Save accounts |
+| Project creation and full lists | Open Project sharing |
+| Person directory creation | Open People |
+
+This is not complete agent bootstrap or complete Setup: first token/harness
+snippet, credential/session administration, read-only identity, health/backup,
+profile and artwork still require their replacements. Registration explicitly
+does not create an identity or token. No legacy editor or detached program is
+called. The one Setup browser test uses two windows and captures this actual
+screen in Neon Noir/Daylight at 390, 1280 and 1920 pixels under
+`artifacts/household-setup/` in CI; these images document the implemented controls,
+not the remaining agent-bootstrap/credential screens. No live move is performed.
