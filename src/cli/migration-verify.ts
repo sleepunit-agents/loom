@@ -3,7 +3,6 @@ import Database from 'better-sqlite3';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { Db } from '../core/index.js';
 import { parseTokenDocument } from '../household.js';
 import { readTasksImport } from '../pieces/tasks/importer.js';
 import { readAttentionImport, type ImportScopes } from '../pieces/attention/importer.js';

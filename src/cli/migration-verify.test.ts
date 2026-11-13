@@ -202,3 +202,16 @@ it.each(['wal','journal'])('refuses a direct writer creating a nonempty %s durin
   });
   try {expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');}finally{writer?.close();}
 });
+it('compares every credential/settings concern on changed same-count content and redacts all values',async()=>{
+  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const tables=['settings','sessions','links','challenges','passkeys','push','readers','piece_settings','token_use','tokens'].map(name=>`household_${name}`);
+  const db=new Database(join(f.home,'loom.db'));
+  for(const table of tables) db.prepare(`UPDATE ${table} SET body=?`).run(JSON.stringify({credential:'PRIVATE_CREDENTIAL_CONTENT_CANARY'}));
+  db.prepare('INSERT INTO household_members VALUES (?,?)').run('hidden',JSON.stringify({person:'hidden',private:'PRIVATE_CREDENTIAL_CONTENT_CANARY'}));db.close();
+  const before=bytes(f.home),r=verifyMigration(f.root,f.home);
+  expect(r.status).toBe('different');expect(r.differences.map(d=>d.table)).toEqual(expect.arrayContaining([...tables,'household_members']));
+  for(const table of tables) {const d=r.differences.find(d=>d.table===table)!;expect(d.actual).toBe(d.expected);expect(d.expected).toBeGreaterThan(0);}
+  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(3);
+  expect(JSON.stringify(r)+io.stdout.mock.calls.flat().join('')+io.stderr.mock.calls.flat().join('')).not.toContain('PRIVATE_CREDENTIAL_CONTENT_CANARY');expect(bytes(f.home)).toEqual(before);
+});
