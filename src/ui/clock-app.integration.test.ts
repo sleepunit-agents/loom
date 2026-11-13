@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { signin, hash } from '../core/signin/index.js';
+import { filedLocal } from '../pieces/clock/local-filing.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import type { Result } from '../core/index.js';
 import { wakes } from '../pieces/clock/store.js';
@@ -109,21 +110,27 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       expect(JSON.stringify(input)).not.toContain(message);
       await post(runner,'runtime.reportJob',{job,state:'running'});
       const read=await post<{messages:{text:string}[]}>(input.credential,'runtime.readConversation',{});
-      expect(read.messages.map(m=>m.text)).toContain(message);
+      const delivered=read.messages.at(-1)?.text;expect(delivered).toBe(message);
+      const parsed=/^Please file these exact words for my local-work decision, without scheduling yet:\n([\s\S]+)\nNote: ([^\n]+)$/.exec(delivered!);
+      expect(parsed).not.toBeNull();
+      const request={agent:'art',prompt:parsed![1],note:parsed![2]};
+      expect(request).toEqual({agent:'art',prompt,note});
       for(const secret of [runner,unbound]) {
-        const denied=await fetch(`${loom.url}/api/clock/requestLocal`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt,note},id:`not-body:${++apiSeq}`})});
+        const denied=await fetch(`${loom.url}/api/clock/requestLocal`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input:request,id:`not-body:${++apiSeq}`})});
         expect(await denied.json()).toMatchObject({ok:false});
       }
-      const card=await post<{id:string;state:string}>(input.credential,'clock.requestLocal',{agent:'art',prompt,note});
+      const card=await post<{id:string;state:string}>(input.credential,'clock.requestLocal',request);
       expect(Object.keys(card).sort()).toEqual(['id','state']);localCards.push(card.id);
       const saved=load(loom.db).approvals.find(c=>c.id===card.id)!;
       expect(saved).toMatchObject({member:'jonathan',people:['jonathan'],conversation:runtimeStore(loom.db).read('job',job)!.conversation,state:'pending'});
-      expect(saved.details).toContain(prompt);expect(saved.details).toContain(note);
+      const shownWords=`Report host disk usage: ${note}.`;
+      expect(saved.details).toBe(`Agent's note (its own words): ${note}\n\nRuns on loom's machine, exactly as written, everything from here to the end:\n${shownWords}`);
+      expect(filedLocal(loom.db,card.id)).toMatchObject({prompt,note,caller:{member:'jonathan',people:['jonathan'],conversation:runtimeStore(loom.db).read('job',job)!.conversation}});
       expect(wakes(loom.db).filter(w=>w.approval===card.id)).toHaveLength(0);
       await post(input.credential,'runtime.reply',{id:`filing-reply:${card.id}`,text:`Filed for your decision; nothing scheduled. [Review local request](/p/clock-preview/item/${card.id})`});
       await a.getByRole('link',{name:'Review local request',exact:true}).click();
       await expect.poll(()=>a.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
-      await expect.poll(()=>a.getByText(prompt,{exact:false}).count()).toBeGreaterThan(0);
+      await expect.poll(()=>a.getByText(shownWords,{exact:false}).count()).toBeGreaterThan(0);
     }
     call('park',{agent:'art',prompt:'Continue after the answer',note:'Waiting for the owner',on:localCards[0]});
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
