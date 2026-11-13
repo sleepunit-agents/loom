@@ -170,3 +170,47 @@ it('ports held-turn due-to-progress grouping and median behavior', () => {
   expect(dueToProgressSeconds([t(1, 0, 'wake'), t(2, 10, 'note', 'a', 'none'), t(3, 20, 'action', 'b', 'progressed'), t(4, 60, 'action', 'a', 'progressed'), t(5, 100, 'wake'), t(6, 130, 'reply', 'c', 'deferred'), t(7, 220, 'reply', 'c', 'answered')])).toBe(60);
   expect(dueToProgressSeconds([t(1, 0, 'note', 'a', 'progressed')])).toBeNull();
 });
+it('orders, filters and limits findings after visibility filtering across conversations and agents', async () => {
+  const { call, write, clock } = await setup();
+  const add = (agent: string, place: string, text: string, member?: string) => {
+    write({ ...reply, place, from: { kind: 'agent', id: agent } }, { agent, ...(member ? { member } : {}) });
+    const conversation = conversationId(agent, 'relay', place);
+    expect(call('writeFinding', { conversation, seq: 1, measure: 'graded', score: 5, text })).toMatchObject({ ok: true });
+    return conversation;
+  };
+  const first = add('art', 'first', 'First'); clock.advance(1);
+  const other = add('other', 'other', 'Other'); clock.advance(1);
+  add('art', 'third', 'Third'); clock.advance(1);
+  add('art', 'private', 'Private newest', 'alice');
+  const texts = (input: unknown, viewer: Viewer = alice) => {
+    const result = call('findings', input, viewer); expect(result.ok).toBe(true);
+    return result.ok ? (result.value as { text: string }[]).map(f => f.text) : [];
+  };
+  expect(texts({})).toEqual(['Private newest', 'Third', 'Other', 'First']);
+  expect(texts({ limit: 2 })).toEqual(['Private newest', 'Third']);
+  expect(texts({ agent: 'art' })).toEqual(['Private newest', 'Third', 'First']);
+  expect(texts({ agent: 'other', conversation: first })).toEqual([]);
+  expect(texts({ conversation: other })).toEqual(['Other']);
+  expect(texts({ agent: 'art', limit: 1 }, { kind: 'member', id: 'bob' })).toEqual(['Third']);
+});
+it('rejects a second finding on a different own turn of the same day', async () => {
+  const { call, write } = await setup(); write(reply); write({ ...reply, at: '2026-07-01T10:00:00Z' });
+  const input = { conversation: id, seq: 1, measure: 'graded', score: null, text: 'First' };
+  expect(call('writeFinding', input)).toMatchObject({ ok: true });
+  expect(call('writeFinding', { ...input, seq: 2, text: 'Second' })).toMatchObject({ code: 'conflict' });
+});
+it('rolls the whole sweep back when a later nested fold fails', async () => {
+  const { app, write, call } = await setup(); write(base); write({ ...base, place: 'second' });
+  const original = app.operations.call.bind(app.operations); let folds = 0;
+  vi.spyOn(app.operations, 'call').mockImplementation((door, viewer, name, input, op) => {
+    if (name === 'attention.fold' && ++folds === 2) return failure('denied', 'injected nested refusal');
+    return original(door, viewer, name, input, op);
+  });
+  const before = app.db.prepare('SELECT * FROM core_operations').all(), changed = vi.spyOn(app.live, 'changed');
+  expect(call('retain', {})).toMatchObject({ code: 'denied' });
+  expect(folds).toBe(2);
+  expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
+  expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(2);
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(changed).not.toHaveBeenCalled();
+});
