@@ -42,10 +42,11 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
     flags[flag] = value;
   }
-  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in';
-  if (positional.length < count || !timed && positional.length > count) return fail(`expected ${timed ? 'a time or duration' : count ? spec.positional!.join(', ') : 'no positional arguments'}`,2);
+  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in', variadic = timed || name === 'vouch';
+  if (positional.length < count || !variadic && positional.length > count) return fail(`expected ${timed ? 'a time or duration' : count ? spec.positional!.join(', ') : 'no positional arguments'}`,2);
   if (!agent && !name?.startsWith('lane ' ) && name !== 'rearm') return fail('select a clock with --agent or WAKE_AGENT');
   const input: Record<string,unknown> = {};
+  if (name === 'vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
   if (timed) input.when = positional.join(name === 'in' ? '' : ' ');
   if (['at','in','park','schedule set'].includes(name!)) {
@@ -100,6 +101,10 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (timed) {
     const w = value as Wake & { alreadyScheduled?: boolean; schedule: string };
     return success(w.alreadyScheduled ? `already scheduled: ${scheduleName(w.schedule,agent!)}, next at ${clockTime(w.due)} (nothing armed)` : `${w.id} will wake at ${clockTime(w.due)}`);
+  }
+  if (name === 'vouch') {
+    const {done,gone} = value as {done:string[];gone:string[]};
+    return success(`vouched for ${done.join(' ')}: ${done.length === 1 ? 'it fires' : 'they fire'} as the owner's${gone.length ? `\nunchanged: ${gone.join(' ')}` : ''}`);
   }
   if (name === 'park') { const w = value as Wake; return success(`${w.id} parked on ${w.wait!.id}: it wakes when the owner answers (checked every 5 minutes; 24h at most). End this session now.`); }
   if (name === 'cancel') { const w = value as Wake; return success(w.state === 'cancelled' ? `cancelled ${w.id}` : `${w.id}: ${w.outcome ?? w.state}`); }

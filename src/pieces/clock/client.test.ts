@@ -1,12 +1,13 @@
 import { Readable } from 'node:stream';
 import { runWakeClient } from '../../cli/wake-client.js';
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { startLoom } from '../../foundation.js';
+import { importClock } from './importer.js';
 import { installClock } from './index.js';
 import { clockTime, type CommandAnswer } from './binding.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
@@ -14,10 +15,14 @@ import { wakes, schedules } from './store.js';
 const dirs: string[] = [], closes: Array<()=>Promise<void>> = [];
 afterEach(async()=>{for(const close of closes.splice(0)) await close();for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true});});
 const owner: Viewer = {kind:'member',id:'jonathan'};
-async function setup() {
+async function setup(imported = false) {
   const home=mkdtempSync(join(tmpdir(),'clock-cli-'));dirs.push(home);
+  if (imported) {
+    const source=join(home,'old');mkdirSync(join(source,'art'),{recursive:true});
+    writeFileSync(join(source,'art','spool.jsonl'), ['w-aaaaaa','w-bbbbbb'].map(id=>JSON.stringify({id,kind:'wake',for:'-',at:'2026-11-14 09:00:00',created:'2026-11-13 08:00:00',prompt:'Imported work',note:'unknown'})).join('\n'));
+  }
   const clock=new FakeClock(Date.parse('2026-11-13T15:00:00Z'));
-  const app=await startLoom({home,clock, authenticate:req => req.headers.authorization === 'Bearer fixture-token' ? {viewer:owner,valid:()=>true} : undefined, install(app){const jobs=installClock(app.db,app.operations,app.live,()=>({members:{jonathan:{owner:true,agents:['art','other']}},projects:{},services:{}}),{approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}});app.onClose(jobs.close);}});closes.push(()=>app.close());
+  const app=await startLoom({home,clock, authenticate:req => req.headers.authorization === 'Bearer fixture-token' ? {viewer:owner,valid:()=>true} : undefined, install(app){if(imported)importClock(app.db,join(home,'old'),clock.now());const jobs=installClock(app.db,app.operations,app.live,()=>({members:{jonathan:{owner:true,agents:['art','other']}},projects:{},services:{}}),{approvals:{check:()=>({state:'pending'}),subscribe:()=>()=>{}}});app.onClose(jobs.close);}});closes.push(()=>app.close());
   const run=(argv:string[],viewer=owner,id=randomUUID(),laneFile?:{path:string;text:string})=>{
     const answer=app.operations.call('http',viewer,'clock.command',{argv,agent:'art',laneFile},id);
     if(!answer.ok)throw Error(JSON.stringify(answer));return answer.value as CommandAnswer;
@@ -170,4 +175,45 @@ it('refuses ambiguous same-agent schedule names instead of choosing different wo
   a.operations.call('direct',owner,'clock.scheduleSet',{id:'art/care',agent:'art',at:'09:31',prompt:'Other words',note:''},randomUUID());
   expect(a.run(['schedule','run','care'])).toMatchObject({exit:1,stderr:'wake: schedule name is ambiguous; use its exact id in the Clock app\n'});
   expect(wakes(a.db).filter(w=>w.runNow)).toHaveLength(0);
+});
+
+it('vouches through the command with canonical unique ids and one outer retry receipt',async()=>{
+  const a=await setup(true), args=['vouch','w-bbbbbb','w-aaaaaa','w-bbbbbb'];
+  const result=a.run(args,owner,'vouch-retry');
+  expect(result).toEqual({exit:0,stdout:"vouched for w-aaaaaa w-bbbbbb: they fire as the owner's\n",stderr:''});
+  const snapshot=wakes(a.db);
+  expect(snapshot.every(w=>w.state==='pending' && w.by.kind==='member' && w.by.id==='jonathan')).toBe(true);
+  expect(a.run(args,owner,'vouch-retry')).toEqual(result);
+  expect(wakes(a.db)).toEqual(snapshot);
+  expect(a.db.prepare("SELECT * FROM clock_events").all()).toHaveLength(2);
+});
+it('reports unchanged vouch targets truthfully and keeps the owning policy on every command call',async()=>{
+  const a=await setup(true), before=wakes(a.db);
+  for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'stranger'}] as Viewer[])
+    expect(a.run(['vouch','w-aaaaaa'],viewer)).toMatchObject({exit:1,stdout:''});
+  expect(a.run(['--agent','other','vouch','w-aaaaaa'])).toMatchObject({exit:1,stdout:''});
+  expect(a.run(['vouch'])).toMatchObject({exit:2,stdout:''});
+  expect(a.run(['vouch','w-aaaaaa','--approval','a-old'])).toMatchObject({exit:2,stdout:''});
+  expect(a.run(['vouch','w-INVALID'])).toMatchObject({exit:1,stdout:''});
+  expect(a.operations.call('http',{kind:'service',id:'clock'},'clock.command',{argv:['vouch','w-aaaaaa'],agent:'art'},randomUUID())).toMatchObject({ok:false,code:'denied'});
+  expect(wakes(a.db)).toEqual(before);
+  const missing='w-cccccc';
+  expect(a.run(['vouch','w-aaaaaa',missing])).toEqual({exit:0,stdout:"vouched for w-aaaaaa: it fires as the owner's\nunchanged: w-cccccc\n",stderr:''});
+  expect(wakes(a.db).find(w=>w.id==='w-bbbbbb')).toEqual(before.find(w=>w.id==='w-bbbbbb'));
+  expect(a.run(['vouch','w-aaaaaa'])).toMatchObject({exit:1,stdout:''});
+});
+it('retries owner vouch over HTTP after losing the committed answer without adopting twice',async()=>{
+  const a=await setup(true),token=join(dirs.at(-1)!,'token');writeFileSync(token,'fixture-token');
+  let stdout='',stderr='',calls=0;const bodies:string[]=[];
+  const code=await runWakeClient(['vouch','w-aaaaaa'],{
+    env:{LOOM_URL:a.url,LOOM_TOKEN_FILE:token,WAKE_AGENT:'art'},stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>stdout+=s,stderr:s=>stderr+=s,
+  },{request:async(url,init)=>{
+    bodies.push(String(init?.body));const response=await fetch(url,init);
+    if(++calls===1){await response.body?.cancel();throw Error('lost response');}return response;
+  },retry:async()=>{}});
+  expect(code).toBe(0);expect(stderr).toBe('');
+  expect(stdout).toBe("vouched for w-aaaaaa: it fires as the owner's\n");
+  expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
+  expect(a.db.prepare('SELECT * FROM clock_events').all()).toHaveLength(1);
+  expect(wakes(a.db).find(w=>w.id==='w-aaaaaa')).toMatchObject({state:'pending',by:owner});
 });

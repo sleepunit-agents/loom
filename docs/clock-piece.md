@@ -452,8 +452,15 @@ with legacy duration/grep/last-2000 filtering; old subprocess log details are no
 reconstructed. Schedule ids created here are namespaced by agent; existing raw
 ids remain addressable only on their own agent's clock.
 
-Vouch/ask-vouch remain explicit refusals until the owning provenance workflow
-lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
+`vouch <id> [<id> …]` calls the existing owner-only `clock.vouch` operation.
+The binding sorts and deduplicates ids into its canonical target; the operation
+retains every policy, eligibility and batch-size check. The legacy owner
+confirmation line is preserved; partial results add `unchanged: <ids>` rather
+than claiming that every ineligible row fired. `--approval` is deliberately
+refused: Allow is applied and spent by Approvals itself, never by this client.
+The authenticated owner token replaces the old host-terminal identity test and
+interactive typed-id confirmation. Agent tokens cannot vouch. `ask-vouch` remains
+an explicit refusal until its owning filing/grouping workflow lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
 refused in favor of the daemon, runtime, Clock app and core migration. This client
 slice does not claim completion of provenance, local approvals, runtime dispatch
 or importer-all registration; those remain on t-2201.
@@ -609,7 +616,8 @@ itself must explicitly supply this application role; an uncomposed installer
 continues to fail closed. Clock never reads Approvals tables or spends its receipt.
 
 This is the backend owning application for legacy `vouch-approved` and the owner
-vouch action. Client/app vouch and ask-vouch filing, automatic grouped asking and
+vouch action. The wake client exposes the owner action as described above. App
+vouch and ask-vouch filing, automatic grouped asking and
 denial suppression, other imported adoption/recovery, and runtime-authenticated
 provenance remain unfinished on t-2201. No live import, configuration or dispatch
 is enabled by this slice.
