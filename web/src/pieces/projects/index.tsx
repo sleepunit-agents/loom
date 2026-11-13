@@ -1,0 +1,44 @@
+import {useState,useEffect} from 'react';
+import {useRecords} from '../../data';
+import {Split,List,Empty,Loading,Error,Input} from '../../kit';
+import {projects,whatOf,safeHref,type ProjectRecord,type ProjectItem,type ProjectSection} from './model';
+interface Access {[key:string]:unknown;id:string;allowed:boolean;agents:string[]}
+export const projectsSession={folder:'active',query:'',agent:''};
+function Link({item,go}:{item:ProjectItem;go?:(path:string)=>void}){
+ const href=safeHref(item.href);
+ return <li className="grid gap-1 py-2"><p>{href?<a className="underline" href={href} onClick={e=>{if(go&&href.startsWith('/')&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go(href);}}}>{item.title}</a>:item.title}{item.status&&<span> · {item.status}</span>}{item.new&&<span> · new</span>}</p><p className="text-sm text-[var(--muted)]">{[item.when,...(item.who??[]),item.ref].filter(Boolean).join(' · ')}</p>{item.body&&<details><summary>Details</summary><p className="whitespace-pre-wrap">{item.body}</p></details>}</li>;
+}
+function Section({s,go}:{s:ProjectSection;go?:(path:string)=>void}){
+ const body=s.error?<Error text={s.error}/>:!s.available?<p>{s.label} service is not available yet.</p>:<>{s.groups?.filter(g=>!g.waiting).map(g=><div key={g.title}><h3 className="font-medium">{g.title}</h3><ul>{g.items.map((item,i)=><Link key={i} item={item} go={go}/>)}</ul></div>)}<ul>{s.items?.filter(i=>!i.waiting).map((item,i)=><Link key={i} item={item} go={go}/>)}</ul>{!(s.items?.length||s.groups?.some(g=>!g.waiting&&g.items.length))&&<p>Nothing else here.</p>}{s.total!==undefined&&<p>{s.total} in all; {s.items?.length??0} shown.</p>}{s.counts&&<p>{Object.entries(s.counts).map(([key,n])=>`${key}: ${n}`).join(' · ')}</p>}</>;
+ return ['notes','memories'].includes(s.key)?<details className="border-t pt-3"><summary>{s.label}</summary>{body}</details>:<section className="border-t pt-3"><h2 className="text-lg font-semibold">{s.label}</h2>{body}</section>;
+}
+function Reader({project:p,go}:{project:ProjectRecord;go?:(path:string)=>void}){
+ if(p.archived)return <Empty title="This project is archived" text={p.name}/>;
+ return <article className="grid gap-5 p-5"><header><p>{p.agent} · {p.card.status}</p><h1 className="text-2xl font-semibold">{p.name}</h1>{p.card.summary&&<p className="whitespace-pre-wrap">{p.card.summary}</p>}</header>
+  <section><h2>Goal and where it stands</h2>{p.card.goal&&<p>{p.card.goal}</p>}<dl>{p.fields.map(f=><div key={f.key}><dt>{f.key}</dt><dd>{f.value} · {f.state}{p.card.where[f.key].verified_at&&` · ${p.card.where[f.key].verified_at}`}{p.card.where[f.key].source&&` · ${p.card.where[f.key].source}`}</dd></div>)}</dl></section>
+  <section><h2 className="text-lg font-semibold">Waiting on you</h2>{p.waiting.length?<ul>{p.waiting.map((i,n)=><Link key={n} item={i} go={go}/>)}</ul>:<p>{p.unknown?"Couldn't count everything waiting; a section is unavailable.":'Nothing waiting on you.'}</p>}</section>
+  {p.sections.map(s=><Section key={s.key} s={s} go={go}/>)}
+  {!!p.card.links.repos?.length&&<section><h2>Repositories</h2><ul>{p.card.links.repos.map(r=><li key={r}>{r.replace(/^github:/,'')}</li>)}</ul></section>}
+ </article>;
+}
+function Card({p,selected,onClick}:{p:ProjectRecord;selected:boolean;onClick:()=>void}){
+ return <li><button type="button" data-split-row aria-pressed={selected} onClick={onClick} className="grid w-full gap-3 border-b p-4 text-left hover:bg-[var(--surface-2)] focus-visible:outline"><span className="flex justify-between gap-3"><strong>{p.name}</strong><span>{p.card.status}</span></span><span>{p.agent} · {whatOf(p.card.summary)}</span>{p.card.status==='active'&&<><strong>{p.waiting.length?`${p.waiting.length} for you · ${p.waiting.slice(0,4).map(i=>i.title).join(' · ')}`:p.unknown?"Couldn't count what's waiting":'Nothing waiting on you'}</strong>{!!p.lately.length&&<span>Lately: {p.lately.map(i=>`${i.title}${i.status?` (${i.status})`:''}`).join(' · ')}</span>}{p.spark.some(Boolean)&&<span aria-label={`${p.spark.reduce((a,b)=>a+b,0)} dated things in this project's sections over the last 7 days`} className="flex h-5 items-end gap-1">{p.spark.map((n,i)=><span key={i} className="w-2 bg-[var(--accent)]" style={{height:`${Math.max(2,n/Math.max(...p.spark)*20)}px`}}/>)}</span>}{p.changes&&<span>{p.changes.open} open · {p.changes.failing} failing · {p.changes.running} checking</span>}</>}<span>{p.people.slice(0,4).join(' · ')}{p.people.length>4?` +${p.people.length-4}`:''}</span><span>{(p.card.links.repos??[]).slice(0,6).map(r=>r.replace(/^github:/,'')).join(' · ')}{(p.card.links.repos?.length??0)>6?` +${p.card.links.repos!.length-6}`:''}</span><span className="text-sm text-[var(--muted)]">Activity {p.activity}</span></button></li>;
+}
+export default function ProjectsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){
+ const base='/p/projects-preview';const [local,setLocal]=useState(()=>typeof location==='undefined'?base:location.pathname);
+ const path=(shellPath??local).split('?')[0];let selected:string|undefined;try{selected=path.startsWith(`${base}/project/`)?decodeURIComponent(path.slice(`${base}/project/`.length)):undefined;}catch{/* Invalid route remains not found. */}
+ const navigate=(id?:string)=>{const next=id?`${base}/project/${encodeURIComponent(id)}`:base;if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
+ useEffect(()=>{if(go)return;const pop=()=>setLocal(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
+ const access=useRecords<Access>('projects.access'),feed=useRecords<ProjectRecord>('project'),detail=useRecords<ProjectRecord>('project.hub',selected??'');
+ const permission=access.status==='live'?access.records[0]:undefined;
+ const [folder,setFolder]=useState(projectsSession.folder),[query,setQuery]=useState(projectsSession.query),[agent,setAgent]=useState(projectsSession.agent);
+ const active=feed.records.filter(p=>!p.archived&&p.card.status==='active').length,quiet=feed.records.filter(p=>!p.archived&&p.card.status!=='active').length;
+ const effectiveFolder=active?folder:'quiet';const shown=projects(feed.records,effectiveFolder,query,agent);
+ const unavailable=(status:string)=><Error text={status==='denied'?'You don’t have access to Projects.':'Connection lost. Projects will return when connected.'}/>;
+ if(access.status==='loading')return <Loading label="Opening projects…"/>;if(access.status!=='live')return unavailable(access.status);if(!permission?.allowed)return unavailable('denied');
+ return <Split className="h-full" label="Projects" folders={[{id:'active',label:'Active',count:active},{id:'quiet',label:'Paused and done',count:quiet}]} folder={effectiveFolder} onFolder={value=>{projectsSession.folder=value;setFolder(value);}}
+  search={<div className="grid gap-2"><label>Search projects<Input type="search" value={query} onChange={e=>{projectsSession.query=e.target.value;setQuery(e.target.value);}}/></label><label>Agent<select value={agent} onChange={e=>{projectsSession.agent=e.target.value;setAgent(e.target.value);}}><option value="">All authorized agents</option>{permission.agents.map(a=><option key={a}>{a}</option>)}</select></label></div>}
+  listTitle="Projects" listMeta={`${shown.length} projects`} list={feed.status==='loading'?<Loading label="Opening projects…"/>:feed.status!=='live'?unavailable(feed.status):<><List label="Projects">{shown.map(p=><Card key={p.id} p={p} selected={p.id===selected} onClick={()=>navigate(p.id)}/>)}</List>{!shown.length&&<Empty title={query.trim()?`Nothing matches “${query.trim()}”`:active||quiet?'No projects here':'No projects yet'} text="A project is an ongoing body of work with a goal. An agent makes one with project_write."/>}</>}
+  reader={detail.status==='loading'?<Loading label="Opening project…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?<Reader project={detail.records[0]} go={go}/>:<Empty title="Project not found" text="It may have been archived or removed."/>}
+  open={!!selected} onBack={()=>navigate()} backLabel="Projects" blank={<Empty title="Open a project" text="See what is queued, who is involved and what happened lately."/>}/>;
+}
