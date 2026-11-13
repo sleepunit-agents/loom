@@ -54,7 +54,7 @@ it('uses commit order at the same clock, clears older asks including other runs,
 it('preserves question validation and caps before receipt or digest storage', async () => {
   const { app, write } = await setup();
   const receipts = app.db.prepare('SELECT count(*) AS n FROM core_operations').get();
-  for (const digest of [ { summary: '' }, { summary: 'x'.repeat(601) }, { text: 'delivered words' }, { asks: Array(9).fill('ask') }, { tasks: ['x'.repeat(65)] }, { decisions: [' '] }, { projects: ['Not a slug'] }, { needs_owner: { ...question, text: 'secret' } }, { needs_owner: { ask: 'Merge t-40?' } }, { needs_owner: { ask: 'OK?', waits_on: { pr: 'x#1' } } }, { needs_owner_href: 'https://example.com' }, { needs_owner: question, needs_owner_href: 'http://example.com' } ]) expect(write(digest)).toMatchObject({ code: 'invalid' });
+  for (const digest of [ { summary: '' }, { summary: 'x'.repeat(601) }, { text: 'delivered words' }, { asks: Array(9).fill('ask') }, { tasks: ['x'.repeat(65)] }, { decisions: [' '] }, { decisions: Array(9).fill('decision') }, { tasks: Array(17).fill('t-40') }, { asks: ['x'.repeat(201)] }, { projects: ['a', 'b', 'c', 'd', 'e'] }, { needs_owner: 'x'.repeat(201) }, { needs_owner: { ask: 'x'.repeat(141) } }, ...['why', 'if_yes', 'if_no', 'href'].map(field => ({ needs_owner: { ask: 'OK?', [field]: 'x'.repeat(field === 'why' ? 241 : field === 'href' ? 501 : 141) } })), { projects: ['Not a slug'] }, { needs_owner: { ...question, text: 'secret' } }, { needs_owner: { ask: 'Merge t-40?' } }, { needs_owner: { ask: 'OK?', waits_on: { pr: 'x#1' } } }, { needs_owner_href: 'https://example.com' }, { needs_owner: question, needs_owner_href: 'http://example.com' } ]) expect(write(digest)).toMatchObject({ code: 'invalid' });
   expect(app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
   expect(app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
   expect(app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual(receipts);
@@ -93,6 +93,8 @@ it('requires all central grants for nested ask writes and leaves no partial dige
   const service: Viewer = { kind: 'service', id: 'writer' };
   expect(write({ needs_owner: question }, 'run-1', service)).toMatchObject({ code: 'denied' });
   expect(app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
+  expect(write({}, 'run-1', service)).toMatchObject({ code: 'denied' });
+  expect(write({}, 'run-1', alice)).toMatchObject({ ok: true });
   expect(write({}, 'run-1', service)).toMatchObject({ ok: true });
   expect(call('digests', { conversation }, { kind: 'service', id: 'reader' })).toMatchObject({ code: 'denied' });
   expect(call('digests', { conversation }, { kind: 'service', id: 'listed' })).toMatchObject({ value: [{ run: 'run-1' }] });
@@ -156,4 +158,14 @@ it('restores an open ask when a subsequent nested raise is refused', async () =>
   intercept.mockRestore();
   expect(call('get', { id: `${digestId(conversation, 'run-1')}:1` })).toMatchObject({ value: { state: 'open' } });
   expect(call('digests', { conversation })).toMatchObject({ value: [{ revision: 1, projects: [] }] });
+});
+
+it('requires separate agent and project visibility when creating a digest', async () => {
+  const { app, write, call } = await setup({ project: 'shared' });
+  const carol: Viewer = { kind: 'member', id: 'carol' };
+  expect(call('conversation', { id: conversation }, carol)).toMatchObject({ ok: true });
+  expect(write({}, 'run-new', carol)).toMatchObject({ code: 'denied' });
+  expect(app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
+  expect(write({}, 'run-new', art)).toMatchObject({ ok: true });
+  expect(call('digests', { conversation }, carol)).toMatchObject({ value: [{ run: 'run-new' }] });
 });

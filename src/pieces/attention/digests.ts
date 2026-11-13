@@ -1,7 +1,7 @@
 /** Agent-authored summaries. Delivered messages never pass through this operation. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { operation, mayAct, maySee, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
+import { operation, mayAct, maySee, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
 import type { Conversation } from './conversations.js';
 import { attentionRole } from './role.js';
 import { parseNeeds, answersOf, type NeedsOwner } from './needs.js';
@@ -34,7 +34,13 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
   const conversation = (id: string) => read<Conversation>('attention_conversations', id);
   const all = (id: string) => (db.prepare('SELECT record FROM attention_digests WHERE conversation=? ORDER BY rowid').all(id) as { record: string }[]).map(r => JSON.parse(r.record) as Digest);
   operations.register(operation({ name: 'attention.writeDigest', write: true, input: digestInput, output: z.unknown(),
-    may: (v, i) => { const c = conversation(i.conversation); return !!c && mayAct(v, { type: 'attention.digest', ...c }, sharing(), 'act', 'attention.writeDigest'); },
+    may: (v, i) => {
+      const c = conversation(i.conversation); if (!c) return false;
+      const scope = { type: 'attention.digest', ...c };
+      return read<Digest>('attention_digests', digestId(c.id, i.run))
+        ? mayAct(v, scope, sharing(), 'act', 'attention.writeDigest')
+        : mayCreate(v, scope, sharing(), 'attention.writeDigest');
+    },
     run(ctx, input) {
       const c = conversation(input.conversation)!;
       const id = digestId(c.id, input.run), previous = read<Digest>('attention_digests', id);

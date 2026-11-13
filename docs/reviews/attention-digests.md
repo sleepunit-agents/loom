@@ -15,4 +15,9 @@ Round 1: BLOCKING. Frozen source 5b74f81e150eb393d4300650c8c8030922c94015; TREE 
 - MAJOR policy project inheritance untested: actionable, digest/ask/conversation scope checked, shared-project member can read, member of only the referenced project cannot read or see live record.
 - NIT hash vector: actionable, pinned literal dg-29237ec06e2f for cv-b28ed6ba6479 + NUL + run-1, independently calculated with SHA-256.
 
-Round 2 pending. No further rounds after three; decide by the standing bounded-review rule.
+Round 2: BLOCKING. Frozen source 83b72eef1f4a327f9d7bea9224882ad3c1163ceb; TREE sha256:b852c10ef6f108f2de120ffc38d3f85c2364cc2e0dcd783fe280a022ca121282. /home/art/scratch/attention-digest-review/round-2/reply.md.
+
+- CRITICAL creation used only mayAct: actionable, new digest ids now use central mayCreate (separate inherited project/agent visibility), existing immutable-scope digests use mayAct. Added shared-project member who can read the conversation but cannot see its agent separately: denied creation, permitted read after the agent creates it. Services likewise cannot create agent-scoped records without satisfying central creation policy.
+- MAJOR independent limits untested: actionable, added decisions count, tasks count, asks item length, projects count, legacy/object question length, why/if_yes/if_no/href length rejections.
+
+Round 3 pending. No further rounds after three; decide by the standing bounded-review rule.
