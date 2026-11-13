@@ -922,8 +922,12 @@ is still held; unrelated Saved feedback is not reused here.
 New filing remains through the authenticated bound agent body in the private
 conversation, as the reader explains. A member window never manufactures a body
 Caller: Runtime conversations.approvalCaller accepts only its exact authenticated
-agent Viewer and current private binding. A new owner-facing filing interaction
-through that body remains unfinished; this form schedules existing filings only.
+agent Viewer and current private binding. The Local requests folder and reader
+link to `/p/comms-preview/new`, opening the existing private composer. The owner
+chooses an available agent and asks it to file local work there. Sending is a
+Comms acknowledgement; the card exists only after the bound body calls
+`clock.requestLocal`. The owner then reviews that card here. This timing form
+schedules existing filings only.
 
 ### Owning-window recovery seam
 
@@ -946,5 +950,24 @@ in the existing owning recovery roles. Window wrapper receipts are omitted from
 export. No migration or Runtime launch is added.
 
 The Clock app uses this seam for recovery scheduling. It sends no saved words,
-Caller or scope. It does not file new work or launch Runtime; owner-facing filing
-through the bound body and actual private Runtime delivery remain unfinished.
+Caller or scope. Filing is requested through private chat as described above;
+actual private Runtime delivery remains unfinished.
+
+### Private-chat filing proof
+
+The single Clock browser proof runs next mode with real Signin, encrypted Comms,
+Runtime binding, runner claim/input/report and the issued body credential. From
+Clock the owner opens the new-thread route, sends exact local-work instructions,
+and the test body reads them through `runtime.readConversation`. It calls the
+public `clock.requestLocal` with that body credential and posts the review link
+through `runtime.reply`. Comms renders only the exact relative Clock approval
+path (`/p/clock-preview/item/a-` plus eight lowercase hex characters) in this
+window; arbitrary internal links remain inert and external HTTPS links retain
+their separate-window protection. The destination still checks window ownership
+before showing or answering a card; a link supplies no authority.
+The owner follows it into the existing decision and
+scheduling flow. Runner and unbound-agent filing attempts fail; outsider windows
+cannot read the thread or card. The proof replaces synthetic trusted Caller
+filing fixtures. It uses a deterministic body tool-call harness, without claiming
+model interpretation or an external runner process. Sending, filing and allowing
+start no local wake; scheduled private wakes retain exact words and stay held.

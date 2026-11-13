@@ -237,3 +237,11 @@ it('watches unjoined jobs until a local join or a persisted member message',()=>
  // Reopening creates a new reader; an unsent local join does not persist.
  expect(watchingJob({joined:false},false)).toBe(true);
 });
+
+it('opens only exact Clock local-approval paths in this window, keeping arbitrary internal links inert',()=>{
+ const html=replyHtml('[Review local request](/p/clock-preview/item/a-1234abcd) [external](https://example.com)');
+ expect(html).toContain('href="/p/clock-preview/item/a-1234abcd"');
+ expect(html).toMatch(/<a href="\/p\/clock-preview\/item\/a-1234abcd">Review local request<\/a>/);
+ expect(html).toMatch(/href="https:\/\/example.com" target="_blank" rel="noopener noreferrer"/);
+ for(const path of ['/p/clock-preview/item/a-1234abcd?allow=true','/p/clock-preview/item/a-1234abcd/../../settings','/p/clock-preview/item/a-1234abcD','/p/clock-preview/item/w-123456','/p/clock-preview/item/a-%31%32%33%34abcd','//evil.invalid/p/clock-preview/item/a-1234abcd','/p/approvals-preview','/p/clock-preview/item/a-1234abcd#allow'])expect(replyHtml(`[bad](${path})`)).not.toContain('<a ');
+});

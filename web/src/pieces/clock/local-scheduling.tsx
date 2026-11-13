@@ -23,7 +23,7 @@ export function LocalScheduling({ approval, snapshot }: { approval: Approval; sn
   }
   return <section aria-label="Schedule saved local work" className="grid min-w-0 gap-3 p-5 [overflow-wrap:anywhere]">
     <h2>Schedule saved local work</h2>
-    <p>Ask your agent in your private conversation to file new local work. Its exact saved words appear above. Allowing a request starts nothing.</p>
+    <p><a href="/p/comms-preview/new">Ask an agent in a private thread</a> to file new local work. Its exact saved words appear above. Allowing a request starts nothing.</p>
     <p>Scheduling keeps those words and the original note. Local delivery is still held; a saved wake does not mean a body has started.</p>
     {eligible ? <form aria-label="Local work timing" onSubmit={submit} className="grid gap-3">
       <fieldset disabled={!enabled} className="grid gap-3">
