@@ -17,7 +17,9 @@ with tempfile.TemporaryDirectory() as root:
     receipt={'id':'a-01234567','kind':'merge','target':target,'what':'Merge the fix?','why':'It fixes the page.','who':{'agent':'art','where':'h-1'},'for':'owner','minutes':60,'at':'2026-11-12T00:00:00Z','state':'pending','ask':'Merge the fix?','if_yes':'I merge it.','if_no':'I leave it open.'}
     allowed={**receipt,'state':'allowed','decided':'2026-11-12T00:00:00Z','expires':'2026-11-12T01:00:00Z','by':'jonathan'}
     cases=[]
-    def case(label,argv,approvals=[],rules=[],member=False):
+    def case(label,argv,approvals=[],rules=[],member=False,principal=None):
+        principal = principal or {'for':'owner','people':[]}
+        ap.principal_for_call=lambda *args,**kwargs:principal
         with tempfile.TemporaryDirectory(dir=root) as home:
             ap.STATE=Path(home)
             Path(home,'approvals.json').write_text(json.dumps({'v':1,'approvals':{a['id']:a for a in approvals},'notices':[]}))
@@ -29,7 +31,7 @@ with tempfile.TemporaryDirectory() as root:
                 expected={'exit':0,'stdout':out,'stderr':err}
             except (ValueError,LookupError,PermissionError) as e:
                 expected={'exit':1,'stdout':'','stderr':f'approvals: {e}\n'}
-            cases.append({'label':label,'argv':argv,'approvals':approvals,'rules':rules,'member':member,'expected':expected})
+            cases.append({'label':label,'argv':argv,'approvals':approvals,'rules':rules,'member':member,'principal':principal,'expected':expected})
     case('request',['request','--kind','merge','--target',target,'--ask','Merge the fix?','--why','It fixes the page.','--if-yes','I merge it.','--if-no','I leave it open.'])
     case('request already allowed',['request','--kind','merge','--target',target,'--what','Merge the fix?','--why','It fixes the page.'],[allowed])
     for state,a in [('pending',receipt),('allowed',allowed),('denied',{**receipt,'state':'denied','decided':receipt['at']})]:
@@ -54,5 +56,17 @@ with tempfile.TemporaryDirectory() as root:
     case('owner grant',['grant','--kind','merge','--target',target,'--for','art'],member=True)
     case('agent list refused',['list'],[receipt])
     case('agent grant refused',['grant','--kind','merge','--target',target,'--for','art'])
+    # Authenticated principal comes from a trusted fixture, never from CLI flags.
+    for principal in [{'for':'loren','people':[]},{'for':'?','people':[]},{'for':'?','people':['dan','eve']},{'for':'?','people':['dan','eve','loren']},{'for':'?','people':['dan','eve','loren','mark']}]:
+        label='principal '+principal['for']+':'+','.join(principal['people'])
+        own={**allowed,'for':principal['for'],'people':principal['people']}
+        case(label+' spends matching receipt',['use',own['id'],'--kind','merge','--target',target],[own],principal=principal)
+        case(label+' cannot spend owner receipt',['use',allowed['id'],'--kind','merge','--target',target],[allowed],principal=principal)
+        case(label+' rule',['rule','merge',target,'--json'],[own],rules=[do],principal=principal)
+        case(label+' check json',['check',own['id'],'--json','--principal=fixture-proof'],[own],principal=principal)
+    case('unknown people mismatch',['use',allowed['id'],'--kind','merge','--target',target],[{**allowed,'for':'?','people':['eve']}],principal={'for':'?','people':['dan']})
+    case('equals values',['use',allowed['id'],'--kind=merge','--target='+target],[allowed])
+    case('last repeated value wins',['use',allowed['id'],'--kind','relay','--kind','merge','--target',target],[allowed])
+    case('flags before positional',['check','--json',allowed['id']],[allowed])
     dest=Path(__file__).resolve().parent
-    Path(dest,'cli-oracle.json').write_text(json.dumps({'upstream':'588b3f7c22f86068063153676de159597348216a','generated_by':'offline Python run() oracle; frozen time and id; trusted owner principal; no runtime subprocess','cases':cases},indent=2)+'\n')
+    Path(dest,'cli-oracle.json').write_text(json.dumps({'upstream':'588b3f7c22f86068063153676de159597348216a','generated_by':'offline Python run() oracle; frozen time and id; trusted principal fixtures; no runtime subprocess','cases':cases},indent=2)+'\n')

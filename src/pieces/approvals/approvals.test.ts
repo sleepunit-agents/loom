@@ -302,6 +302,7 @@ describe('frozen independent old CLI oracle',()=>{
   const oracle=JSON.parse(readFileSync(new URL('./fixtures/cli-oracle.json',import.meta.url),'utf8'));
   it.each(oracle.cases)('$label',async test=>{
     const a=await setup();
+    if(test.principal)a.identity(test.principal);
     persist(a.db,{approvals:test.approvals,rules:test.rules,grants:[],standing:[],audit:[],notices:[]},a.clock.now());
     const result=a.value('command',{argv:test.argv},test.member?owner:agent);
     // Request and owner grant allocate a new random id; the oracle freezes that allocation.

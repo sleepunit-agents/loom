@@ -61,7 +61,11 @@ week after the last receipt change. Pending receipts remain live indefinitely.
 The owner rule view retains the old pending-first, newest-first list of named
 principals, one card per person. Central household authority and record visibility
 apply to this view; being a signed-in member alone grants no owner access. The
-independent frozen CLI oracle includes both empty and populated owner views.
+independent frozen CLI oracle covers 50 cases, including empty and populated owner
+views, named and unknown principals with exact people sets, principal-mismatch
+refusal wording, JSON rule output without duplicate stderr warnings, equals-form
+flags, repeated values and flags before positional arguments. Expected results
+come from the pinned old Python program; the test suite reads frozen JSON only.
 
 ## Data and authority
 

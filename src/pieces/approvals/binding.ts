@@ -52,7 +52,7 @@ export function command(operations:Operations,viewer:Viewer,argv:string[]):Comma
   else if(verb==='rule'){
     if(input.json)out=legacyJson(value);
     else {const targets=input.targets as string[];out=targets.map(t=>{const r=value[t];return r.tier+(r.tier==='ask'&&r.approval?` ${r.approval.state} ${r.approval.id}`:'')+(targets.length===1?'':`  ${t}`);}).join('\n');}
-    stderr=[...new Set(Object.values(value).flatMap((r:any)=>r.note?[`approvals: ${r.note}\n`]:[]))].join('');
+    stderr=input.json?'':[...new Set(Object.values(value).flatMap((r:any)=>r.note?[`approvals: ${r.note}\n`]:[]))].join('');
   } else if(verb==='tell'){
     const n=value as Notice,r=repoOf(n.target),agent=n.agent[0].toUpperCase()+n.agent.slice(1);
     const whose=n.for&&n.for!=='owner'?` for ${n.for.split('-').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')}`:'';

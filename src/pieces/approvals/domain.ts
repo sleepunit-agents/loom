@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { OperationError } from '../../core/index.js';
 import { type State, type Approval, type Caller, type Standing, iso, stateOf, maySpend, samePrincipal, forOf, pieceKinds, pieceSpent, serviceOf } from './model.js';
 import { invalid, denied, exactTarget, repoOf, hostOf, grantOf, vouchOf, resetOf, writeoffOf, covered, standingTarget } from './targets.js';
-import { plain, checkPlain } from './words.js';
+import { plain, checkPlain, principalWords } from './words.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 export interface DomainContext { caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string; canRead?: (approval:Approval)=>boolean }
 export function find(s: State, id: string): Approval { const a = s.approvals.find(a => a.id === id); if (!a) throw new OperationError('not-found', `no approval ${id}`); return a; }
@@ -89,7 +89,7 @@ export function use(s: State, id: string, kind: string, target: string, c: Domai
   const state = stateOf(a,now);
   if (state !== 'allowed') denied(`${id} is ${state}${state === 'pending' ? ', waiting on the owner' : ''}`);
   if (a.kind !== kind || a.target !== target) denied(`${id} allows ${a.kind} for ${a.target}, not ${kind} for ${target}`);
-  if (!(c.piece && kind === 'grant') && !samePrincipal(a,caller)) denied(`${id} was asked for ${forOf(a)}; this body acts for ${caller.for}`);
+  if (!(c.piece && kind === 'grant') && !samePrincipal(a,caller)) denied(`${id} was asked for ${principalWords(a)}; this body acts for ${principalWords(caller,'you')}`);
   const last = newest(s,a);
   if (last?.id !== id && last?.state === 'denied' && last.decided! > (a.decided ?? '')) { if(c.canRead && !c.canRead(last)) denied('A later decision prevents this spend'); denied(`${id} was overruled: the owner said no to ${target} after (${last.id})`); }
   const no = s.approvals.find(b => b.id !== id && b.kind === kind && b.state === 'denied' && b.who.agent === a.who.agent && (b.decided ?? '') > (a.decided ?? '') && covered(b).some(id => covered(a).includes(id)));

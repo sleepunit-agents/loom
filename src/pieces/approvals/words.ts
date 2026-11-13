@@ -2,6 +2,16 @@ import { invalid, grantOf, vouchOf, resetOf, hostOf, writeoffOf } from './target
 import { type Approval, forOf } from './model.js';
 export const plain = (text: string, n = 1e6) => text.normalize('NFKC').replace(/[\p{C}\p{Z}<>\[\]{}]/gu,' ').replace(/ +/g,' ').trim().slice(0,n);
 const names = (slug: string) => slug.split('-').map(w => w[0]?.toUpperCase()+w.slice(1)).join(' ');
+/** Legacy principal wording used in spend refusals. */
+export function principalWords(p: {for?: string;people?: string[]}, owner = 'the owner'): string {
+  const who = forOf(p);
+  if (who === 'owner') return owner;
+  if (who !== '?') return names(who).slice(0,40);
+  const people = (p.people ?? []).map(p=>names(p).slice(0,40));
+  if (people.length > 3) return `${people.slice(0,2).join(', ')} and ${people.length-2} others`;
+  if (people.length > 1) return `${people.slice(0,-1).join(', ')} and ${people.at(-1)}`;
+  return "someone loom can't name";
+}
 export function checkPlain(words: Record<string,string>) {
   for (const [field,text] of Object.entries(words)) {
     const max = field === 'ask' ? 140 : field === 'why' ? 240 : 200;
