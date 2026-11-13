@@ -8,26 +8,23 @@ function useCall<T>(request?: Call<T>) {
   return useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle as CallState<T>));
 }
 const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
-export function AskReader({ ask, snapshot, go }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void }) {
-  const [confirmation,setConfirmation] = useState<{ records: readonly Ask[]; request: Call<Ask> }>();
+type Confirmation = { records: readonly Ask[]; request: Call<Ask> };
+export function AskReader({ ask, snapshot, go, initialConfirmation, lock, busy = false, onBusy }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; lock?: {current:boolean}; busy?: boolean; onBusy?(busy:boolean):void }) {
+  const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
   const [request,setRequest] = useState<Call<Ask>>();
   const [checking,setChecking] = useState(false), [draft,setDraft] = useState('');
   const [message,setMessage] = useState('');
   const latest = useRef(snapshot); latest.current = snapshot;
-  const sending = useRef(false), mounted = useRef(true);
+  const localLock = useRef(false), mounted = useRef(true);
+  const sending = lock ?? localLock;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; },[]);
   const link = decisionLink(ask);
-  // A live set is necessary, but only the daemon read confirms that the displayed ask is still open.
-  useEffect(() => {
-    if (snapshot.status === 'live' && ask.state === 'open' && !link && !ask.member) {
-      setConfirmation({records:snapshot.records,request:call<Ask>('attention.get',{id:ask.id})});
-    } else setConfirmation(undefined);
-  },[snapshot.records,snapshot.status,ask.id,ask.state,ask.member,link?.path]);
+  // Opening a row or pressing Check again creates the read; effects never replay requests.
   const checked = useCall(confirmation?.request), saving = useCall(request);
   const confirmed = snapshot.status === 'live' && confirmation?.records === snapshot.records && checked.result?.ok && checked.result.value.id === ask.id && checked.result.value.state === 'open';
   async function answer(value: Answer) {
-    if (!confirmed || sending.current || saving.pending) return;
-    sending.current = true; setChecking(true); setMessage('');
+    if (!confirmed || sending.current || busy || saving.pending) return;
+    sending.current = true; onBusy?.(true); setChecking(true); setMessage('');
     const records = snapshot.records;
     try {
       // Always ask again immediately before the write. A reconnect, scope change or changed record invalidates it.
@@ -36,9 +33,10 @@ export function AskReader({ ask, snapshot, go }: { ask: Ask; snapshot: Snapshot<
       if (latest.current.status !== 'live' || latest.current.records !== records || !fresh.ok || fresh.value.id !== ask.id || fresh.value.state !== 'open') {
         setConfirmation(undefined); setMessage('This ask changed or could not be checked. Nothing was recorded.'); return;
       }
-      setRequest(call<Ask>('attention.answer',{id:ask.id,answer:value}));
-      setConfirmation(undefined);
-    } finally { sending.current = false; if (mounted.current) setChecking(false); }
+      const write = call<Ask>('attention.answer',{id:ask.id,answer:value});
+      setRequest(write); setConfirmation(undefined);
+      await write.result;
+    } finally { sending.current = false; onBusy?.(false); if (mounted.current) setChecking(false); }
   }
   const href = safeHref(ask.href);
   return <article className="grid min-w-0 grid-cols-1 gap-5 p-5 [overflow-wrap:anywhere]">
@@ -50,8 +48,8 @@ export function AskReader({ ask, snapshot, go }: { ask: Ask; snapshot: Snapshot<
     {ask.member && ask.state === 'open' && !link && <p>Answer this in its private conversation. Private replies stay there.</p>}
     {ask.state === 'open' && !link && !ask.member && <>
       {!confirmed && <p role="status">{message || (checked.result?.ok === false ? `Couldn’t check this ask: ${checked.result.message}` : checked.result?.ok && checked.result.value.state !== 'open' ? 'This ask is no longer open.' : 'Checking whether this ask is still open…')}</p>}
-      {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking} onClick={()=>{setMessage('');setConfirmation({records:snapshot.records,request:call('attention.get',{id:ask.id})});}}>Check again</Button>}
-      {confirmed && <fieldset disabled={checking || saving.pending} className="grid gap-3">
+      {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{setMessage('');setConfirmation({records:snapshot.records,request:call('attention.get',{id:ask.id})});}}>Check again</Button>}
+      {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid gap-3">
         <legend>Record your answer</legend>
         {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" onClick={()=>void answer({kind:'no'})}>No</Button></div>}
         {ask.answers === 'words' && <><label className="grid gap-1">Your answer<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
@@ -74,7 +72,12 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/')+5)) : undefined; } catch { /* Malformed paths select nothing. */ }
   const snapshot = useRecords<Ask>('attention.ask'), {records,status} = snapshot;
   const [folder,setFolder] = useState('needs'), [query,setQuery] = useState('');
+  const [opening,setOpening] = useState<{id:string;confirmation:Confirmation}>();
+  const [busy,setBusy] = useState(false);
+  const lock = useRef(false);
   function navigate(id?: string) {
+    const record = records.find(a=>a.id===id);
+    setOpening(record && status==='live' && record.state==='open' && !record.member && !decisionLink(record) ? {id:record.id,confirmation:{records,request:call<Ask>('attention.get',{id:record.id})}} : undefined);
     const next = id ? `${base}/ask/${encodeURIComponent(id)}` : base;
     if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
   }
@@ -90,8 +93,9 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   return <Split className="h-full" label="Inbox" folder={folder} onFolder={id=>{setFolder(id);navigate();}}
     folders={[{id:'needs',label:'Needs you',count:records.filter(a=>a.state==='open').length},{id:'answered',label:'Answered',count:records.filter(a=>a.state!=='open').length},{heading:'By agent'},...agents.map(agent=>({id:`agent:${agent}`,label:agent,count:records.filter(a=>a.agent===agent && a.state==='open').length}))]}
     search={<label className="grid gap-1">Search asks<Input type="search" value={query} onChange={e=>setQuery(e.target.value)} /></label>}
+    listTop={busy ? <p role="status" className="p-3">An answer is still being checked or recorded. Other answers wait.</p> : undefined}
     listTitle={folder==='answered' ? 'Answered' : folder.startsWith('agent:') ? `From ${folder.slice(6)}` : 'Needs you'} listMeta={shown.length}
     list={status==='loading' ? <Loading label="Opening Inbox…" /> : status!=='live' ? <Error text={status==='denied' ? 'Sign in to see your Inbox.' : 'Waiting for connection. Answers wait until loom is reachable.'} /> : <><List label="Ask list">{shown.map(ask=><Row key={ask.id} title={ask.ask} meta={ask.why} status={`${ask.agent ?? 'Household'} · ${ask.state}`} selected={ask.id===selected} onClick={()=>navigate(ask.id)} />)}</List>{!shown.length && <Empty title={query ? `Nothing matches “${query}”` : folder==='needs' ? 'Nothing needs you' : 'No asks here'} text={query ? 'Try another search.' : 'Asks from your agents appear here.'} />}</>}
-    reader={current ? <AskReader key={current.id} ask={current} snapshot={snapshot} go={openLink} /> : selected ? <Empty title="This ask is no longer in view" text="It may have changed or become unavailable." /> : null}
+    reader={current ? <AskReader key={current.id} ask={current} snapshot={snapshot} go={openLink} initialConfirmation={opening?.id===current.id ? opening.confirmation : undefined} lock={lock} busy={busy} onBusy={setBusy} /> : selected ? <Empty title="This ask is no longer in view" text="It may have changed or become unavailable." /> : null}
     open={!!selected} onBack={()=>navigate()} backLabel="Inbox" blank={<Empty title="Open an ask" text="Read the full question and what happens either way." />} />;
 }

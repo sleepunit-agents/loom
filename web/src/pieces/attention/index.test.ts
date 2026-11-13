@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h, useSyncExternalStore } from '../../web/node_modules/react/index.js';
-import { act, create } from '../../web/node_modules/react-test-renderer/index.js';
-import type { Ask } from '../../web/src/pieces/attention/model';
-import type { Call, CallState, Result, Snapshot } from '../../web/src/data';
+import { createElement as h, useSyncExternalStore } from 'react';
+// @ts-expect-error The existing react-test-renderer dependency ships without declarations.
+import { act, create } from 'react-test-renderer';
+import type { ReactElement } from 'react';
+// Renderer props include arbitrary DOM attributes and callbacks; tests invoke them dynamically.
+type Node = { children: Array<Node|string>; props: Record<string, any> };
+import type { Ask } from './model';
+import type { Call, CallState, Result, Snapshot } from '../../data';
 const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn() }));
-vi.mock('../../web/src/data',()=>({useRecords:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot),call:f.call}));
-vi.mock('../../web/src/lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
-import InboxApp, { AskReader } from '../../web/src/pieces/attention';
-import { decisionLink, safeHref } from '../../web/src/pieces/attention/model';
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+vi.mock('../../data',()=>({useRecords:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot),call:f.call}));
+vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
+import InboxApp, { AskReader } from './index';
+import { decisionLink, safeHref } from './model';
+(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const ask = (id='ask-1', fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:'Continue the work?',why:'A useful result',if_yes:'I continue.',if_no:'I stop.',answers:'yes-no',source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 function request<T>() {
   let state:CallState<T>={pending:true,status:'pending'}, resolve:(r:Result<T>)=>void;
@@ -17,10 +21,10 @@ function request<T>() {
   return {call, async finish(result:Result<T>) { await act(async()=>{state={pending:false,status:'done',result};resolve!(result);listeners.forEach(fn=>fn());}); }};
 }
 let tree:ReturnType<typeof create> | undefined;
-const draw=async(element:any)=>{await act(async()=>{tree=create(element);});};
+const draw=async(element:ReactElement)=>{await act(async()=>{tree=create(element);});if(buttons('Check again').length) await click('Check again');};
 const text=()=>JSON.stringify(tree!.toJSON());
-const words=(n:any):string=>typeof n==='string'?n:(n.children??[]).map(words).join('');
-const buttons=(label:string)=>tree!.root.findAllByType('button').filter(b=>words(b)===label);
+const words=(n:Node|string):string=>typeof n==='string'?n:(n.children??[]).map(words).join('');
+const buttons=(label:string)=>tree!.root.findAllByType('button').filter((b:Node)=>words(b)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick();});
 async function publish(snapshot:Snapshot<Ask>) { await act(async()=>{f.snapshot=snapshot;f.listeners.forEach(fn=>fn());}); }
 beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
@@ -29,7 +33,7 @@ it('shows central needs, agent folders, answered history, full details and searc
   const go=vi.fn();
   f.snapshot={records:[ask(),ask('other',{agent:'mark',ask:'Review the plan?'}),ask('done',{state:'answered',ask:'Finished question',answer:{kind:'done',by:{kind:'member',id:'jonathan'},at:2}})],status:'live'};
   f.call.mockReturnValue(request<Ask>().call);
-  await draw(h(InboxApp,{go,path:'/p/inbox-preview/ask/ask-1'}));
+  await draw(h<{path?:string;go?:(path:string)=>void}>(InboxApp,{go,path:'/p/inbox-preview/ask/ask-1'}));
   for(const word of ['Needs you','Answered','By agent','mark','I continue.','I stop.']) expect(text()).toContain(word);
   expect(text()).not.toContain('Finished question');
   await click('Answered1');
@@ -57,7 +61,7 @@ it('requires a daemon confirmation before showing buttons and a fresh check befo
 });
 it.each(['gone','denied','offline','changed','unmounted'] as const)('sends nothing when the immediate check is %s',async(mode)=>{
   const shown=request<Ask>(),fresh=request<Ask>(); f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call);
-  await draw(h(InboxApp,{path:'/p/inbox-preview/ask/ask-1',go:vi.fn()}));
+  await draw(h<{path?:string;go?:(path:string)=>void}>(InboxApp,{path:'/p/inbox-preview/ask/ask-1',go:vi.fn()}));
   await shown.finish({ok:true,value:ask()}); await click('Yes');
   if(mode==='offline') await publish({records:[],status:'offline'});
   if(mode==='changed') await publish({records:[ask('ask-1',{why:'Changed'})],status:'live'});
@@ -85,3 +89,35 @@ it.each([{waits_on:{approval:'a-12345678'}},{source:{kind:'approval' as const,id
   const link=decisionLink(record);if(link){await click(link.label);expect(go).toHaveBeenCalledWith(link.path);}
 });
 it('allows only HTTP(S) authored references',()=>{expect(safeHref('javascript:alert(1)')).toBeUndefined();expect(safeHref('//host')).toBeUndefined();expect(safeHref('https://example.com/')).toBe('https://example.com/');});
+it.each(['no','done','dismiss'] as const)('records %s after its own fresh check',async(kind)=>{
+  const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
+  await draw(h(AskReader,{ask:ask(),snapshot:f.snapshot,go:vi.fn()}));await shown.finish({ok:true,value:ask()});
+  await click(kind==='no'?'No':kind==='done'?'Mark done':'Dismiss');await fresh.finish({ok:true,value:ask()});
+  expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:'ask-1',answer:{kind}});await write.finish({ok:true,value:ask('ask-1',{state:'answered'})});
+});
+it('sorts agent folders, filters them and includes resolved asks in history with references and full answer',async()=>{
+  const resolved=ask('resolved',{agent:'zeta',state:'resolved',resolution:'Closed elsewhere',ask:'Resolved question',href:'https://example.com/record',refs:['t-2205'],answer:{kind:'words',text:'A recorded answer',by:{kind:'member',id:'jonathan'},at:Date.parse('2026-11-13T06:00:00Z')}});
+  f.snapshot={records:[ask('z',{agent:'zeta',ask:'Zeta question'}),resolved,ask('a',{agent:'alpha',ask:'Alpha question'})],status:'live'};
+  await draw(h<{path?:string;go?:(path:string)=>void}>(InboxApp,{go:vi.fn(),path:'/p/inbox-preview/ask/resolved'}));
+  const folders=tree!.root.findAllByType('button').map(words);expect(folders.indexOf('alpha1')).toBeLessThan(folders.indexOf('zeta1'));
+  await click('alpha1');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).toContain('Alpha question');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).not.toContain('Zeta question');
+  await click('Answered1');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).toContain('Resolved question');
+  for(const word of ['Closed elsewhere','t-2205','A recorded answer','jonathan','11/13/2026','12:00:00 AM','CT'])expect(text()).toContain(word);
+  expect(tree!.root.findByType('a').props.href).toBe('https://example.com/record');
+});
+it('keeps one pending write above reader navigation and never claims delivery',async()=>{
+  const first=ask(),second=ask('ask-2',{ask:'Another question'}),shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>(),other=request<Ask>();
+  f.snapshot={records:[first,second],status:'live'};
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call).mockReturnValueOnce(other.call);
+  await draw(h(InboxApp));
+  const firstRow=tree!.root.findAllByProps({'data-split-row':''}).find((n:Node)=>words(n).includes('Continue the work?'))!;
+  await act(async()=>firstRow.props.onClick());await shown.finish({ok:true,value:first});
+  expect(text()).toContain('Delivery to the agent is not connected');
+  await click('Yes');await fresh.finish({ok:true,value:first});
+  const row=tree!.root.findAllByProps({'data-split-row':''}).find((n:Node)=>words(n).includes('Another question'))!;
+  await act(async()=>row.props.onClick());await other.finish({ok:true,value:second});
+  expect(tree!.root.findByType('fieldset').props.disabled).toBe(true);
+  await click('Yes');expect(f.call.mock.calls.filter(([op])=>op==='attention.answer')).toHaveLength(1);
+  await write.finish({ok:true,value:{...first,state:'answered'}});
+  expect(tree!.root.findByType('fieldset').props.disabled).toBe(false);
+});

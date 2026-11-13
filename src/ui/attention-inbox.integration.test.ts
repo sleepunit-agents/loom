@@ -35,6 +35,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     };
     await signIn(a,'jonathan');
     await Promise.all([a.goto(`${loom.url}/p/inbox-preview/ask/public`),b.goto(`${loom.url}/p/inbox-preview/ask/public`)]);
+    await a.getByRole('button',{name:'Check again',exact:true}).click();
+    await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});
     await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
