@@ -16,7 +16,13 @@ export interface AgentPost {
  run?: string; tool?: string; state?: 'running' | 'done' | 'failed';
  ref?: string; step?: Record<string, unknown>;
 }
+export interface DeliveryTrace {
+ thread: string; conversation: string; archived: number | null; working: boolean;
+ messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
+}
 export interface Comms {
+ /** Bounded routing/delivery facts only; never decrypts private work details. */
+ trace(agent: string, thread: string): DeliveryTrace;
  /** Only the trusted runtime constructs this binding; never derive it from tool arguments. */
  reader(binding: ReadBinding): ThreadReader;
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;

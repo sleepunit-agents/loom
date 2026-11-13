@@ -357,3 +357,33 @@ it('strips the first unread summary line if retention expires while crypto is su
  const now=s.clock.now()+14*86400_000;s.clock.now=()=>now;resume();
  expect(await reading).toMatchObject({ok:true,value:{summaries:[{unread:1,first:{thread:place,text:null}}]}});
 });
+
+it('traces only the newest hundred delivery facts without decrypting words or work metadata',async()=>{
+ let opens=0;
+ const s=await setup({key:key=>({...key,open:async words=>{opens++;return key.open(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ for(let n=0;n<102;n++)await s.comms.post('art',place,{id:`trace-${n}`,kind:'card',text:'private trace text',run:'private run',tool:'private tool',step:{body:'private output'}});
+ const before=opens;
+ const trace=s.comms.trace('art',place);
+ expect(trace.messages).toHaveLength(100);
+ expect(trace.messages.map(m=>m.seq)).toEqual(Array.from({length:100},(_,n)=>n+4));
+ expect(trace.messages[0]).toEqual({seq:4,at:s.clock.now(),kind:'card',from:'art'});
+ expect(JSON.stringify(trace)).not.toContain('private');
+ expect(opens).toBe(before);
+ expect(()=>s.comms.trace('other-agent',place)).toThrow('Thread unavailable');
+ expect(()=>s.comms.trace('art','missing')).toThrow('Thread unavailable');
+ await s.call('change',{thread:place,action:'archive'});
+ expect(s.comms.trace('art',place).archived).toBe(s.clock.now());
+ await s.call('change',{thread:place,action:'delete'});
+ expect(()=>s.comms.trace('art',place)).toThrow('Thread unavailable');
+});
+it('traces fixed delivery states without returning arbitrary record payloads',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ expect(s.comms.trace('art',place).messages[0].delivery).toBe('delivered');
+ for(const delivery of ['sending','held','failed']) {
+  s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery,reason:'private reason'}),place);
+  expect(s.comms.trace('art',place).messages[0]).toEqual({seq:1,at:s.clock.now(),kind:'message',from:'jonathan',delivery});
+ }
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'private injected status'}),place);
+ expect(s.comms.trace('art',place).messages[0]).not.toHaveProperty('delivery');
+});

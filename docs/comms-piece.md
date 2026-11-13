@@ -34,7 +34,7 @@ operation preparation rechecks session validity and permission before commit.
 Records are window-only. Runtime delivery rechecks thread ownership after
 crypto and inside the effect hold before handing words to runtime.
 
-The in-process `Comms` role currently exposes `post`, `deliver`, `title` and
+The in-process `Comms` role currently exposes `post`, `deliver`, `title`, metadata-only `trace` and
 stop-consuming `status`. It is not yet the complete old runtime adapter.
 
 Words and new runtime work payloads are age encrypted in `comms_messages`.
@@ -71,7 +71,7 @@ data does not remove the behavior it delivered.
 | Adapter `describe` | Runtime role | Missing: member-only brief/readers, project, title guidance and inline-ask guidance. |
 | Adapter `post` | `Comms.post` | Partial: encrypted replies, cards, ask refs, agent isolation and id dedupe; harness labels, spawn report refs and continuation receipt semantics need parity. |
 | Adapter `reconcile` | Runtime role | Missing: delivered/not-accepted/unresolved/deleted continuation receipt and deadline/clock behavior. |
-| Adapter `trace`, `traceOf` | Runtime role | Missing: bounded metadata-only delivery trace and deleted/archived behavior. |
+| Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag; working/done heartbeat, alive/token facts, queued/failed/retry/no-reply/loop notices and stale transitions missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |

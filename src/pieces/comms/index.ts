@@ -255,6 +255,16 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }
  sweep();
  return {post,deliver,
+  trace(agent,place) {
+   const t=requireAgent(agent,place);
+   const messages=messageRows(db,place,undefined,100).map(r=>{
+    const delivery=JSON.parse(r.record).delivery;
+    return {seq:r.seq,at:r.at,kind:r.kind,from:r.sender,
+     ...(r.kind==='message'&&['sending','held','failed','delivered'].includes(delivery)?{delivery}:{}),
+    };
+   });
+   return {thread:t.id,conversation:t.conversation,archived:t.archived,working:t.working,messages};
+  },
   reader(binding) {
    // Snapshot trusted routing facts so later caller mutation cannot widen this capability.
    const {agent,conversation,valid}=binding;
