@@ -85,6 +85,8 @@ describe('policy, live records, retry and role binding', () => {
     const own = app.command('create', { title: 'My next step', actor: 'someone-else' }, agent);
     expect(own).toMatchObject({ ok: true });
     expect(app.call('show', { id: own.id }, agent)).toMatchObject({ task: { agent: 'art' } });
+    expect(app.call('ready', {}, agent)).toMatchObject({ entries: [expect.objectContaining({ id: own.id })] });
+    expect(app.call('list', {}, agent)).toMatchObject({ entries: [expect.objectContaining({ id: own.id })] });
     expect(app.call('show', { id: own.id }, { kind: 'agent', id: 'pond-bot' })).toMatchObject({ code: 'denied' });
     const household = app.command('create', { title: 'Household work' });
     expect(app.call('show', { id: household.id }).task).not.toHaveProperty('agent');

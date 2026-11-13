@@ -1,3 +1,5 @@
+import { touched } from '../core/touched/index.js';
+import { dirname } from 'node:path';
 /**
  * Person cards — the condensed current state of a human the agent works with
  * (docs/specs/person-cards.md, t-1376).
@@ -381,7 +383,7 @@ export class PeopleStore {
     this.holdsPeople = hasTable(this.db, 'people');
     this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
     this.holdsMerges = hasTable(this.db, 'person_merges');
-    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
+    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, slug => touched(dirname(config.dbPath), 'person', slug));
   }
 
   close(): void {

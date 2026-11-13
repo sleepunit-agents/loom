@@ -1,5 +1,6 @@
+import { sharingApp } from './pieces/sharing/registration';
 import { tasksApp } from './pieces/tasks/registration';
 import { changesApp } from './pieces/changes/registration';
 /** Composition is the one place that chooses the installed first-party apps. */
-export const apps = [tasksApp, changesApp];
+export const apps = [tasksApp, sharingApp, changesApp];
 export const appAt = (path: string) => apps.find(app => path === app.path || path.startsWith(`${app.path}/`));
