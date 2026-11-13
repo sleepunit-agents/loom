@@ -16,6 +16,8 @@ export type Route = z.infer<typeof routeSchema>;
 export type PersonLink = z.infer<typeof linkSchema>;
 export interface Message {
   id: string; channel: string; parent?: string; thread?: string; dm: boolean; group?: boolean;
+  /** Original platform event time; never the receipt time. */
+  at?: string; label?: string;
   user: string; text: string; mentions: string[]; bot?: boolean; webhook?: string;
 }
 export interface Address { channel: string; thread?: string; dm: boolean; group?: boolean }

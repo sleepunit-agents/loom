@@ -225,14 +225,14 @@ prompt, and replacement cancels the uncertain record. All pass with this change.
 
 ## Legacy source audit
 
-The entire pinned `bin/wake`, `README.md` (404 lines) and `test/smoke.sh`
-(116 lines) have now been read. The Python test suite still requires a complete
-read; this is not a final parity claim. In addition to
+The entire pinned `bin/wake`, `README.md` (404 lines), `test/smoke.sh`
+(116 lines) and `test/test_wake.py` (4,098 lines) have now been read.
+This is not a final parity claim. In addition to
 the command inventory above, the source has these domain obligations:
 
 | Legacy behavior | Current new-side gap or choice |
 | --- | --- |
-| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API schedules 20 | The shared 50 cap covers at/in, park and ordinary schedule run-now. Lane run-now accounting, API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
+| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API schedules 20 | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
@@ -242,7 +242,7 @@ the command inventory above, the source has these domain obligations:
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
-| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Current generic not-started retry counts a failure; quota outcome parity and owner notice integration remain unfinished. |
+| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notice integration remains unfinished. |
 | Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history exists; attention role publication and owner notices remain unfinished. |
 
 The client still owes exact stdout/stderr/exit fixtures, including the runtime
@@ -264,8 +264,15 @@ consume those slots; cancelling a parked wait frees one for run-now. Fresh owner
 wake-now keeps its legacy exemption. The job fixture fills the budget with 49
 timed wakes and one parked wait, refuses each additional one-off path, then
 cancels the wait and runs an ordinary schedule once. It failed before the shared
-check and passes afterwards. Another agent's budget stays separate. API shares
-and lane run-now accounting remain part of the unfinished parity work.
+check and passes afterwards. Another agent's budget stays separate. Lane run-now keeps its schedule link for reassignment but carries an explicit
+`runNow` marker for one-off accounting. Persisted immediate runs from before
+that marker are recognized by their lane revision and existing pause-bypass flag.
+New accelerated recurring occurrences explicitly retain `runNow: false`, so they
+do not consume one-off capacity. A pre-marker accelerated lane occurrence is
+indistinguishable from a pre-marker lane run-now; conservatively count that old
+ambiguous shape until it terminates rather than risk overfilling the budget.
+An ordinary recurring occurrence never uses this fallback. Its recurring occurrence does not consume
+that budget. API shares remain unfinished.
 
 The fully read legacy smoke script verifies runtime delivery's id, agent, local
 placement, wake place, preamble and prompt, absence of a model override, and that
@@ -274,8 +281,9 @@ need corresponding new-side registry/app assertions rather than a port of the
 old subprocess test. The README additionally requires continuation deadline
 validation both before commit and before delivery, immutable delivery across
 recovery, no retry of a failed continuation, quota reset plus one minute, and
-suppression of the runtime-quota triage wake itself. These remain runtime/domain
-integration obligations; the new implementation must not restore old launchers.
+suppression of the runtime-quota triage wake itself. The reset and triage
+suppression behavior is implemented below; continuation validation remains a
+runtime/domain integration obligation; the new implementation must not restore old launchers.
 
 ## Foundation review corrections
 
@@ -291,3 +299,22 @@ history or make fire-now eligible. This is conservative even if cancellation win
 before the runtime microtask invokes the role; reconciliation owns its resolution.
 Pause records enumerate the pause table as well as work, so an otherwise empty
 paused agent is present on first subscription and reconnect.
+
+## Runtime quota waits
+
+A runtime result `{state: 'not-started', code: 'quota', reason, retryAfter?}`
+confirms that no body started. `retryAfter` is an ISO instant with a timezone;
+missing or malformed values default to an hour. The clock adds one minute and
+clamps the wait to 15 minutes through eight days. A quota result never increments
+the existing failure count, including on repeated waits, and a persisted deadline
+survives restart. Ordinary definite failures retain exponential backoff and the
+six-failure limit. Superseded work is cancelled before applying either retry path.
+
+The clock keeps the same wake id with a fresh dispatch intent after a confirmed
+not-started outcome; there is no old HTTP delivery-id adapter. It records
+`quota-wait` in event history. A quota result for `alert:runtime-quota` instead
+cancels the triage wake and records `quota-notice`, preventing recursive triage
+when no model has room. Other alert work still waits. Only a structured quota
+code selects this behavior; arbitrary reason text conveys no status or authority.
+Runtime/attention composition and publication of the owner's quota notice remain
+separate unfinished work; this unit does not publish one itself.

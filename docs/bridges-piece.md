@@ -34,6 +34,19 @@ runtime commit whose acknowledgement was lost without adding another turn. The v
 is acknowledged after the inbox is durable, independently of runtime availability.
 Unknown and denied users are left on read; their stored message words are erased.
 
+Messages carry their original event timestamp and optional display label through the
+inbox to runtime. Timestamps normalize to ISO UTC milliseconds, truncating finer
+precision. Missing timestamps derive from Slack's message ts or Discord's snowflake,
+never the receipt clock. Invalid event times hold the receipt durably for correction.
+Previously queued foundation messages without a recoverable event time also hold.
+
+The injected runtime delivery role returns `delivered`, `refused`, `retry` or `held`.
+Only `delivered` establishes a conversation binding. A final refusal consumes the
+receipt and erases its words; a transient outcome or exception retains the stable id
+for retry; malformed/unknown outcomes hold without retry until deliberately repaired.
+Production composition must map the runtime registry Result into these outcomes and
+must preserve authenticated caller identity; that integration remains on t-2210.
+
 Reply text is kept in the outbox, never exposed as traffic metadata. A send exception
 is treated as uncertain, even if a venue might have rejected it before posting.
 Inbox and outbox records retain their receiving bot identity; changing a venue
