@@ -63,9 +63,10 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
     <section><h2>{schedule.file ? 'Repository file' : 'Text'}</h2><p className="whitespace-pre-wrap break-words">{schedule.laneDetails?.text ?? schedule.file ?? schedule.prompt}</p></section>
   </article>;
   else if (id) reader = <Empty title="This work is no longer in view" text="It may have aged out, been removed or become unavailable." />;
+  const saved = receipt?.result?.ok ? receipt.result.value as { alreadyScheduled?: boolean; schedule?: string; due?: number } : undefined;
   const feedback = <div className="grid gap-2">
       {receipt?.pending && <Loading label={receipt.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} />}
-      {receipt?.result && (receipt.result.ok ? <p role="status">Saved</p> : <Error title="Couldn’t save" text={`${receipt.result.code}: ${receipt.result.message}`} />)}
+      {receipt?.result && (receipt.result.ok ? <p role="status">{saved?.alreadyScheduled && typeof saved.due === 'number' ? `Already scheduled: ${saved.schedule}, next at ${time(saved.due)} (nothing armed)` : 'Saved'}</p> : <Error title="Couldn’t save" text={`${receipt.result.code}: ${receipt.result.message}`} />)}
       {confirm && <section aria-label="Confirm clock action" className="grid gap-2"><p>{confirm.why}</p><Button variant="outline" disabled={!enabled} onClick={() => {if(enabled){send(confirm.operation,confirm.input);setConfirm(undefined);}}}>{confirm.label}</Button><Button variant="outline" onClick={() => setConfirm(undefined)}>Keep unchanged</Button></section>}
   </div>;
   return <Split label="Clock" className="h-full" folders={[{id:'wakes',label:'Wakes'},{id:'schedules',label:'Schedules'},{id:'lanes',label:'Household lanes'},{id:'history',label:'Recent history'}]} folder={folder} onFolder={f => {setFolder(f);back();}}
