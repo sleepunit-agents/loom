@@ -59,6 +59,17 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       if ('managed' in acknowledgement && acknowledgement.managed === true) { record.attentionManaged = true; saveRequest(record); }
       ctx.changed('secret.request', record.id); return record;
   }
+  // The Settings page needs explicit capability/availability rather than inferring
+  // ownership from an empty list. No household document or credential is exposed.
+  live.register({ name: 'secret.settings', ids: () => ['settings'], inScope: () => true,
+    read(id, viewer) {
+      if (id !== 'settings' || !owner(viewer, 'secrets.list')) return;
+      const held = sharing();
+      return { id, agents: [...new Set([...Object.values(held.members).flatMap(m => m.agents),
+        ...Object.values(held.projects).flatMap(p => p.agents)])].sort(),
+        valuesAvailable: operations.has('secrets.set') && operations.has('secrets.remove'), now: operations.clock.now() };
+    },
+  });
   operations.register(operation({ name: 'secrets.list', input: z.object({}).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.list'), run: () => ({ names: all<SecretName>(db, 'secrets_names'), grants: all<Grant>(db, 'secrets_grants'), requests: all<GrantRequest>(db, 'secrets_requests') }),
   }));

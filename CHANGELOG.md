@@ -1880,3 +1880,5 @@ Initial public release.
 [0.4.0-alpha.2]: https://github.com/sleepunit-agents/loom/compare/v0.4.0-alpha.1...v0.4.0-alpha.2
 [0.4.0-alpha.1]: https://github.com/sleepunit-agents/loom/compare/v0.3.1...v0.4.0-alpha.1
 [0.3.1]: https://github.com/sleepunit-agents/loom/releases/tag/v0.3.1
+
+- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
