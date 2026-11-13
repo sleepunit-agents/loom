@@ -1,8 +1,8 @@
 # Offline importer registration
 
 `src/cli/migration-registry.ts` is the extension point for `loom migrate all`.
-This slice supplies the registry; the all/verify commands and editable plan follow
-in t-2213. Existing individual commands are unchanged. No daemon path loads it.
+The registry and [plan preparation](migration-plan.md) are available;
+the all/verify commands follow in t-2213. Existing individual commands are unchanged. No daemon path loads it.
 
 An importer declares a unique lowercase `name`, `dependencies` (registration
 names), `reads` (a human-readable snapshot input inventory), and an in-process
