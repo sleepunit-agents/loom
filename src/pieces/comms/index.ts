@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type LiveRecord } from '../../core/index.js';
+import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type Context, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
@@ -20,6 +20,7 @@ const clientId = z.string().regex(/^[a-z2-7]{16}$/);
 const target = z.object({ thread: id });
 export interface Options {
  db: Db; operations: Operations; live: Live; clock: Clock; sharing(): Sharing; key: WordsKey;
+ filing?(ctx:Context,input:{thread:string;agent:string;member:string;conversation:string;project?:string}):void;
  runtime: RuntimeDelivery; hold: Hold; attention: Attention; days?: number;
  /** Authoritative new-side conversation metadata; absent means step reads are denied. */
  conversation?(id: string): StepConversation | undefined;
@@ -324,7 +325,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     case 'title': if(i.title===undefined)return fail('invalid','A title is required');t.title=i.title;t.titledBy='member';break;
     case 'project': {
      if(i.project && (!maySee(ctx.viewer,{project:i.project},o.sharing()) || !maySee({kind:'agent',id:t.agent},{project:i.project},o.sharing())))return fail('invalid','Choose a project of this agent');
-     t.project=i.project ?? undefined;break;
+     t.project=i.project ?? undefined;o.filing?.(ctx,{thread:t.id,agent:t.agent,member:t.member,conversation:t.conversation,project:t.project});break;
     }
     case 'pin': {
      const pins=(db.prepare('SELECT record FROM comms_threads WHERE member=?').all(t.member) as {record:string}[]).filter(r=>JSON.parse(r.record).pinned).length;

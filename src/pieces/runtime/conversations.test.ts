@@ -1,3 +1,4 @@
+import { runtimeRole } from './role.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { afterEach, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
@@ -94,6 +95,8 @@ it('keeps authenticated job proof across restart, fences revoked bodies and neve
  expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false});
  const auth=signin(f.app);
  const viewer=auth.token(hash(body))!.viewer;
+ const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ expect(await runtimeRole(f.app.operations).reply(viewer,{conversation:cv,job,id:'role-reply',text:'Private role reply'},'role-retry')).toMatchObject({ok:true});
  expect(await f.app.operations.callAsync('direct',{...viewer},'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
  const pending=f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'racing-revoke',text:'must not post after revoke'});
  const pendingRead=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
@@ -184,11 +187,30 @@ it('follows an authorized thread filing change without losing delivery or creati
  const job=jobs[0];await f.post(f.runner,'runtime.claimJob',{job});
  const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ f.app.db.exec("CREATE TRIGGER fail_refile BEFORE UPDATE ON runtime_bindings BEGIN SELECT RAISE(ABORT,'filing interrupted'); END");
+ expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:false});
+ expect(runtimeStore(f.app.db).read('job',job)?.project).toBeUndefined();
+ expect(JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).project).toBeUndefined();
+ expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ f.app.db.exec('DROP TRIGGER fail_refile');
  expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
+ expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(await f.post(body,'runtime.reply',{id:'after-filing',text:'Reply immediately after filing'})).toMatchObject({ok:true});
+ expect(await f.post(body,'runtime.conversationStatus',{})).toMatchObject({ok:true});
  expect(await f.socket('comms.send',{thread,id:'cdefghijklmnopqr',text:'PRIVATE after filing'})).toMatchObject({ok:true});
  const read=await f.post(body,'runtime.readConversation',{});expect(read.ok).toBe(true);expect(JSON.stringify(read)).toContain('PRIVATE after filing');
  expect(runtimeStore(f.app.db).read('job',job)?.project).toBe('pond');
  expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
  const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
  expect(runtimeStore(f.app.db).read('binding',cv)?.project).toBe('pond');
+});
+
+it('does not turn another message into a second execution for an uncertain accepted job',async()=>{
+ const f=await setup(),thread=await f.open();let jobs:string[]=[];
+ for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
+ const job=jobs[0];
+ f.app.db.transaction(()=>{const store=runtimeStore(f.app.db),{changedAt:_,...before}=store.read('job',job)!;store.put('job',{...before,state:'uncertain'},f.clock.now());})();
+ expect(await f.socket('comms.send',{thread,id:'defghijklmnopqrs',text:'New message while uncertain'})).toMatchObject({ok:true});
+ expect(value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
 });

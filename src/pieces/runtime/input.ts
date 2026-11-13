@@ -1,7 +1,7 @@
-import { controlScope } from './control.js';
+import { assignedRunner } from './control.js';
 /** Executable input release is asynchronous and outside the registry transaction. */
 import { z } from 'zod';
-import { operation, OperationError, mayAct, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
 import type { OutsideEffects } from '../../core/effects.js';
 import { runtimeStore } from './store.js';
 import { canHost } from './boxes.js';
@@ -11,11 +11,9 @@ import { buildIdentity } from './records.js';
 
 export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects, body?: { issue(agent: string, job: string): string; valid(job: string): boolean }) {
   const store = runtimeStore(db);
-  const assigned = (viewer: Viewer, id: string) => {
-    const job = store.read('job', id), box = job && store.read('box', job.box);
-    return viewer.kind === 'runner' && !!job && !!box && job.box === viewer.id && box.revokedAt === undefined
-      && (job.member === undefined || !!body?.valid(id))
-      && mayAct(viewer, controlScope(store,job,sharing()), sharing(), 'report-job');
+  const assigned=(viewer:Viewer,id:string)=>{
+    const job=store.read('job',id);
+    return !!job&&(job.member===undefined||!!body?.valid(id))&&assignedRunner(store,viewer,id,sharing());
   };
   const snapshot = (viewer: Viewer, id: string) => {
     if (!assigned(viewer, id)) throw new OperationError('denied', 'Input unavailable');

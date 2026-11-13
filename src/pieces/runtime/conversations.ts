@@ -2,7 +2,7 @@ import { attentionRole } from '../attention/role.js';
 import { controlScope, currentExecution } from './control.js';
 /** Private words remain in Comms. Runtime persists routing and acceptance only. */
 import { z } from 'zod';
-import { operation, OperationError, mayUseThread, mayAct, mayMove, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, OperationError, mayUseThread, mayAct, mayMove, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
 import type { Comms, RuntimeDelivery, DeliveryReceipt } from '../comms/role.js';
 import { runtimeStore } from './store.js';
@@ -12,7 +12,7 @@ const id=z.string().min(1).max(200);
 const routing=z.object({thread:id,agent:id,member:id,conversation:id,seq:z.number().int().positive(),generation:z.number().int().min(0).max(1000).optional(),project:id.optional()}).strict();
 type Routing=z.infer<typeof routing>;
 const key=(m:DeliveryReceipt)=>JSON.stringify([m.agent,m.member,m.thread,m.conversation,m.seq,m.generation??0]);
-const active=new Set(['queued','starting','running','waiting']);
+const active=new Set(['queued','starting','running','waiting','uncertain','lost']);
 interface Proof {agent:string;job:string;valid():boolean}
 export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(viewer:Viewer)=>Proof|undefined) {
  const {db,operations,live}=app,store=runtimeStore(db);
@@ -42,19 +42,31 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    ||!available({thread:binding.place,agent:p.agent,member:job.member,conversation:binding.id,project:binding.project,seq:1}))return;
   return {job,binding,proof:p};
  };
+ const refile=(ctx:Context,m:{thread:string;agent:string;member:string;conversation:string;project?:string})=>{
+  const binding=store.read('binding',m.conversation);if(!binding)return;
+  if(binding.agent!==m.agent||binding.member!==m.member||binding.place!==m.thread)throw new OperationError('conflict','Conversation binding changed');
+  const {changedAt:_,...before}=binding,next={...before,project:m.project};
+  if(!mayMove(ctx.viewer,{...before,type:'runtime.binding'},{...next,type:'runtime.binding'},sharing(),'runtime.acceptConversation'))throw new OperationError('denied','Conversation filing unavailable');
+  const job=binding.job?store.read('job',binding.job):undefined;
+  if(job){
+   if(job.agent!==m.agent||job.member!==m.member||job.conversation!==m.conversation)throw new OperationError('conflict','Job binding changed');
+   const {changedAt:_,...prior}=job,after={...prior,project:m.project};
+   if(!mayMove(ctx.viewer,{...prior,type:'runtime.job'},{...after,type:'runtime.job'},sharing(),'runtime.acceptConversation'))throw new OperationError('denied','Conversation filing unavailable');
+   if(store.put('job',after,ctx.now))ctx.changed('runtime.job',job.id);
+  }
+  if(store.put('binding',next,ctx.now))ctx.changed('runtime.binding',binding.id);
+ };
  operations.register(operation({name:'runtime.acceptConversation',doors:['direct'],write:true,input:routing,output:z.object({job:id}),
   may:(v,m)=>v.kind==='member'&&v.id===m.member&&available(m),
   run(ctx,m){
    const old=receipt(m);if(old)return old;
    const before=store.read('binding',m.conversation);
    if(before&&(before.agent!==m.agent||before.member!==m.member||before.place!==m.thread))throw new OperationError('conflict','Conversation binding changed');
+   if(before)refile(ctx,m);
    store.put('binding',{id:m.conversation,agent:m.agent,member:m.member,project:m.project,venue:'loom',place:m.thread,...(before?.job?{job:before.job}:{})},ctx.now);
    const previous=before?.job?store.read('job',before.job):undefined;
    let job=previous&&active.has(previous.state)?previous.id:undefined;
-   if(job&&previous&&previous.project!==m.project){
-    if(!mayMove(ctx.viewer,{...previous,type:'runtime.job'},{...previous,project:m.project,type:'runtime.job'},sharing(),'runtime.acceptConversation'))throw new OperationError('denied','Conversation filing unavailable');
-    const {changedAt:_,...record}=previous;store.put('job',{...record,project:m.project},ctx.now);ctx.changed('runtime.job',job);
-   }
+
    if(!job){
     accepting=true;
     let result:ReturnType<typeof operations.call>;
@@ -82,7 +94,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  operations.register(operation({name:'runtime.reply',doors:['http','direct'],input:z.object({id,conversation:id.optional(),job:id.optional(),text:z.string().min(1).max(40_000)}).strict(),output:z.object({seq:z.number()}),
   may:(v,i)=>{const b=bound(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
    const b=bound(viewer)!;
-   return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id},b.binding.place,{...i,kind:'reply',run:b.job.id});
+   return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
   },run(ctx,_i,prepared){if(!bound(ctx.viewer))throw new OperationError('denied','Body binding ended');return prepared;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
@@ -119,7 +131,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    reconciling=true;void Promise.resolve().then(()=>Promise.all([comms?.reconcileDeliveries(),comms?.reconcileEnds()])).finally(()=>{reconciling=false;});
   }
  });
- return {delivery,privateStart,connect(role:Comms){comms=role;confirmed();void comms.reconcileDeliveries();},
+ return {delivery,privateStart,refile,connect(role:Comms){comms=role;confirmed();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   close(){closed=true;unobserve();},
  };

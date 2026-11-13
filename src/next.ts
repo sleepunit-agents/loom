@@ -168,7 +168,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   installAttentionMaintenance(app);
   if (!app.operations.has('comms.open')) {
     const comms=installComms({db:app.db,operations:app.operations,live:app.live,clock:app.operations.clock,sharing,
-      key:await loadKey(options.home),runtime:conversations.delivery,hold:stagingHold(effects),attention:attentionRole(app.operations),
+      key:await loadKey(options.home),filing:conversations.refile,runtime:conversations.delivery,hold:stagingHold(effects),attention:attentionRole(app.operations),
       recipients:()=>{const h=new HouseholdDatabase(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
     });
     conversations.connect(comms);

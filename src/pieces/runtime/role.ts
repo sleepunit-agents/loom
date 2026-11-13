@@ -49,19 +49,19 @@ export interface Reply {
 export interface Runtime {
   startBody(viewer: Viewer, input: StartBody, operationId: string): Result;
   deliver(viewer: Viewer, input: Deliver, operationId: string): Result;
-  reply(viewer: Viewer, input: Reply, operationId: string): Result;
+  reply(viewer: Viewer, input: Reply, operationId: string): Promise<Result>;
   /** The attention piece owns desk status; runtime has no second status record. */
   reportStatus(viewer: Viewer, input: Omit<AgentStatus, 'changedAt'>, operationId: string): Result;
 }
 /** Binding only: the runtime installer supplies the operations in later slices.
  * Missing operations fail closed with the registry's not-found result.
  */
-export function runtimeRole(operations: Pick<Operations, 'call'>): Runtime {
+export function runtimeRole(operations: Pick<Operations, 'call' | 'callAsync'>): Runtime {
   const attention = attentionRole(operations);
   return {
     startBody: (viewer, input, id) => operations.call('direct', viewer, 'runtime.startBody', input, id),
     deliver: (viewer, input, id) => operations.call('direct', viewer, 'runtime.deliver', input, id),
-    reply: (viewer, input, id) => operations.call('direct', viewer, 'runtime.reply', input, id),
+    reply: (viewer, input, id) => operations.callAsync('direct', viewer, 'runtime.reply', input, id),
     reportStatus: (viewer, input, id) => attention.reportStatus(viewer, input, id),
   };
 }

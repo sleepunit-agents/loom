@@ -41,9 +41,9 @@ export function sameOrigin(req: IncomingMessage): boolean {
   const local = `${'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
   return !origin || origin === (publicOrigin && new URL(publicOrigin).host === req.headers.host ? publicOrigin : local);
 }
-const stores = new WeakMap<Foundation, Signin>();
+const stores = new WeakMap<Foundation['db'], Signin>();
 export function signin(app: Foundation): Signin {
-  let store = stores.get(app); if (!store) { store=new Signin(app); stores.set(app,store); } return store;
+  let store = stores.get(app.db); if (!store) { store=new Signin(app); stores.set(app.db,store); } return store;
 }
 export class Signin {
   readonly sessions: SessionDatabase;

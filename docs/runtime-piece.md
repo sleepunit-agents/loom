@@ -713,7 +713,8 @@ Next mode installs Comms with its private key and the real runtime delivery role
 Member messages remain encrypted in Comms; runtime stores only routing receipts,
 a private binding and a generic instruction to read the bound conversation.
 Acceptance and startBody enqueue share one registry transaction. Later messages
-reuse the active job. An authorized thread filing change moves its private job
+reuse the active job. An uncertain or lost accepted job remains held for
+reconciliation; another message never starts a replacement automatically. An authorized thread filing change moves its private job
 and binding together under central move policy; message words stay in Comms.
 Queue, claim and input acknowledgements do not mark a
 thread working; assigned runner running/waiting reports confirm its start.
