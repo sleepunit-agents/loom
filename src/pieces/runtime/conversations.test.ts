@@ -448,3 +448,23 @@ it('removes archived conversation authority while staging retains a live job and
  expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
  for(const field of ['conversation','project','people'])expect(receipt).not.toHaveProperty(field);
 });
+
+it('removes terminal job principal authority even when its credential and private binding remain valid',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const store=runtimeStore(f.app.db),conversation=store.read('job',job)!.conversation!;
+ const ask={kind:'github-write',target:'running:principal',what:'Check a current job',why:'Test terminal job attribution',conversation};
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',conversation,people:['jonathan']}});
+ for(const state of ['done','failed','stopped','lost','uncertain','queued','starting'] as const){
+  // Model durable state ahead of credential cleanup. Calling finishJob would
+  // revoke the token as well and could conceal a missing resolver state check.
+  f.app.db.transaction(()=>{const {changedAt:_,...record}=store.read('job',job)!;store.put('job',{...record,state},f.clock.now());})();
+  expect(signin(f.app).token(hash(body))).toBeDefined();
+  expect(store.read('binding',conversation)).toMatchObject({job,member:'jonathan'});
+  const receipt=value<Record<string,unknown>>(await f.post(body,'approvals.request',{...ask,target:state+':principal',principal:'owner'}));
+  expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
+  for(const field of ['people','conversation','project'])expect(receipt).not.toHaveProperty(field);
+ }
+});
