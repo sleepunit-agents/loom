@@ -1,14 +1,16 @@
 /** Value-free source model only, not an importer or an authorization decision.
  * The offline composition must still import exact grants and validate carry links. */
 import { z } from 'zod';
-import { secretAgent, secretName } from './input.js';
+import { secretName } from './input.js';
 
 const requestId = z.string().regex(/^q-[0-9a-f]{8}$/);
 const timestamp = z.iso.datetime({ precision: 3 });
 const request = z.object({
   id: requestId,
   secret: secretName,
-  agent: secretAgent,
+  // houseOf checks only string identity. Preserve it; final import must map it
+  // to a registered new-side principal without normalizing or widening grants.
+  agent: z.string(),
   house: z.string().regex(/^h-[0-9]{1,9}$/),
   service: z.string().min(1).optional(),
   why: z.string().min(1).max(300),
@@ -35,6 +37,7 @@ const request = z.object({
     if (r.carriedFrom && (r.always || r.claimedBy)) invalid();
     if (r.always && (r.claimedBy || r.minutes !== 480)) invalid();
     if (r.carriedFrom && r.who) invalid();
+    if (((r.by === 'policy' && r.state !== 'revoked') || (r.carriedFrom && r.state === 'granted')) && r.decided !== r.at) invalid();
     // Owner Allow/Always use one Date for decision and expiry. Revoke overwrites
     // decided, and a carry retains the earlier house's expiry instead.
     if (r.state === 'granted' && r.by === 'owner' && !r.carriedFrom && r.decided && r.expires

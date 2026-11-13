@@ -142,3 +142,8 @@ not assert cross-row consistency or authorize a missing partner. The final
 importer must validate effective carry/revocation semantics and import matching
 scoped grants, names, policy and audit in its enclosing transaction. This slice
 has no DB writes, receipt, filesystem discovery, command or daemon registration.
+
+The source model retains any string agent identity, matching legacy `houseOf`;
+the final importer must map it to a registered principal without normalizing it
+or granting agent-wide access. Unsupported new-side identities must refuse at
+that composition boundary. Parsing alone never makes a principal authoritative.

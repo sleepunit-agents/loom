@@ -37,7 +37,7 @@ it('refuses mismatched identity, self links, unsupported envelopes and unknown o
   expect(() => parseLegacySecretRequests(Buffer.from(sentinel))).toThrow(/^Invalid legacy secret requests$/);
 });
 it('refuses malformed fields and impossible stored decisions instead of inventing or broadening grants', () => {
-  for (const edit of [{ id: 'q-no' }, { secret: 'bad name' }, { house: 'host' }, { agent: '' }, { service: '' },
+  for (const edit of [{ id: 'q-no' }, { secret: 'bad name' }, { house: 'host' }, { service: '' },
     { why: '' }, { why: 'x'.repeat(301) }, { minutes: 0 }, { minutes: 481 }, { minutes: 1.5 }, { at: 'yesterday' },
     { state: 'expired' }, { state: 'granted' }, { expires }, { by: 'owner' }, { who: 'dana' }, { always: false },
     { state: 'denied', by: 'owner', decided: at, expires },
@@ -71,7 +71,7 @@ it('refuses impossible owner expiry, Always duration and carried answering attri
   }
   // Revoke overwrites decided; a carried grant retains the source expiry.
   expect(one({ ...granted, state: 'revoked', decided: expires })).toHaveLength(1);
-  expect(one({ ...granted, carriedFrom: 'q-89abcdef', decided: '2020-01-01T00:30:00.000Z' })).toHaveLength(1);
+  expect(one({ ...granted, carriedFrom: 'q-89abcdef', at: '2020-01-01T00:30:00.000Z', decided: '2020-01-01T00:30:00.000Z' })).toHaveLength(1);
 });
 it('uses no filesystem, child process or current clock while parsing supplied bytes', () => {
   const bytes = Buffer.from(JSON.stringify({ v: 1, requests: { [base.id]: base } }));
@@ -86,4 +86,18 @@ it('uses no filesystem, child process or current clock while parsing supplied by
     expect(parseLegacySecretRequests(bytes)).toEqual([base]);
     for (const call of [...reads, ...processes, now]) expect(call).not.toHaveBeenCalled();
   } finally { vi.restoreAllMocks(); syncBuiltinESMExports(); }
+});
+
+it('preserves legacy string agent identities for final importer mapping rather than normalizing them', () => {
+  for (const agent of ['art-', 'art--bridge', '', 'A'.repeat(150)]) expect(one({ ...base, agent })).toEqual([{ ...base, agent }]);
+  expect(() => one({ ...base, agent: 123 })).toThrow(/^Invalid legacy secret requests$/);
+});
+it('requires original decision time for policy decisions and granted carry, but not revocation', () => {
+  const later = '2020-01-01T00:30:00.000Z';
+  for (const edit of [
+    { state: 'denied', by: 'policy', decided: later },
+    { state: 'granted', by: 'policy', decided: later, expires },
+    { state: 'granted', by: 'owner', decided: later, expires, carriedFrom: 'q-89abcdef' },
+  ]) expect(() => one({ ...base, ...edit })).toThrow(/^Invalid legacy secret requests$/);
+  expect(one({ ...base, state: 'revoked', by: 'policy', decided: later, expires })).toHaveLength(1);
 });
