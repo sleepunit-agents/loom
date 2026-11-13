@@ -59,7 +59,7 @@ it('atomically imports names, separate startup policy, exact temporary authority
 it('rolls back schema, all metadata, receipt and pending asks on interruption and detects content damage before commit',()=>{
   const f=setup();
   for(const interrupt of [()=>{throw Error('power');},()=>{f.app.db.prepare("UPDATE secrets_names SET record='{}'").run();},()=>{f.app.db.prepare("DELETE FROM attention_asks").run();}]) {
-    expect(()=>importSecrets(f.app.db,f.home,f.from,now,options,{interrupt})).toThrow('Secrets import refused');
+    expect(()=>importSecrets(f.app.db,f.home,f.from,now,options,{interrupt})).toThrow('Secrets import refused: destination-state');
     expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name IN ('secrets_names','attention_asks')").all()).toEqual([]);
   }
   expect(importSecrets(f.app.db,f.home,f.from,now,options).imported).toBe(true);
@@ -71,7 +71,7 @@ it('same source after restart is a no-op preserving later edits; different bytes
   expect(f.app.db.prepare('SELECT record FROM secrets_names').get()).toEqual({record:'{}'});
   expect(()=>importSecrets(f.app.db,f.home,f.from,now,{...options,agents:{art:'mark'}})).toThrow('Secrets import refused');
   writeFileSync(join(f.from,'policy.json'),readFileSync(join(f.from,'policy.json'),'utf8')+'\n');
-  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow('Secrets import refused');
+  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow('Secrets import refused: destination-state');
 });
 it('refuses unknown identities, malformed/value-bearing metadata, pending ask collisions and populated destinations without partial writes',()=>{
   const f=setup();

@@ -764,5 +764,6 @@ metadata. Unknown fields and invalid dates still refuse before retention.
 Source refusals name a fixed check: `copied-source`, `identity-options`,
 `source-files`, `encrypted-store`, `policy-request-plan`, `identity-mapping`,
 `audit-schema`, or `audit-projection`. Parser messages, keys and values never enter
-the error. Destination failures retain the generic refusal. This is an offline
+the error. Destination failures identify `destination-paths`, `destination-state`,
+`destination-lock`, or `destination-open`; internal exception messages remain hidden. This is an offline
 parser repair only; it performs no live import or holder/Settings activation.

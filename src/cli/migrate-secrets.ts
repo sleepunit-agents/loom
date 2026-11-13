@@ -15,6 +15,7 @@ export async function migrateSecrets(argv:string[],io:IOStreams):Promise<number>
   catch {io.stderr(usage);return 2;}
   if(!args.values.home||!args.values.from||!args.values.identities){io.stderr(usage);return 2;}
   let release:(()=>void)|undefined;
+  let check: 'destination-paths' | 'destination-lock' | 'destination-open' = 'destination-paths';
   try {
     let options;
     try {options=secretImportOptions.parse(JSON.parse(readFileSync(args.values.identities,'utf8')));}
@@ -26,10 +27,12 @@ export async function migrateSecrets(argv:string[],io:IOStreams):Promise<number>
     assertSeparateSecretPaths(source,destination);
     try {assertCopiedSecretSource(source);}
     catch {throw new SecretsImportRefusal('copied-source');}
+    check = 'destination-lock';
     release=acquireHttpLock(args.values.home);
+    check = 'destination-open';
     const app=createFoundation({home:args.values.home});
     try {io.stdout(JSON.stringify(importSecrets(app.db,args.values.home,args.values.from,Date.now(),options))+'\n');return 0;}
     finally {app.close();}
-  } catch (error) {if(error instanceof SecretsImportRefusal){io.stderr(error.message+'\n');return 1;}io.stderr('Secrets import refused; check source, identities and imported household, and stop the destination daemon.\n');return 1;}
+  } catch (error) {if(error instanceof SecretsImportRefusal){io.stderr(error.message+'\n');return 1;}io.stderr(new SecretsImportRefusal(check).message+'\n');return 1;}
   finally {release?.();}
 }
