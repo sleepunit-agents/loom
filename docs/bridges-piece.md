@@ -426,3 +426,46 @@ proof that a separately configured app-level token belongs to that app. Composit
 must invalidate/revalidate on setup or credential changes and use this app ID to
 reject mismatched incoming `api_app_id` values. Socket registration, raw drain,
 normalization/admission and lifecycle remain required; nothing starts IO on install.
+
+## Slack raw normalization drain
+
+`slackDrain` is an unregistered, serialized handoff from the private raw inbox to
+`Bridges.receive`. It inspects each candidate through fresh `slackApi.inspect`
+evidence before using `slackMessage`; human display names come from current People
+via unambiguous owner-written links, never Slack labels. The engine then resolves
+links and repeats fresh inspection/runtime admission, including every group member.
+Normalization does not grant admission. Unsupported events and definite platform
+refusals erase raw words; metadata waits and failed normalized commits retain them.
+Consumption follows the normalized commit. A failure between commits replays the
+same stable engine message ID without a second delivery.
+
+Each pass handles at most 64 raw receipts in receipt order, using a received/id
+cursor to pass retained failures before wrapping to retry them. Failed checks retry
+after five seconds; backlogs schedule another bounded pass. The conservative raw
+budget starts at the immutable receipt time: exactly one hour remains eligible,
+more than an hour erases raw words and retains the deduplication tombstone. This
+raw budget includes time spent staged or offline and is distinct from the engine's
+first-transient-result budget. An attempt begun within the raw budget may finish.
+
+The drain rechecks the enabled venue snapshot and persistent setup revision after
+metadata IO and before handoff. Setup changes permanently stop the old drain, even
+when restored. Composition must also provide a current credential-generation check;
+a false check stops it permanently. Reauthenticate and recreate the binding/drain
+after either change. Pending receipts stay private and can be recovered only by
+a fresh drain for the same authenticated identity; replacement identities cannot
+read them. Owner disposition of obsolete identities remains required.
+
+The staging gate runs before metadata and again after awaits. Held staging retains
+raw receipts until release or expiry when draining resumes. `close` cancels timers,
+prevents a late handoff and waits for the current metadata/handoff Promise; the
+root must await it before closing the database. No new IO begins after close.
+The root still must authenticate the binding, supply service SecretUse and trusted
+People names, start the socket, call flush at startup/receipt/release, invalidate
+on setup/credential changes, and install shutdown ordering. No root registration
+or live connection is introduced here.
+
+| Legacy queue behavior | New building block / remaining work |
+| --- | --- |
+| Fallible metadata before delivery | Durable raw receipt, fresh API inspection, People normalization, then engine commit |
+| In-memory retry with one-hour expiry | Immutable raw receipt age, five-second retry and tombstone erasure |
+| Shutdown during intake | Serialized close suppresses late handoff; daemon registration remains required |
