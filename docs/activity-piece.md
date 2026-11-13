@@ -31,7 +31,8 @@ member policy. It supplies safe plain titles, metadata and only authorized sibli
 run titles. Comms rows always name their member, even for the household owner.
 `needsForMember` identifies who may see a run's needs and destination. Text cards
 are not steps. Role failures/malformed output preserve the episode section and
-show an error instead of implying an empty household. Source errors are generic.
+show an error instead of implying an empty household. Source errors are generic. Reader error/unavailable records remain distinct from
+missing/unauthorized entries; one broken episode database leaves healthy sources working.
 
 Activity separately checks memory/agent visibility and conversation/agent/member
 visibility with unchanged central policy. It never puts project scope on private
@@ -52,7 +53,8 @@ the same not-found answer. Offline and denied feeds render no retained content.
 
 The coordinator wires the NEW Conversations/Comms role; it must emit `conversation`,
 `digest`, or `comms.*` changes for new/changed/removed content and return its next
-expiry deadline. No old conversations/comms program or database is permitted.
+expiry deadline. Each run returned by `read` carries its own `expires` deadline;
+Activity withdraws an open reader at that instant, even without a change event. No old conversations/comms program or database is permitted.
 Use the household database's timezone, owner and GitHub owner metadata. Verify
 existing listed agent memory paths in the copied home, ensure no competing source
 listeners, and start/verify next mode only at the coordinated move. This PR makes

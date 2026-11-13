@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
-import {mkdtempSync,rmSync,existsSync} from 'node:fs';
+import {mkdtempSync,rmSync,existsSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {once} from 'node:events';
@@ -15,7 +15,7 @@ const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
 const dir=()=>{const h=mkdtempSync(join(tmpdir(),'activity-'));homes.push(h);return h;};
 afterEach(async()=>{for(const fn of closes.splice(0).reverse())await fn();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
 const now=Date.parse('2026-11-13T18:00:00Z'),owner:Viewer={kind:'member',id:'owner'},partial:Viewer={kind:'member',id:'partial'};
-const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}},services:{}};
+const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}},services:{'conversation-reader':{types:['conversation'],operations:[]},'memory-reader':{types:['memory'],operations:[]}}};
 function source(){const path=join(dir(),'memories.db'),db=new BetterSqlite3(path);db.exec('CREATE TABLE memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');closes.push(()=>db.close());return {path,db,add(ref:string,input:Record<string,unknown>={}){const row={ref,title:ref,content:'A complete story mentioning t-12 and sleepunit-agents/loom#941.',created:'2026-11-13T17:00:00Z',project:null,metadata:'{"where":"terminal"}',expires_at:null,category:'episode',archived:0,...input};db.prepare('INSERT OR REPLACE INTO memories VALUES(@ref,@title,@content,@created,@project,@metadata,@expires_at,@category,@archived)').run(row);}};}
 const conv=(id='cv-111111111111',input:Partial<ActivityConversation>={}):ActivityConversation=>({id,agent:'art',venue:'terminal',place:'terminal',label:'Build the household',people:['owner'],...input});
 const run=(key:string,input:Partial<ActivityRun>={}):ActivityRun=>({kind:'digest',key,at:'2026-11-13T17:10:00Z',conversation:conv(),summary:'Shipped Activity. The full story follows.',asked:['Show what happened'],decided:['Use the new role'],tasks:['t-2207'],links:[],more:[],...input});
@@ -63,4 +63,36 @@ it('updates two windows after outside writes and expiry without polling, and cle
  const next=sockets.map(w=>once(w,'message'));a.add('m-two',{title:'Outside update'});app.operations.call('direct',{kind:'agent',id:'art'},'core.touched',{type:'memory',id:'art:m-two'});for(const p of next)expect(JSON.parse((await p)[0].toString()).record.entries.map((e:{title:string})=>e.title)).toContain('Outside update');
  const expired=sockets.map(w=>once(w,'message'));(app.operations.clock as FakeClock).advance(1000);for(const p of expired)expect(JSON.parse((await p)[0].toString()).record.entries.map((e:{id:string})=>e.id)).toEqual(['e~art~m-two']);
  a.db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-two');expect(read(app,'e~art~m-two')).toMatchObject({code:'not-found'});
+});
+
+it('authorizes conversation-only and memory-only services independently and passes the original viewer to every role method',async()=>{
+ const a=source();a.add('m-later',{created:'2026-11-13T14:00:00Z'});a.add('m-named',{created:'2026-11-13T14:00:00Z',metadata:'{"conversation":"cv-111111111111","where":"terminal"}'});
+ const calls:Array<{method:string;viewer:Viewer}>=[],base=role([run('dg-one')]);
+ const original:ActivityConversations={list(v,q){calls.push({method:'list',viewer:v});return base.list(v,q);},read(v,a,k,id){calls.push({method:'read',viewer:v});return base.read(v,a,k,id);},conversation(v,a,id){calls.push({method:'conversation',viewer:v});return base.conversation(v,a,id);}};
+ const app=await fixture(a.path,undefined,original),v:Viewer={kind:'service',id:'conversation-reader'},memory:Viewer={kind:'service',id:'memory-reader'};
+ expect(list(app,v).entries.map(e=>e.id)).toEqual(['d~art~dg-one']);expect(read(app,'d~art~dg-one',v)).toMatchObject({ok:true});expect(read(app,'e~art~m-later',v)).toMatchObject({code:'not-found'});
+ expect(list(app,memory).entries.map(e=>e.id)).toEqual(['e~art~m-later']);expect(read(app,'d~art~dg-one',memory)).toMatchObject({code:'not-found'});
+ calls.splice(0);list(app,partial);read(app,'d~art~dg-one',partial);read(app,'e~art~m-named',partial);expect(new Set(calls.map(c=>c.method))).toEqual(new Set(['list','read','conversation']));for(const c of calls)expect(c.viewer).toBe(partial);
+});
+it('reports reader failures and absent owners separately from missing, retaining healthy episodes beside corrupt databases',async()=>{
+ const a=source();a.add('healthy');const bad=join(dir(),'corrupt.db');writeFileSync(bad,'not a sqlite database');
+ const r=role([run('dg-one')]),app=await fixture(a.path,bad,r);expect(list(app)).toMatchObject({episodes:'error'});expect(list(app).entries.some(e=>e.id==='e~art~healthy')).toBe(false); // nearby digest owns the run
+ r.read=()=>{throw Error('/private/secret');};expect(read(app,'d~art~dg-one')).toMatchObject({value:{state:'error',message:'The conversation service couldn’t open this entry.'}});
+ expect(read(app,'e~other~anything')).toMatchObject({value:{state:'error'}});r.list=()=>({available:true,rows:[]});expect(list(app).entries.map(e=>e.id)).toEqual(['e~art~healthy']);
+ const absent=await fixture(a.path);expect(read(absent,'d~art~dg-one')).toMatchObject({value:{state:'unavailable'}});expect(read(absent,'e~art~missing')).toMatchObject({code:'not-found'});
+});
+it('expires an open digest at the NEW owner’s exact deadline',async()=>{
+ const a=source(),rows=[run('dg-expiring',{expires:now+1000})],app=await fixture(a.path,undefined,role(rows));
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'activity.entry',scope:'d~art~dg-expiring'}));expect(JSON.parse((await initial)[0].toString()).records).toHaveLength(1);
+ const expired=once(ws,'message');(app.operations.clock as FakeClock).advance(1000);expect(JSON.parse((await expired)[0].toString())).toMatchObject({kind:'del',id:'d~art~dg-expiring'});
+});
+it('rolls recent windows, access dates and thirty-day readers at local midnight',async()=>{
+ const a=source();a.add('m-drop',{created:'2026-11-11T08:00:00Z'});a.add('m-month',{created:'2026-10-14T08:00:00Z'});const app=await fixture(a.path);
+ const sockets=await Promise.all([['activity.window','recent'],['activity.access',undefined],['activity.entry','e~art~m-month']].map(async([type,scope])=>{const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type,scope}));expect(JSON.parse((await initial)[0].toString()).records).toHaveLength(1);return ws;}));
+ const next=sockets.map(ws=>once(ws,'message'));(app.operations.clock as FakeClock).advance(startOf('2026-11-14','America/Chicago')-now);
+ expect(JSON.parse((await next[0])[0].toString()).record).toMatchObject({days:['2026-11-14','2026-11-13','2026-11-12'],entries:[]});expect(JSON.parse((await next[1])[0].toString()).record.today).toBe('2026-11-14');expect(JSON.parse((await next[2])[0].toString())).toMatchObject({kind:'del',id:'e~art~m-month'});
+});
+it('suppresses normalized conversation ids from prompt content even without metadata outside the nearby-run heuristic',async()=>{
+ const a=source();a.add('prompt',{title:'You are art, in a conversation on terminal: House work.',content:'Ask: You are art, in a conversation on terminal: House work. Its conversation is cv-111111111111',metadata:'{}',created:'2026-11-13T12:00:00Z'});
+ const app=await fixture(a.path,undefined,role([run('dg-one')]));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-one']);
 });

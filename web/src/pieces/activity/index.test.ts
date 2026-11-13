@@ -40,3 +40,9 @@ it('renders the full reader and original internal destinations; hides reader dat
  const link=tree!.root.findAllByType('a').find(a=>a.props.children==='t-12')!,preventDefault=vi.fn();await act(async()=>link.props.onClick({preventDefault}));expect(preventDefault).toHaveBeenCalledOnce();expect(props.go).toHaveBeenCalledWith('/p/tasks-preview/task/t-12');
  f.detail={records:[],status:'offline'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).not.toContain('The complete story');expect(text()).toContain('Connection lost');
 });
+
+it('changes day-specific counts and distinguishes reader service errors from missing entries',async()=>{
+ f.window=feed();await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?day=2026-11-12&e=d~art~dg-one'}));});expect(text()).toContain('0 entries');expect(text()).toContain('This entry is no longer available');
+ const day=tree!.root.findByType('select');await act(async()=>day.props.onChange({target:{value:'2026-11-13'}}));expect(props.go.mock.lastCall?.[0]).toContain('day=2026-11-13');
+ f.detail={records:[{id:'d~art~dg-one',state:'error',message:'The conversation service couldn’t open this entry.'}],status:'live'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).toContain('couldn’t open this entry');expect(text()).not.toContain('This entry is no longer available');
+});

@@ -4,6 +4,7 @@ import {Split,List,Row,Empty,Loading,Error,Button,Markdown,type SplitFolder} fro
 import Face from '../../face';
 import {reducedMotion} from '../../access';
 import {VENUES,address,filtersOf,passes,safeHref,type Filters,type ActivityWindow,type ActivityEntry,type ActivityOpen} from './model';
+interface Failure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
 interface Access {[key:string]:unknown;id:string;allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[]}
 // Session state contains only navigation preferences. Records remain in the
 // shared live store: each Earlier click adds one three-day subscription.
@@ -39,7 +40,7 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  const [local,setLocal]=useState(()=>typeof location==='undefined'?'/p/activity-preview':location.pathname+location.search);
  const q=new URL(shellPath??local,'http://loom').searchParams,f=filtersOf(q),selected=q.get('e')??undefined;
  const access=useRecords<Access>('activity.access'),permission=access.status==='live'?access.records[0]:undefined;
- const [count,setCount]=useState(activitySession.windows),windows=useWindows(permission?.windows??[],count),detail=useRecords<ActivityOpen>('activity.entry',selected??'');
+ const [count,setCount]=useState(activitySession.windows),windows=useWindows(permission?.windows??[],count),detail=useRecords<ActivityOpen|Failure>('activity.entry',selected??'');
  const records=windows.flatMap(w=>w.status==='live'?w.records:[]),entries=[...new Map(records.flatMap(w=>w.entries).map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id));
  const days=[...new Set(records.flatMap(w=>w.days))].sort().reverse(),day=q.get('day')??permission?.today??days[0],tz=permission?.timezone??'America/Chicago';
  const navigate=(nf:Filters=f,id:string|null=selected??null,d=day)=>{const next=address(nf,id??undefined,d);if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
@@ -70,6 +71,6 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  {days.map(d=>{const rows=shown.filter(e=>e.day===d);return rows.length?<section key={d} aria-label={d}><h2 className="px-4 py-2 font-medium">{d}</h2><List label={`Activity on ${d}`}>{rows.map(e=><Row key={e.id} data-day={e.day} data-hour={e.hour} title={e.title} meta={`${new Date(e.at).toLocaleTimeString([],{timeZone:tz,hour:'numeric',minute:'2-digit'})} · ${e.agent} · ${e.where}${e.line?' · '+e.line:''}`} icon={<Face bg="" size={28} label={e.agent}/>} status={e.what==='work'?'Work done':e.what==='system'?'System':undefined} selected={e.id===selected} onClick={()=>pick(e.id)} style={{contentVisibility:'auto',containIntrinsicSize:'auto 100px'}}/>)}</List></section>:null;})}
  {loading?<Loading label="Opening activity…"/>:!shown.length&&<Empty title={f.who.length+f.where.length+f.what.length?'Nothing matches these filters':'Quiet'} text="Try fewer filters or earlier days."/>}
  {count<11&&<Button disabled={loading} onClick={()=>{activitySession.windows=count+1;setCount(count+1);}}>Earlier</Button>}</>}</div>}
- reader={detail.status==='loading'?<Loading label="Opening entry…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?<Reader entry={detail.records[0]} tz={tz} go={go} pick={pick}/>:<Empty title="This entry is no longer available" text="It may have expired or you may no longer have access."/>}
+ reader={detail.status==='loading'?<Loading label="Opening entry…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?('state' in detail.records[0]?<Error text={String(detail.records[0].message)}/>:<Reader entry={detail.records[0] as ActivityOpen} tz={tz} go={go} pick={pick}/>):<Empty title="This entry is no longer available" text="It may have expired or you may no longer have access."/>}
  open={!!selected} onBack={()=>navigate(f,null)} backLabel="Activity" blank={<Empty title="Open an entry" text="Read what happened, what was asked and what was decided."/>}/>;
 }

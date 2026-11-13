@@ -5,7 +5,7 @@
 import type {Viewer} from '../../core/index.js';
 export interface ActivityConversation {id:string;agent:string;venue:string;place:string;label:string;people:string[];member?:string}
 export interface ActivityRun {
- kind:'digest'|'conversation';key:string;at:string;conversation:ActivityConversation;
+ kind:'digest'|'conversation';key:string;at:string;expires?:number;conversation:ActivityConversation;
  summary?:string;turns?:number;replies?:number;asked:string[];decided:string[];tasks:string[];
  links:Array<{label:string;href?:string}>;steps?:Array<{label:string;state:string;tool:string}>;
  needs?:string;needsHref?:string;needsForMember?:string;
