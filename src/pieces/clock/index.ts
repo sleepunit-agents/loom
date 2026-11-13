@@ -66,8 +66,24 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
+    work(i);
     const due = calendar(() => name === 'at' ? parseAt(i.when, ctx.now) : parseIn(i.when, ctx.now));
     if (due <= ctx.now) invalid('Wake must be in the future');
+    // Only a currently owner-authored schedule can stand in for a self-chain.
+    // Agent-authored schedules need runtime conversation provenance first.
+    if (i.file && !i.continuation && !i.approval && !i.place && !paused(db, i.agent)) {
+      for (const s of schedules(db)) {
+        if (!s.enabled || s.agent !== i.agent || s.project !== i.project || s.member !== i.member
+          || (s.laneDetails?.source ?? s.file) !== i.file || !see(ctx.viewer, s, 'schedule')
+          || s.by.kind !== 'member' || !mayAct(s.by, {}, sharing(), 'household') || !create(s.by, s)
+          || !(ctx.viewer.kind === 'agent' && ctx.viewer.id === i.agent || ctx.viewer.kind === 'member' && ctx.viewer.id === s.by.id)) continue;
+        const occurrence = wakes(db).filter(w => w.schedule === s.id && w.state === 'pending' && !w.runNow && !w.bypassPause
+          && w.due > ctx.now && w.laneVersion === s.laneVersion && w.scheduleRevision === s.scheduleRevision)
+          .sort((a, b) => a.due - b.due)[0];
+        if (occurrence && Math.abs(due - occurrence.due) <= 6 * 3600_000)
+          return { alreadyScheduled: true, schedule: s.id, due: occurrence.due };
+      }
+    }
     oneOffRoom(i.agent);
     return make(ctx, i, due);
   });

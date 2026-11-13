@@ -32,6 +32,51 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 // Drain the known dispatch promise chain, without wall-clock sleeps.
 const settled = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('durable daemon clock', () => {
+  it('answers a file lane self-rearm within six hours without creating another wake, even at capacity', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: 'routines/upkeep.md' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    for (let n = 0; n < 50; n++) app.set('2d');
+    const before = wakes(app.db);
+    for (const delta of [-6, 0, 6]) {
+      const r = app.value('in', { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: `${(occurrence.due + delta * 3600_000 - app.clock.now()) / 1000}s` }, { kind: 'agent', id: 'art' });
+      expect(r).toEqual({ alreadyScheduled: true, schedule: s.id, due: occurrence.due });
+    }
+    expect(wakes(app.db)).toEqual(before);
+  });
+  it('keeps an extra file run outside the six-hour boundary and suppresses only live matching occurrences', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: `${(occurrence.due - app.clock.now()) / 1000}s` };
+    const agent: Viewer = { kind: 'agent', id: 'art' };
+    expect(app.value('in', input, agent)).toEqual({ alreadyScheduled: true, schedule: s.id, due: occurrence.due });
+    expect(app.value('in', { ...input, when: `${(occurrence.due + 6 * 3600_000 + 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
+    expect(app.value('in', { ...input, file: 'routines/other.md' }, agent).state).toBe('pending');
+    app.value('pause', { agent: 'art' });
+    app.clock.advance(occurrence.due - app.clock.now()); await settled();
+    expect(wake(app.db, occurrence.id)?.hold).toBe('paused');
+    // A held occurrence is no promise of a future run.
+    expect(app.value('in', { ...input, when: '1m' }, agent).state).toBe('pending');
+  });
+  it('never substitutes unproven or another scope schedule for work or approval continuations', async () => {
+    const access = structuredClone(sharing);
+    access.members.helper = { owner: false, agents: ['art'] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    const agent: Viewer = { kind: 'agent', id: 'art' };
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '12h' };
+    app.value('scheduleSet', { id: 'agent', agent: 'art', at: '03:31', file: input.file, note: 'agent' }, agent);
+    expect(app.value('in', input, agent).state).toBe('pending');
+    app.value('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: input.file });
+    for (const fields of [{ project: 'pond' }, { continuation: 'opaque' }, { approval: 'a-local' }, { place: 'conversation' }])
+      expect(app.value('in', { ...input, ...fields }, agent).state).toBe('pending');
+    expect(app.value('in', input, { kind: 'member', id: 'helper' }).state).toBe('pending');
+    // Invalid work and unauthorized callers cannot turn the no-op into success.
+    expect(app.call('in', { ...input, prompt: 'Both' }, agent)).toMatchObject({ ok: false, code: 'invalid' });
+    expect(app.call('in', input, { kind: 'agent', id: 'stranger' })).toMatchObject({ ok: false, code: 'denied' });
+    access.members.jonathan.owner = false;
+    expect(app.value('in', input, agent).state).toBe('pending');
+  });
   it('creates an owner wake now without a lane, preserving attribution and bypassing pause', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'now-body' } as const));
     const app = await loom({ runtime: { startBody } });

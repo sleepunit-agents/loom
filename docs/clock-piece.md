@@ -337,3 +337,24 @@ Ported cases: legacy Python tests for exact merge action, local words missing,
 owner-applied vouch, secret re-request and resumed-note prefix replacement.
 Daemon fixtures cover answer notification, 24-hour unanswered timeout, restart
 before Deny, and restart after the resumed wake fires without a second body.
+
+## File-lane self-rearm suppression
+
+`clock.at` and `clock.in` return `{alreadyScheduled:true,schedule,due}` without
+creating a wake when a file self-rearm falls within six elapsed hours (inclusive)
+of the next pending occurrence of an enabled owner-authored schedule. Ordinary
+file schedules and household lanes with a matching `source` both qualify. File
+names are exact repository-relative strings; the server does not open or resolve
+them. Work validation and central create policy run before this result; a no-op
+uses no one-off capacity. Extra runs beyond that window are still armed.
+
+A schedule must have the same agent, project and member scope, a currently
+authorized owner author, and a pending future occurrence of its current revision.
+The caller is either that owner or the assignee agent itself. Paused agents,
+held/firing work, explicit run-now rows, continuations, approvals and delivery
+places do not qualify. Agent-authored schedules cannot substitute for a rearm
+until authenticated runtime conversation provenance is available; that remaining
+parity obligation is tracked on t-2201. Non-owner member requests remain explicit
+extra work. This deliberately narrows the old local clock's file matching while
+preserving its six-hour boundary. The generated client must render this result
+as `already scheduled: <schedule>, next at <time> (nothing armed)`.
