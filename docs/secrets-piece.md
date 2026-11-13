@@ -43,3 +43,30 @@ interruption tests. It must preserve scopes, expirations, policy and carry/revok
 metadata and import audit metadata without importing value bytes into loom.db.
 The old stores remain untouched for rollback. No import or host step is performed
 by this increment.
+
+## Service use inside the daemon
+
+`installSecretServices` adds household-only `secrets.grantService` and
+`secrets.revokeService` for `{service, name}` (grant optionally has `expiresAt`).
+Only installed services and existing names may be granted. These entries live in
+the same central grants table with the reserved principal `service:<id>`; `:` is
+not a valid agent ID. They are household records, never grants to an agent with
+that service's name. Agent grants and service grants do not authorize each other.
+Removal already deletes every grant for the secret, including service entries.
+
+`secretUseRole` binds the authenticated service viewer at composition and offers
+`withValue(name, use)`. It checks current registration, the exact service grant,
+expiry, Never policy and name existence before reading the holder and again
+before calling `use` after transport awaits. There is no public value operation,
+retry result or Live change. Holder and callback errors become a fixed message.
+The injected `SecretValueSource` must deliver a fresh exclusively owned buffer
+from the authenticated separate holder; that buffer is erased on every exit.
+
+The callback is trusted built-in code. It must not log, store, return or retain
+credential text or any transformed copy. Its result is returned only to its
+in-process caller, never automatically to the registry. JavaScript strings cannot
+be securely erased; the callback's credential string is dropped when it returns.
+Production local transport, provider account lookup (`resolveGitHub`), staging
+holds and authenticated composition remain required; this increment installs
+nothing in next mode and reads no old files. Agent value delivery remains
+`handSecret`/`handTo` to a runtime sink.
