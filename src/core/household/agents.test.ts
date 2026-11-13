@@ -36,6 +36,8 @@ it('registers existing contexts only for household owners on every door, preserv
   app.db.transaction(() => household.change(h, raw => { raw.extra = { retained: ['unknown'] }; raw.default = 'mark'; }))();
   const before = household.document()!, projects = new HouseholdRows(app.db, 'projects').entries();
   const tokens = new HouseholdRows(app.db, 'tokens').entries();
+  // Next-mode startup creates the owner's page-link credential on this fixture.
+  expect(tokens.length).toBeGreaterThan(0);
   const dir = context(h, 'new-agent'), creed = readFileSync(join(dir, 'IDENTITY.md'));
   for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
     for (const viewer of [{ kind: 'member', id: 'pollock' }, { kind: 'member', id: 'missing' }, { kind: 'agent', id: 'art' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'sharing' }] as Viewer[]) {
