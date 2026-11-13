@@ -28,8 +28,7 @@ private local wakes are explicitly held before intent and before Runtime.
 Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
-mutation/join, original schedule principal narrowing, API 40/conversation 20 and
-origin-bearing schedule 20 quotas, agent-authored self-rearm eligibility, and
+mutation/join, original schedule principal narrowing, API 40/conversation 20 quotas, agent-authored self-rearm eligibility, and
 continuation issuer/handle/deadline/place validation. These are gaps, not deliberate
 drops. Archived strings and caller-supplied handles cannot fill them.
 
@@ -274,7 +273,7 @@ the command inventory above, the source has these domain obligations:
 
 | Legacy behavior | Current new-side gap or choice |
 | --- | --- |
-| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
+| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares and verified conversation provenance are unfinished. New origin-bearing schedules have the 20-per-agent cap described below. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Owner-authored schedule suppression and its client response are implemented below; agent-authored eligibility still needs authenticated runtime provenance. |
@@ -971,3 +970,21 @@ cannot read the thread or card. The proof replaces synthetic trusted Caller
 filing fixtures. It uses a deterministic body tool-call harness, without claiming
 model interpretation or an external runner process. Sending, filing and allowing
 start no local wake; scheduled private wakes retain exact words and stay held.
+
+
+### API-origin schedule capacity
+
+A new `clock.scheduleSet` from an agent Viewer is refused when the target agent
+already has twenty origin-bearing schedules. The origin is stamped from that
+Viewer, never from command or operation input; it is capacity metadata only and
+confers no mutation, principal, conversation or delivery authority. Owner-created
+schedules are exempt and consume no API share. Existing schedules may be replaced
+at capacity, matching the legacy new-creation check; an owner replacement has no
+API origin. Disabled origin-bearing schedules count until removed. Historical
+rows lacking this new metadata do not acquire origin from `by` or archive text.
+The shared fifty-one-off cap is unchanged. API forty / verified-conversation twenty
+one-off quotas and the conversation mutation boundary remain unfinished.
+
+The in-process schedule-capacity fixtures cover the twenty-first refusal without
+partial rows/events, owner exemption, replacement/removal, disabled and historical
+rows, separate target-agent shares, ignored forged origin and restart persistence.

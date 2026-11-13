@@ -311,7 +311,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const old = schedule(db, i.id);
     if (old?.laneDetails) invalid('Edit household lanes with laneSet');
     if (old && (old.agent !== i.agent || old.project !== i.project || old.member !== i.member)) invalid('Remove a schedule before changing its scope');
-    const s: Schedule = { ...i, at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
+    if (!old && ctx.viewer.kind === 'agent' && schedules(db).filter(s => s.agent === i.agent && s.apiOrigin).length >= 20)
+      invalid('At most 20 API-origin schedules per agent; remove some first');
+    const s: Schedule = { ...i, ...(ctx.viewer.kind === 'agent' ? { apiOrigin: ctx.viewer.id } : {}), at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
     cancelOccurrences(ctx, s.id, 'Schedule changed');
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
