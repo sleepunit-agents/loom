@@ -331,7 +331,7 @@ and host answers are applied by their piece; the continuation spends nothing.
 Secret answers ask the new house to request again. A local-wake answer without
 trusted stored-word recovery instructions tells the continuation to refile rather
 than consuming an unusable receipt. Full local-approval creation and recovery is
-still a later server slice. No approval is spent by unpark itself.
+still a later server slice. An incomplete current Allow without instructions or action details tells the body to stop and inspect the approval rather than guessing from a saved snapshot. This deliberately drops the old generic “spend with --approval” fallback: it cannot identify the allowed action. No approval is spent by unpark itself.
 
 Ported cases: legacy Python tests for exact merge action, local words missing,
 owner-applied vouch, secret re-request and resumed-note prefix replacement.

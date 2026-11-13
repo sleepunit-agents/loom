@@ -15,7 +15,7 @@ function spendWords(id: string, answer: Answer) {
   if (answer.instruction) return answer.instruction;
   if (answer.kind === 'local-wake') return `The clock no longer has the words ${id} was filed for, so it can't be set from it. Don't spend it: comment on the task what was waiting, set the wake again with its words (-p) so the owner is asked once more, and park on the new id.`;
   if (answer.kind && answer.target) return `Pick up where you left off, and spend it on exactly the action it allows (${answer.kind} for ${answer.target}): \`approvals use ${quote(id)} --kind ${quote(answer.kind)} --target ${quote(answer.target)}\`, or the tool that asked with this id (${id}). Don't ask again: any of this agent's bodies spends it, once.`;
-  return `Pick up where you left off, and spend it with --approval ${id} on exactly the action it allows.`;
+  return `The current action for ${id} could not be read. Don't spend it or infer the action from saved metadata: check the approval details, comment on the task what is waiting, and stop until the exact allowed action is available.`;
 }
 /** The role supplies spending instructions. Saved request metadata never authorizes a spend.
  * In particular a pending card's instruction cannot survive a denial or timeout.

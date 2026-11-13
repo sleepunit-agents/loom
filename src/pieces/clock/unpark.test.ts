@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { unpark } from './unpark.js';
-import type { Answer } from './dependencies/approvals.js';
 import type { Wake } from './store.js';
 const row = (note = 'DNS health check', id = 'a-24e194de'): Wake => ({
   id: 'w-1', agent: 'art', prompt: 'Continue the work', note, state: 'parked', due: 0,
@@ -49,6 +48,12 @@ describe('parked continuation words', () => {
     expect(w.prompt).toContain("Don't spend it"); expect(w.prompt).not.toContain('--approval a-24e194de');
     const restored = row(); unpark(restored, { state: 'allowed', kind: 'local-wake', instruction: 'wake in 1m --approval a-24e194de' });
     expect(restored.prompt).toContain('wake in 1m --approval a-24e194de');
+  });
+  it('does not suggest spending an incomplete current Allow from a saved snapshot', () => {
+    const w = row(); w.wait!.kind = 'merge'; w.wait!.target = 'saved-head';
+    unpark(w, { state: 'allowed' });
+    expect(w.prompt).toContain("Don't spend it or infer the action from saved metadata");
+    expect(w.prompt).not.toContain('saved-head'); expect(w.prompt).not.toContain('--approval');
   });
   it('asks a new house to request an allowed secret again instead of spending its request id', () => {
     const w = row('waiting', 'q-secret'); unpark(w, { state: 'granted', instruction: 'approvals use q-secret' });
