@@ -21,6 +21,8 @@ const random = () => randomBytes(32).toString('hex');
 interface StoredSession { issuedAt: number; secret: string; signedInAt?: number; agent?: true; device?: string; label?: string; via?: 'token'|'link'|'passkey' }
 interface BrowserSession { s: StoredSession; viewer: Viewer; expiresAt: number }
 const MONTH = 30 * 86400, HOURS = 6 * 3600;
+/** Actual browser validity, also used by safe Account/admin projections. */
+export const sessionExpiresAt=(s:{issuedAt:number;agent?:true;device?:string})=>(s.issuedAt+(s.agent||/^HeadlessChrome\b/.test(s.device??'')?HOURS:MONTH))*1000;
 const clean = (s?: string) => (s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu,' ').replace(/\s+/g,' ').trim().slice(0,60);
 /** Normalize before truncation: ordinary headless UAs begin with Mozilla and can be long. */
 function deviceOf(ua?: string): string | undefined {
@@ -95,11 +97,11 @@ export class Signin {
   checkCsrf(req: IncomingMessage, value: string) { const id=cookieId(req); return !!id && eq(value,this.csrf(id)); }
   session(id: string, recordUse = false): BrowserSession | undefined {
     const s=this.sessions.get('sessions',hash(id)); if (!s) return;
-    const max=s.agent || /^HeadlessChrome\b/.test(s.device ?? '') ? HOURS : MONTH;
-    if (this.now() >= s.issuedAt+max) return;
+    const expiresAt=sessionExpiresAt(s);
+    if (this.now()*1000 >= expiresAt) return;
     const t=this.token(s.secret); if (!t || t.viewer.kind!=='member') return;
     if (recordUse) this.used(s.secret,id);
-    return {s,...t,expiresAt:Math.min((s.issuedAt+max)*1000,t.expiresAt ?? Infinity)};
+    return {s,...t,expiresAt:Math.min(expiresAt,t.expiresAt ?? Infinity)};
   }
   /** Usage is diagnostic, never authority. Pure token/session checks do not call this. */
   private used(digest: string, id?: string): void {

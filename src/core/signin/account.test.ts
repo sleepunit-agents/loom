@@ -41,9 +41,10 @@ it('removes a passkey and revokes its own token, keeps descendants unless select
 });
 it('removes a legacy shared-token key without revoking its links token and refuses stale replacement refs',async()=>{
   const f=await setup();f.s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'links',sha256:hash('links'),created:'2026-01-01'}));
-  const key={id:'legacy',secret:hash('links'),publicKey:'key',counter:0,alg:-7,label:'legacy',created:0};f.s.sessions.change(x=>{x.passkeys!.legacy=key;x.passkeys!.sibling={...key,id:'sibling',label:'Sibling'};});
-  const before=f.read().passkeys.find(k=>k.label==='legacy')!;
-  expect(f.call('removePasskey',{ref:before.ref,withMade:true},'legacy')).toEqual({ok:true,value:{removed:1,revoked:0}});expect(f.s.token(hash('links'))).toBeDefined();expect(f.s.sessions.read().passkeys!.sibling).toEqual({...key,id:'sibling',label:'Sibling'});
+  f.s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'linked',sha256:hash('linked'),passkey:hash('linked'),from_sha256:hash('links'),created:'2026-01-01'}));
+  const key={id:'legacy',secret:hash('links'),publicKey:'key',counter:0,alg:-7,label:'legacy',created:0};f.s.sessions.change(x=>{x.passkeys!.legacy=key;x.passkeys!.sibling={...key,id:'sibling',label:'Sibling'};x.passkeys!.linked={...key,id:'linked',secret:hash('linked'),label:'Linked'};});
+  const before=f.read().passkeys.find(k=>k.label==='legacy')!;expect(before.made).toBe(0);
+  expect(f.call('removePasskey',{ref:before.ref,withMade:true},'legacy')).toEqual({ok:true,value:{removed:1,revoked:0}});expect(f.s.token(hash('links'))).toBeDefined();expect(f.s.sessions.read().passkeys!.sibling).toEqual({...key,id:'sibling',label:'Sibling'});expect(f.s.sessions.read().passkeys!.linked).toBeDefined();
   f.s.sessions.change(x=>{x.passkeys!.legacy={...key,secret:hash('jonathanchild')};});
   expect(f.call('removePasskey',{ref:before.ref},'stale')).toMatchObject({ok:false,code:'not-found'});expect(f.s.sessions.read().passkeys!.legacy).toBeDefined();
 });

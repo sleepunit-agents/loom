@@ -16,11 +16,13 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
   const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
-    const context=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await context.newPage();
+    const context=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
     const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
     const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!link.ok)throw Error('Fixture sign-in failed');
     await a.goto(base+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
+    const secondLink=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!secondLink.ok)throw Error('Second sign-in failed');
+    await b.goto(base+(secondLink.value as {path:string}).path);const otherSignedIn=b.waitForResponse(r=>r.request().method()==='POST');await b.getByRole('button',{name:'Sign in',exact:true}).click();expect((await otherSignedIn).status()).toBe(303);
     await a.goto(base+'/p/account-preview');await b.goto(base+'/p/account-preview');
     const registration=a.getByRole('form',{name:'Add a passkey',exact:true});await expect.poll(()=>registration.getByRole('textbox').isEnabled()).toBe(true);
     await registration.getByRole('textbox').fill('Browser passkey');await registration.getByRole('button',{name:'Add a passkey',exact:true}).click();
@@ -38,6 +40,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
       expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
-    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});expect(errors).toEqual([]);await context.close();
+    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});await a.getByRole('button',{name:'Sign out this device',exact:true}).click();
+    await expect.poll(()=>a.getByRole('button',{name:'Sign in with a passkey',exact:true}).count()).toBe(1);expect((await (await context.request.get(base+'/auth/session')).json()).viewer).toBeNull();expect((await (await otherContext.request.get(base+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
+    expect(errors).toEqual([]);await context.close();await otherContext.close();
   }finally{await browser.close();await loom.close();vi.unstubAllEnvs();rmSync(home,{recursive:true,force:true});}
 },60_000);
