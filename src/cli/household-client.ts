@@ -32,6 +32,7 @@ export async function runHouseholdClient(argv: string[], io: IOStreams, runtime:
   const now = runtime.now ?? (() => performance.now());
   const deadline = now() + 4000;
   for (;;) {
+    if (now() >= deadline) return fail('loom daemon is unavailable');
     try {
       const response = await runtime.request(new URL(`/api/household/${command.name}`, base), {
         method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(Math.max(1, Math.min(1500, Math.ceil(deadline - now())))),

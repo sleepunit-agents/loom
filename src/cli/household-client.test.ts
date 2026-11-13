@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +11,7 @@ import { HouseholdDatabase } from '../core/household/document.js';
 import { householdCommands } from '../core/household/commands.js';
 import { runHouseholdClient } from './household-client.js';
 const cleanup: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const close of cleanup.splice(0)) await close(); });
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'household-client-')); fixture(home);
   mkdirSync(join(home, 'commons'), { recursive: true });
@@ -85,7 +85,7 @@ it('refuses invalid usage before transport and preserves raw JSON for server val
   const result = await run(['addAgent', '{"agent":1e400}']);
   expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.bodies[0]).toContain('1e400');
   expect(await run(['addAgent', '{}'], request)).toMatchObject({ code: 1, stdout: '', stderr: 'loom-household: loom daemon is unavailable\n' });
-  expect(calls).toBe(9);
+  expect(calls).toBe(8);
 });
 it('requires an explicit safe origin, refuses redirects and never echoes transport diagnostics', async () => {
   const { run, app, tokenFile } = await setup(); let calls = 0;
@@ -122,6 +122,39 @@ it('survives a one-second restart and bounds immediate refusal retries to four s
     elapsed = 0; attempts.length = 0; stdout = ''; stderr = '';
     runtime.request = async () => { attempts.push(elapsed); if (serverError) return new Response(null, { status: 503 }); throw Error('connection refused'); };
     expect(await runHouseholdClient(['addAgent', '{}'], io, runtime)).toBe(1);
-    expect(elapsed).toBe(4000); expect(attempts).toHaveLength(9); expect(stdout).toBe('');
+    expect(elapsed).toBe(4000); expect(attempts).toEqual([0, 500, 1000, 1500, 2000, 2500, 3000, 3500]); expect(stdout).toBe('');
   }
+});
+
+it('cancels a stalled request at 1.5 seconds before retrying the same write', async () => {
+  const { app, tokenFile } = await setup();
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const caps: number[] = [];
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+    caps.push(ms); const controller = new AbortController();
+    setTimeout(() => controller.abort(Error('deadline')), ms); return controller.signal;
+  });
+  let started!: () => void;
+  const firstRequest = new Promise<void>(resolve => { started = resolve; });
+  let calls = 0; const bodies: string[] = []; let stdout = '';
+  const result = runHouseholdClient(['addAgent', '{"agent":"new-agent"}'], {
+    stdout: s => stdout += s, stderr: () => {}, stdin: Readable.from([]), stdinIsTTY: false,
+    env: { LOOM_URL: app.url, LOOM_TOKEN_FILE: tokenFile },
+  }, {
+    now: () => Date.now(), retry: async ms => { await vi.advanceTimersByTimeAsync(ms); },
+    request: (async (_url, init) => {
+      bodies.push(String(init?.body));
+      if (++calls > 1) return Response.json({ ok: true, value: ['new-agent'] });
+      started();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    }) as typeof fetch,
+  });
+  await firstRequest;
+  expect(caps).toEqual([1500]);
+  await vi.advanceTimersByTimeAsync(1499); expect(calls).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await result).toBe(0); expect(calls).toBe(2); expect(caps).toEqual([1500, 1500]);
+  expect(new Set(bodies).size).toBe(1); expect(JSON.parse(stdout)).toEqual(['new-agent']);
 });
