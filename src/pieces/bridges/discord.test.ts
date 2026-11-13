@@ -81,8 +81,11 @@ describe('Discord intake contract',()=>{
     const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(io.attempt);
     io.attempt.mockClear();
     try {
-      expect(convert({attachments:[{filename:'report.pdf',url:'https://cdn.discordapp.com/attachments/report.pdf'}]})!.text)
+      const event=raw({attachments:[{filename:'report.pdf',url:'https://cdn.discordapp.com/attachments/report.pdf'}]});
+      const bots=[art,mark], before=structuredClone({event,art,channel,bots});
+      expect(discordMessage(event,art,channel,bots)!.text)
         .toBe('hello [attachment: report.pdf https://cdn.discordapp.com/attachments/report.pdf]');
+      expect({event,art,channel,bots}).toEqual(before);
       expect(convert({attachments:[{filename:'report.pdf'}]})).toBeNull();
       expect(io.attempt).not.toHaveBeenCalled();
     } finally {fetch.mockRestore();}
