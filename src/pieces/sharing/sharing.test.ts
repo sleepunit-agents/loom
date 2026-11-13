@@ -89,3 +89,25 @@ it('publishes account assignment and clearing to a subscribed owner after commit
     }
   } finally { socket.terminate(); }
 });
+
+it('projects only membership fields to owners and evicts the projection when ownership ends', async () => {
+  const h = home(); fixture(h);
+  const viewer = { ...owner };
+  const app = await startLoom({ home: h, clock: new FakeClock(), authenticate: () => ({ viewer, valid: () => true }) }); closes.push(app.close);
+  app.db.transaction(() => new HouseholdDatabase(app.db).change(h, raw => {
+    (raw.members as Array<Record<string, unknown>>)[0].privateImportedValue = 'must-not-project';
+  }))();
+  const socket = new WebSocket(app.url.replace('http', 'ws') + '/live'); await once(socket, 'open');
+  const next = () => once(socket, 'message').then(([raw]) => JSON.parse(raw.toString()));
+  try {
+    const initial = next(); socket.send(JSON.stringify({ kind: 'subscribe', type: 'household.sharing' }));
+    const record = (await initial).records[0];
+    expect(record.defaultAgent).toBe('art');
+    expect(record.membership).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'pollock', role: 'member', agents: ['pond-bot'] }]);
+    expect(JSON.stringify(record)).not.toContain('must-not-project');
+    const denied = next(); viewer.id = 'pollock'; app.live.refreshAccess();
+    const revoked = await denied;
+    expect(JSON.stringify(revoked)).not.toContain('membership');
+    expect(revoked).toMatchObject({ kind: 'set', records: [] });
+  } finally { socket.terminate(); }
+});
