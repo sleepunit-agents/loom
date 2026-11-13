@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { format } from 'node:util';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startLoom } from '../../foundation.js';
@@ -11,7 +12,7 @@ import { handSecret, installSecretValues } from './values.js';
 import type { KeyHolder } from './keyholder.js';
 const owner: Viewer = {kind: 'member', id: 'jonathan'};
 const sentinel = 'HOLDER-ACK-SECRET-SENTINEL';
-const captured: unknown[] = [];
+const captured: string[] = [];
 afterEach(() => {vi.restoreAllMocks(); captured.length = 0;});
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -19,7 +20,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, {recursive: true, force: true});
 });
 async function setup() {
-  for (const method of ['log', 'warn', 'error'] as const) vi.spyOn(console, method).mockImplementation((...args) => {captured.push(args);});
+  for (const method of ['log', 'warn', 'error'] as const) vi.spyOn(console, method).mockImplementation((...args) => {captured.push(format(...args));});
   const home = mkdtempSync(join(tmpdir(), 'loom-holder-ack-')); homes.push(home); fixture(home);
   const holder: KeyHolder = {names: () => [], set() {}, remove() {}, handTo() {}, rotate() {}};
   const clock = new FakeClock();
