@@ -278,7 +278,9 @@ questions, "may this viewer see this record" and "may this viewer do this to it"
    its setup; household things (members, projects' lists, secrets, runners, pieces) are a household owner's; and
    an agent never answers an ask meant for a person.
 
-**The other tokens are narrow.** A runner sees and reports only the jobs assigned to it. The secrets key holder
+**The other tokens are narrow.** A runner sees and reports only the jobs assigned to it, and reports
+its own machine's health and facts (that it is alive, what it has, what it is hosting); it reads nothing about any
+other machine. The secrets key holder
 and an outside piece see only the record types and operations a household owner granted them.
 
 **A built-in piece's own job has its own viewer.** Background work a piece runs in the daemon (Changes syncing
