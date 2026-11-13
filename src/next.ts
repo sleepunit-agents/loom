@@ -20,6 +20,7 @@ import { installClock } from './pieces/clock/index.js';
 import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { installSlackDaemon, type SlackDaemonOptions } from './pieces/bridges/slack-daemon.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
@@ -73,10 +74,15 @@ export interface NextChangesOptions {
   request?: typeof fetch;
   interval?: number;
 }
+export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource }
+const bridgeDaemons = new WeakMap<Foundation, ReturnType<typeof installSlackDaemon>>();
+/** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
+export async function closeNext(app: Foundation) { await bridgeDaemons.get(app)?.close(); }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
   changes?: NextChangesOptions;
+  bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
   clockDeadmanAgents?: readonly string[];
 }
@@ -158,6 +164,11 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('clock.list')) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { runtime: clockRuntime(app, effects), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
+  }
+  if (options.bridges && !bridgeDaemons.has(app)) {
+    if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
+    const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
+    bridgeDaemons.set(app,installSlackDaemon(app,effects,{...options.bridges,secrets}));
   }
   installAttentionMaintenance(app);
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects);

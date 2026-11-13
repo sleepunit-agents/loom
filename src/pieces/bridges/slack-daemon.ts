@@ -1,0 +1,120 @@
+/** Trusted next-mode composition. Runtime handoff remains an injected role. */
+import { randomUUID } from 'node:crypto';
+import type { Foundation } from '../../core/app.js';
+import type { OutsideEffects } from '../../core/effects.js';
+import type { SecretUse } from '../secrets/role.js';
+import type { SlackDrainOptions } from './slack-drain.js';
+import { slackDrain } from './slack-drain.js';
+import { slackInbox } from './slack-inbox.js';
+import { slackApi } from './slack-api.js';
+import { slackSocket, type SlackSocketOptions } from './slack-socket.js';
+import { all, setupRevision } from './store.js';
+import type { Venue } from './model.js';
+export interface SlackDaemonOptions {
+  secrets: SecretUse;
+  /** Public holder generation, changed whenever a credential is replaced. */
+  credentialEpoch(): string;
+  name(venue: Venue, user: string): string | undefined;
+  receive: SlackDrainOptions['receive'];
+  request?: typeof fetch;
+  socket?: SlackSocketOptions['socket'];
+}
+interface Session { stop(): void; close(): Promise<void>; flush(): Promise<void> }
+/** All callbacks are trusted in-process roles, never operation input. No grants
+ * are created here. Start is asynchronous and unavailable credentials retry. */
+export function installSlackDaemon(app: Foundation, effects: OutsideEffects, options: SlackDaemonOptions) {
+  const clock = app.operations.clock;
+  let closed = false, generation = 0, running: Promise<void> | undefined, again = false;
+  let cancel: (() => void) | undefined;
+  let signature: string | undefined;
+  const sessions = new Map<string, Session>();
+  const attempts = new Map<string, {id:string;kind:'bridge-send';title:string}>();
+  // Live notifications invalidate synchronously, before any outstanding await resumes.
+  function invalidate() {
+    generation++; signature = undefined;
+    for (const session of sessions.values()) session.stop();
+    schedule(0);
+  }
+  function key() { return JSON.stringify([setupRevision(app.db), options.credentialEpoch()]); }
+  function schedule(delay = 5000) {
+    if (closed || cancel) return;
+    cancel = clock.at(clock.now() + delay, () => { cancel = undefined; void sync(); });
+  }
+  async function retire() {
+    const old = [...sessions.values()]; sessions.clear();
+    old.forEach(s => s.stop()); await Promise.all(old.map(s => s.close()));
+  }
+  async function pass() {
+    if (closed) return;
+    if (app.db.inTransaction) { schedule(); return; }
+    const next = key();
+    if (signature !== next) {
+      generation++; await retire();
+      attempts.clear();
+      if (closed) return;
+      signature = key();
+    }
+    const epoch = generation, saved = signature;
+    const current = () => !closed && generation === epoch && key() === saved;
+    for (const venue of all(app.db, 'venues').filter(v => v.enabled && v.platform === 'slack' && v.appSecret)) {
+      if (!current()) { invalidate(); return; }
+      if (sessions.has(venue.id)) { await sessions.get(venue.id)!.flush(); continue; }
+      let effect = attempts.get(venue.id);
+      if (!effect) { effect={id:`bridges:slack:${randomUUID()}`,kind:'bridge-send',title:'Connect Slack bridge'}; attempts.set(venue.id,effect); }
+      const lease=effect;
+      // A released connection permits its own reads and reconnects for this lifetime.
+      // On restart a new lifetime is held again; no released lease is inherited.
+      const permitted = () => current() && (effects.status(lease.id) === 'started' || effects.beforeOutside(lease));
+      const api = slackApi(options.secrets, permitted, options.request);
+      const auth = await api.authenticate(venue);
+      if (!current()) { effects.finish(effect.id); return; }
+      if (auth === 'wait') {
+        if (effects.status(lease.id) === 'started') { effects.finish(lease.id); attempts.delete(venue.id); }
+        continue;
+      }
+      let stopped = false;
+      const valid = () => !stopped && current();
+      const inbox = slackInbox(app.db, clock, {venue,app:auth.app});
+      const drain = slackDrain({db:app.db,clock,binding:{venue,app:auth.app},inspect:api.inspect,
+        name:user=>options.name(venue,user), receive:options.receive,current:valid,beforeRead:()=>valid() && permitted()});
+      const socket = slackSocket({appSecret:venue.appSecret!,secrets:options.secrets,clock,
+        beforeConnect:()=>valid() && permitted(),request:options.request,socket:options.socket,
+        async receive(payload) {
+          if (!valid()) throw Error('Slack binding ended');
+          await inbox.receive(payload);
+          // ACK follows the raw commit, never metadata IO or runtime delivery.
+          void drain.flush();
+        }});
+      let closing: Promise<void> | undefined;
+      const session: Session = {
+        stop() { if (!stopped) { stopped=true; socket.close(); } },
+        close() { session.stop(); return closing ??= drain.close().finally(()=>effects.finish(effect.id)); },
+        flush:()=>drain.flush(),
+      };
+      sessions.set(venue.id,session);
+      await drain.flush(); // Recover durable receipts even if Slack sends nothing new.
+    }
+    schedule(); // Also observes holder generation changes without a live notification.
+  }
+  function sync(): Promise<void> {
+    if (closed) return Promise.resolve();
+    if (running) { again=true; return running; }
+    running=(async()=>{ do { again=false; try { await pass(); } catch { schedule(); } } while(again && !closed); })()
+      .finally(()=>{running=undefined;});
+    return running;
+  }
+  const unobserve=app.live.observe(changes=>{
+    if (closed) return;
+    if (changes.some(c=>['secret.name','secret.grant','secret.policy','core.access'].includes(c.type))
+      || (changes.some(c=>c.type.startsWith('bridges.')) && key() !== signature)) invalidate();
+  });
+  const unrelease=effects.onReleased(id=>{if(id.startsWith('bridges:slack:')) void sync();});
+  void sync();
+  let closing: Promise<void> | undefined;
+  return { sync, close(): Promise<void> {
+    if (closing) return closing;
+    closed=true;generation++;cancel?.();unobserve();unrelease();
+    for(const session of sessions.values()) session.stop();
+    return closing=(async()=>{await running;await retire();})();
+  }};
+}

@@ -469,3 +469,36 @@ or live connection is introduced here.
 | Fallible metadata before delivery | Durable raw receipt, fresh API inspection, People normalization, then engine commit |
 | In-memory retry with one-hour expiry | Immutable raw receipt age, five-second retry and tombstone erasure |
 | Shutdown during intake | Serialized close suppresses late handoff; daemon registration remains required |
+
+## Next-mode Slack lifecycle composition
+
+`startLoom({next:true, bridges:{source, credentialEpoch, name, receive}})` now
+binds the authenticated bot/workspace/app evidence, service-scoped `SecretUse`,
+raw inbox, serialized drain and Socket Mode transport. The supplied source is the
+public authenticated holder source; no grants or credentials are discovered.
+`credentialEpoch` is a trusted holder generation callback, and must change for
+any replacement of either token. Setup revision and public secret name, grant,
+policy and access changes invalidate immediately; a five-second lifecycle check
+also observes holder generations. Traffic/status notifications do not invalidate
+setup. Each new session authenticates again, including after edit-and-restore.
+
+Startup drains saved receipts without waiting for a new socket event. Receipt
+ACK waits only for the raw commit. The root waits for active drain/authentication
+work before closing SQLite, on both normal shutdown and startup failure.
+
+In staging, one explicit core effect releases one connection lifetime, including
+its reconnects and metadata reads; a new identity, credential generation or daemon
+restart needs another release. This is a technical choice: read/dial callbacks
+share one connection lease rather than asking separately for each metadata page.
+Outgoing messages still require their own engine send effects. This slice exposes
+trusted programmatic composition only: CLI holder/engine wiring, real People name
+resolution, runtime role reconciliation and obsolete-identity disposition remain
+required before activation. The injected receive callback is the small runtime
+seam and can use a fake while runtime delivery is absent.
+
+| Legacy lifecycle | New replacement |
+| --- | --- |
+| Slack adapter start/reconnect | `installSlackDaemon` authenticates then starts `slackSocket` with service credentials |
+| Retry waiting input on startup | Startup `slackDrain.flush`, receipt/release flush and bounded lifecycle timer |
+| Config/credential replacement | Synchronous invalidation, socket retirement, awaited drain close, fresh app authentication |
+| Adapter shutdown | Next root awaits authentication and drain before database close |
