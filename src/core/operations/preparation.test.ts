@@ -63,13 +63,16 @@ it('recovers committed external metadata before preparation and keeps the origin
     return new RecoveredWrite({ saved: true }, expires);
   });
   const spies = install(app, { recover });
-  const publish = vi.spyOn(app.live, 'changed');
+  const publicationTransactions: boolean[] = [];
+  const changed = app.live.changed.bind(app.live);
+  const publish = vi.spyOn(app.live, 'changed').mockImplementation(changes => { publicationTransactions.push(app.db.inTransaction); changed(changes); });
   expect(await app.operations.callAsync('http', owner, 'example.save', input, 'external')).toEqual({ ok: true, value: { saved: true } });
   expect(spies.prepare).not.toHaveBeenCalled(); expect(spies.run).not.toHaveBeenCalled();
   expect(recover).toHaveBeenCalledTimes(1);
   expect(app.db.prepare('SELECT * FROM example_recovered').all()).toEqual([{ id: 'saved' }]);
   expect(app.db.prepare('SELECT expires FROM core_operations').get()).toEqual({ expires });
   expect(publish).toHaveBeenCalledExactlyOnceWith([{ type: 'example.saved', id: 'saved' }]);
+  expect(publicationTransactions).toEqual([false]);
   expect(app.operations.call('direct', owner, 'example.other', input, 'external')).toMatchObject({ code: 'conflict' });
 });
 
@@ -96,9 +99,9 @@ it('still checks conflicting receipts after concurrent preparation completes', a
   expect(await pending).toMatchObject({ code: 'conflict' }); expect(spies.run).not.toHaveBeenCalled();
 });
 
-it.each(['permission', 'authentication'] as const)('rechecks %s after preparation without committing a receipt', async ended => {
+it.each([['permission', false], ['permission', true], ['authentication', false], ['authentication', true]] as const)('rechecks %s after preparation without committing a receipt (recheckPolicy=%s)', async (ended, recheckPolicy) => {
   const { app } = setup(); let allowed = true, valid = true, release!: () => void;
-  const spies = install(app, { allowed: () => allowed, recheckPolicy: true, prepare: () => new Promise<void>(resolve => { release = resolve; }) });
+  const spies = install(app, { allowed: () => allowed, recheckPolicy, prepare: () => new Promise<void>(resolve => { release = resolve; }) });
   const pending = app.operations.callAsync('http', owner, 'example.save', input, 'gate', false, () => valid);
   if (ended === 'permission') allowed = false; else valid = false;
   release(); expect(await pending).toMatchObject({ code: 'denied' }); expect(spies.run).not.toHaveBeenCalled();
@@ -130,7 +133,9 @@ it('checks recovery again after preparation when an external receipt becomes ava
     return new RecoveredWrite({ saved: true }, expires);
   });
   const spies = install(app, { recover, prepare: () => new Promise<void>(resolve => { release = resolve; }) });
-  const publish = vi.spyOn(app.live, 'changed');
+  const publicationTransactions: boolean[] = [];
+  const changed = app.live.changed.bind(app.live);
+  const publish = vi.spyOn(app.live, 'changed').mockImplementation(changes => { publicationTransactions.push(app.db.inTransaction); changed(changes); });
   const pending = app.operations.callAsync('http', owner, 'example.save', input, 'late-recovery');
   expect(recover).toHaveBeenCalledTimes(1); expect(publish).not.toHaveBeenCalled();
   available = true; release();
@@ -139,4 +144,5 @@ it('checks recovery again after preparation when an external receipt becomes ava
   expect(app.db.prepare('SELECT * FROM example_recovered').all()).toEqual([{ id: 'after-prepare' }]);
   expect(app.db.prepare('SELECT expires FROM core_operations').get()).toEqual({ expires });
   expect(publish).toHaveBeenCalledExactlyOnceWith([{ type: 'example.saved', id: 'after-prepare' }]);
+  expect(publicationTransactions).toEqual([false]);
 });
