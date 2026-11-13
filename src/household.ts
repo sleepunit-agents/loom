@@ -432,13 +432,25 @@ function assertPrivate(path: string): void {
   }
 }
 
+/** Shared validation for the legacy file and the stopped-daemon importer. */
+export function parseTokenDocument(raw: unknown, path = 'tokens'): { [key: string]: unknown; v: 1; tokens: TokenRecord[] } {
+  const doc = raw as { v?: number; tokens?: unknown } | null;
+  if (doc?.v !== 1 || !Array.isArray(doc.tokens)) throw new HouseholdError(`${path}: expected {"v": 1, "tokens": [...]}`);
+  if (!doc.tokens.every(validRecord)) throw new HouseholdError(`${path}: a token record is malformed (label, role, a 64-hex sha256 and created are required)`);
+  return doc as { [key: string]: unknown; v: 1; tokens: TokenRecord[] };
+}
+
+/** Optional supplied store; production selection waits for the complete importer. */
+export interface TokenPersistence {
+  records(digest: string): TokenRecord[];
+  touch(digest: string, when: string): void;
+}
+
 export function loadTokens(home: string): TokenRecord[] {
   const path = join(home, TOKENS_FILE);
   if (!existsSync(path)) return [];
   assertPrivate(path);
-  const raw = readJson(path) as { v?: number; tokens?: unknown };
-  if (raw?.v !== 1 || !Array.isArray(raw.tokens)) throw new HouseholdError(`${path}: expected {"v": 1, "tokens": [...]}`);
-  if (!raw.tokens.every(validRecord)) throw new HouseholdError(`${path}: a token record is malformed (label, role, a 64-hex sha256 and created are required)`);
+  const raw = parseTokenDocument(readJson(path), path);
   const used = loadUsed(home);
   return (raw.tokens as TokenRecord[]).map((t) => {
     const { last_used: _ignored, ...rest } = t;
@@ -568,20 +580,23 @@ export class TokenResolver {
 
   private readonly get: () => Household;
   private readonly runtimePieces?: () => readonly string[];
+  private readonly persistence?: TokenPersistence;
 
   /**
    * A household, or a function returning the current one (re-read as household.json changes).
    * `runtimePieces`: the managed pieces that say `"role": "runtime"`, read per request. Without
    * it, runtime and review tokens resolve to nothing.
    */
-  constructor(h: Household | (() => Household), opts: { runtimePieces?: () => readonly string[] } = {}) {
+  constructor(h: Household | (() => Household), opts: { runtimePieces?: () => readonly string[]; persistence?: TokenPersistence } = {}) {
     this.get = typeof h === 'function' ? h : () => h;
     this.runtimePieces = opts.runtimePieces;
+    this.persistence = opts.persistence;
   }
 
   private get h(): Household { return this.get(); }
 
-  private current(): TokenRecord[] {
+  private current(digest: string): TokenRecord[] {
+    if (this.persistence) return this.persistence.records(digest);
     const path = join(this.h.home, TOKENS_FILE);
     let key: string;
     // Every write is a rename, so the inode changes even where mtimes are coarse.
@@ -598,7 +613,7 @@ export class TokenResolver {
    */
   resolve(presented: string, now: number = Date.now()): Role | null {
     const d = Buffer.from(sha(presented), 'hex');
-    const hit = this.current().find((t) => isLive(t, now) && t.sha256.length === 64 && timingSafeEqual(Buffer.from(t.sha256, 'hex'), d));
+    const hit = this.current(d.toString('hex')).find((t) => isLive(t, now) && t.sha256.length === 64 && timingSafeEqual(Buffer.from(t.sha256, 'hex'), d));
     if (!hit) return null;
     const role = parseRole(hit.role);
     if (!role || (role.kind === 'agent' && !this.h.agents.includes(role.agent))) return null;
@@ -626,7 +641,7 @@ export class TokenResolver {
 
   /** The member a live owner token with this sha256 belongs to, if it's live and they're still a member. */
   ownerMember(digestHex: string): Member | undefined {
-    const t = this.current().find((x) => isLive(x) && x.role === 'owner' && x.sha256 === digestHex);
+    const t = this.current(digestHex).find((x) => isLive(x) && x.role === 'owner' && x.sha256 === digestHex);
     if (!t) return undefined;
     return t.member === undefined ? firstOwner(this.h) : memberOf(this.h, t.member);
   }
@@ -637,6 +652,7 @@ export class TokenResolver {
     this.lastTouch.set(digest, now);
     // Only tokens.used.json, never tokens.json: see USED_FILE.
     try {
+      if (this.persistence) { this.persistence.touch(digest, new Date(now).toISOString()); return; }
       const used = loadUsed(this.h.home);
       used[digest] = new Date(now).toISOString();
       writePrivate(join(this.h.home, USED_FILE), JSON.stringify(used) + '\n');
