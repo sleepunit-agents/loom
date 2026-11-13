@@ -9,7 +9,7 @@ import { installBridges } from './index.js';
 import { schema as foundationSchema } from './schema/001.js';
 import { schema as retrySchema } from './schema/002.js';
 import { Bridges } from './engine.js';
-import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
+import type { BridgeRuntime, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
 import { z } from 'zod';
 import type { RecordType } from '../../core/live/index.js';
 import { OperationError } from '../../core/index.js';
@@ -24,10 +24,11 @@ const roots: string[] = [], closes: (()=>Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true}); });
 class FakeVenue implements VenueAdapter {
   platform: Venue['platform'];
-  callbacks?: Parameters<VenueAdapter['connect']>[2]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
+  callbacks?: Parameters<VenueAdapter['connect']>[1]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
   constructor(platform: Venue['platform']) {this.platform=platform;}
-  async connect(_v: Venue,_c: unknown,callbacks: Parameters<VenueAdapter['connect']>[2]) { this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
-  async inspect() { return this.inspection; }
+  async connect(_v: Venue,callbacks: Parameters<VenueAdapter['connect']>[1]) { await this.acquire(_v); this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
+  acquire: (v: Venue) => Promise<void> = async()=>{};
+  async inspect(v: Venue) { await this.acquire(v); return this.inspection; }
   async send(...args: Parameters<VenueAdapter['send']>) { this.posts.push(args); if (this.uncertain) throw new Error('token-value-do-not-store'); return {id:`post-${this.posts.length}`}; }
 }
 async function fixture(platform: Venue['platform']='discord', staging=false, existingHome?: string, now?: number) {
@@ -40,8 +41,8 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
   const admitted: string[]=[];
   const runtime: BridgeRuntime={async admit(input){admitted.push(input.person);return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');return 'delivered';},async stop(i){stops.push(i);}};
-  const secrets: BridgeSecrets={async may(){return secretAllowed;},async get(_agent,name){secretGets.push(name);return 'token-value-do-not-store';}};
-  const engine=new Bridges(app,clock,runtime,secrets,[adapter],effects);
+  adapter.acquire=async v=>{if(!secretAllowed) throw Error('Credential unavailable'); secretGets.push(v.tokenSecret);};
+  const engine=new Bridges(app,clock,runtime,[adapter],effects);
   const close=async()=>{await engine.close();await app.close();}; closes.push(close);
   const op=(name:string,input:unknown,id=crypto.randomUUID())=>app.operations.call('direct',owner,`bridges.${name}`,input,id);
   const venue=venueSchema.parse({id:'art-'+platform,platform,agent:'art',workspace:'house',bot:'100',tokenSecret:'art-token'});
@@ -266,7 +267,7 @@ describe('in-process bridge delivery',()=>{
     expect(incoming.address).toMatchObject({group:true,dm:false});
     expect(f.admitted).toEqual(['jonathan','mark']);
     f.engine.reply({id:'reply',incomingId:incoming.id,text:'hello'}); await f.engine.flush();
-    expect(f.adapter.posts[0][2]).toMatchObject({group:true,dm:false});
+    expect(f.adapter.posts[0][1]).toMatchObject({group:true,dm:false});
   });
   it('reclassifies pre-fix pending receipts and replies before admission and posting',async()=>{
     const f=await groupFixture(); f.setGate('wait');
@@ -394,7 +395,7 @@ describe('in-process bridge delivery',()=>{
     expect(f.app.db.prepare('SELECT state,text FROM bridges_outbox').get()).toEqual({state:'pending',text:'reply after a long outage'});
     expect(f.adapter.posts).toEqual([]);
     f.adapter.inspection={kind:'allow',members:['100','200','201']}; await f.engine.flush();
-    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply after a long outage');
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][2]).toBe('reply after a long outage');
     expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'sent'});
     await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
   });
@@ -541,7 +542,7 @@ describe('in-process bridge delivery',()=>{
     const incomingId=[...f.deliveries.keys()][0];
     f.engine.reply({id:'reply',incomingId,text:'hello'}); await f.engine.flush();
     f.engine.reply({id:'reply',incomingId,text:'hello'}); await f.engine.flush();
-    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][4]).toBe('reply');
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply');
     expect(()=>f.engine.reply({id:'reply',incomingId,text:'changed'})).toThrow('reused');
   });
   it('uses explicit resolved mentions, inherits thread routes and keeps DMs separate', async()=>{
@@ -585,7 +586,7 @@ describe('in-process bridge delivery',()=>{
     const address=platform==='slack'?{channel:'D300',thread:'1794503533.000001',dm:true}:{channel:'400',parent:'300',thread:'400'};
     await f.engine.receive(f.venue.id,f.message(address)); await f.engine.flush();
     const posts: {text:string;channel:string;thread?:string}[]=[];
-    f.adapter.send=async(v,_token,address,text)=>postReply(v.platform,text,async part=>{
+    f.adapter.send=async(v,address,text)=>postReply(v.platform,text,async part=>{
       posts.push({text:part,channel:address.channel,thread:address.thread}); return {id:`part-${posts.length}`};
     });
     const text='line\n'.repeat(1800), incomingId=[...f.deliveries.keys()][0];
@@ -604,7 +605,7 @@ describe('in-process bridge delivery',()=>{
     const f=await fixture(platform);
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     const posts:string[]=[];
-    f.adapter.send=async(v,_token,_address,text)=>postReply(v.platform,text,async part=>{
+    f.adapter.send=async(v,_address,text)=>postReply(v.platform,text,async part=>{
       posts.push(part); if(posts.length===2)throw new Error('token-value-do-not-store'); return {id:'first-part'};
     });
     f.engine.reply({id:'partial',incomingId:[...f.deliveries.keys()][0],text:'x'.repeat(9000)}); await f.engine.flush();

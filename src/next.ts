@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { runtimeOwnerApplication } from './pieces/runtime/owner-application.js';
 import { storedSprite } from './core/household/sprites.js';
 import { installComms } from './pieces/comms/index.js';
@@ -27,6 +28,11 @@ import { installClock } from './pieces/clock/index.js';
 import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { Bridges } from './pieces/bridges/engine.js';
+import { venueAdapters } from './pieces/bridges/adapters.js';
+import { personFor, setupRevision } from './pieces/bridges/store.js';
+import type { BridgeRuntime } from './pieces/bridges/role.js';
+import type { Venue } from './pieces/bridges/model.js';
 import { bridgeCredentials } from './pieces/bridges/credentials.js';
 import type { HolderGeneration } from './pieces/secrets/local-holder.js';
 import { installDiscordDaemon, type DiscordDaemonOptions } from './pieces/bridges/discord-daemon.js';
@@ -85,7 +91,7 @@ export interface NextChangesOptions {
   request?: typeof fetch;
   interval?: number;
 }
-export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets' | 'credentialEpoch' | 'observeCredentials'> { source: SecretValueSource & HolderGeneration; discordSocket?: DiscordDaemonOptions['socket'] }
+export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets' | 'credentialEpoch' | 'observeCredentials' | 'name' | 'receive'> { name?: SlackDaemonOptions['name']; receive?: SlackDaemonOptions['receive']; runtime?: BridgeRuntime; source: SecretValueSource & HolderGeneration; discordSocket?: DiscordDaemonOptions['socket'] }
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
@@ -190,9 +196,36 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
     const credentials=bridgeCredentials(options.bridges.source,app.operations.clock);
     const lifetime={credentialEpoch:credentials.current,observeCredentials:credentials.observe};
-    const slack=installSlackDaemon(app,effects,{...options.bridges,...lifetime,secrets});
-    const discord=installDiscordDaemon(app,effects,{...options.bridges,...lifetime,secrets,socket:options.bridges.discordSocket});
-    bridgeDaemons.set(app,{async close(){const pending=[slack.close(),discord.close()];credentials.close();await Promise.all(pending);}});
+    let closed=false,serial=0;
+    const readAttempts=new Map<string,{key:string;id:string}>();
+    const marker=(v:Venue)=>{
+      const epoch=credentials.current();
+      return closed || epoch===undefined ? undefined : JSON.stringify([serial,epoch,setupRevision(app.db),v]);
+    };
+    const adapters=venueAdapters(secrets,{request:options.bridges.request,lifetime:marker,beforeRead:v=>{
+      const key=marker(v);if(key===undefined)return false;
+      let attempt=readAttempts.get(v.id);
+      if(attempt?.key!==key){if(attempt)effects.finish(attempt.id);attempt={key,id:`bridges:inspect:${randomUUID()}`};readAttempts.set(v.id,attempt);}
+      return effects.status(attempt.id)==='started' || effects.beforeOutside({id:attempt.id,kind:'bridge-send',title:'Inspect bridge recipients'});
+    }});
+    // Runtime's installed conversation path currently serves private Comms only.
+    // This explicit missing-role fake refuses admission until its bridge role lands.
+    const unavailable:BridgeRuntime={admit:async()=> 'wait',deliver:async()=> 'held',stop:async()=>{throw Error('Bridge runtime unavailable');}};
+    const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??unavailable,adapters,effects);
+    const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));
+    const name=options.bridges.name??((v,user)=>{
+      const person=personFor(app.db,v,user);if(!person)return;
+      for(const id of [`${v.agent}:${person}`,`commons:${person}`]) {
+        const result=mindRole(app.operations).call({kind:'agent',id:v.agent},'personRead',{id});
+        if(result.ok && result.value && typeof result.value==='object' && 'name' in result.value && typeof result.value.name==='string')return result.value.name;
+      }
+    });
+    const slack=installSlackDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,name});
+    const discord=installDiscordDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,socket:options.bridges.discordSocket});
+    const stopCredentials=credentials.observe(()=>{serial++;void engine.flush();});
+    const stopLive=app.live.observe(changes=>{if(changes.some(c=>['bridges.venue','bridges.route','bridges.link','bridges.send','secret.name','secret.grant'].includes(c.type)))void engine.flush();});
+    void engine.flush();
+    bridgeDaemons.set(app,{async close(){closed=true;stopCredentials();stopLive();const pending=[slack.close(),discord.close(),engine.close()];credentials.close();await Promise.all(pending);for(const attempt of readAttempts.values())effects.finish(attempt.id);}});
   }
   installAttentionMaintenance(app);
   if (!app.operations.has('comms.open')) {

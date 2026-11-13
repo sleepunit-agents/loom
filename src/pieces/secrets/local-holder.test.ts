@@ -135,6 +135,7 @@ it('serve composes an explicit authenticated source and public GitHub bindings',
   try {
     await listening;const changes=started.mock.calls[0][0].changes!;
     expect(changes.github).toEqual({acme:'github'});
+    expect(started.mock.calls[0][0].bridges?.source).toBe(changes.source);
     const bytes=await changes.source.read('github');expect(Buffer.from(bytes).toString()).toBe('CLI-FIXTURE-VALUE');bytes.fill(0);
   } finally {process.emit('SIGTERM');expect(await running).toBe(0);started.mockRestore();}
 });

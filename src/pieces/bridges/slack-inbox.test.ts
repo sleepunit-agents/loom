@@ -168,7 +168,7 @@ describe('private Slack durable raw inbox',()=>{
       const secrets={may:async()=>true,get:async()=> 'fixture-only'};
       const adapter={platform:'slack' as const,connect:async()=>({close(){}}),inspect:async()=> 'allow' as const,send:async()=>({id:'post'})};
       const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
-      const bridges=new Bridges(f.app,f.clock,runtime,secrets,[adapter],effects);closes.unshift(()=>bridges.close());return bridges;
+      const bridges=new Bridges(f.app,f.clock,runtime,[adapter],effects);closes.unshift(()=>bridges.close());return bridges;
     }
     const message={id:payload().event.ts,channel:'D123',user:'U200',text:'private words',dm:true,mentions:[]};
     const f=await fixture();const first=engine(f);await f.inbox.receive(payload());const [raw]=f.inbox.pending();

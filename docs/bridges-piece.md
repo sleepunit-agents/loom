@@ -704,3 +704,54 @@ identical-value replacement and holder outage; platform transports remain test f
 CLI activation, People names, real adapter send/inspect and removal of the foundation
 engine's `BridgeSecrets.may/get` interface remain required composition work. Runtime
 handoff remains explicitly injected until that subsequent integration.
+
+
+### Service-owned adapters and explicit holder composition
+
+`serve --next --secret-holder FILE` now supplies the configured authenticated
+source to both Changes and Bridges. No extra source discovery or grants are
+introduced. The root installs the durable `Bridges` engine and the real
+`venueAdapters`, alongside the existing socket daemons. The engine no longer
+has `BridgeSecrets.may/get` or receives a token; HTTP adapters acquire each
+value through the bridges service's `SecretUse.withValue`.
+
+Each inspection authenticates the configured bot/workspace and fetches fresh
+recipient metadata. Each outgoing chunk rechecks runtime admission, setup,
+service grants, the observed holder lifetime and staging. Discord posts use
+`allowed_mentions.parse=[]`; Slack escapes mention markup and disables markdown,
+link parsing and unfurls. Receipts must identify the requested channel. Partial
+posts and ambiguous receipts make the whole durable send uncertain, without retry.
+The request endpoints follow [Discord Create Message](https://docs.discord.com/developers/resources/message#create-message)
+and [Slack chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage/).
+
+Staging has a separately released inspection lifetime and one effect per whole
+reply. A lifetime permits its repeated reads; holder failure/recovery, setup
+changes and shutdown invalidate pending callbacks. Root shutdown waits for the
+engine as well as both receivers. The existing public generation monitor remains
+the only holder-mutation signal; no value-derived marker is added.
+
+Slack names resolve the explicit bridge account link, then call the installed
+`mindRole.personRead` as that venue's agent, first for its own relationship and
+then for the commons directory. Central policy decides visibility. Missing or
+denied cards yield an absent name; neither owner impersonation nor account fields
+on People cards grant bridge authority.
+
+The installed runtime conversation implementation currently binds private Comms
+threads, not bridge venues. `NextBridgesOptions.runtime` therefore remains an
+explicit trusted role; the root's named missing-role fake refuses admission with
+`wait` when absent. Existing transient retention rules apply. Tests inject only
+this missing runtime and platform HTTP/sockets; real persistent holder, pinned
+mTLS, household mutation authority, service grants, SQLite queues, People reader
+and staging paths are exercised. **Real bridge runtime delivery/reply composition
+is still required**; CLI wiring is not a claim that agent bodies receive messages.
+
+| Old path | New path in this unit |
+| --- | --- |
+| Engine `BridgeSecrets.may/get` and raw token arguments | Credential-owning `venueAdapters` on service `SecretUse` |
+| Adapter send with one token for all chunks | Per-chunk grant acquisition and fresh runtime/platform checks |
+| Injected Slack names only | Current linked person's installed policy-checked Mind role |
+| Holder flag composes Changes only | Same explicit source also composes Bridges |
+
+Retained command parity, proactive first DM, files, read/describe/presence, peers,
+pairs, attributed relay, offline importer, raw identity disposition and final move
+inventory remain obligations of the full rebuild.
