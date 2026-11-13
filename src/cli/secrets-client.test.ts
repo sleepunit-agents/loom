@@ -103,6 +103,12 @@ it('retries identical complete writes after dropped responses without repeating 
   expect(app.db.prepare("SELECT count(*) n FROM core_operations WHERE name='secrets.set'").get()).toEqual({ n: 1 });
   expect(await app.run(['list'], { request: async () => { throw Error('PRIVATE token and provider detail'); } })).toMatchObject({ code: 1, stdout: '', stderr: 'loom-secrets: loom daemon is unavailable\n' });
 });
+it('preserves a credential UTF-8 BOM and embedded newlines while trimming only the final newline', async () => {
+  const app = await setup();
+  app.holder.set.mockImplementation((_name, bytes) => { expect(bytes.toString('utf8')).toBe('\uFEFFfirst\nsecond'); });
+  expect(await app.run(['add', 'API'], { value: '\uFEFFfirst\nsecond\n' })).toMatchObject({ code: 0, stdout: '', stderr: 'stored API\n' });
+  expect(app.holder.set).toHaveBeenCalledOnce();
+});
 it('requires actual household-owner authentication and refuses unconfigured value operations', async () => {
   const app = await setup(false);
   for (const token of ['restricted-token', 'agent-token']) {

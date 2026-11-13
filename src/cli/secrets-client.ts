@@ -58,7 +58,7 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
       }
       const bytes = Buffer.concat(chunks);
       try {
-        const value = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r?\n$/, '');
+        const value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes).replace(/\r?\n$/, '');
         if (!value.length || Buffer.byteLength(value) > 65536) return fail('Value must contain 1 to 65536 UTF-8 bytes', 2);
         input.value = value; input.mode = spec.name === 'add' ? 'add' : 'replace';
       } finally { bytes.fill(0); }
