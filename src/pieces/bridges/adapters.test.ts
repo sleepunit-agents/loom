@@ -31,7 +31,7 @@ it.each(['discord','slack'] as const)('%s authenticates and inspects fresh metad
 it.each(['discord','slack'] as const)('%s sends sequential chunks with scoped values, bound receipts, threads and disabled mentions',async platform=>{
   const f=fixture(platform),authorize=vi.fn(async()=>true),text='<@200> & <!everyone> '+ 'x'.repeat(4000);
   const result=await f.adapter.send(v(platform),{channel:m(platform).channel,dm:platform==='slack',thread:platform==='discord'?'300':'1794503533.000000'},text,'reply',authorize);
-  expect(result.id).toBe(platform==='discord'?'400':'1794503533.000001');expect(authorize).toHaveBeenCalledTimes(platform==='discord'?3:2);
+  expect(result.id).toBe(platform==='discord'?'400':'1794503533.000001');expect(authorize).toHaveBeenCalledTimes(platform==='discord'?6:4);
   const bodies=f.request.mock.calls.map(([,init])=>{
     expect(init).toMatchObject({method:'POST',redirect:'error'});expect(init?.headers).toMatchObject({Authorization:platform==='discord'?'Bot PRIVATE':'Bearer PRIVATE'});return JSON.parse(String(init?.body));
   });
@@ -50,7 +50,7 @@ it.each(['discord','slack'] as const)('%s refuses stale/held values after deferr
 it.each(['discord','slack'] as const)('%s stops after one partial post on revoked authorization or lifetime, and sanitizes ambiguity',async platform=>{
   for(const failure of ['authority','lifetime','receipt'] as const) {
     const f=fixture(platform),authorize=vi.fn(async()=>true);
-    if(failure==='authority')authorize.mockResolvedValueOnce(true).mockResolvedValue(false);
+    if(failure==='authority')authorize.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValue(false);
     const original=f.request.getMockImplementation()!;
     f.request.mockImplementation(async(...args)=>{const r=await original(...args);if(failure==='lifetime')f.rotate();return failure==='receipt'?Response.json({error:'PRIVATE',id:'invalid'}):r;});
     await expect(f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'x'.repeat(8000),'reply',authorize)).rejects.toThrow(/^Bridge reply attempt uncertain$/);
@@ -59,4 +59,12 @@ it.each(['discord','slack'] as const)('%s stops after one partial post on revoke
 });
 it.each(['discord','slack'] as const)('%s holds before any acquisition and never posts if authorization fails',async platform=>{
   const f=fixture(platform);f.hold();await expect(f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'hello','reply',async()=>true)).rejects.toThrow();expect(f.use).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+});
+
+it.each(['discord','slack'] as const)('%s reauthorizes after a pending holder before posting',async platform=>{
+  const f=fixture(platform),started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let allowed=true;
+  f.use.mockImplementationOnce(async(_name,callback)=>{started.resolve();await finish.promise;return callback('PRIVATE');});
+  const pending=f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'hello','reply',async()=>allowed);
+  const result=expect(pending).rejects.toThrow(/^Bridge reply attempt uncertain$/);
+  await started.promise;allowed=false;finish.resolve();await result;expect(f.request).not.toHaveBeenCalled();
 });

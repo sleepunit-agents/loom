@@ -215,15 +215,13 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));
     const name=options.bridges.name??((v,user)=>{
       const person=personFor(app.db,v,user);if(!person)return;
-      for(const id of [`${v.agent}:${person}`,`commons:${person}`]) {
-        const result=mindRole(app.operations).call({kind:'agent',id:v.agent},'personRead',{id});
-        if(result.ok && result.value && typeof result.value==='object' && 'name' in result.value && typeof result.value.name==='string')return result.value.name;
-      }
+      const result=mindRole(app.operations).call({kind:'agent',id:v.agent},'personRead',{id:`${v.agent}:${person}`});
+      if(result.ok && result.value && typeof result.value==='object' && 'name' in result.value && typeof result.value.name==='string')return result.value.name;
     });
     const slack=installSlackDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,name});
     const discord=installDiscordDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,socket:options.bridges.discordSocket});
     const stopCredentials=credentials.observe(()=>{serial++;void engine.flush();});
-    const stopLive=app.live.observe(changes=>{if(changes.some(c=>['bridges.venue','bridges.route','bridges.link','bridges.send','secret.name','secret.grant'].includes(c.type)))void engine.flush();});
+    const stopLive=app.live.observe(changes=>{if(changes.some(c=>c.type==='secret.name'||c.type==='secret.grant'))serial++;if(changes.some(c=>['bridges.venue','bridges.route','bridges.link','bridges.send','secret.name','secret.grant'].includes(c.type)))void engine.flush();});
     void engine.flush();
     bridgeDaemons.set(app,{async close(){closed=true;stopCredentials();stopLive();const pending=[slack.close(),discord.close(),engine.close()];credentials.close();await Promise.all(pending);for(const attempt of readAttempts.values())effects.finish(attempt.id);}});
   }

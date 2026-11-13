@@ -166,7 +166,7 @@ describe('private Slack durable raw inbox',()=>{
     function engine(f:Awaited<ReturnType<typeof fixture>>) {
       const runtime={admit:async()=> 'allow' as const,deliver:async(input:Incoming)=>{delivered.push(input);return 'delivered' as const;},stop:async()=>{}};
       const secrets={may:async()=>true,get:async()=> 'fixture-only'};
-      const adapter={platform:'slack' as const,connect:async()=>({close(){}}),inspect:async()=> 'allow' as const,send:async()=>({id:'post'})};
+      const adapter={platform:'slack' as const,current:()=>()=>true,connect:async()=>({close(){}}),inspect:async()=> 'allow' as const,send:async()=>({id:'post'})};
       const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
       const bridges=new Bridges(f.app,f.clock,runtime,[adapter],effects);closes.unshift(()=>bridges.close());return bridges;
     }

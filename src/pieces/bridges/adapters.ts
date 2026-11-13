@@ -19,7 +19,7 @@ async function json(response:Response) {
   if(!object(data))throw Error('Bridge unavailable');return data;
 }
 export function venueAdapters(secrets:SecretUse, options:{
-  /** Public holder generation + setup lifetime; undefined always refuses IO. */
+  /** Public holder generation + setup/authority lifetime; undefined always refuses IO. */
   lifetime(venue:Venue):string|undefined;
   /** Staging gate for reads. Called before acquisition and after every await. */
   beforeRead(venue:Venue):boolean;
@@ -47,7 +47,7 @@ export function venueAdapters(secrets:SecretUse, options:{
     return 'allow';
   }
   return (['discord','slack'] as const).map(platform=>({
-    platform,
+    platform, current:lease,
     // No second receiver: installDiscordDaemon/installSlackDaemon own connections.
     async connect(){return {close(){}};},
     inspect,
@@ -58,7 +58,7 @@ export function venueAdapters(secrets:SecretUse, options:{
       return postReply(platform,text,async part=>{
         if(!current() || !await authorize() || !current())throw Error('Bridge reply attempt uncertain');
         return secrets.withValue(v.tokenSecret,async token=>{
-          if(!current())throw Error('Bridge reply attempt uncertain');
+          if(!current() || !await authorize() || !current())throw Error('Bridge reply attempt uncertain');
           const slackText=part.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
           const response=await request(platform==='discord'?`https://discord.com/api/v10/channels/${target.channel}/messages`:'https://slack.com/api/chat.postMessage',{
             method:'POST',redirect:'error',signal:AbortSignal.timeout(15_000),

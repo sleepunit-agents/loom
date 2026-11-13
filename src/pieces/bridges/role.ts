@@ -24,6 +24,8 @@ export interface VenueConnection { close(): void }
 export type Inspection = 'allow' | 'drop' | 'wait' | { kind: 'allow'; members: string[] };
 export interface VenueAdapter {
   platform: Venue['platform'];
+  /** Capture a lifetime predicate before awaits; loss/recovery invalidates it. */
+  current(venue: Venue): () => boolean;
   connect(venue: Venue, callbacks: {
     /** A gateway acknowledges only after this resolves (durably received). */
     message(message: Message): Promise<void>; dropped(): void;

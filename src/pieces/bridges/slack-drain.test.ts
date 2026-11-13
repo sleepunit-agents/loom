@@ -44,7 +44,7 @@ async function settle() { for(let n=0;n<80;n++) await Promise.resolve(); }
 function engineFor(f:Awaited<ReturnType<typeof fixture>>,runtime:BridgeRuntime,group=false) {
   const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
   const engine=new Bridges(f.app,f.clock,runtime,
-    [{platform:'slack',connect:async()=>({close(){}}),inspect:async()=>group?{kind:'allow',members:['U123','U200','U201']}:'allow',send:async()=>({id:'post'})}],effects);
+    [{platform:'slack',current:()=>()=>true,connect:async()=>({close(){}}),inspect:async()=>group?{kind:'allow',members:['U123','U200','U201']}:'allow',send:async()=>({id:'post'})}],effects);
   closes.unshift(()=>engine.close());return engine;
 }
 function deferred<T>() { let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve}; }

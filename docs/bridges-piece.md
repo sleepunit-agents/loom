@@ -731,8 +731,8 @@ engine as well as both receivers. The existing public generation monitor remains
 the only holder-mutation signal; no value-derived marker is added.
 
 Slack names resolve the explicit bridge account link, then call the installed
-`mindRole.personRead` as that venue's agent, first for its own relationship and
-then for the commons directory. Central policy decides visibility. Missing or
+`mindRole.personRead` as that venue's agent for its own relationship. Central policy denies agents
+access to unscoped commons cards; there is no commons fallback or service grant. Missing or
 denied cards yield an absent name; neither owner impersonation nor account fields
 on People cards grant bridge authority.
 

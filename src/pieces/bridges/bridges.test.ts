@@ -26,6 +26,7 @@ class FakeVenue implements VenueAdapter {
   platform: Venue['platform'];
   callbacks?: Parameters<VenueAdapter['connect']>[1]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
   constructor(platform: Venue['platform']) {this.platform=platform;}
+  current(){return ()=>true;}
   async connect(_v: Venue,callbacks: Parameters<VenueAdapter['connect']>[1]) { await this.acquire(_v); this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
   acquire: (v: Venue) => Promise<void> = async()=>{};
   async inspect(v: Venue) { await this.acquire(v); return this.inspection; }
@@ -820,4 +821,13 @@ describe('platform event timestamps',()=>{
     for (const id of ['','-1','1.5','18446744073709551616']) expect(eventTime('discord',id)).toBeUndefined();
     expect(eventTime('slack','not-a-ts')).toBeUndefined();
   });
+});
+
+it('does not deliver an inspection lifetime invalidated during runtime admission',async()=>{
+  const f=await fixture(),started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let generation=0;
+  f.adapter.current=()=>{const captured=generation;return ()=>captured===generation;};
+  let calls=0;f.runtime.admit=async()=>{if(calls++)return 'wait';started.resolve();await finish.promise;return 'allow';};
+  await f.engine.receive(f.venue.id,f.message());await started.promise;generation++;finish.resolve();await f.engine.flush();
+  expect(f.deliveries.size).toBe(0);expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+  f.runtime.admit=async()=> 'allow';f.clock.advance(5000);await f.engine.flush();expect(f.deliveries.size).toBe(1);
 });
