@@ -3,8 +3,8 @@ import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result } from '../../data';
-const f = vi.hoisted(() => ({ status: 'live', call: vi.fn(), once: vi.fn() }));
-vi.mock('../../data', () => ({ call: f.call, callOnce: f.once, useRecords: (name: string) => ({ status: f.status, records: name === 'signin.admin' ? [{ id: 'household', at: Date.parse('2026-11-13T12:00:00Z'), tokens: [{ ref: 'expired', label: 'operator', role: 'owner', created: '2026-11-11T12:00:00Z', expires: '2026-11-12T12:00:00Z' }, { ref: 'live', label: 'operator', role: 'owner', created: '2026-11-12T12:00:00Z' }], sessions: [{ ref: '0123456789abcdef', issuedAt: 1, expiresAt: 2, member: 'jonathan', agent: false }] }] : [{ id: 'household', members: ['jonathan'], agents: ['art'] }] }) }));
+const f = vi.hoisted(() => ({ status: 'live', access: true, call: vi.fn(), once: vi.fn() }));
+vi.mock('../../data', () => ({ call: f.call, callOnce: f.once, useRecords: (name: string) => ({ status: f.status, records: name === 'signin.admin' ? !f.access ? [] : [{ id: 'household', at: Date.parse('2026-11-13T12:00:00Z'), tokens: [{ ref: 'expired', label: 'operator', role: 'owner', created: '2026-11-11T12:00:00Z', expires: '2026-11-12T12:00:00Z' }, { ref: 'live', label: 'operator', role: 'owner', created: '2026-11-12T12:00:00Z' }], sessions: [{ ref: '0123456789abcdef', issuedAt: 1, expiresAt: 2, member: 'jonathan', agent: false }] }] : [{ id: 'household', members: ['jonathan'], agents: ['art'] }] }) }));
 vi.mock('../../kit', () => Object.fromEntries(['Button', 'Input', 'Empty', 'Error', 'Loading'].map(name => [name, (props: object) => h(name === 'Button' ? 'button' : name === 'Input' ? 'input' : 'div', props)])));
 import AccessAdmin, { tokenInput } from './access';
 import { mutation, tokenAttempt } from './model';
@@ -15,7 +15,7 @@ function request() {
   const handle = { id: 'request', result: new Promise<Result>(() => {}), getSnapshot: () => state, subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; } };
   return { handle, finish: async (result: Result) => act(async () => { state = { pending: false, status: 'done', result }; listeners.forEach(fn => fn()); }) };
 }
-beforeEach(async () => { vi.clearAllMocks(); tokenAttempt.set(undefined); f.status = 'live'; const done = request(); await done.finish({ ok: true, value: {} }); mutation.set(done.handle, 'previous'); });
+beforeEach(async () => { vi.clearAllMocks(); tokenAttempt.set(undefined); f.access = true; f.status = 'live'; const done = request(); await done.finish({ ok: true, value: {} }); mutation.set(done.handle, 'previous'); });
 afterEach(async () => { await act(async () => tree?.unmount()); vi.unstubAllGlobals(); });
 it('returns only the chosen identity fields and explicit expiry', () => {
   const data = new FormData(); data.set('role', 'owner'); data.set('label', 'work'); data.set('member', 'jonathan'); data.set('agent', 'ignored');
@@ -79,4 +79,18 @@ it('keeps only a nonsecret uncertain-mint breadcrumb through disconnect, remount
 it('offers no revocation action for an expired row sharing a replacement label', async () => {
   await act(async () => { tree = create(h(AccessAdmin)); });
   expect(tree.root.findAllByProps({ 'aria-label': 'Revoke token operator' })).toHaveLength(1);
+});
+
+it('forgets an already returned bearer on owner demotion with a connected empty Live snapshot', async () => {
+  const r = request(); f.once.mockReturnValue(r.handle);
+  const Original = FormData;
+  vi.stubGlobal('FormData', class extends Original { constructor() { super(); this.set('role', 'owner'); this.set('label', 'before-demotion'); this.set('member', 'jonathan'); } });
+  await act(async () => { tree = create(h(AccessAdmin)); });
+  await act(async () => tree.root.findByProps({ 'aria-label': 'Create token' }).props.onSubmit({ preventDefault: vi.fn(), currentTarget: {} }));
+  await r.finish({ ok: true, value: { token: 'demoted-bearer' } });
+  expect(tree.root.findByProps({ 'aria-label': 'Token value' }).props.children).toBe('demoted-bearer');
+  await act(async () => { f.access = false; tree.update(h(AccessAdmin)); });
+  expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(0);
+  await act(async () => { f.access = true; tree.update(h(AccessAdmin)); });
+  expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(0);
 });

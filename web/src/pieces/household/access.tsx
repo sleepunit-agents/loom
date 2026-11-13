@@ -24,7 +24,7 @@ export default function AccessAdmin({ active = true }: { active?: boolean }) {
   const [role, setRole] = useState('owner');
   const admin = feed.records[0], h = household.records[0];
   // Never retain a returned bearer beyond this mounted, authorized, connected screen.
-  useEffect(() => { if (feed.status !== 'live' || !active) setMint(undefined); }, [feed.status, active]);
+  useEffect(() => { if (feed.status !== 'live' || !active || !admin || !h) setMint(undefined); }, [feed.status, active, admin, h]);
   useEffect(() => { if (result.result && (result.result.ok || result.result.code !== 'unavailable')) tokenAttempt.set(undefined); }, [result.result]);
   const live = active && feed.status === 'live' && household.status === 'live' && !!admin && !!h;
   const enabled = live && !frozen(change) && !result.pending;

@@ -20,7 +20,8 @@ export function memberInput(form: FormData) {
 }
 export function accountInput(form: FormData, agent: string) { return { agent, accounts: { github: String(form.get('github') ?? '').split(/[\s,]+/).filter(Boolean) } }; }
 
-/** Nonsecret recovery breadcrumb survives navigation; never holds a request or bearer. */
+/** Nonsecret recovery breadcrumb survives navigation; never holds a request or bearer.
+ * Deliberately separate from the short request store above, so no mint Call can be retained here. */
 let attemptedLabel: string | undefined;
 const attemptListeners = new Set<() => void>();
 export const tokenAttempt = {
