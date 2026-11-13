@@ -238,7 +238,7 @@ the command inventory above, the source has these domain obligations:
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
 | `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | Current continuation field is opaque data only; validation and runtime capability inspection remain unfinished. It must not convey authority by its presence. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
-| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and question-role parity remain unfinished. |
+| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note is implemented below; question-role composition remains unfinished. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
@@ -318,3 +318,22 @@ when no model has room. Other alert work still waits. Only a structured quota
 code selects this behavior; arbitrary reason text conveys no status or authority.
 Runtime/attention composition and publication of the owner's quota notice remain
 separate unfinished work; this unit does not publish one itself.
+
+## Parked continuation messages
+
+Answered parks prepend the legacy continuation instructions and label the note
+once: Allowed, Denied, expired Allow and unanswered after 24 hours remain distinct.
+The request id and answer stay on the wake; notes use human words. Saved kind and
+target are display snapshots, never spending authority: the current visible role
+answer supplies exact instructions or the current action. A denial or timeout
+never receives an Allow's instructions. Grant, vouch, principal reset, box write-off
+and host answers are applied by their piece; the continuation spends nothing.
+Secret answers ask the new house to request again. A local-wake answer without
+trusted stored-word recovery instructions tells the continuation to refile rather
+than consuming an unusable receipt. Full local-approval creation and recovery is
+still a later server slice. No approval is spent by unpark itself.
+
+Ported cases: legacy Python tests for exact merge action, local words missing,
+owner-applied vouch, secret re-request and resumed-note prefix replacement.
+Daemon fixtures cover answer notification, 24-hour unanswered timeout, restart
+before Deny, and restart after the resumed wake fires without a second body.
