@@ -494,9 +494,10 @@ Creation uses a single-send data-layer call: it refuses offline, never queues or
 replays after connection loss, and offers no retry. A lost reply may have committed;
 check the list and revoke its label before deliberately creating a replacement.
 The bearer is held only by the creating mounted screen, hidden on connection or
-access loss, navigation, or Hide token. It is never a Live record or retry receipt.
+access loss, leaving the active Setup tile (including Home/minimize), or Hide token. It is never a Live record or retry receipt.
 Other windows see only metadata. Token revocation confirms the label and optional
 passkey/device cascade; session revocation confirms a safe unique session ref.
+Token revocation includes an opaque stable ref, so an old row or confirmation cannot revoke a replacement that reused its label. Expired rows lose their revoke action at the server-clock deadline. Only a nonsecret attempted-label recovery breadcrumb survives a lost mint or navigation.
 Those revocations retain the shared same-id retry handle across navigation.
 No clipboard or local-storage copy is made. Last-use recording, first-token
 bootstrap and own-person Account controls remain separate inventory entries.

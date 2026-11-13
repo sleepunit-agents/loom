@@ -195,3 +195,24 @@ it('creates a token over the authenticated browser socket without a credential r
   const metadata = JSON.stringify(messages.filter(m => (m as { kind: string }).kind !== 'result'));
   expect(metadata).toContain('browser-mint'); expect(metadata).not.toContain(result.value.token); expect(metadata).not.toContain(hash(result.value.token));
 });
+
+it('uses an opaque token ref to refuse stale label reuse without touching the replacement', async () => {
+  const f = await setup();
+  const first = f.call('token.create', { label: 'reusable', role: 'agent', agent: 'art', expires: new Date(f.clock.now() + 1000).toISOString() });
+  if (!first.ok) throw Error();
+  const old = (first.value as { record: { ref: string } }).record.ref;
+  expect(old).not.toContain(hash('operator-bearer'));
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { authorization: 'Bearer operator-bearer' } });
+  cleanup.push(() => { ws.terminate(); }); await once(ws, 'open');
+  ws.send(JSON.stringify({ kind: 'subscribe', type: 'signin.admin' }));
+  const snapshot = JSON.parse(String((await once(ws, 'message'))[0])); expect(snapshot.records[0].at).toBe(f.clock.now());
+  const expired = once(ws, 'message'); f.clock.advance(1000);
+  const update = JSON.parse(String((await expired)[0])); expect(update.record.at).toBe(f.clock.now());
+  const replacement = f.call('token.create', { label: 'reusable', role: 'agent', agent: 'art' });
+  if (!replacement.ok) throw Error();
+  const value = replacement.value as { token: string; record: { ref: string } };
+  expect(f.call('token.revoke', { label: 'reusable', ref: old }, 'stale')).toMatchObject({ ok: false, code: 'not-found' });
+  expect(f.s.token(hash(value.token))).toBeDefined();
+  expect(f.call('token.revoke', { label: 'reusable', ref: value.record.ref }, 'right')).toMatchObject({ ok: true, value: { revoked: 1 } });
+  expect(f.s.token(hash(value.token))).toBeUndefined();
+});

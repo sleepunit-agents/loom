@@ -156,7 +156,7 @@ it('single-send calls never queue, replay after a lost result, or allow manual r
   f.watch(); const socket = f.sockets[0]; socket.open();
   const lost = f.store.call('token.create', { label: 'lost' }, false);
   expect(socket.sent.filter(x => x.name === 'token.create')).toHaveLength(1);
-  socket.close(); expect(await lost.result).toMatchObject({ ok: false, code: 'unavailable' });
+  socket.close(); expect(lost.getSnapshot().pending).toBe(false); expect(await lost.result).toMatchObject({ ok: false, code: 'unavailable' });
   f.next(); f.sockets[1].open(); lost.retry?.(); offline.retry?.();
   expect(f.sockets[1].sent.filter(x => x.kind === 'call')).toEqual([]);
   // A late reply from the old connection cannot resurrect the secret.

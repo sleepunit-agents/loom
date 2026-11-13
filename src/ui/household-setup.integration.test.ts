@@ -53,7 +53,9 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     const revokeToken = b.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true });
     await expect.poll(() => revokeToken.count()).toBe(1);
     expect(await b.getByLabel('Token value', { exact: true }).count()).toBe(0);
-    await a.getByRole('button', { name: 'Hide token', exact: true }).click();
+    await a.getByRole('button', { name: 'Home', exact: true }).click();
+    await expect.poll(() => a.locator('[data-tile]').count()).toBe(0);
+    await a.getByRole('button', { name: 'Open Household setup', exact: true }).click();
     expect(await a.getByLabel('Token value', { exact: true }).count()).toBe(0);
     // A separately seeded browser session is revoked through the real screen.
     const session = loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {});
@@ -65,6 +67,9 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     loom.live.changed([{ type: 'signin.admin', id: 'household' }]);
     const revokeSession = a.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true });
     await expect.poll(() => revokeSession.count()).toBe(1);
+    await revokeSession.getByRole('button').click();
+    expect(await revokeSession.evaluate(form => !(form as HTMLFormElement).checkValidity())).toBe(true);
+    expect(auth.session(temporary)).toBeDefined();
     await revokeSession.getByRole('checkbox').check(); await revokeSession.getByRole('button').click();
     await expect.poll(() => b.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true }).count()).toBe(0);
     expect(auth.session(temporary)).toBeUndefined();
@@ -79,6 +84,9 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
       await b.getByRole('heading', { name: 'Tokens and sessions', exact: true }).scrollIntoViewIfNeeded();
       await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
+    await revokeToken.getByRole('button').click();
+    expect(await revokeToken.evaluate(form => !(form as HTMLFormElement).checkValidity())).toBe(true);
+    expect(auth.tokens.list().find(t => t.label === 'setup-browser-token')?.revoked).toBeUndefined();
     await revokeToken.getByRole('checkbox', { name: 'I confirm revoking setup-browser-token', exact: true }).check();
     await revokeToken.getByRole('button').click();
     await expect.poll(() => a.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true }).count()).toBe(0);
