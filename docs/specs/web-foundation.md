@@ -414,6 +414,18 @@ The supported starting environment is Node 22 or later with npm (as package.json
 the home, database and household of one, and prints a one-time sign-in link. Beyond Node and npm nothing is required: no Python, no `age` binary (encryption uses the library already in the tree), no container, no
 systemd. `loom service install` is an optional convenience that writes one unit.
 
+In next mode, first start creates a household when none exists (the OS username is its first owner,
+with an `assistant` agent) and prints one owner sign-in link to stdout if there are no browser sessions.
+It records that initial print in `loom.db`, so a restart does not print another. For an imported home,
+an expired first link, or service stdout that is unavailable, the OS user who owns the home obtains a
+fresh link while the daemon runs with `loom token link --next --local --home <dir> --member <person>
+[--label <name>] [--ttl <seconds>] [--page-url <base>]`. This needs no bearer token: it uses the daemon's
+mode-0600 `operator.sock` inside the mode-0700 home. The client refuses unsafe ownership or modes;
+the daemon remains the only database writer. The socket accepts only link creation, with a default
+five-minute lifetime and a fifteen-minute cap. Each local link is audited with OS identity, member,
+label and expiry, never its code. The command prints the full link once, using `--page-url` when supplied
+or the daemon's first address; open it and confirm sign-in before it expires. The link can be spent once.
+
 **The base install is the desk and every in-repo piece.** Secrets is the one optional addition that brings its
 own requirements (`sops` and `age` today), until its step settles whether loom can ship them.
 

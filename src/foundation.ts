@@ -10,10 +10,12 @@ import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import type { Sharing } from './core/index.js';
 import { installNext, listenNext, type NextOptions } from './next.js';
+import { listenOperator, firstSignin, prepareOperatorHome } from './core/signin/operator.js';
 import { ownHome } from './core/daemon-home.js';
 import type { OutsideEffects } from './core/effects.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot }: {
+export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout }: {
+  stdout?: (text: string) => void;
   home: string; clock?: Clock; sharing?: () => Sharing;
   next?: boolean; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   install?: (app: ReturnType<typeof createFoundation>) => void;
@@ -21,6 +23,7 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   /** Transitional production transport; it owns piece installation and listener shutdown. */
   listen?: (app: Foundation) => Promise<{ url: string; close(): Promise<void> }>;
 }): Promise<Omit<Foundation, 'close'> & { url: string; effects?: OutsideEffects; close(): Promise<void> }> {
+  if (next) prepareOperatorHome(home);
   const release = next ? await ownHome(home) : async () => {};
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
@@ -41,8 +44,13 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   if (next) {
     try {
       const server = await listenNext(app, nextOptions);
+      let operator: Awaited<ReturnType<typeof listenOperator>> | undefined;
+      try {
+        operator = await listenOperator(app, home, server.url);
+        firstSignin(app, home, server.url, stdout ?? (text => process.stdout.write(text)));
+      } catch (error) { await operator?.close().catch(() => {}); await server.close(); throw error; }
       let closing: Promise<void> | undefined;
-      return { ...app, effects, url: server.url, close() { return closing ??= (async () => { try { await server.close(); } finally { await closeApp(); } })(); } };
+      return { ...app, effects, url: server.url, close() { return closing ??= (async () => { try { await operator!.close(); } finally { try { await server.close(); } finally { await closeApp(); } } })(); } };
     } catch (e) { await closeApp(); throw e; }
   }
   if (listen) {

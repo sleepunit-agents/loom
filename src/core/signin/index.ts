@@ -2,6 +2,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
+import { migrate } from '../db/index.js';
 import type { Foundation } from '../app.js';
 import type { Authentication } from '../live/index.js';
 import { OperationError } from '../operations/index.js';
@@ -159,6 +160,12 @@ export class Signin {
   }
 }
 export function installSignin(app: Foundation) {
+  migrate(app.db, 'signin', [{ number: 1, sql: `
+    CREATE TABLE signin_audit (
+      id INTEGER PRIMARY KEY, at INTEGER NOT NULL, os_uid INTEGER NOT NULL,
+      os_user TEXT NOT NULL, member TEXT NOT NULL, label TEXT NOT NULL, expires INTEGER NOT NULL
+    );
+  ` }]);
   const s=signin(app);
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
