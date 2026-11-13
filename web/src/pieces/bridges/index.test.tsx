@@ -418,3 +418,11 @@ it('does not offer dismissal for an orphan staging effect or an evicted send', a
   await publish('bridges.send', []); expect(button('Confirm dismissal')).toBeUndefined(); expect(button('Dismiss this send')).toBeUndefined();
   expect(button('Release this send')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
 });
+it.each([{ remoteId: 'new-receipt' }, { venue: 'other-connection' }, { incoming: 'other-intake' }])('invalidates same-state confirmation when metadata changes: %j', async update => {
+  pendingWrite(); const original = { ...f.snapshots['bridges.send'].records[0], state: 'uncertain' };
+  await publish('bridges.send', [original]); await draw('/p/bridges-preview/item/sends/reply'); await click('Dismiss this send');
+  await publish('bridges.send', [{ ...original, ...update }]);
+  expect(button('Confirm dismissal')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
+  await click('Dismiss this send'); await click('Confirm dismissal');
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.dismissSend', { id: 'reply', state: 'uncertain' });
+});
