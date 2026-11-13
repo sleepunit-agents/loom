@@ -110,3 +110,21 @@ it('discards disconnected or unmounted page responses and expires delayed pages 
  pages.accept(pages.begin(),[{...m,id:'th/2',seq:2,keepUntil:200}],100);
  pages.accept(pages.begin(),[m],100);expect(pages.rows.map(m=>m.seq)).toEqual([1,2]);
 });
+
+import { ConversationPages, retainedStep, type ConversationStep } from '../../web/src/pieces/comms/conversation-pages.js';
+it('expires every ordinary activity label field at its deadline and discards arbitrary envelopes',()=>{
+ const step:ConversationStep={seq:1,conversation:'cv-public',at:0,keepUntil:100,text:'Private label',run:'private run',id:'private card',tool:'Shell',state:'done'};
+ const pages=new ConversationPages();pages.accept(pages.begin(),[{...step,body:'unwanted body'} as ConversationStep],99);
+ expect(pages.rows[0].text).toBe('Private label');expect(JSON.stringify(pages.rows)).not.toContain('unwanted body');
+ pages.expire(100);expect(pages.rows).toEqual([{seq:1,conversation:'cv-public',at:0,keepUntil:100,text:null}]);
+ for(const keepUntil of [NaN,Infinity,undefined])expect(retainedStep({...step,keepUntil} as ConversationStep,0).text).toBeNull();
+});
+it('fences delayed conversation pages on Live replacement, access loss or unmount and merges by global sequence',()=>{
+ const pages=new ConversationPages(),generation=pages.begin();
+ const step:ConversationStep={seq:1,conversation:'cv-public',at:0,keepUntil:100,text:'Old label',id:'same-card',run:'run-one'};
+ pages.accept(generation,[{...step,seq:2,run:'run-two'},step],1);
+ pages.accept(generation,[{...step,text:'Updated label'}],1);
+ expect(pages.rows.map(row=>row.text)).toEqual(['Updated label','Old label']);
+ pages.clear();expect(pages.accept(generation,[step],1)).toBe(false);expect(pages.rows).toEqual([]);
+ pages.accept(pages.begin(),[step],100);expect(pages.rows[0].text).toBeNull();
+});

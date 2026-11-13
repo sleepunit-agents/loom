@@ -6,6 +6,7 @@ import { replyHtml } from './render';
 import { messageView, type Message } from './message';
 import { workingView } from './working';
 import { EarlierPages, retainedMessage } from './pages';
+import { ConversationActivity } from './conversation';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
 const idle:CallState={pending:false,status:'done'};const noop=()=>()=>{};
@@ -72,6 +73,9 @@ export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:str
  const mine=identity.result?.ok?identity.result.value:undefined;
  const navigate=(id?:string)=>{const next=id?`${base}/thread/${id.replace(/^th:/,'')}`:base;if(go)go(next);else{history.pushState(null,'',next);setLocalPath(next);}setCreating(false);};
  useEffect(()=>{if(go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
+ const conversationPath=path.startsWith(`${base}/conversation/`)?path.slice(`${base}/conversation/`.length):undefined;
+ let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
+ if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
  const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
  return <Split label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle="Threads" listMeta={records.length}
   listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button></div>}

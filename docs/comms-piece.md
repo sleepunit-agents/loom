@@ -83,8 +83,8 @@ data does not remove the behavior it delivered.
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
-| Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; thread batch validation and timing/body limits remain missing. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding and conversation UI remain missing. |
-| `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and conversation-page UI remain missing. |
+| Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; thread batch validation and timing/body limits remain missing. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
+| `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
@@ -109,7 +109,7 @@ rolls back its schema as well as its rows.
 
 The app maps imported nested card tool/state and step details, ask question/reason/outcome
 lines, and kept answer verdicts. Answered, expired, freeform and unreferenced asks do not
-offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their trusted label writer and window reader now exist; production runtime/metadata binding and page UI remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
+offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their trusted label writer and window reader now exist; production runtime/metadata binding and conversation-list navigation remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
 focused tests for both matching and different destination keys.
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
@@ -421,3 +421,31 @@ on main `0606623`; the only rebase conflict kept both Knowledge and Comms app
 registrations. Production runtime/metadata composition and conversation UI
 remain required. Review budgets remain backend/security 2/3 and importer 1/3;
 this Live permission surface must be included in the remaining aggregate review.
+
+
+Ordinary conversation activity now has a read-only kit screen at
+`/p/comms-preview/conversation/<encoded-conversation-id>`. It subscribes only to
+that conversation's `conversationSteps` record, renders labels as text, and loads
+earlier hundred-row pages through `comms.conversationSteps`. No body content,
+private envelopes or generic JSON work details render on this screen. The URL
+does not grant access; the existing window/member policy stays authoritative.
+A missing or private conversation displays Conversation unavailable. Production
+metadata/runtime binding and navigation from the future conversation list are
+still required; no legacy lookup or conversation enumeration was added.
+
+The local earlier-page cache uses global sequence identity, expires all label
+metadata at the server deadline, and drops late responses after disconnect,
+unmount or any authoritative Live replacement. Choice: any Live change clears
+earlier pages, so a metadata or access change cannot leave an old page visible.
+The person can load those pages again. Rendering hides cached pages immediately
+when the aggregate changes, before effect cleanup. Successful Call results stay
+local to the request rather than in component state.
+
+Before this unit the conversation URL had no activity screen. Two new helper
+cases cover exact expiry, missing/invalid deadlines, arbitrary-envelope stripping,
+sequence deduplication across body runs and generation fencing. All 322 affected
+tests, TypeScript checking and the production web build pass. The existing single
+browser proof now exercises 103 labels, earlier loading, browser-only exact expiry
+and a private metadata transition; it captures this screen in both looks at
+390/1280/1920. No local browser ran; current-head CI must prove that extension.
+Review budgets remain backend/security 2/3 and importer 1/3.

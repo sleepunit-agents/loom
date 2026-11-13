@@ -14,9 +14,10 @@ const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across two windows, retains a device draft, sanitises replies and captures both looks',async()=>{
  const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);const starts:{seq:number;generation?:number}[]=[];let comms!:ReturnType<typeof installComms>;let reply=true;
+ const conversations=new Map([['cv-label-fixture',{agent:'art',venue:'discord',version:'one'}]]);
  const loom=await startLoom({home,clock,authenticate:()=>({viewer:{kind:'member',id:'jonathan'},window:true,valid:()=>true}),install:app=>{
   installFixture(app);
-  comms=installComms({...app,clock,key,sharing:fixtureSharing,hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
+  comms=installComms({...app,clock,key,sharing:fixtureSharing,conversation:id=>conversations.get(id),hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
    deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
@@ -81,7 +82,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
-  for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`comms-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
+  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
+  await capture('comms',true);
   await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
   await b.getByRole('button',{name:'Send again',exact:true}).click();
@@ -109,6 +111,28 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await b.clock.fastForward(1);
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
   expect(await b.getByText('Retained recent card 100',{exact:true}).count()).toBe(1);
+  // Ordinary-conversation labels use a separate scoped Live page, with no body text.
+  const writer=comms.conversationWriter({agent:'art',conversation:'cv-label-fixture',run:'fixture-label-run',startedAt:clock.now(),valid:()=>true});
+  await writer.write([{id:'earliest',tool:'Shell',summary:'Earlier conversation label',state:'done'}]);
+  clock.advance(500);
+  for(let start=0;start<102;start+=50)await writer.write(Array.from({length:Math.min(50,102-start)},(_,n)=>({id:`label-${start+n}`,tool:'Shell',summary:`Conversation label ${start+n}`,state:'running' as const})));
+  // The previous deadline proof left this clock paused, slightly ahead of the server.
+  await b.clock.setSystemTime(clock.now());
+  await b.goto(`${loom.url}/p/comms-preview/conversation/cv-label-fixture`);
+  await expect.poll(()=>b.getByText('Conversation label 101',{exact:true}).count()).toBe(1);
+  expect(await b.getByText('Earlier conversation label',{exact:true}).count()).toBe(0);
+  await b.getByRole('button',{name:'Load earlier activity',exact:true}).click();
+  await expect.poll(()=>b.getByText('Earlier conversation label',{exact:true}).count()).toBe(1);
+  await capture('comms-conversation');
+  await b.clock.fastForward(14*86400000-501);
+  expect(await b.getByText('Earlier conversation label',{exact:true}).count()).toBe(1);
+  await b.clock.fastForward(1);
+  await expect.poll(()=>b.getByText('Earlier conversation label',{exact:true}).count()).toBe(0);
+  expect(await b.getByText('Conversation label 101',{exact:true}).count()).toBe(1);
+  // An authoritative private transition removes the aggregate and cached pages.
+  conversations.get('cv-label-fixture')!.venue='comms';loom.live.changed([{type:'conversation',id:'cv-label-fixture'}]);
+  await expect.poll(()=>b.getByText('Conversation unavailable',{exact:true}).count()).toBe(1);
+  expect(await b.getByText('Conversation label 101',{exact:true}).count()).toBe(0);
   await a.getByRole('button',{name:'Delete',exact:true}).click();await a.getByRole('button',{name:'Keep thread',exact:true}).click();expect(await a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60000);
