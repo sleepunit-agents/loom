@@ -2,7 +2,7 @@ import { closeSync, mkdtempSync, openSync, readSync, rmSync, writeSync } from 'n
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { copyMigrationFile } from './migration-files.js';
+import { copyMigrationFile } from '../core/migration-files.js';
 /** Completed backups only. A private disk image avoids source sidecars and whole-DB buffers. */
 export function openSnapshotSqlite(path: string): Database.Database {
   const directory=mkdtempSync(join(tmpdir(),'loom-migration-sqlite-'));

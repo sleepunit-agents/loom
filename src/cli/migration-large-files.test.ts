@@ -7,7 +7,7 @@ import { createSnapshot, readSnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
 import { verifyMigration, verifyRuntimeMigration } from './migration-verify.js';
-import { fileDigest, migrationChunkBytes } from './migration-files.js';
+import { fileDigest, migrationChunkBytes } from '../core/migration-files.js';
 
 // A whole-file Buffer read would otherwise pass on a high-memory test runner.
 vi.mock('node:fs',async original=>{

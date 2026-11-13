@@ -1,4 +1,4 @@
-import { fileDigest } from './migration-files.js';
+import { fileDigest } from '../core/migration-files.js';
 import { compareRuntimeArchive } from '../pieces/runtime/import-archive.js';
 /** Offline comparison only. No foundation, migrations, importer calls or writable opens. */
 import Database from 'better-sqlite3';

@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
-import { fileDigest } from '../../cli/migration-files.js';
+import { fileDigest } from '../../core/migration-files.js';
 import { records, type RuntimeRecords } from './records.js';
 
 const identity = z.string().min(1).max(200);

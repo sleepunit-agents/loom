@@ -1,5 +1,5 @@
 /** Private offline archive IO. Each SQLite value is at most one file chunk. */
-import { fileChunks, fileDigest, migrationChunkBytes } from '../../cli/migration-files.js';
+import { fileChunks, fileDigest, migrationChunkBytes } from '../../core/migration-files.js';
 import type Database from 'better-sqlite3';
 import type { readRuntimeInventory } from './import-source.js';
 type Inventory = ReturnType<typeof readRuntimeInventory>;
