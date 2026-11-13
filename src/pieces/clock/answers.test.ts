@@ -2,9 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
+import { FakeClock, operation, type Viewer } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
 import { installAttention } from '../attention/index.js';
 import { secretGrantAttention } from '../secrets/attention.js';
@@ -77,8 +78,13 @@ it('refuses invisible or missing answers and rechecks visibility rather than sav
     expect(s.call('clock.park',{agent:'mark',prompt:'Hidden',note:'',on:card.id},viewer).ok).toBe(false);
   }
   expect(s.call('clock.park',{agent:'art',prompt:'Missing',note:'',on:'a-deadbeef'},agent).ok).toBe(false);
-  const parked = s.park(card.id,owner);
-  s.access.members.jonathan.agents = []; s.access.members.jonathan.owner = false;
+  const parked = s.park(card.id,owner); await s.flush();
+  s.clock.advance(60_000); await settle();
+  s.app.operations.register(operation({name:'fixture.revoke',write:true,input:z.object({}),output:z.unknown(),may:()=>true,run(ctx){
+    s.access.members.jonathan.agents = []; s.access.members.jonathan.owner = false; ctx.changed('core.access','all');
+  }}));
+  s.value('fixture.revoke'); await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',hold:'permission'});
   expect(reader.check(card.id,owner)).toBeUndefined();
   s.clock.advance(86400_000); await settle();
   expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',hold:'permission'});
@@ -89,11 +95,13 @@ it('composes real secret request answers without exposing secret names or granti
   const s = await setup(true);
   s.value('secrets.describe',{name:'api-key',description:'Private secret name'});
   const request = s.value<{id:string}>('secrets.requestHouse',{agent:'art',target:'api-key',scope:{house:'h-1'},why:'work',minutes:2},agent);
-  const parked = s.park(request.id);
+  const parked = s.park(request.id); await s.flush();
+  const now = s.clock.now();
+  expect(wake(s.app.db,parked.id)?.due).toBe(now+5*60_000);
   s.value('attention.answer',{id:request.id,answer:{kind:'yes'}});
   const grants = s.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all();
   expect(grants).toHaveLength(1);
-  await s.flush();
+  await s.flush(); expect(s.clock.now()).toBe(now);
   expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'allowed'}});
   expect(wake(s.app.db,parked.id)?.prompt).toContain('request it again');
   const reader = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
@@ -112,8 +120,10 @@ it('keeps missing Secrets unavailable and unsubscribes the answer observer', asy
   expect(reader.check('q-missing',owner)).toBeUndefined();
   let changes = 0; const off = reader.subscribe(()=>changes++);
   s.app.live.changed([{type:'wake',id:'w-test'}]); expect(changes).toBe(0);
-  s.app.live.changed([{type:'approval',id:'a-test'},{type:'secret.request',id:'q-test'}]); expect(changes).toBe(1);
-  off(); s.app.live.changed([{type:'core.access',id:'all'}]); expect(changes).toBe(1);
+  s.app.live.changed([{type:'approval',id:'a-test'}]); expect(changes).toBe(1);
+  s.app.live.changed([{type:'secret.request',id:'q-test'}]); expect(changes).toBe(2);
+  s.app.live.changed([{type:'core.access',id:'all'}]); expect(changes).toBe(3);
+  off(); s.app.live.changed([{type:'core.access',id:'all'}]); expect(changes).toBe(3);
 });
 
 it('observes an expired approval rather than handing out stale Allow instructions', async () => {
@@ -147,7 +157,7 @@ it('keeps wake authority while answer visibility differs from a privileged viewe
   const answers = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
   expect(answers.check(card.id,agent)).toBeUndefined();
   expect(answers.check(card.id,owner)?.state).toBe('allowed');
-  expect(s.call('clock.checkPark',{id:parked.id},agent).ok).toBe(true);
+  expect(s.call('clock.checkPark',{id:parked.id},owner).ok).toBe(true);
   await s.flush(); expect(wake(s.app.db,parked.id)?.state).toBe('parked');
   s.clock.advance(parked.wait!.until-s.clock.now()); await settle();
   expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',hold:'staging',wait:{answer:'unknown'}});
