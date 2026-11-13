@@ -3,6 +3,7 @@
  * free-form text. Built for consolidation workflows: feed an anchor and
  * inspect what overlaps with it.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import { formatMatchResult } from './recall.js';
 import type { FindSimilarInput, MemoryMatch } from '../backends/types.js';
@@ -29,8 +30,9 @@ export function formatSimilarResults(
 export async function findSimilar(
   contextDir: string,
   input: FindSimilarInput,
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const matches = await backend.findSimilar(input);
   return formatSimilarResults(input, matches);
 }

@@ -126,3 +126,17 @@ hub does not discover installed-piece feeds or open the legacy Comms app for
 filed threads. A caller may supply its own `pieceSections` source explicitly.
 Omitted selections retain the existing app-backed behavior. This is another
 reader prerequisite; the stdio entry point remains unchanged.
+
+Vector-backed memory tools accept `memorySelection: {agent}` (or standalone
+`null`) on `createLoomServer`, passed to their optional final selection argument
+and `createBackend(contextDir, selection)`. The context determines the private
+store; the trusted selection bypasses `LOOM_SQLITE_DB_PATH`. Omitted selection
+retains that override. The backend cache remains keyed by resolved database path,
+so selected agents keep separate handles while callers selecting the same store
+share one handle. Remember, recall, list, update, forget, prune, similarity, audit,
+archive/restore, merge and revision tools all pass the selection.
+
+This is still a prerequisite: tape, salience, proposals, identity and project-hub
+memory readers need explicit routing separately. No entry point selects this
+configuration yet. Keep the local-and-active isolation guard until the entire
+memory path is explicit; this change does not enable the stdio cutover.
