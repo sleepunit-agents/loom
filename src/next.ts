@@ -20,6 +20,7 @@ import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
+import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installSecrets } from './pieces/secrets/index.js';
@@ -156,7 +157,9 @@ export function installNext(app: Foundation, options: NextOptions) {
     app.onClose(jobs.close);
   }
   installAttentionMaintenance(app);
-  return installEffects(app, sharing, !!options.staging);
+  const effects = installEffects(app, sharing, !!options.staging);
+  if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects);
+  return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
   const sources = mindTransports.get(app) ?? [];
