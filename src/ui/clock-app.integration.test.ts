@@ -26,6 +26,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const access = fixtureSharing();
+  access.services.clock = {types:['clock','approval'],operations:['clock.localRequest','approvals.piece-request']};
   access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
   const sharing = () => access;
   let auth: ReturnType<typeof signin> | undefined;
@@ -45,7 +46,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const ownerSession = session('jonathan'), guestSession = session('pollock');
   const localCards = ['Allow once','Deny this job','Standing job'].map(note => {
     const result=clockLocalFiling(loom.operations).request({who:{agent:'art',where:'house (queue)'},for:'owner',member:'jonathan',people:['jonathan'],conversation:'cv-123456789abc'},`<!-- house: local -->\nReport host disk usage: ${note}.`,note);
-    expect(result.ok).toBe(true);return (result as {ok:true;value:{id:string}}).value.id;
+    expect(result).toMatchObject({ok:true});return (result as {ok:true;value:{id:string}}).value.id;
   });
   let seq=0;
   const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
