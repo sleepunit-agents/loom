@@ -969,7 +969,7 @@ updates the row without selecting it or polling. The displayed activity time
 stays the thread's last activity; a heartbeat does not invent a new message time.
 The existing single browser proof checks the semantic timestamp, working/done
 updates and six list screenshots. Newest digest summaries, agent portraits,
-row gestures and dock unread counts remain unfinished.
+swipe/archive Undo and dock unread counts remain unfinished.
 
 
 ## Thread list letters
@@ -980,7 +980,7 @@ the decorative letter is hidden from assistive technology to avoid a repeated
 name. It requires no display registry, portrait request or additional record.
 The single browser proof checks the letter and absence of horizontal page
 overflow in all six list captures. Reader pixel portraits and channel treatment,
-newest digest summaries, gestures and dock unread counts remain unfinished.
+newest digest summaries, swipe/archive Undo and dock unread counts remain unfinished.
 
 
 ## Stop control visibility
@@ -1005,6 +1005,20 @@ pin cap, archive lifecycle and access checks remain authoritative.
 
 The single browser proof exercises pointer and keyboard entry, focus return,
 pin/unpin and archive/unarchive across folders, and captures the closed list
-and open menu in both looks at all three widths. Swipe, long press and archive
-Undo remain unfinished, alongside the broader inventory above. This is a
+and open menu in both looks at all three widths. Touch pinning is described
+below; swipe and archive Undo remain unfinished, alongside the broader inventory above. This is a
 presentation unit with no backend, session, policy or runtime changes.
+
+
+## Touch row pinning
+
+A stationary touch or pen hold on a row's open target pins that thread after
+550 ms, through the existing pin operation and eight-pin cap. It never toggles
+a pinned thread or opens the reader. Moving more than ten CSS pixels, lifting
+early, cancellation, a second contact, focus/visibility loss or leaving the
+list cancels the pending hold. The row's menu trigger stays independent.
+Mouse and keyboard retain the existing menu controls, including Unpin.
+Pending actions and unavailable connections prevent pinning; operation errors
+remain above the list. The single browser proof covers hold timing, no
+navigation, cancellation and the resulting Unpin menu in all six views.
+Swipe and archive Undo remain unfinished.

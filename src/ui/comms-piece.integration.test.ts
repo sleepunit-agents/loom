@@ -109,7 +109,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
-  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu')await b.keyboard.press('Escape');}};
+  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'||prefix==='comms-hold'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:prefix==='comms-hold'?'Unpin':'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu'||prefix==='comms-hold')await b.keyboard.press('Escape');}};
   await capture('comms',true);
   await b.setViewportSize({width:390,height:900});
   await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
@@ -136,6 +136,40 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await b.keyboard.press('Enter');
   await expect.poll(()=>threadState().pinned).toBe(false);
   expect(new URL(b.url()).pathname).toBe(listPath);
+  // A touch hold pins without a compatibility click opening the reader. Advance only
+  // the installed browser clock; ordinary scrolling/cancellation must stay ordinary.
+  await b.setViewportSize({width:390,height:900});
+  await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
+  await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
+  const touch={pointerType:'touch',pointerId:7,isPrimary:true,button:0,clientX:120,clientY:180};
+  await row(b).dispatchEvent('pointerdown',touch);await b.clock.fastForward(549);
+  expect(threadState().pinned).toBe(false);
+  await b.clock.fastForward(1);await expect.poll(()=>threadState().pinned).toBe(true);
+  await row(b).dispatchEvent('pointerup',touch);await row(b).dispatchEvent('click',{detail:1});
+  expect(new URL(b.url()).pathname).toBe(listPath);
+  await expect.poll(()=>rowTrigger().isEnabled()).toBe(true);
+  await capture('comms-hold',true);
+  await rowTrigger().click();await b.getByRole('menuitem',{name:'Unpin',exact:true}).click();
+  await expect.poll(()=>threadState().pinned).toBe(false);
+  await expect.poll(()=>rowTrigger().isEnabled()).toBe(true);
+  for(const cancel of ['scroll','cancel','second','release']){
+   await row(b).dispatchEvent('pointerdown',touch);
+   if(cancel==='scroll')await row(b).dispatchEvent('pointermove',{...touch,clientY:210});
+   if(cancel==='cancel')await row(b).dispatchEvent('pointercancel',touch);
+   if(cancel==='second')await row(b).dispatchEvent('pointerdown',{...touch,pointerId:8,isPrimary:false});
+   if(cancel==='release')await row(b).dispatchEvent('pointerup',touch);
+   await b.clock.fastForward(600);expect(threadState().pinned).toBe(false);
+   await row(b).dispatchEvent('pointerup',touch);
+   expect(new URL(b.url()).pathname).toBe(listPath);
+  }
+  // A held menu trigger stays a menu control, never the row's pin gesture.
+  const menuTouchTarget=await rowTrigger().elementHandle();if(!menuTouchTarget)throw new Error('Missing row menu trigger');
+  await menuTouchTarget.dispatchEvent('pointerdown',touch);await b.clock.fastForward(600);
+  expect(threadState().pinned).toBe(false);
+  await expect.poll(()=>b.getByRole('menuitem',{name:'Pin',exact:true}).count()).toBe(1);
+  expect(new URL(b.url()).pathname).toBe(listPath);
+  await menuTouchTarget.dispatchEvent('pointercancel',touch);
+  await b.keyboard.press('Escape');await b.clock.resume();
   await rowTrigger().click();await b.getByRole('menuitem',{name:'Archive',exact:true}).click();
   await expect.poll(()=>row(b).count()).toBe(0);
   expect(new URL(b.url()).pathname).toBe(listPath);
