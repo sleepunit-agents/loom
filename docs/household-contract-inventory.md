@@ -26,13 +26,13 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | `loom household icons set APP PNG` | **Pending** icon replacement |
 | `loom household icons use SET\|none` | **Pending** active-set selection |
 | `loom household icons list` | **Pending** installed-set projection/client |
-| `loom token create` (agent/service/house, owner, peer, piece, runtime roles) | **Pending** general token mint operation and generated client. Sign-in's internal token creation is not this command |
-| `loom token list` | **Pending** credential-safe token list projection and generated client |
-| `loom token revoke LABEL [--with-passkeys] [--with-devices]` | `signin.revokeToken({label})` revokes matching live token rows and refreshes access; **pending** passkey/device cascade behavior and generated token client |
+| `loom token create` (agent/service/house, owner, peer, piece, runtime roles) | `token.create` / `loom-token create`; explicit member/agent/active runner/service only; retired legacy roles are disposed in household-piece.md |
+| `loom token list` | `token.list` / `loom-token list`, safe metadata only |
+| `loom token revoke LABEL [--with-passkeys] [--with-devices]` | `token.revoke` / `loom-token revoke`, atomic optional descendant-passkey and device cascades; old internal `signin.revokeToken` remains |
 | `loom token link` | Existing explicit `loom token link --next --member PERSON`; [client.ts](../src/core/signin/client.ts) supports remote bearer and local operator modes. This is an ephemeral, non-retrying credential command |
-| `loom sessions list` | **Pending** session list projection and generated client |
-| `loom sessions revoke REF` | **Pending** owner session administration operation/client. A browser logging itself out is already supported but does not replace this command |
-| `loom sessions revoke --label LABEL` | **Pending** end agent sessions by label operation/client |
+| `loom sessions list` | `sessions.list` / `loom-sessions list`, safe metadata and ended state |
+| `loom sessions revoke REF` | `sessions.revoke({ref})` / `loom-sessions revoke`, unique-ref lookup and device removal |
+| `loom sessions revoke --label LABEL` | `sessions.revoke({label})` / `loom-sessions revoke`, agent/headless sessions only |
 | Legacy bare stdio `loom` | Explicit `loom mcp --next --home HOME [--agent AGENT]` or `loom mcp --next --context-dir CONTEXT`; stopped-daemon two-agent and standalone acceptance is implemented |
 
 New member/project/account commands have no old CLI spelling:

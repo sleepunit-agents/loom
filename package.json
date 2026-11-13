@@ -13,7 +13,9 @@
     "loom-taskstore": "dist/taskstore-client.js",
     "loom-changes": "dist/changes-client.js",
     "loom-approvals-client": "dist/approvals-client.js",
-    "loom-wake-client": "dist/wake-client.js"
+    "loom-wake-client": "dist/wake-client.js",
+    "loom-token": "dist/token-client.js",
+    "loom-sessions": "dist/sessions-client.js"
   },
   "files": [
     "dist",

@@ -1039,6 +1039,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 
+- New-side household token/session administration and generated `loom-token`/`loom-sessions` clients: safe lists, one-time minting, scoped session revocation and atomic passkey/device compromise cascades.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
