@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
+- Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
 - Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
 - Add next-mode member-private Appearance and Accessibility preference operations and Live records, preserving imported choices across owner changes.

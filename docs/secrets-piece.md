@@ -1,5 +1,55 @@
 # Secrets and grants on the new side
 
+## Remote command client
+
+`loom-secrets-client` requires explicit `LOOM_URL` and `LOOM_TOKEN_FILE`. It
+interprets shared `secretCommands` metadata and calls registry operations; it
+never opens loom.db, an old Secrets directory, a key, or a piece executable.
+The small legacy syntax/acknowledgement transformations stay in the transport
+boundary; command metadata owns binding names and flags, and the daemon owns
+policy and state rendering. This keeps the existing typed mutation operations
+unchanged instead of adding a second daemon write API solely for CLI rendering.
+This separate executable leaves existing `loom secrets` dispatch unchanged until
+the final move. Tokens supply actual household membership; environment variables
+cannot assert an owner, service or house. These owner commands require a current
+household owner, including metadata reads. A host's old same-user access is not
+remote authentication.
+
+| Old command | Remote command / operation | Behavior |
+| --- | --- | --- |
+| `list [--json]` | same / `secrets.command` | Sorted names only; compact JSON or one name per line, exit 0. |
+| `may AGENT NAME [--json]` | same / `secrets.command` | Startup policy only; allowed exits 0, ask/denied exit 1, old text preserved. |
+| `state q-ID` | same / `secrets.command` | Pending/granted/expired/denied/revoked; missing exits 3. New cancelled requests explicitly return cancelled. Current authority is determined from the surviving request-linked grant, so moved/replaced grants cannot claim access. |
+| `policy houses NAME AGENT [--off]` | same / `secrets.startup` | Atomic chosen-agent edit, old stderr acknowledgement, existing startup operation's registered-agent/known-name validation. |
+| `add NAME` | same / `secrets.set` | Nonempty bounded UTF-8 from stdin only; trims one final newline, never argv. |
+| `add NAME --force` | `replace NAME` / `secrets.set` | Force/upsert is dropped: explicit replacement requires the existing name; no list-then-write race. |
+| `rm NAME` | same / `secrets.remove` | Old stderr acknowledgement. |
+| Terminal no-echo value prompt | Settings password form | Dropped from this client; stdin or Settings avoids terminal-mode mutation. |
+| `init`, `bundle export/import` | Separate holder lifecycle/final move | Dropped from the remote client: no crypto keys or plaintext export on its registry path. Lifecycle work remains required below. |
+| `get --reveal`, `podman`, `issue` | Trusted runtime sink / service `withValue` | Dropped from the remote client; it has no value-read operation, host environment bypass or local injection subprocess. Production runtime sink wiring remains required. |
+| `policy houses-import` | Offline metadata importer | Bulk legacy source transfer stays offline, not a series of partial remote policy writes. |
+| `ui`, `ui page/act`, `api --json` | Settings and typed registry operations | Old manifest/page/envelope protocol retired. |
+| House `request`, `status`, granted `get` through old API | Authenticated runtime adapter | Not exposed by this owner client. Actual job/house/service binding and sink delivery remain required; no caller-supplied house is accepted. |
+
+Mutations use the same complete registry id, member-bound writeId and input on
+every transport retry. Add/remove stay unavailable in normal next mode until
+production holder mutations are installed; fixture holders prove the command
+path without activation. Malformed bindings exit 2, denial 4, missing records 3,
+and conflict/unavailability 1; provider messages and response bodies never become
+errors. A malformed acknowledgement is never printed as success. UTF-8 values
+are limited to 64 KiB; owned input buffers are erased. JavaScript strings and the
+serialized retry request remain in this process for the call and cannot be
+securely erased. The client retains no cross-process retry file; after uncertain
+failure it does not claim rollback. Durable production holder reconciliation
+remains required before activation.
+
+The checked-in oracle records real output from
+`sleepunit-agents/loom-secrets@bc8d2117b8ac35a33ff54ab8fb33ab59b0d8ed39`
+on synthetic metadata. The in-process next/staging HTTP test replays the same
+cases and compares stdout, stderr and exit codes. It never launches an old
+program. This completes these owner command bindings, not the authenticated
+house API, holder lifecycle, exact runtime grants transition or full t-2208.
+
 This piece is under construction for t-2208. Next mode installs metadata and
 grant operations independently of holder configuration. `installSecrets` owns
 names, requests, policy and core grants in loom.db; `installSecretValues` still

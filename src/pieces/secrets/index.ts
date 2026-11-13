@@ -7,6 +7,7 @@ import { installSecretUsage } from './usage.js';
 import { installSecretHistory } from './history.js';
 import { schema } from './schema/001.js';
 import { grantId } from './grant-id.js';
+import { installSecretCommands } from './command-operations.js';
 export { grantId } from './grant-id.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
@@ -40,6 +41,7 @@ export function grantsRole(db: Db): Grants {
 export function installSecrets(db: Db, operations: Operations, live: Live, sharing: () => Sharing, attention?: GrantAttention) {
   registerBuiltinService(operations, 'secrets', ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change']);
   migrate(db, 'secrets', schema);
+  installSecretCommands(db, operations, sharing);
   installSecretHistory(db, operations, live, sharing);
   installSecretUsage(db, operations, live, sharing);
   const owner = (v: Viewer, op: string) => mayAct(v, { type: 'secret.grant' }, sharing(), 'household', op);
