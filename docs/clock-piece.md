@@ -991,3 +991,25 @@ rows, separate target-agent shares, ignored forged origin and restart persistenc
 Matching origin cannot bypass revoked project policy or the private local dispatch
 hold; both probes have a permitted ordinary Runtime-call positive control.
 Archived origin text remains uncounted and unstamped after restart.
+
+### API one-off capacity
+
+New agent-created one-offs retain capacity-only `apiCapacity` metadata. Per target
+agent, the existing fifty active one-off ceiling still applies; API-origin work
+also has a forty ceiling, and each Runtime-proven conversation has twenty. Bodies
+without a current owning binding share one unknown bucket. Parked, firing and held
+work counts; cancelled, fired and failed work does not. Ordinary recurring
+occurrences and deadman safety wakes are outside these one-off counts. Owner/member
+creation consumes only the shared fifty, preserving ten slots beyond the API ceiling.
+
+Runtime supplies a conversation only for the exact central Signin Viewer with a
+current live private Comms or Bridges binding and current source access. A public
+`runtime.startBody` conversation string is insufficient. Clock stores a hash of the
+agent and conversation, not the private conversation id. Local approval recovery uses
+its authenticated saved Caller for the same capacity bucket and checks capacity
+before spending. No historical `by`, archive or imported metadata is promoted.
+
+This metadata is capacity only: it supplies no principal, visibility, mutation,
+join or dispatch authority. Original schedule principal narrowing, authenticated
+mutation/join rules and agent-authored six-hour self-chain suppression remain
+unfinished, as does service-identity dispatch and actual private Runtime delivery.
