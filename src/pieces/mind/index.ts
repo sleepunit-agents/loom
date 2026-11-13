@@ -27,7 +27,7 @@ export function installMindKnowledge(operations: Operations, live: Live, options
   operations.register(operation({ name: 'mind.knowledgeRead', input: z.object({ slug: z.string().min(1).max(200) }), output: z.unknown(),
     may: visible, run: (ctx, input) => read(input.slug, ctx.viewer) ?? { ok: false, code: 'not-found', message: 'Knowledge page not found' },
   }));
-  live.register({ name: 'knowledge', ids: () => view().pages.map(p => p.slug), read,
+  live.register({ name: 'knowledge', ids: scope => scope === undefined ? view().pages.map(p => p.slug) : [scope], read,
     inScope: (r, scope) => scope === undefined || r.id === scope,
     // Freshness and Recently verified change at their exact boundary without polling.
     expires(record) {
