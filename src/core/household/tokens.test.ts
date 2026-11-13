@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -74,6 +74,8 @@ it('resolves by digest with the old files absent and sees revocation on another 
     expect(resolver.ownerDigestLive(digest('owner'))).toBe(false);
   } finally { second.close(); }
   expect(() => f.store.list()).toThrow();
+  expect(existsSync(join(f.home, 'tokens.json'))).toBe(false);
+  expect(existsSync(join(f.home, 'tokens.used.json'))).toBe(false);
 });
 
 it('rolls back callback writes and partial token changes, then retries atomically', () => {
@@ -115,4 +117,55 @@ it('uses the supplied schema only and rejects malformed documents before writing
   f.db.transaction(() => f.store.replace({ v: 1, tokens: [record('x')] }, {}))();
   new HouseholdRows(f.db, 'tokens').remove(digest('x'));
   expect(() => f.store.document()).toThrow('missing household token row');
+});
+
+it('keeps usage writes separate, throttled, and applies current household and runtime policy', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+  const f = fixture();
+  const original = { v: 1, tokens: [record('owner'), record('agent', 'agent:ada'), record('runtime', 'runtime:runtime')] };
+  f.db.transaction(() => f.store.replace(original, {}))();
+  let h = f.h;
+  let pieces = ['runtime'];
+  const resolver = new TokenResolver(() => h, { persistence: f.store, runtimePieces: () => pieces });
+  expect(resolver.resolve('owner')).toEqual({ kind: 'owner', member: 'jonathan' });
+  const first = f.store.used()[digest('owner')];
+  vi.advanceTimersByTime(59_999); resolver.resolve('owner');
+  expect(f.store.used()[digest('owner')]).toBe(first);
+  vi.advanceTimersByTime(1); resolver.resolve('owner');
+  expect(f.store.used()[digest('owner')]).toBe('2026-11-12T12:01:00.000Z');
+  expect(f.store.document()).toEqual(original);
+  h = { ...h, agents: ['art'], members: [] };
+  expect(resolver.resolve('owner')).toBeNull();
+  expect(resolver.ownerMember(digest('owner'))).toBeUndefined();
+  expect(resolver.resolve('agent')).toBeNull();
+  pieces = [];
+  expect(resolver.resolve('runtime')).toBeNull();
+  expect(existsSync(join(f.home, 'tokens.used.json'))).toBe(false);
+});
+
+it('keeps replacement inside the caller import transaction, including other concerns and receipt', () => {
+  const f = fixture();
+  const before = { v: 1, original: true, tokens: [record('old')] };
+  f.db.transaction(() => f.store.replace(before, { old: 'usage' }))();
+  const next = { v: 1, replacement: true, tokens: [record('new')] };
+  const members = new HouseholdRows(f.db, 'members');
+  const receipts = new HouseholdRows(f.db, 'imports');
+  const importAll = (interrupt: boolean) => f.db.transaction(() => {
+    members.put('jonathan', { person: 'jonathan', role: 'owner' });
+    f.store.replace(next, { next: 'usage' });
+    receipts.put('household', { checksums: ['synthetic'], compared: true });
+    if (interrupt) throw new Error('interrupted before commit');
+  })();
+  expect(() => importAll(true)).toThrow('interrupted before commit');
+  expect(f.store.document()).toEqual(before);
+  expect(f.store.used()).toEqual({ old: 'usage' });
+  expect(f.store.records(digest('new'))).toEqual([]);
+  expect(members.entries()).toEqual([]);
+  expect(receipts.entries()).toEqual([]);
+  importAll(false);
+  expect(f.store.document()).toEqual(next);
+  expect(f.store.used()).toEqual({ next: 'usage' });
+  expect(f.store.records(digest('old'))).toEqual([]);
+  expect(members.get('jonathan')).toEqual({ person: 'jonathan', role: 'owner' });
+  expect(receipts.get('household')).toEqual({ checksums: ['synthetic'], compared: true });
 });
