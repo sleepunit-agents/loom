@@ -33,7 +33,7 @@ jobs:
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_TEST_SHOTS="$PWD/artifacts/bridges-preview"
           nice -n 19 npx vitest run src/ui/bridges-preview.integration.test.ts --maxWorkers=1
-          test "$(find artifacts/bridges-preview -name '*.png' | wc -l)" -eq 24
+          test "$(find artifacts/bridges-preview -name '*.png' | wc -l)" -eq 30
       - uses: actions/upload-artifact@v7
         if: always()
         with:
