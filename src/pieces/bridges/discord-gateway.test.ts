@@ -176,6 +176,31 @@ describe('Discord gateway session transport',()=>{
       await g.transport.close();
     } finally {await app.close(); rmSync(home,{recursive:true,force:true});}
   });
+  it('allows separate 15-second connection, credential acquisition and READY waits',async()=>{
+    let acquire!:()=>void;
+    const withValue=async<T>(_name:string,use:(v:string)=>Promise<T>)=>{await new Promise<void>(r=>{acquire=r;});return use('PRIVATE');};
+    const f=fixture({secrets:{withValue}}); await settled(); const s=f.sockets[0];
+    f.clock.advance(14_000); s.hello(); await settled(); f.clock.advance(14_000); expect(s.terminate).not.toHaveBeenCalled();
+    acquire(); await settled(); expect(s.sent().some(frame=>frame.op===2)).toBe(true);
+    // The first heartbeat from HELLO needs its ACK before the next periodic beat.
+    s.frame({op:11}); f.clock.advance(9999); s.frame({op:11}); f.clock.advance(4000);
+    expect(s.terminate).not.toHaveBeenCalled(); s.frame(ready()); await settled(); expect(f.commit).toHaveBeenCalledOnce();
+  });
+  it('expires a missing READY fifteen seconds after successful authentication',async()=>{
+    const f=fixture(); await settled(); f.clock.advance(14_000); const s=f.sockets[0]; s.hello(); await settled();
+    f.clock.advance(5000); s.frame({op:11}); f.clock.advance(9999); expect(s.terminate).not.toHaveBeenCalled();
+    f.clock.advance(1); expect(s.terminate).toHaveBeenCalledOnce();
+  });
+  it('keeps Identify and Resume socket writes inside the active credential callback until completion',async()=>{
+    let active=false,finish!:()=>void;
+    const withValue=async<T>(_name:string,use:(v:string)=>Promise<T>)=>{active=true;try{return await use('PRIVATE');}finally{active=false;}};
+    const f=fixture({secrets:{withValue}}); await settled(); const a=f.sockets[0];
+    a.send.mockImplementationOnce((_text,callback)=>{expect(active).toBe(true);finish=()=>callback();});
+    a.hello(); await settled(); expect(active).toBe(true); finish(); await settled(); expect(active).toBe(false);
+    a.frame(ready()); await settled(); a.emit('close',1006); const b=await retry(f);
+    b.send.mockImplementationOnce((_text,callback)=>{expect(active).toBe(true);finish=()=>callback();});
+    b.hello(); await settled(); expect(b.sent()[0].op).toBe(6); expect(active).toBe(true); finish(); await settled(); expect(active).toBe(false);
+  });
   it('does not Identify again within five seconds even after a failed socket write',async()=>{
     const f=fixture(); await settled(); f.sockets[0].send.mockImplementationOnce((_text,callback)=>callback(Error('failed')));
     await identified(f); expect(f.withValue).toHaveBeenCalledOnce();

@@ -97,13 +97,16 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
       const s = dial(target, {maxPayload:1024*1024,followRedirects:false,perMessageDeflate:false,handshakeTimeout:15_000}); socket = s;
       let hello = false, authenticated = false, sessionReady = false, resumed = false, waitingAck = false;
       let received: number | null = checkpoint?.seq ?? null;
-      let interval = 0;
+      let interval = 0, receivedDispatch = false;
       let deadline = at(15_000, () => reconnect(epoch));
+      function writeHeartbeat() {
+        waitingAck = true;
+        void track(send(s,epoch,{op:1,d:received}).catch(() => reconnect(epoch)));
+      }
       function beat() {
         if (!alive(epoch)) return;
         if (waitingAck) { reconnect(epoch); return; }
-        waitingAck = true;
-        void track(send(s,epoch,{op:1,d:received}).catch(() => reconnect(epoch)));
+        writeHeartbeat();
         at(interval,beat);
       }
       s.on('error', () => reconnect(epoch));
@@ -119,6 +122,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
             if (hello || !object(f.d) || !Number.isSafeInteger(f.d.heartbeat_interval)
               || (f.d.heartbeat_interval as number) < 1000 || (f.d.heartbeat_interval as number) > 300_000) throw Error();
             hello = true; interval = f.d.heartbeat_interval as number;
+            deadline(); deadline = at(15_000, () => reconnect(epoch));
             const jitter = (o.random ?? Math.random)();
             if (!Number.isFinite(jitter) || jitter < 0 || jitter >= 1) throw Error();
             at(Math.floor(interval*jitter),beat);
@@ -133,7 +137,9 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
                 authenticated = true;
                 await send(s,epoch,body);
               });
-              if (alive(epoch)) authenticated = true;
+              if (alive(epoch) && !receivedDispatch) {
+                deadline(); deadline = at(15_000, () => reconnect(epoch));
+              }
             })().catch(() => reconnect(epoch)));
             return;
           }
@@ -141,7 +147,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
           if (f.op === 11) { waitingAck = false; return; }
           if (f.op === 1) {
             // Server-requested beats do not move the periodic schedule.
-            waitingAck = true; void track(send(s,epoch,{op:1,d:received}).catch(() => reconnect(epoch))); return;
+            writeHeartbeat(); return;
           }
           if (f.op === 7) { reconnect(epoch); return; }
           if (f.op === 9) {
@@ -151,7 +157,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
           if (f.op !== 0) throw Error();
           if (!authenticated || !sequence(f.s) || typeof f.t !== 'string' || !/^[A-Z_]{1,80}$/.test(f.t)) throw Error();
           if (received !== null && f.s <= received) throw Error();
-          received = f.s;
+          received = f.s; receivedDispatch = true;
           let next: DiscordCheckpoint;
           if (f.t === 'READY') {
             if (sessionReady || checkpoint || !object(f.d) || !object(f.d.user) || f.d.user.id !== o.bot
