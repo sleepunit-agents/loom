@@ -115,8 +115,7 @@ export function liveOnChange(f: (view: string) => boolean): void { changeSayers.
 
 /**
  * Piece pages stay piece-rendered (docs/specs/collections.md); what they show moves with their piece's records. The
- * Tasks pages are asked again when the tasks' records move (tasks-live.ts, its own chunk, loaded with the first such page;
- * tasks-pages.ts says which). A `live` one isn't asked again on a bare change or a timer while those are live.
+ * Unmoved Changes and Projects pages use legacy-work-live.ts and legacy-work-pages.ts for their shared pulses.
  */
 
 
@@ -179,6 +178,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const [fresh, setFresh] = useState(true);
   const showing = useRef(start);
   const shellChrome = useRef<View['chrome'] | undefined>(undefined);
+  const shellRequest = useRef<Promise<Answer> | undefined>(undefined);
   const navNow = useRef(nav);
   navNow.current = nav;
   // Whether there's a page on screen to keep while the next is asked for (not an error's card, not nothing).
@@ -189,9 +189,13 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     const n = navNow.current;
     const app = appAt(new URL(to, 'http://loom').pathname);
     if (app) {
+      showing.current = to;
       // A cold shell still needs its chrome. App data comes only from the app's live records.
       if (bootstrap && !shellChrome.current) {
-        const answer = await fetchView('/').catch((): Answer => ({status:0}));
+        shellRequest.current ??= fetchView('/').catch((): Answer => ({status:0}));
+        const answer = await shellRequest.current;
+        shellRequest.current = undefined;
+        if (showing.current !== to) return;
         if (answer.redirect || answer.status === 401) { location.href = answer.redirect ?? '/login'; return; }
         if (!answer.data) { setError('offline'); return; }
         shellChrome.current = answer.data.chrome;
@@ -274,7 +278,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     return () => clearInterval(t);
   }, [every]);
 
-  // What's shown reads tasks: asked again when they move (tasks-live.ts watchPage). Held while any such page is shown,
+  // Unmoved shared work pages are asked again when their records move. Held while any such page is shown,
   // not per address, so a sort or a filter keeps it.
   const csrf = (data as { chrome?: { csrf?: string } } | null)?.chrome?.csrf;
   const pulse = pulseOf(url);

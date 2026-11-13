@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Switch Tasks to the live app at `/p/tasks`, retire its legacy page JSON, and keep Comms and Projects task cards on the Tasks role. Apply only after the verified task import.
+
 - Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.
 
 - Add an in-repo tasks piece, opt-in `loom-taskstore` API client, and offline verified tasks importer; existing taskstore and Tasks screens stay on their current path until cutover.

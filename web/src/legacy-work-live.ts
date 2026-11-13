@@ -1,16 +1,7 @@
 import { recordsSnapshot, watchRecords } from './data';
 import type { Task } from './pieces/tasks/model';
-// The tasks' own records, live (t-2029; docs/specs/collections.md, "As built: tasks"): the tasks piece publishes every
-// task as `tasks/task`, and this tab holds the ones its Tasks pages show: every open or started task, and every task that
-// moved in the last eight days (done, commented, made). Held only while something shown reads them: a Tasks page, a
-// project's page, a Comms thread's work panel.
-//
-// Those pages stay the piece's own, drawn by it (collections.md: "Piece pages stay piece-rendered"); what moves them now
-// is their records. A Tasks page is asked again when a task it could show moves, and no longer on loom's bare "something
-// changed" or a timer while the records are live (page.ts). A project's page is asked again on a task's move as
-// well as on those (it shows other pieces' work too). A thread's work panel asks again when a task it shows, or one made
-// in it, moves (comms-work.tsx). Household owners only, as the Tasks pages are: anyone else's set is refused, and their
-// pages are asked for as before. Loaded as its own chunk, with the first page that reads it.
+// Compatibility for unmoved Comms, Projects and Changes. Tasks use the foundation
+// record store; Changes and Projects retain their collection adapters until they move.
 import { collectionsRuntime } from './page';
 import type { CollectionRuntime, QuerySpec, Rec, ViewState } from './collections/runtime';
 
@@ -163,7 +154,7 @@ export const projectsLive = (): boolean => projects.live();
 export const REDRAW_MS = 10 * 60_000;
 
 /**
- * A page that reads tasks or changes (page.ts; `which`, tasks-pages.ts pulseOf): `ask` when they move, a moment later so
+ * A page that reads tasks or changes (page.ts; `which`, legacy-work-pages.ts pulseOf): `ask` when they move, a moment later so
  * a burst of moves is one ask; one heard while the tab is hidden is asked for when it's shown again (a live page isn't
  * asked on its own then); and every REDRAW_MS.
  */
@@ -179,5 +170,5 @@ function watchPage(csrf: string, ask: () => void, which: string): () => void {
   return () => { clearTimeout(t); clearInterval(slow); document.removeEventListener('visibilitychange', shown); for (const off of offs) off(); };
 }
 
-/** For page.ts, which loads this chunk only when a page that reads tasks or changes is shown (tasks-pages.ts). */
+/** For page.ts, which loads this chunk only when a page that reads tasks or changes is shown (legacy-work-pages.ts). */
 export const tasksPulse = { watchPage, live: tasksLive };

@@ -4,7 +4,7 @@
 // Desktop, with the comm screen in the right column: a framed panel under the comm screen and YOU. Anywhere else (a
 // phone, or a desktop pane under 760 px, where the comm screen sits at the top): a strip, "Work (N)", folded until
 // tapped. Read when the thread opens, 5 s after each new reply, and when a task it shows (or one made in it) moves, or
-// a change it shows does: the tasks' and the changes' own records, live (tasks-live.ts, t-2029). Every 60 s while the
+// a change it shows does: the tasks' and the changes' own records, live (legacy-work-live.ts, t-2029). Every 60 s while the
 // page is visible only while those it needs aren't live.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { changesLive, tasksLive, watchChanges, watchTasks } from './legacy-work-live';
