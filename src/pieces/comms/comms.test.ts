@@ -13,17 +13,17 @@ import type { Attention, Hold, Comms, Delivery } from './role.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean}={}) {
+async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
- const app=await startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{deliver:async d=>{deliveries.push(d);},end:async cv=>{ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
- });cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
+ const start=()=>startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{deliver:async d=>{deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
+ });let app=await start();cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
  const open=async()=>{const r=await call('open',{agent:'art',id:n.toString(2).replaceAll('0','a').replaceAll('1','b').padStart(16,'a'),text:'secret member words',project:'pond'});expect(r.ok).toBe(true);return (r as {ok:true;value:{thread:string;seq:number}}).value.thread;};
- return {app,clock,home,call,open,deliveries,ends,get comms(){return comms;},setSharing:(value:Sharing)=>{sharing=value;app.live.refreshAccess();},getSharing:()=>sharing};
+ return {get app(){return app;},clock,home,call,open,deliveries,ends,get comms(){return comms;},async restart(){await comms.close();await app.close();app=await start();},setSharing:(value:Sharing)=>{sharing=value;app.live.refreshAccess();},getSharing:()=>sharing};
 }
 it('encrypts rows with age; only acknowledgements enter retry storage, and runtime receives the words',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
@@ -279,6 +279,65 @@ for(const archiveAgain of [false,true])it(`a delayed archive end cannot stop a r
  await s.call('change',{thread:place,action:'archive'});await begin;
  await s.call('change',{thread:place,action:'unarchive'});if(archiveAgain)await s.call('change',{thread:place,action:'archive'});release();await done;
  expect(s.ends).toHaveLength(archiveAgain?1:0);
+});
+for(const action of ['archive','delete'] as const)it(`rolls back the ${action} end journal with a failed thread write`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ s.app.db.exec(`CREATE TRIGGER reject_change BEFORE ${action==='delete'?'DELETE':'UPDATE'} ON comms_threads BEGIN SELECT RAISE(ABORT,'write failed'); END`);
+ expect(await s.call('change',{thread:place,action})).toMatchObject({ok:false,code:'unavailable'});
+ expect(s.comms.trace('art',place).archived).toBe(null);
+ expect(s.app.db.prepare("SELECT * FROM comms_meta WHERE key LIKE 'pending-end:%'").all()).toEqual([]);
+ expect(s.app.db.prepare('SELECT * FROM comms_deleted').all()).toEqual([]);expect(s.ends).toEqual([]);
+});
+for(const action of ['archive','delete'] as const)it(`recovers a staged ${action} end after restart without repeating completed ends`,async()=>{
+ let released=false;const attempts:string[]=[];
+ const s=await setup({hold:stagingHold({beforeOutside:f=>{if(f.title==='End a Comms body')attempts.push(f.id);return released;},finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action});await s.comms.close();
+ expect(s.ends).toEqual([]);
+ released=true;await s.restart();await s.comms.close();
+ expect(s.ends).toHaveLength(1);expect(new Set(attempts).size).toBe(1);
+ await s.restart();await s.comms.close();expect(s.ends).toHaveLength(1);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_meta').all())).not.toContain('secret member words');
+});
+it('retries held and failed ends explicitly after release, coalescing concurrent recovery calls',async()=>{
+ let released=false,fail=true;const attempts:string[]=[];
+ const s=await setup({hold:stagingHold({beforeOutside:f=>{if(f.title==='End a Comms body')attempts.push(f.id);return released;},finish:()=>{}}),end:async()=>{if(fail)throw new Error('uncertain runtime');}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'delete'});
+ await s.comms.reconcileEnds();expect(s.ends).toEqual([]);
+ released=true;await s.comms.reconcileEnds();expect(s.ends).toEqual([]);
+ expect(s.app.db.prepare("SELECT * FROM comms_meta WHERE key LIKE 'pending-end:%'").all()).toHaveLength(1);
+ fail=false;await Promise.all([s.comms.reconcileEnds(),s.comms.reconcileEnds()]);
+ expect(s.ends).toHaveLength(1);expect(new Set(attempts).size).toBe(1);
+ expect(s.app.db.prepare("SELECT * FROM comms_meta WHERE key LIKE 'pending-end:%'").all()).toEqual([]);
+ await s.comms.reconcileEnds();expect(s.ends).toHaveLength(1);
+});
+for(const rearchive of [false,true])it(`restart discards an obsolete archive end and preserves a new lifecycle (rearchive=${rearchive})`,async()=>{
+ let released=false;const attempts:string[]=[];
+ const s=await setup({hold:stagingHold({beforeOutside:f=>{if(f.title==='End a Comms body')attempts.push(f.id);return released;},finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'archive'});
+ await s.call('change',{thread:place,action:'unarchive'});
+ if(rearchive)await s.call('change',{thread:place,action:'archive'});
+ await s.comms.close();released=true;await s.restart();await s.comms.close();
+ expect(s.ends).toHaveLength(rearchive?1:0);
+ if(rearchive)expect(attempts.at(-1)).toBe(`comms-end:${place}:2`);
+ expect(s.app.db.prepare("SELECT * FROM comms_meta WHERE key LIKE 'pending-end:%'").all()).toEqual([]);
+});
+it('completion of an old end does not remove a newer staged end job',async()=>{
+ let began:()=>void=()=>{},release:()=>void=()=>{},first=true,allow=true;
+ const started=new Promise<void>(r=>{began=r;}),waiting=new Promise<void>(r=>{release=r;});
+ const s=await setup({hold:stagingHold({beforeOutside:()=>allow,finish:()=>{}}),end:async()=>{if(first){first=false;began();await waiting;}}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'archive'});await started;
+ await s.call('change',{thread:place,action:'unarchive'});allow=false;
+ await s.call('change',{thread:place,action:'delete'});
+ release();await s.comms.reconcileEnds();
+ // Drain the first lifecycle before checking that its completion retained generation two.
+ await s.comms.close();
+ const rows=s.app.db.prepare("SELECT value FROM comms_meta WHERE key LIKE 'pending-end:%'").all() as {value:string}[];
+ expect(rows).toHaveLength(1);expect(JSON.parse(rows[0].value)).toMatchObject({action:'delete',generation:2});
+ allow=true;await s.restart();await s.comms.close();expect(s.ends).toHaveLength(2);
 });
 it('removes expired words and work fields when a later page row finishes decrypting after the deadline',async()=>{
  let reading=false,release:()=>void=()=>{},started:()=>void=()=>{},firstDone:()=>void=()=>{};

@@ -91,6 +91,39 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }));
  let closed=false;
  const pending = new Map<string,Promise<void>>();
+ type End = {thread:string;conversation:string;generation:number;action:'archive'|'delete'};
+ const endKey=(place:string)=>`pending-end:${place}`;
+ function queueEnd(t:Thread,action:End['action'],generation:number) {
+  const value:End={thread:t.id,conversation:t.conversation,generation,action};
+  db.prepare('INSERT INTO comms_meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(endKey(t.id),JSON.stringify(value));
+ }
+ function end(place:string,generation:number):Promise<void> {
+  if(closed)return Promise.resolve();
+  const row=db.prepare('SELECT value FROM comms_meta WHERE key=?').get(endKey(place)) as {value:string}|undefined;
+  if(!row)return Promise.resolve();
+  const job=JSON.parse(row.value) as End;
+  if(job.generation!==generation)return Promise.resolve();
+  const marker=`comms-end:${place}:${generation}`,prior=pending.get(marker);if(prior)return prior;
+  const task=o.hold(async()=>{
+   if(closed)return;
+   const saved=db.prepare('SELECT value FROM comms_meta WHERE key=?').get(endKey(place)) as {value:string}|undefined;
+   if(saved?.value!==row.value)return;
+   const current=thread(db,place);
+   // Reopening cancels an archive; a later lifecycle replaces this journal entry.
+   const eligible=job.action==='archive'
+    ?current?.archived!==null&&current?.endGeneration===generation&&current.conversation===job.conversation
+    :!current&&!!db.prepare('SELECT 1 FROM comms_deleted WHERE id=? AND conversation=?').get(place,job.conversation);
+   if(eligible)await o.runtime.end(job.conversation);
+   // Conditional deletion preserves a newer job committed while runtime awaited.
+   db.prepare('DELETE FROM comms_meta WHERE key=? AND value=?').run(endKey(place),row.value);
+  },{id:marker,kind:'body-start',title:'End a Comms body'}).catch(()=>{}).finally(()=>pending.delete(marker));
+  pending.set(marker,task);return task;
+ }
+ async function reconcileEnds() {
+  if(closed)return;
+  const jobs=db.prepare("SELECT value FROM comms_meta WHERE key LIKE 'pending-end:%'").all() as {value:string}[];
+  await Promise.all(jobs.map(row=>{const job=JSON.parse(row.value) as End;return end(job.thread,job.generation);}));
+ }
  function deliver(agent:string,place:string,seq:number):Promise<void> {
   const marker=messageId(place,seq);const prior=pending.get(marker);if(prior)return prior;
   if(closed)return Promise.resolve();
@@ -178,11 +211,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      if(!t.pinned && pins>=8)return fail('conflict','At most eight pinned threads');t.pinned=true;break;
     }
     case 'unpin':t.pinned=false;break;
-    case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;}break;
-    case 'unarchive':t.archived=null;break;
+    case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;queueEnd(t,'archive',t.endGeneration);}break;
+    case 'unarchive':t.archived=null;db.prepare('DELETE FROM comms_meta WHERE key=?').run(endKey(t.id));break;
     case 'read': if(i.seq===undefined)return fail('invalid','A message number is required'); t.readSeq=Math.max(t.readSeq,Math.min(i.seq,t.nextSeq-1));break;
     case 'stop':t.stop=true;break;
     case 'delete':
+     queueEnd(t,'delete',(t.endGeneration??0)+1);
      db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(t.id,t.member,t.agent,t.conversation,ctx.now);
      for(const r of messageRows(db,t.id,undefined,2147483647))ctx.changed('message',messageId(t.id,r.seq));
      db.prepare('DELETE FROM comms_threads WHERE id=?').run(t.id);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation,endGeneration:(t.endGeneration??0)+1};
@@ -191,18 +225,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },
   after(i,result) {
    if((i.action!=='archive'&&i.action!=='delete')||!result.ok||closed)return;
-   const value=result.value as {conversation:string;endGeneration:number};
-   const marker=`comms-end:${i.thread}:${value.endGeneration}`;
-   if(pending.has(marker))return;
-   const task=o.hold(async()=>{
-    if(closed)return;
-    const current=thread(db,i.thread);
-    // A held archive from an earlier lifecycle must never end a reopened body.
-    if(i.action==='archive'&&(!current||current.archived===null||current.endGeneration!==value.endGeneration))return;
-    if(i.action==='delete'&&current)return;
-    await o.runtime.end(value.conversation);
-   },{id:marker,kind:'body-start',title:'End a Comms body'}).catch(()=>{}).finally(()=>pending.delete(marker));
-   pending.set(marker,task);
+   const value=result.value as {endGeneration:number};
+   void end(i.thread,value.endGeneration);
   },
  }));
  operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,input:target.extend({seq:z.number().int().positive()}),output:ack,may:(v,i)=>writable(v,i),
@@ -254,7 +278,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day),sweep);
  }
  sweep();
- return {post,deliver,
+ void reconcileEnds();
+ return {post,deliver,reconcileEnds,
   trace(agent,place) {
    const t=requireAgent(agent,place);
    const messages=messageRows(db,place,undefined,100).map(r=>{

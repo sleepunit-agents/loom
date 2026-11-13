@@ -35,7 +35,7 @@ Records are window-only. Runtime delivery rechecks thread ownership after
 crypto and inside the effect hold before handing words to runtime.
 
 The in-process `Comms` role currently exposes `post`, `deliver`, `title`, metadata-only `trace` and
-stop-consuming `status`. It is not yet the complete old runtime adapter.
+stop-consuming `status`. `reconcileEnds` retries durable archive/delete end jobs at startup and can be called by the frame after staging release. It is not yet the complete old runtime adapter.
 
 Words and new runtime work payloads are age encrypted in `comms_messages`.
 The key file is read per crypto operation; no age executable is required.
@@ -65,7 +65,7 @@ data does not remove the behavior it delivered.
 | `/title`, `setTitle`, `comms_title` | `comms.change` and `Comms.title` | Partial: title bounds and member-title precedence work; agent command binding missing. |
 | `/project`, `setProject`, filed threads | `comms.change` | Partial: project gate works; project integration and lookup missing. |
 | Pin/unpin | `comms.change` | Present: eight-pin cap, idempotent pin, unpin releases capacity. |
-| Archive/unarchive/delete | `comms.change` and staged runtime end | Partial: archive and cascade/tombstone work; end effects now have per-archive lifecycle identity and recheck the generation inside the hold, so reopening cancels a delayed old end; durable end recovery and automatic resume after staging release remain missing. |
+| Archive/unarchive/delete | `comms.change` and staged runtime end | Partial: archive and cascade/tombstone work; end effects now have per-archive lifecycle identity and recheck the generation inside the hold, so reopening cancels a delayed old end; archive/delete now journal metadata-only end jobs in the same transaction and retry them on startup. Reopening cancels the old archive job, completion removes only its own generation, and failed/held ends remain retryable through `reconcileEnds`. Runtime end must tolerate replay after an uncertain crash. Automatic staging-release binding remains missing. |
 | `/read`, `markRead`, in-front suppression | `comms.change` | Partial: read sequence is monotonic; foreground presence and notification suppression missing. |
 | `/stop`, `/resume`, `/model` | Runtime control seam | Partial: one-shot stop flag only; actual interrupt/resume/model selection and state missing. |
 | Adapter `describe` | Runtime role | Missing: member-only brief/readers, project, title guidance and inline-ask guidance. |
@@ -111,7 +111,7 @@ host import has been attempted by this work.
 The app is registered at `/p/comms-preview`. The browser evidence fixture
 installs it explicitly with a fake runtime. Production next-mode composition
 must await the key, install Comms, bind attention and runtime roles, provide the
-real page-session capability, and drive effect release/recovery. The normal
+real page-session capability, and drive effect release/recovery (`reconcileEnds` exists for durable end jobs; the release binding and delivery recovery remain missing). The normal
 fixture must install the same pieces with explicit fakes. Existing old mode
 must remain usable until the later move.
 
@@ -121,3 +121,5 @@ runs in CI, never against the live household. CI evidence at the original
 checkpoint is not validation of a later head. Backend/security review has used
 two of three rounds; importer review one of three. Finish these obligations
 before consuming final review or marking the draft ready.
+
+Archive/delete recovery tests restart the foundation against the same database after a staged end, then restart again to prove completed ends do not repeat. They also cover held/failed retries, concurrent recovery coalescence, reopened/rearchived lifecycle cancellation and an old in-flight completion preserving a newer delete job. This journal starts with newly committed archive/delete operations; it does not infer historical end requests.

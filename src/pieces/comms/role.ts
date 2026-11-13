@@ -2,6 +2,7 @@
 export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; text: string; project?: string }
 export interface RuntimeDelivery {
  deliver(message: Delivery): Promise<void>;
+ /** Must tolerate replay after an uncertain crash, scoped to this conversation. */
  end(conversation: string): Promise<void>;
 }
 /** The frame's staging gate must wrap every effect, including runtime delivery. */
@@ -21,6 +22,8 @@ export interface DeliveryTrace {
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
 export interface Comms {
+ /** Retry durable end jobs at startup or after staging release; no private words. */
+ reconcileEnds(): Promise<void>;
  /** Bounded routing/delivery facts only; never decrypts private work details. */
  trace(agent: string, thread: string): DeliveryTrace;
  /** Only the trusted runtime constructs this binding; never derive it from tool arguments. */
