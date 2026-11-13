@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
+- Add worker-local Claude turns with exact tool denies and original-binding native history isolation; daemon policy execution remains held.
 
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
