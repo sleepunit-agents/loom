@@ -52,6 +52,7 @@ describe('durable daemon clock', () => {
     const agent: Viewer = { kind: 'agent', id: 'art' };
     expect(app.value('in', input, agent)).toEqual({ alreadyScheduled: true, schedule: s.id, due: occurrence.due });
     expect(app.value('in', { ...input, when: `${(occurrence.due + 6 * 3600_000 + 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
+    expect(app.value('in', { ...input, when: `${(occurrence.due - 6 * 3600_000 - 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
     expect(app.value('in', { ...input, file: 'routines/other.md' }, agent).state).toBe('pending');
     app.value('pause', { agent: 'art' });
     app.clock.advance(occurrence.due - app.clock.now()); await settled();
@@ -92,7 +93,7 @@ describe('durable daemon clock', () => {
   it.each([
     'schedule continuation', 'schedule approval', 'schedule place',
     'occurrence continuation', 'occurrence approval', 'occurrence place',
-    'disabled', 'stale revision', 'stale lane', 'nonfuture', 'held', 'firing', 'run-now', 'bypass pause',
+    'disabled', 'stale revision', 'stale lane', 'nonfuture', 'held', 'firing', 'run-now', 'bypass pause', 'paused agent',
     'author lost create', 'other owner', 'agent scope', 'member scope',
   ])('keeps independent work when the candidate has %s', async scenario => {
     const access = structuredClone(sharing);
@@ -113,6 +114,7 @@ describe('durable daemon clock', () => {
     if (scenario === 'firing') occurrence.state = 'firing';
     if (scenario === 'run-now') occurrence.runNow = true;
     if (scenario === 'bypass pause') occurrence.bypassPause = true;
+    if (scenario === 'paused agent') app.value('pause', { agent: 'art' });
     if (scenario === 'author lost create') { access.members.jonathan.agents = []; viewer = { kind: 'agent', id: 'art' }; }
     if (scenario === 'other owner') viewer = { kind: 'member', id: 'other' };
     if (scenario === 'agent scope') { s.agent = 'pond-bot'; occurrence.agent = 'pond-bot'; }
@@ -121,6 +123,17 @@ describe('durable daemon clock', () => {
     expect(app.value('in', input, viewer).state).toBe('pending');
     expect(wakes(app.db)).toHaveLength(2);
     expect(wake(app.db, occurrence.id)).toEqual(occurrence);
+  });
+  it('uses the next occurrence rather than a later current occurrence for the same schedule', async () => {
+    const app = await loom();
+    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const first = wakes(app.db)[0];
+    const later = { ...first, id: 'w-later', due: first.due + 86400_000 };
+    app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(later.id, JSON.stringify(later), later.changedAt);
+    const before = wakes(app.db);
+    const extra = app.value('in', { agent: 'art', file: 'routines/upkeep.md', note: 'extra', when: '36h' }, { kind: 'agent', id: 'art' });
+    expect(extra.state).toBe('pending');
+    expect(wakes(app.db).filter(w => w.id !== extra.id)).toEqual(before);
   });
   it('creates an owner wake now without a lane, preserving attribution and bypassing pause', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'now-body' } as const));
