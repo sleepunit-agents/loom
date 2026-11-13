@@ -116,6 +116,11 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
     } catch { if (!res.headersSent) res.writeHead(503, {'content-length':0}); res.end(); }
     finally { bytes?.fill(0); }
   });
+  // Bound accepted sockets before TLS/headers, rather than Node's coarse HTTP timer.
+  server.on('connection', socket => {
+    const deadline = setTimeout(() => socket.destroy(), 5000);
+    socket.once('close', () => clearTimeout(deadline));
+  });
   server.requestTimeout = 5000; server.headersTimeout = 5000;
   try {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(config.socket, resolve); });

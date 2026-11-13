@@ -191,3 +191,15 @@ it('independently bounds authority clients when a valid pinned peer never acknow
     await vi.advanceTimersByTimeAsync(5000);await expect(pending).resolves.toBeNull();
   }finally{vi.useRealTimers();}
 });
+
+it('bounds persistent reader connections before TLS and incomplete HTTP headers',async()=>{
+  const s=await setup(),holder=await startPersistentHolder(s.file);closes.push(holder.close);
+  for(const tls of [false,true]) {
+    vi.useFakeTimers();let connected=false,closed=false;
+    const peer=tls?tlsConnect({path:s.config.read.socket,servername:'holder.test',ca:privateBytes(s.client.ca),cert:privateBytes(s.client.cert),key:privateBytes(s.client.key),minVersion:'TLSv1.3'},()=>{connected=true;peer.write('GET /v1/value/API HTTP/1.1\r\nHost: holder.test\r\n');})
+      :netConnect(s.config.read.socket,()=>{connected=true;});
+    peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+    try {await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));}
+    finally {peer.destroy();vi.useRealTimers();}
+  }
+});

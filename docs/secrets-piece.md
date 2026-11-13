@@ -682,7 +682,11 @@ store mutation, including receipt replay. Work already started may commit after
 a disconnect or later permission change; a transport failure never promises
 rollback. Stable full-input/member write receipts prevent obsolete retries from
 repeating writes. Read access on this persistent lifecycle also pins the daemon,
-beyond the dedicated CA. The old read-only lifecycle retains its CA contract.
+beyond the dedicated CA. Both read lifecycles now also bound accepted connections
+before TLS or incomplete headers; the old read-only lifecycle retains its CA
+identity contract. Listener ownership/deadline code stays explicit in the three
+protocol modules: the small duplication avoids coupling independently consumed
+read, mutation and authority lifecycles to a new generic transport abstraction.
 
 This connects the production holder process and current database authority;
 async registry set/remove plus durable metadata reconciliation are still required
