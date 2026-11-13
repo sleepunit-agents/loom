@@ -74,6 +74,7 @@ describe('in-process bridge delivery',()=>{
     ['malformed member',{kind:'allow',members:['100','200',null]}],
   ])('drops Slack group inspection with %s',async(_name,inspection)=>{
     const f=await groupFixture(); f.adapter.inspection=inspection as Inspection;
+    if(_name==='missing sender') expect(f.op('putLinks',{id:'third',platform:'slack',workspace:'house',user:'202',person:'pollock'}).ok).toBe(true);
     await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
     expect(f.deliveries.size).toBe(0); expect(f.admitted).toEqual([]);
     expect(f.app.db.prepare('SELECT state,message FROM bridges_inbox').get()).toEqual({state:'dropped',message:'{}'});

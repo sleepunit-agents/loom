@@ -110,11 +110,11 @@ export class Bridges implements BridgesRole {
     if (this.cancelRetry || this.closed) return;
     this.cancelRetry = this.clock.at(this.clock.now()+5000, () => { this.cancelRetry=undefined; void this.flush(); });
   }
-  private setupUnchanged(v: Venue, message: Message, route: Route | undefined, revision: string) {
+  private setupUnchanged(v: Venue, message: Message | undefined, route: Route | undefined, revision: string) {
     const current = venueById(this.app.db,v.id);
     return !this.closed && current?.enabled && setupRevision(this.app.db) === revision
       && JSON.stringify(current) === JSON.stringify(v)
-      && JSON.stringify(routeFor(this.app.db,current,message.channel,message.parent)) === JSON.stringify(route);
+      && (!message || JSON.stringify(routeFor(this.app.db,current,message.channel,message.parent)) === JSON.stringify(route));
   }
   /** No admission cache: a reply may run long after the original receipt. */
   private async admit(v: Venue, message: Message, route: Route | undefined, adapter: VenueAdapter, token: string, person: string) {
@@ -210,10 +210,7 @@ export class Bridges implements BridgesRole {
           this.changed('bridges.send',row.id); continue;
         }
       }
-      if (this.closed) return;
-      const current = venueById(db,row.venue);
-      if (!current?.enabled || setupRevision(db)!==revision || JSON.stringify(current)!==JSON.stringify(v)
-        || (message && !this.setupUnchanged(v,message,route,revision))) { this.retry(); continue; }
+      if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
       // The effect id is permanent; releasing a staging item allows exactly one attempt.
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);
