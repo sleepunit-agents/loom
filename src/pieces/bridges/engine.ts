@@ -135,20 +135,20 @@ export class Bridges implements BridgesRole {
               const current = venueById(db,row.venue);
               if (!current?.enabled || identity(current)!==row.identity || personFor(db,current,message.user)!==person
                 || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
-              if (!message.bot && isStop(message.text)) await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
-              else {
-                const at = eventTime(v.platform,message.id,message.at);
-                if (!at) { state='held'; reason='invalid event time'; }
-                else {
-                  const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
-                  if (outcome === 'retry') { this.retry(); continue; }
-                  if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
-                  else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
-                }
-              }
-              if (!reason) {
-                db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
+              const at = eventTime(v.platform,message.id,message.at);
+              if (!at) { state='held'; reason='invalid event time'; }
+              else if (!message.bot && isStop(message.text)) {
+                await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
                 state='delivered';
+              } else {
+                const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
+                if (outcome === 'retry') { this.retry(); continue; }
+                if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
+                else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
+                else {
+                  db.prepare('INSERT OR IGNORE INTO bridges_conversations VALUES (?,?)').run(hash([key.agent,key.who,key.venue]),JSON.stringify(key));
+                  state='delivered';
+                }
               }
             } else reason='not admitted';
           } else reason='not addressed';

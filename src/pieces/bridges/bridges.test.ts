@@ -7,7 +7,7 @@ import { FakeClock, type Sharing } from '../../core/index.js';
 import { installEffects } from '../../core/effects.js';
 import { installBridges } from './index.js';
 import { Bridges } from './engine.js';
-import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming } from './role.js';
+import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome } from './role.js';
 import { z } from 'zod';
 import type { RecordType } from '../../core/live/index.js';
 import { OperationError } from '../../core/index.js';
@@ -72,6 +72,32 @@ describe('in-process bridge delivery',()=>{
     f.clock.advance(5000); await f.engine.flush();
     expect(f.deliveries.size).toBe(outcome==='retry'?1:0);
   });
+  it('acknowledges durable receipt while runtime delivery is still blocked',async()=>{
+    const f=await fixture(); await f.engine.sync();
+    let release!: (outcome: DeliveryOutcome)=>void, started!: ()=>void;
+    const entering=new Promise<void>(resolve=>{started=resolve;});
+    const blocked=new Promise<DeliveryOutcome>(resolve=>{release=resolve;});
+    f.runtime.deliver=async()=>{started();return blocked;};
+    await f.adapter.callbacks!.message(f.message());
+    expect(f.app.db.prepare('SELECT state,message FROM bridges_inbox').get()).toEqual({state:'pending',message:JSON.stringify(f.message())});
+    await entering;
+    release('delivered'); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'delivered'});
+  });
+  it.each([undefined,'unexpected'])('holds malformed runtime outcome %s without retries',async outcome=>{
+    const f=await fixture(); const deliver=vi.fn(async()=>outcome as unknown as DeliveryOutcome); f.runtime.deliver=deliver;
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    f.clock.advance(5000); await f.engine.flush();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'runtime delivery held'});
+    expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+  });
+  it('holds a malformed stop event without stopping runtime or binding a conversation',async()=>{
+    const f=await fixture(); await f.engine.receive(f.venue.id,f.message({text:'cancel!',at:'bad'})); await f.engine.flush();
+    expect(f.stops).toEqual([]); expect(f.deliveries.size).toBe(0);
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'held'});
+    expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+  });
   it('holds malformed event metadata durably instead of inventing an event time',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message({at:'bad'})); await f.engine.flush();
     expect(f.deliveries.size).toBe(0);
@@ -134,6 +160,7 @@ describe('in-process bridge delivery',()=>{
   });
   it('accepts stop without waking another body',async()=>{
     const f=await fixture(); await f.engine.receive(f.venue.id,f.message({text:'<@100> cancel!'})); await f.engine.flush(); expect(f.stops).toHaveLength(1); expect(f.deliveries.size).toBe(0);
+    expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
   });
 
   it('never gets a denied credential or opens a connection or sends with one',async()=>{
