@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
+
 - Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
