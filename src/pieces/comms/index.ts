@@ -37,6 +37,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const words=encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
   return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null})};
  };
+ const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?record:{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
@@ -131,7 +132,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  operations.register(operation({name:'comms.messages',doors:['socket'],windowOnly:true,
   input:target.extend({before:z.number().int().positive().optional()}),output,may:(v,i)=>writable(v,i),
   prepare:async i=> {const rows=messageRows(db,i.thread,i.before);return {rows,records:await Promise.all(rows.map(decode))};},
-  run(ctx,i,raw) { const p=raw as {rows:MessageRow[];records:LiveRecord[]}; if(JSON.stringify(messageRows(db,i.thread,i.before))!==JSON.stringify(p.rows))return fail('conflict','Thread changed; load this page again');return p.records; },
+  run(ctx,i,raw) { const p=raw as {rows:MessageRow[];records:LiveRecord[]}; if(JSON.stringify(messageRows(db,i.thread,i.before))!==JSON.stringify(p.rows))return fail('conflict','Thread changed; load this page again');return retainedPage(p.rows,p.records); },
  }));
  const changeInput=target.extend({action:z.enum(['title','project','pin','unpin','archive','unarchive','read','stop','delete']),title:title.optional(),project:id.nullable().optional(),seq:z.number().int().nonnegative().optional()});
  operations.register(operation({name:'comms.change',doors:['socket'],windowOnly:true,write:true,input:changeInput,output:ack,may:(v,i)=>writable(v,i),
@@ -185,7 +186,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   prepare:async i=>key.seal(JSON.stringify({text:i.words ?? '',ref:i.ref,verdict:i.verdict})),
   run(ctx,i,raw) {
    const t=thread(db,i.thread)!;
-   const ask=db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL").get(t.id,i.ref,i.ref);
+   const ask=db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL AND at > ?").get(t.id,i.ref,i.ref,clock.now()-days*day);
    if(!ask)return fail('denied','Ask unavailable');
    if(i.words)return fail('unavailable','Private word answers need the private attention role');
    // Attention is an in-process role, so its policy and answer participate in this transaction.
@@ -241,7 +242,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     if(!permitted(current)||current.id!==t.id||current.member!==t.member||current.conversation!==t.conversation)return fail('denied','Thread unavailable');
     if(JSON.stringify(messageRows(db,t.id,parsed.before,limit))!==JSON.stringify(rows))return fail('conflict','Thread changed; load this page again');
     // An earlier row may expire while a later row is still decrypting.
-    const messages=records.map((record,n)=>rows[n].at+days*day>clock.now()?record:{id:record.id,thread:t.id,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
+    const messages=retainedPage(rows,records);
     return {thread:{id:current.id,title:current.title,archived:current.archived,working:current.working},messages};
    }};
   },

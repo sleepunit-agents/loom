@@ -252,3 +252,40 @@ for(const archiveAgain of [false,true])it(`a delayed archive end cannot stop a r
  await s.call('change',{thread:place,action:'unarchive'});if(archiveAgain)await s.call('change',{thread:place,action:'archive'});release();await done;
  expect(s.ends).toHaveLength(archiveAgain?1:0);
 });
+it('removes expired words and work fields when a later page row finishes decrypting after the deadline',async()=>{
+ let reading=false,release:()=>void=()=>{},started:()=>void=()=>{},firstDone:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;}),decoded=new Promise<void>(r=>{firstDone=r;});
+ const s=await setup({key:k=>({...k,open:async blob=>{
+  const words=await k.open(blob);
+  if(reading&&words.includes('earlier private'))firstDone();
+  if(reading&&words.includes('later private')){await decoded;started();await waiting;}
+  return words;
+ }})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'earlier',kind:'card',text:'earlier private',tool:'private tool',step:{body:'private output'}});
+ s.clock.advance(1000);
+ await s.comms.post('art',place,{id:'later',kind:'reply',text:'later private'});
+ s.clock.advance(14*86400_000-1001);
+ reading=true;const page=s.call('messages',{thread:place});await began;
+ // Wall time can cross a deadline before the timer callback gets its turn.
+ const now=s.clock.now();s.clock.now=()=>now+1;
+ release();const result=await page;
+ expect(result.ok).toBe(true);
+ expect(JSON.stringify(result)).not.toContain('earlier private');
+ expect(JSON.stringify(result)).not.toContain('private tool');
+ expect(JSON.stringify(result)).not.toContain('private output');
+ expect(JSON.stringify(result)).toContain('later private');
+});
+it('refuses an ask that expires while answer encryption waits, before calling attention',async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};let answers=0;
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}}),attention:{answer:()=>{answers++;return {ok:true,value:{}};}}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'ask',kind:'ask',ref:'attention',text:'private question'});
+ s.clock.advance(14*86400_000-1);pause=true;
+ const answer=s.call('answer',{thread:place,ref:'attention',verdict:'yes'});await began;
+ const now=s.clock.now();s.clock.now=()=>now+1;release();
+ expect(await answer).toMatchObject({ok:false,code:'denied'});
+ expect(answers).toBe(0);
+ expect(s.app.db.prepare("SELECT * FROM comms_messages WHERE kind='answer'").all()).toEqual([]);
+});

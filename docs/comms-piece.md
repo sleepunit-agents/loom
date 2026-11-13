@@ -40,7 +40,9 @@ stop-consuming `status`. It is not yet the complete old runtime adapter.
 Words and new runtime work payloads are age encrypted in `comms_messages`.
 The key file is read per crypto operation; no age executable is required.
 Retention is 1–14 days, defaults to 14, and arms the clock for the earliest
-expiry. Expired words cannot be read or delivered. Deletion cascades message
+expiry. Page reads recheck every row at return after all decryption completes,
+stripping expired words and work fields even before the sweep callback runs.
+Answers recheck the ask deadline at commit before calling attention. Expired words cannot be read or delivered. Deletion cascades message
 rows and retains a wordless tombstone. `secure_delete` is enabled.
 
 `exportDatabase` omits all Comms tables and their migrations. Production export
