@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,10 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/index.js';
 import { loadHousehold, createToken } from '../household.js';
 import { startHttpServer } from './http-server.js';
+
+// Operation tools are offered to agents only on the new side.
+beforeAll(() => { process.env.LOOM_NEXT = '1'; });
+afterAll(() => { delete process.env.LOOM_NEXT; });
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 it('mounts registered task operations for authenticated daemon sessions, binds viewers and excludes peers/anonymous', async () => {
