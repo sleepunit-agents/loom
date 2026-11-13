@@ -1,4 +1,5 @@
 import { saveLocalReceipt } from './local-receipt.js';
+import { installLocalWindow } from './local-window.js';
 import { installLocalPublic, localPublicPolicy } from './local-public.js';
 import { installPrivateExport } from './store.js';
 import { localOwner, sameLocalCaller } from '../approvals/role.js';
@@ -71,6 +72,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   installPrivateExport(db);
   installLocalFiling(db, operations, sharing);
   installLocalPublic(operations, sharing, options.caller);
+  installLocalWindow(operations, sharing);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
   const deadmanAgents = new Set(z.array(text).parse(options.deadmanAgents ?? []));
   let parksChanged = false;
