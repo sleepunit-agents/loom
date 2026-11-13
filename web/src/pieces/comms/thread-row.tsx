@@ -15,11 +15,11 @@ export function ThreadRow({thread:t,selected,disabled,onOpen,onAction}:{thread:T
   unread={t.unread} selected={selected} onClick={onOpen}
   onContextMenu={e=>{e.preventDefault();showMenu();}}
   onKeyDown={e=>{if(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10')){e.preventDefault();showMenu();}}}
-  actions={<DropdownMenu open={open} onOpenChange={next=>setOpen(next&&!disabled)}>
+  actions={<div onKeyDown={e=>e.stopPropagation()}><DropdownMenu open={open} onOpenChange={next=>setOpen(next&&!disabled)}>
    <DropdownMenuTrigger asChild><Button ref={trigger} variant="outline" disabled={disabled} aria-label={`Actions for ${t.title??`New thread with ${t.agent}`}`}>⋯</Button></DropdownMenuTrigger>
    <DropdownMenuContent align="end" aria-label="Thread actions">
     <DropdownMenuItem disabled={disabled} onSelect={()=>act(t.pinned?'unpin':'pin')}>{t.pinned?'Unpin':'Pin'}</DropdownMenuItem>
     <DropdownMenuItem disabled={disabled} onSelect={()=>act(t.archived===null?'archive':'unarchive')}>{t.archived===null?'Archive':'Unarchive'}</DropdownMenuItem>
    </DropdownMenuContent>
-  </DropdownMenu>}/>;
+  </DropdownMenu></div>}/>;
 }

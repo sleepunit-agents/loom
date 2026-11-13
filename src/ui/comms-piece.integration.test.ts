@@ -130,11 +130,12 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const threadState=()=>JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
   await expect.poll(()=>threadState().pinned).toBe(true);
   expect(new URL(b.url()).pathname).toBe(listPath);
-  try{await expect.poll(()=>rowTrigger().isEnabled()).toBe(true);}catch(error){console.log('Row action state',await b.evaluate(()=>({menus:[...document.querySelectorAll('[role=menu]')].map(el=>el.outerHTML),list:document.querySelector('.loom-split__list')?.outerHTML})));throw error;}
+  await expect.poll(()=>rowTrigger().isEnabled()).toBe(true);
   await rowTrigger().focus();await b.keyboard.press('ArrowDown');
   await expect.poll(()=>b.getByRole('menuitem',{name:'Unpin',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
   await b.keyboard.press('Enter');
   await expect.poll(()=>threadState().pinned).toBe(false);
+  expect(new URL(b.url()).pathname).toBe(listPath);
   await rowTrigger().click();await b.getByRole('menuitem',{name:'Archive',exact:true}).click();
   await expect.poll(()=>row(b).count()).toBe(0);
   expect(new URL(b.url()).pathname).toBe(listPath);
