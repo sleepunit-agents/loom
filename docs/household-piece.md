@@ -280,3 +280,36 @@ There is no registration job. This operation creates neither a context directory
 nor a creed or token. The Setup screen and generated CLI binding remain in the
 full household task; the legacy command and page retain their existing behavior
 until the coordinated move.
+
+### Members and household ownership
+
+`household.setMember({person, agents})` adds a member or replaces their ownership,
+including `agents: "*"` for household ownership. `household.removeMember({person})`
+removes membership. Both require a household owner through central policy; a
+scoped owner cannot call them. At least one wildcard household owner must remain.
+New members have role `owner`, matching the old page action; existing ordinary
+members keep their role for scoped lists and become owners on wildcard promotion.
+Scoped owners must own at least one agent. Agent references must already exist.
+Setting membership requires an active, exact People directory entry, read through
+the next-mode People operation; a missing directory, archived entry or redirect
+slug cannot create household authority. Removal needs no directory entry.
+Unknown household/member fields and project assignments are preserved.
+
+| Old page action/helper | New operation |
+| --- | --- |
+| `member-set` / `setMember` | `household.setMember` |
+| `member-remove` / `removeMember` | `household.removeMember` |
+
+When the first wildcard owner changes, every unbound owner-token row is pinned to
+its original person in the same transaction as membership and the retry receipt.
+Explicit member bindings and other token roles stay unchanged. Removed members'
+tokens and browser sessions fail authentication immediately; narrowing retains
+the same member identity with the reduced scope. Revoked token rows are pinned
+too so no later first-owner fallback can reassign them. Existing credentials are
+not deleted. As on the old side, re-adding the same person restores their retained
+credentials and project assignments. Removing a person is not credential revocation;
+use the sign-in revoke operation when credentials must stay disabled.
+
+Both operations emit sharing and access changes after commit, refreshing open
+windows synchronously. No membership job, People-directory write, session mint or
+legacy-file write is added. Setup and generated clients remain in the full task.
