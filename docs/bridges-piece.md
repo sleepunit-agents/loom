@@ -107,7 +107,9 @@ The engine repeats inspection and all-member admission before EVERY group post,
 including after staging release; the adapter must fetch fresh conversations.info
 (still MPIM), conversations.members and users.info, never reuse intake membership.
 A temporary failure keeps the reply pending; a definite denial holds it for human
-disposition. Link, route or venue edits during admission invalidate that attempt.
+disposition. Link, route or venue edits during admission invalidate every verdict from that attempt,
+even an edit restored before admission finishes. A transactional setup revision in
+bridges_meta catches this without a new schema.
 Injected fake tests cover these boundaries; no real Web API inspection exists yet.
 Socket durable ACK, outbound threads/splitting, stop/presence and service-based
 secrets.withValue credential wiring remain unfinished. The foundation get seam is

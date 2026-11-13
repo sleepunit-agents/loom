@@ -6,7 +6,7 @@ import type { Address, Message, Route, Venue } from './model.js';
 import { keyFor } from './model.js';
 import { eventTime } from './time.js';
 import { addressed, isStop } from './routing.js';
-import { all, venueById, routeFor, personFor } from './store.js';
+import { all, venueById, routeFor, personFor, setupRevision } from './store.js';
 import type { BridgeRuntime, BridgeSecrets, BridgesRole, VenueAdapter, VenueConnection } from './role.js';
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 interface Inbox { id: string; venue: string; identity: string; message: string; state: 'pending'|'held'|'dropped'|'delivered' }
@@ -110,6 +110,12 @@ export class Bridges implements BridgesRole {
     if (this.cancelRetry || this.closed) return;
     this.cancelRetry = this.clock.at(this.clock.now()+5000, () => { this.cancelRetry=undefined; void this.flush(); });
   }
+  private setupUnchanged(v: Venue, message: Message, route: Route | undefined, revision: string) {
+    const current = venueById(this.app.db,v.id);
+    return !this.closed && current?.enabled && setupRevision(this.app.db) === revision
+      && JSON.stringify(current) === JSON.stringify(v)
+      && JSON.stringify(routeFor(this.app.db,current,message.channel,message.parent)) === JSON.stringify(route);
+  }
   /** No admission cache: a reply may run long after the original receipt. */
   private async admit(v: Venue, message: Message, route: Route | undefined, adapter: VenueAdapter, token: string, person: string) {
     const inspected = await adapter.inspect(v,token,message);
@@ -152,16 +158,13 @@ export class Bridges implements BridgesRole {
             else {
               const adapter = this.adapters.find(a => a.platform === v.platform);
               if (!adapter) throw new Error('Adapter unavailable');
+              const revision = setupRevision(db);
               const {token} = await this.credentials(v);
-              const links = JSON.stringify(all(db,'links'));
               const admitted = await this.admit(v,message,route,adapter,token,person);
               const key = keyFor(v,message,person);
+              if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
               if (admitted === 'wait') { this.retry(); continue; }
               if (admitted === 'allow') {
-                if (this.closed) return;
-                const current = venueById(db,row.venue);
-                if (!current?.enabled || JSON.stringify(current)!==JSON.stringify(v) || JSON.stringify(all(db,'links'))!==links || personFor(db,current,message.user)!==person
-                  || JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route)) { this.retry(); continue; }
                 if (!message.bot && isStop(message.text)) {
                   await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
                   state='delivered';
@@ -191,15 +194,16 @@ export class Bridges implements BridgesRole {
       if (!v?.enabled || identity(v)!==row.identity) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id); this.changed('bridges.send',row.id); continue; }
       const adapter = this.adapters.find(a => a.platform === v.platform);
       if (!adapter) { this.retry(); continue; }
+      const revision = setupRevision(db);
       let token: string;
       try { token=(await this.credentials(v)).token; } catch { this.retry(); continue; }
-      const links = JSON.stringify(all(db,'links'));
       const original = db.prepare('SELECT message FROM bridges_inbox WHERE id=(SELECT incoming FROM bridges_outbox WHERE id=?)').get(row.id) as {message:string} | undefined;
       const message = original ? JSON.parse(original.message) as Message : undefined;
       const route = message ? routeFor(db,v,message.channel,message.parent) : undefined;
       if (v.platform === 'slack' && message?.group) {
         let admitted: 'allow'|'drop'|'wait';
         try { admitted = await this.admit(v,message,route,adapter,token,personFor(db,v,message.user) ?? ''); } catch { this.retry(); continue; }
+        if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
         if (admitted === 'wait') { this.retry(); continue; }
         if (admitted !== 'allow') {
           db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id);
@@ -208,8 +212,8 @@ export class Bridges implements BridgesRole {
       }
       if (this.closed) return;
       const current = venueById(db,row.venue);
-      if (!current?.enabled || JSON.stringify(current)!==JSON.stringify(v) || JSON.stringify(all(db,'links'))!==links
-        || (message && JSON.stringify(routeFor(db,current,message.channel,message.parent))!==JSON.stringify(route))) { this.retry(); continue; }
+      if (!current?.enabled || setupRevision(db)!==revision || JSON.stringify(current)!==JSON.stringify(v)
+        || (message && !this.setupUnchanged(v,message,route,revision))) { this.retry(); continue; }
       // The effect id is permanent; releasing a staging item allows exactly one attempt.
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);

@@ -3,7 +3,7 @@ import { migrate, operation, mayAct, maySee, type Sharing } from '../../core/ind
 import type { Foundation } from '../../core/app.js';
 import { schema } from './schema/001.js';
 import { venueSchema, routeSchema, linkSchema } from './model.js';
-import { all, put } from './store.js';
+import { all, put, bumpSetup } from './store.js';
 export function installBridges(app: Foundation, sharing: () => Sharing) {
   migrate(app.db, 'bridges', schema);
   const { db, operations, live } = app;
@@ -26,6 +26,7 @@ export function installBridges(app: Foundation, sharing: () => Sharing) {
           for (const send of sends) ctx.changed('bridges.send',send.id);
           db.prepare("UPDATE bridges_outbox SET state='held' WHERE venue=? AND state='pending'").run(id);
         }
+        bumpSetup(db);
         db.prepare(`DELETE FROM bridges_${table} WHERE id=?`).run(id); ctx.changed(type,id); return { id };
       },
     }));

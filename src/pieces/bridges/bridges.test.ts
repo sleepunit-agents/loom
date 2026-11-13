@@ -101,6 +101,42 @@ describe('in-process bridge delivery',()=>{
     expect(changed).toBe(true); expect(f.deliveries.size).toBe(0);
     f.clock.advance(5000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
   });
+  it.each(['intake','reply'] as const)('invalidates stale allow and drop after %s setup edits, including edit-and-restore',async phase=>{
+    for (const kind of ['link','route','venue'] as const) for (const restore of [false,true]) for (const verdict of ['allow','drop'] as const) {
+      const f=await groupFixture();
+      if(phase==='reply') { await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush(); }
+      let first=true, fresh=false; const attempts: string[]=[];
+      f.runtime.admit=async input=>{
+        attempts.push(input.person);
+        if(first && input.person!=='mark') return 'allow';
+        if(first) {
+          first=false;
+          if(kind==='link') {
+            expect(f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'pollock'}).ok).toBe(true);
+            if(restore) expect(f.op('putLinks',{id:'member',platform:'slack',workspace:'house',user:'201',person:'mark'}).ok).toBe(true);
+          } else if(kind==='route') {
+            expect(f.op('putRoutes',{id:'group-route',platform:'slack',workspace:'house',channel:'G300',readers:['pollock']}).ok).toBe(true);
+            if(restore) expect(f.op('removeRoutes',{id:'group-route'}).ok).toBe(true);
+          } else {
+            expect(f.op('putVenues',{...f.venue,ignore:['unrelated']}).ok).toBe(true);
+            if(restore) expect(f.op('putVenues',f.venue).ok).toBe(true);
+          }
+          return verdict;
+        }
+        return fresh?'allow':'wait';
+      };
+      if(phase==='intake') await f.engine.receive(f.venue.id,f.groupMessage);
+      else f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'private'});
+      await f.engine.flush();
+      expect(first).toBe(false);
+      expect(f.deliveries.size).toBe(phase==='intake'?0:1); expect(f.adapter.posts).toEqual([]);
+      const table=phase==='intake'?'bridges_inbox':'bridges_outbox';
+      expect(f.app.db.prepare(`SELECT state FROM ${table}`).get()).toEqual({state:'pending'});
+      fresh=true; f.clock.advance(5000); await f.engine.flush();
+      expect(f.deliveries.size).toBe(1); expect(f.adapter.posts).toHaveLength(phase==='reply'?1:0);
+      expect(attempts.length).toBeGreaterThan(1);
+    }
+  });
   it.each(['platform','runtime','unknown-member'] as const)('freshly refuses an outgoing group reply after %s changes',async change=>{
     const f=await groupFixture(); const inspect=vi.spyOn(f.adapter,'inspect');
     await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
