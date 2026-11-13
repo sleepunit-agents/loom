@@ -226,3 +226,14 @@ it('keeps background work separate, promotes member follow-ups and ranks pins th
  expect(folderThreads(rows,'live')).toContain(selected);expect(folderThreads(rows,'background')).toEqual([]);
  expect(rows.map(t=>t.id)).toEqual(['ordinary','unread','pin','job','archive']);
 });
+
+import { watchingJob } from '../../web/src/pieces/comms/threads.js';
+it('watches unjoined jobs until a local join or a persisted member message',()=>{
+ expect(watchingJob({joined:false},false)).toBe(true);
+ expect(watchingJob({joined:false},true)).toBe(false);
+ expect(watchingJob({joined:true},false)).toBe(false);
+ expect(watchingJob(false,false)).toBe(false);
+ expect(watchingJob(undefined,false)).toBe(false);
+ // Reopening creates a new reader; an unsent local join does not persist.
+ expect(watchingJob({joined:false},false)).toBe(true);
+});

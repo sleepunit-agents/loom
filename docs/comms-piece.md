@@ -82,7 +82,7 @@ data does not remove the behavior it delivered.
 | Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Partial: authoritative spawn metadata groups assigned jobs separately until a member message promotes them; runtime spawn creation preserving the supplied conversation, brief/parent and report dedupe remain missing. |
-| Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
+| Watching / Join in | Thread app and runtime role | Present with supplied authoritative job metadata: unjoined jobs show Watching instead of composer/Stop. Join in is local to the keyed reader; only a member message persists promotion. Opening, joining and leaving invoke no runtime control. Production spawn creation/binding remains missing. |
 | Activity route, `postActivity` | `Comms.activityCards` and `Comms.post` | Partial: trusted private batches now validate atomically, preserve original tool/timing/deadline and enforce body/detail/plan bounds; runtime capture/redaction and production binding remain missing. The generic trusted `post` path still exists for replies/asks/errors and legacy card callers; it is not the validated activity-batch API. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
@@ -693,3 +693,25 @@ promotion and preserving its reader. Current-head CI must validate the new
 browser assertions; no browser ran locally. Incoming c185bb6 passed its complete
 Comms browser proof and all CodeQL checks; main CI was still queued at inspection.
 Aggregate review budgets remain backend/security 2/3 and importer 1/3.
+
+
+Spawn thread records now carry `job: {joined}` (false for ordinary threads).
+The kit reader opens unjoined jobs with a Watching bar and live messages/cards,
+without a composer or Stop. Join in reveals those controls locally; leaving and
+reopening before sending watches again. Only the authoritative member-message
+classification persists promotion. The keyed reader prevents a local join from
+following navigation to another thread. Opening, closing and joining do not call
+runtime delivery/end or mutate job membership. Archived threads retain their
+unarchive guidance. No production spawn creator or runtime binding is claimed.
+
+The metadata regression first failed expecting `{joined:false}` but receiving
+`true`. It now proves false before a follow-up and true after it; the local
+watching helper covers ordinary, unjoined, joined and locally joining states.
+All 324 affected tests and root TypeScript pass. The existing single browser
+proof now checks absent composer/Stop, arriving work, all six Watching visual
+fixtures, local join without starts/ends or promotion, reopening before a send,
+and persisted join after a follow-up/reload. Current-head CI must prove these
+assertions; no local browser ran. Incoming 7625e74's browser proof passed
+[Comms evidence](https://github.com/sleepunit-agents/loom/actions/runs/43395555355).
+Review budgets remain backend/security 2/3 and importer 1/3; broader parity and
+production composition remain required.

@@ -5,3 +5,8 @@ export function folderThreads<T extends {id:string;archived:number|null;pinned:b
  return records.filter(t=>folder==='archived'?t.archived!==null:t.archived===null&&(folder==='background'?t.background===true:t.background!==true))
   .sort((a,b)=>rank(a)-rank(b)||b.last-a.last||a.id.localeCompare(b.id));
 }
+
+/** Join in is local to the keyed reader. Only a member message persists promotion. */
+export function watchingJob(job:false|{joined:boolean}|undefined,joining:boolean):boolean{
+ return !!job&&!job.joined&&!joining;
+}

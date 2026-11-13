@@ -10,9 +10,9 @@ import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
 import { bindComposerViewport } from './viewport';
 import { bindThreadRead } from './read';
-import { folderThreads } from './threads';
+import { folderThreads, watchingJob } from './threads';
 import './comms.css';
-interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
+interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};job?:false|{joined:boolean};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
 const idle:CallState={pending:false,status:'done'};const noop=()=>()=>{};
 function useRequest<T>(request?:Call<T>){return useSyncExternalStore(request?.subscribe??noop,request?.getSnapshot??(()=>idle as CallState<T>));}
@@ -36,6 +36,7 @@ function Composer({member,place,agent,onOpened,enabled}:{member:string;place?:st
  </form>;
 }
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
+ const [joining,setJoining]=useState(false);const watching=watchingJob(thread.job,joining);
  const {records,status}=useRecords<Message>('message',thread.id);const [request,setRequest]=useState<Call>();const state=useRequest(request);
  const [pages]=useState(()=>new EarlierPages());const [older,setOlder]=useState<Message[]>([]);const current=useRef<readonly Message[]|undefined>(undefined);current.current=status==='live'?records:undefined;const pageOwner=useRef(current.current);const [title,setTitle]=useState(thread.title??'');const [project,setProject]=useState(thread.project??'');const [deleting,setDeleting]=useState(false);
  const [pagePending,setPagePending]=useState(false),[pageError,setPageError]=useState<string>();
@@ -70,7 +71,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
    {thinking&&<p role="status" aria-label="Thinking status">{thinking}</p>}
    {working&&<p role="status" aria-label="Working status" data-alive={working.face}>{working.text}</p>}
    {status==='live'&&thread.working&&thread.alive&&<p aria-label="Body activity">Last body activity <time dateTime={new Date(thread.alive.at).toISOString()}>{new Date(thread.alive.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time>{thread.alive.tokens!==undefined&&` · ${thread.alive.tokens.toLocaleString('en-US')} tokens`}</p>}
-   <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>act(thread.pinned?'unpin':'pin')}>{thread.pinned?'Unpin':'Pin'}</Button><Button variant="outline" onClick={()=>act(thread.archived===null?'archive':'unarchive')}>{thread.archived===null?'Archive':'Unarchive'}</Button><Button variant="outline" onClick={()=>act('stop')}>Stop</Button><Button variant="outline" onClick={()=>setDeleting(true)}>Delete</Button></div>
+   <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>act(thread.pinned?'unpin':'pin')}>{thread.pinned?'Unpin':'Pin'}</Button><Button variant="outline" onClick={()=>act(thread.archived===null?'archive':'unarchive')}>{thread.archived===null?'Archive':'Unarchive'}</Button>{!watching&&<Button variant="outline" onClick={()=>act('stop')}>Stop</Button>}<Button variant="outline" onClick={()=>setDeleting(true)}>Delete</Button></div>
    <details><summary>Thread settings</summary><form onSubmit={e=>{e.preventDefault();act('title',{title});}}><label>Title<Input value={title} maxLength={60} onChange={e=>setTitle(e.target.value)}/></label><Button type="submit">Save title</Button></form><form onSubmit={e=>{e.preventDefault();act('project',{project:project||null});}}><label>Project<Input value={project} onChange={e=>setProject(e.target.value)}/></label><Button type="submit">File thread</Button></form></details>
    {deleting&&<section aria-label="Delete thread"><p>Delete this thread and all its words?</p><Button disabled={state.pending} onClick={()=>act('delete')}>Delete thread</Button><Button variant="outline" onClick={()=>setDeleting(false)}>Keep thread</Button></section>}
    <Answer request={request}/>
@@ -79,7 +80,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
    {status!=='live'?<Loading label="Waiting for thread connection…"/>:<><Button variant="outline" onClick={load} disabled={pagePending}>Load earlier messages</Button>{pageError&&<Error text={pageError}/>}<ol className="grid gap-4">{all.map(m=>{const view=messageView(m);return <li key={m.id} className="rounded border p-3"><p>{m.from} · {new Date(m.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT{view.tool&&` · ${view.tool}`}{view.state&&` · ${view.state}`}</p>{view.text===null?(view.ask?null:<p>Words no longer kept</p>):<div className="prose break-words" dangerouslySetInnerHTML={{__html:replyHtml(view.text!)}}/>}{view.nextRetry&&<p aria-label="Start retry">Next try at <time dateTime={view.nextRetry}>{new Date(view.nextRetry).toLocaleTimeString('en-US',{timeZone:'America/Chicago',hour:'2-digit',minute:'2-digit'})} CT</time>.</p>}{view.retryStart&&thread.archived===null&&<Button variant="outline" disabled={state.pending} onClick={()=>setRequest(call('comms.retryStart',{thread:thread.id,...view.retryStart}))}>Send again</Button>}{view.step!=null&&<details><summary>Work details</summary><pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(view.step,null,2)}</pre></details>}{view.ask&&<section><p>{view.ask.question}</p>{view.ask.why&&<p>{view.ask.why}</p>}{view.ask.yes&&<p>Yes: {view.ask.yes}</p>}{view.ask.no&&<p>No: {view.ask.no}</p>}{view.ask.answered?<p>{view.ask.answer??'Answered'}</p>:view.ask.canAnswer?<><Button onClick={()=>setRequest(call('comms.answer',{thread:thread.id,ref:m.ref,verdict:'yes'}))}>Allow</Button><Button variant="outline" onClick={()=>setRequest(call('comms.answer',{thread:thread.id,ref:m.ref,verdict:'no'}))}>Deny</Button></>:<p>Answer in Inbox</p>}</section>}{m.kind==='message'&&(m.delivery==='failed'||m.delivery==='held')&&<Button variant="outline" onClick={()=>setRequest(call('comms.resend',{thread:thread.id,seq:m.seq}))}>{m.delivery==='held'?'Try released send':'Send again'}</Button>}</li>;})}</ol></>}
   </div>
   {follow.unread>0&&<div className="px-4 py-2"><Button variant="outline" onClick={follow.down}>New messages ↓ ({follow.unread})</Button></div>}
-  {thread.archived===null?<Composer member={thread.member} place={thread.id} agent={thread.agent} onOpened={()=>{}} enabled={status==='live'}/>:<p className="p-4">Unarchive this thread to send a message.</p>}
+  {thread.archived!==null?<p className="p-4">Unarchive this thread to send a message.</p>:watching?<div className="flex items-center justify-between gap-3 border-t p-4" role="status" aria-label="Watching job"><p><strong>Watching</strong> · {thread.working?`${thread.agent} keeps working when you close this.`:'Closing this leaves the job as it is.'}</p><Button disabled={status!=='live'} onClick={()=>setJoining(true)}>Join in</Button></div>:<Composer member={thread.member} place={thread.id} agent={thread.agent} onOpened={()=>{}} enabled={status==='live'}/>}
  </article>;
 }
 export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){

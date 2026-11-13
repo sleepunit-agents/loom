@@ -13,12 +13,12 @@ import { draftKey } from '../../web/src/pieces/comms/drafts.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across two windows, retains a device draft, sanitises replies and captures both looks',async()=>{
- const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);const starts:{seq:number;generation?:number}[]=[];let comms!:ReturnType<typeof installComms>;let reply=true;
+ const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);const starts:{seq:number;generation?:number}[]=[];const ends:string[]=[];let comms!:ReturnType<typeof installComms>;let reply=true;
  const conversations=new Map([['cv-label-fixture',{agent:'art',venue:'discord',version:'one'}]]);
  const loom=await startLoom({home,clock,authenticate:()=>({viewer:{kind:'member',id:'jonathan'},window:true,valid:()=>true}),install:app=>{
   installFixture(app);
   comms=installComms({...app,clock,key,sharing:fixtureSharing,conversation:id=>conversations.get(id),hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
-   deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',on:'Codex',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
+   deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',on:'Codex',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async conversation=>{ends.push(conversation);},
   }});
  }});
  const firstAt=clock.now();
@@ -241,9 +241,25 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByText('Assigned background job',{exact:true}).count()).toBe(0);
   await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Background work',exact:true}).click();
   await expect.poll(()=>b.getByText('Assigned background job',{exact:true}).count()).toBe(1);
+  const startsBeforeJoin=starts.length,endsBeforeWatch=ends.length;
   await b.getByText('Assigned background job',{exact:true}).click();
+  await expect.poll(()=>b.getByLabel('Watching job').count()).toBe(1);
+  expect(await b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(0);
+  expect(await b.getByRole('button',{name:'Stop',exact:true}).count()).toBe(0);
+  await comms.activityCards('art',jobPlace,{run:'watch-fixture',cards:[{id:'watch-step',tool:'Shell',summary:'Live watched work',state:'running'}]});
+  await expect.poll(()=>b.getByText('Live watched work',{exact:true}).count()).toBe(1);
+  await capture('comms-watching');
+  await b.getByRole('button',{name:'Join in',exact:true}).click();
   await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
-  const startsBeforeJoin=starts.length;
+  expect(await b.getByRole('button',{name:'Stop',exact:true}).count()).toBe(1);
+  // Joining alone neither promotes nor touches the run; reopening watches again.
+  expect(starts.length).toBe(startsBeforeJoin);expect(ends.length).toBe(endsBeforeWatch);
+  expect(await b.getByLabel('Thread list').getByText('Assigned background job',{exact:true}).count()).toBe(1);
+  await b.goto(`${loom.url}/p/comms-preview/thread/${jobPlace.slice(3)}`);
+  await expect.poll(()=>b.getByLabel('Watching job').count()).toBe(1);
+  expect(starts.length).toBe(startsBeforeJoin);expect(ends.length).toBe(endsBeforeWatch);
+  await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Background work',exact:true}).click();
+  await b.getByRole('button',{name:'Join in',exact:true}).click();
   await b.getByRole('textbox',{name:'Message',exact:true}).fill('A member follow-up');await b.getByRole('button',{name:'Send',exact:true}).click();
   await expect.poll(()=>starts.length).toBe(startsBeforeJoin+1);
   await expect.poll(()=>b.getByRole('heading',{name:'Assigned background job',exact:true}).count()).toBe(1);
@@ -251,6 +267,9 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Thread list').getByText('Assigned background job',{exact:true}).count()).toBe(0);
   await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Threads',exact:true}).click();
   await expect.poll(()=>b.getByLabel('Thread list').getByText('Assigned background job',{exact:true}).count()).toBe(1);
+  await b.reload();
+  await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
+  expect(await b.getByLabel('Watching job').count()).toBe(0);expect(ends.length).toBe(endsBeforeWatch);
 
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60000);

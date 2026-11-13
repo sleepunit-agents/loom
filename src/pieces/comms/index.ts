@@ -72,7 +72,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const ownConversation=`cv-${createHash('sha256').update(`${t.agent}\0loom\0${t.id}`).digest('hex').slice(0,12)}`;
   const job=t.conversation!==ownConversation&&conversation?.agent===t.agent&&conversation.venue==='spawn';
   const background=job&&!db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='message' AND sender=? LIMIT 1").get(t.id,t.member);
-  return {job,background};
+  return {job:job?{joined:!background}:false,background};
  };
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};

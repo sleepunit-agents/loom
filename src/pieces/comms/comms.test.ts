@@ -23,8 +23,8 @@ it('groups assigned spawn threads until their member writes, with scoped Live pr
  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
  const snapshot=(scope?:string)=>new Promise<Record<string,unknown>[]>(resolve=>{const receive=(raw:Buffer)=>{const frame=JSON.parse(raw.toString());if(frame.kind==='set'&&frame.type==='thread'&&frame.scope===scope){ws.off('message',receive);resolve(frame.records);}};ws.on('message',receive);ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope}));});
  expect(await snapshot()).toEqual([]);
- expect(await snapshot('background')).toMatchObject([{id:place,job:true,background:true}]);
- expect(await snapshot('all')).toMatchObject([{id:place,job:true,background:true}]);
+ expect(await snapshot('background')).toMatchObject([{id:place,job:{joined:false},background:true}]);
+ expect(await snapshot('all')).toMatchObject([{id:place,job:{joined:false},background:true}]);
  const summaries=await s.call('agents',{});expect(summaries).toMatchObject({ok:true,value:{summaries:[{agent:'art',unread:0}]}});
  expect(JSON.stringify(summaries)).not.toContain(place);
  // Merely reading the job does not promote it.
@@ -34,7 +34,7 @@ it('groups assigned spawn threads until their member writes, with scoped Live pr
  await s.call('send',{thread:place,id:'followupaaaaaaaa',text:'Join this work'});await s.comms.deliver('art',place,2);await promotion;
  expect(frames).toContainEqual({kind:'del',type:'thread',scope:'background',id:place});
  expect(frames.some(f=>f.kind==='put'&&f.scope===undefined&&(f.record as {id?:string}).id===place)).toBe(true);
- expect(await snapshot()).toMatchObject([{id:place,job:true,background:false}]);
+ expect(await snapshot()).toMatchObject([{id:place,job:{joined:true},background:false}]);
  await s.restart();expect(await s.call('agents',{})).toMatchObject({ok:true,value:{summaries:[{last:{thread:place}}]}});
 });
 it('refreshes background classification on authoritative conversation changes and keeps archived jobs in archive',async()=>{
