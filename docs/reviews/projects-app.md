@@ -112,3 +112,12 @@ A second GitHub-reported conflict followed Home PR927 landing. Rebased onto
 63e7d64, preserving HomeSurface, Home, Clock, People and Projects registration.
 All 77 affected tests and root TypeScript pass on that composition. Neither
 rebase touched the live main checkout or any merged branch.
+
+Final-head CI ea753811: three shards, deploy build, DCO, CodeQL and hosted browser
+passed; shard3 caught two type-only imports of Tasks domain types from Projects.
+This was an author error against the role boundary. Replaced them with a minimal
+Projects-owned metadata interface; no sibling implementation import remains.
+Architecture check and affected tests now cover it. No blind failed-job rerun.
+The earlier final-head browser/report/six shots passed but must be regenerated
+for the corrected head. This is an author fix after the bounded review, not a
+fourth round or a cold-clear claim.

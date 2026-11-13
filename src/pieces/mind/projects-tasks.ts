@@ -1,8 +1,12 @@
 /** Pure task-feed projection. Data arrives through the new Tasks role, never legacy IO. */
-import type {Task,Link} from '../tasks/domain.js';
 import type {ProjectGroup,ProjectItem} from './projects-model.js';
 import type {ProjectQuery} from './projects-roles.js';
-type ScopedTask=Task&{project?:string};
+/** Minimal metadata accepted from Tasks.call; the Tasks implementation owns its domain types. */
+export interface ProjectTask {id:string;title:string;status:string;priority:number;createdAt:string;comments:Array<{at:string}>;project?:string;description?:string;assignee?:string;startedAt?:string;closedAt?:string;closeReason?:string;goal?:string;why?:string;source?:string}
+export interface ProjectTaskLink {id:string;dependsOn:string;type:string}
+type Task=ProjectTask;
+type ScopedTask=ProjectTask;
+type Link=ProjectTaskLink;
 const clip=(text:string,n:number)=>text.length>n?text.slice(0,n-1)+'…':text;
 function body(task:Task){
  const text=[[task.goal,task.why].filter(Boolean).join(' '),task.description].filter(Boolean).join('\n\n').trim();if(!text)return undefined;

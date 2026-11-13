@@ -1,7 +1,7 @@
 /** Each role receives the original viewer and must enforce its own policy. All calls stay synchronous. */
 import type {Viewer,Operations} from '../../core/index.js';
 import {taskGroups} from './projects-tasks.js';
-import type {Task,Link} from '../tasks/domain.js';
+import type {ProjectTask as Task,ProjectTaskLink as Link} from './projects-tasks.js';
 import type {Tasks} from '../tasks/role.js';
 import type {ProjectCard,ProjectGroup,ProjectItem,ProjectSection} from './projects-model.js';
 export interface ProjectQuery {agent:string;card:ProjectCard;names:string[];notePrefixes:string[];conversations?:string[];since:string;now:number}
