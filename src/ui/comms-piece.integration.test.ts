@@ -163,8 +163,12 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
    expect(new URL(b.url()).pathname).toBe(listPath);
   }
   // A held menu trigger stays a menu control, never the row's pin gesture.
-  await rowTrigger().dispatchEvent('pointerdown',touch);await b.clock.fastForward(600);
-  expect(threadState().pinned).toBe(false);await rowTrigger().dispatchEvent('pointercancel',touch);
+  const menuTouchTarget=await rowTrigger().elementHandle();if(!menuTouchTarget)throw new Error('Missing row menu trigger');
+  await menuTouchTarget.dispatchEvent('pointerdown',touch);await b.clock.fastForward(600);
+  expect(threadState().pinned).toBe(false);
+  await expect.poll(()=>b.getByRole('menuitem',{name:'Pin',exact:true}).count()).toBe(1);
+  expect(new URL(b.url()).pathname).toBe(listPath);
+  await menuTouchTarget.dispatchEvent('pointercancel',touch);
   await b.keyboard.press('Escape');await b.clock.resume();
   await rowTrigger().click();await b.getByRole('menuitem',{name:'Archive',exact:true}).click();
   await expect.poll(()=>row(b).count()).toBe(0);
