@@ -19,6 +19,8 @@ export interface Wake extends Work {
   wait?: { id: string; until: number; kind?: string; target?: string; answer?: string };
   /** Imported provenance is data, never a Viewer or a grant. */
   legacy?: Record<string, unknown>;
+  /** Fresh owner adoption; archived provenance remains inert and unchanged. */
+  vouched?: { by: string; at: number };
 }
 export interface Schedule extends Work {
   id: string; at: string[]; days: string; by: Viewer; changedAt: number;

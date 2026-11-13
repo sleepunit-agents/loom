@@ -10,6 +10,8 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
+import { vouchable } from './vouch.js';
+import { vouchOf } from '../approvals/targets.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
@@ -143,6 +145,28 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
+  });
+  register('vouch', z.object({ target: text }).strict(), true, (v, i) => {
+    const target = vouchOf(i.target);
+    if (!target || i.target.length > 200 || !mayAct(v, {}, sharing(), 'household')) return false;
+    // Check every existing row, including rows that cannot be adopted. Missing
+    // ids reveal nothing; a mixed target must never cross a clock or private scope.
+    return target.ids.every(id => { const w = wake(db, id); return !w || w.agent === target.agent && see(v, w) && create(v, w); });
+  }, (ctx, i) => {
+    const target = vouchOf(i.target)!;
+    const done: string[] = [], gone: string[] = [];
+    for (const id of target.ids) {
+      const w = wake(db, id);
+      if (!w || !vouchable(w)) { gone.push(id); continue; }
+      // Validate current executable words. Archived fields are never restored.
+      newWork(w);
+      w.by = ctx.viewer; w.state = 'pending'; delete w.hold;
+      w.outcome = 'Owner vouched for unknown imported work';
+      w.vouched = { by: ctx.viewer.id, at: ctx.now };
+      saveWake(ctx, w); event(ctx, w, 'vouch'); done.push(id);
+    }
+    if (!done.length) invalid('None of those wakes is still unknown imported work eligible for vouching');
+    return { done, gone };
   });
   const nowInput = z.union([idInput.strict(), z.object({ agent: text, note: z.string().max(100_000).optional() }).strict()]);
   register('now', nowInput, true, (v, i) => 'id' in i

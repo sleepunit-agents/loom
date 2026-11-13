@@ -576,3 +576,39 @@ A deferred runtime fixture inserts real work while a default is firing, compares
 its unchanged intent, then restarts and confirms the held intent is never replayed.
 Capacity coverage retains an uncertain default alongside 49 ordinary requests:
 the 50th request succeeds and the 51st is refused, without altering the default.
+
+## Owner vouch for unknown imported wakes
+
+`clock.vouch {target: "art:w-aaaaaa,w-bbbbbb"}` adopts eligible one-off imports
+as the authenticated household owner making the decision. The target is canonical,
+sorted and unique, at most twelve compact/UUID wake ids and 200 characters, matching
+Approvals. Current central visibility and target create/give-work policy apply to
+every existing row on the target; a wrong-agent or private row refuses the whole
+operation. The result lists `done` and `gone`; an entirely gone/ineligible set
+refuses. This preserves the legacy approval action's partial-application behavior.
+
+Only `held/provenance` rows from the offline importer, explicitly marked unknown
+(`for: "-"`, `kind: "wake"`) in the archive, qualify. New-side agent rows are not
+assumed unknown. Recurring/parked work, uncertain or attempted dispatches, local,
+standing, continuation, placement or other archived capability-bearing work is
+excluded. Missing legacy provenance and known-person/owner imports require their
+separate recovery flow. Archived words can restrict eligibility but never supply
+a Viewer. Current executable words and relative file paths are validated again.
+
+The decision preserves ids, words, deadline, failures and the inert archive, stamps
+`vouched` with the actual owner/time, and records a vouch event. The wake becomes
+pending under that owner's current authority. Pause, revocation, staging and the
+default held runtime still apply. No archived capability is restored or spent.
+
+Next mode composes `clockVouchApplication` into newly installed Approvals. Its
+owner Allow calls Clock synchronously on the same foundation transaction; Clock
+rechecks policy, and Approvals spends the exact receipt once. Failure rolls back
+both pieces and events. Deny changes no wakes. An installer supplying Approvals
+itself must explicitly supply this application role; an uncomposed installer
+continues to fail closed. Clock never reads Approvals tables or spends its receipt.
+
+This is the backend owning application for legacy `vouch-approved` and the owner
+vouch action. Client/app vouch and ask-vouch filing, automatic grouped asking and
+denial suppression, other imported adoption/recovery, and runtime-authenticated
+provenance remain unfinished on t-2201. No live import, configuration or dispatch
+is enabled by this slice.
