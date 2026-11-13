@@ -1,4 +1,4 @@
-/** Offline migration only. Caller has verified the snapshot and holds the stopped-home gate. */
+/** Offline migration-all only. Caller verifies snapshot, holds its gate and runs coordinator recovery first. */
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -18,7 +18,10 @@ function privateBytes(path: string): Buffer {
     return readFileSync(fd);
   } finally { closeSync(fd); }
 }
-/** Preserve the snapshot identity. Never mint or overwrite a destination key. */
+/** Preserve the snapshot identity. Never mint or overwrite a destination key.
+ * A crash pair is intentionally rejected here: only the coordinator may recover
+ * it after matching the migration receipt and verified source (separateDestination).
+ */
 export function publishMigrationCommsKey(source: string, home: string, controls: { sync?: typeof fsyncSync } = {}): void {
   noSymlinks(source); noSymlinks(home);
   const input = realpathSync(source), target = realpathSync(home);

@@ -18,6 +18,7 @@ import { run } from './migrate.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
+import { publishMigrationCommsKey } from './migration-comms-key.js';
 import { loadKey } from '../pieces/comms/crypto.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import { createMigrationRegistry, MigrationRegistry } from './migration-registry.js';
@@ -331,4 +332,25 @@ it('recovers only the source-identical root Comms publication pair under a match
       await expect(runMigrationAll(root, f.home)).rejects.toThrow(); expect(bytes(f.home)).toEqual(before);
     }
   }
+});
+
+it('resumes key publication through receipt-bound coordinator recovery before the helper retries', async () => {
+  const f = await fixture(); await loadKey(f.old);
+  const root = join(f.dir, 'key-snapshot'); await createSnapshot(f.old, root);
+  const registry = new MigrationRegistry();
+  let calls = 0;
+  registry.register({ name: 'household', dependencies: [], reads: [], run: context => {
+    calls++; expect(() => acquireHttpLock(f.home)).toThrow('already running');
+    const result = importHousehold(context.db, context.home, join(root, 'home'), context.now);
+    publishMigrationCommsKey(join(root, 'home/comms.key'), context.home);
+    return result;
+  } });
+  await expect(runMigrationAll(root, f.home, undefined, { registry, afterPiece: () => { throw Error('death before receipt'); } })).rejects.toThrow('death before receipt');
+  const key = join(f.home, 'comms.key'), before = readFileSync(key);
+  // Actual process death skips finally; reconstruct the exact post-link state.
+  const temp = join(f.home, `.comms.key-import-${randomUUID()}`); linkSync(key, temp);
+  expect(() => publishMigrationCommsKey(join(root, 'home/comms.key'), f.home)).toThrow('Unsafe');
+  expect((await runMigrationAll(root, f.home, undefined, { registry })).status).toBe('complete');
+  expect(calls).toBe(2); expect(fs.existsSync(temp)).toBe(false);
+  expect(statSync(key).nlink).toBe(1); expect(readFileSync(key)).toEqual(before);
 });

@@ -24,7 +24,9 @@ it('publishes a complete private identical key, syncs file before directory, and
   expect(statSync(join(f.home, 'comms.key')).mode & 0o777).toBe(0o600);
   expect(statSync(join(f.home, 'comms.key')).nlink).toBe(1);
   expect(readdirSync(f.home)).toEqual(['comms.key']);
-  publishMigrationCommsKey(f.key, f.home, { sync: fd => { expect(fstatSync(fd).isDirectory()).toBe(true); fsyncSync(fd); } });
+  let retrySyncs = 0;
+  publishMigrationCommsKey(f.key, f.home, { sync: fd => { retrySyncs++; expect(fstatSync(fd).isDirectory()).toBe(true); fsyncSync(fd); } });
+  expect(retrySyncs).toBe(1);
   expect(readFileSync(f.key)).toEqual(before);
 });
 it('never leaves an empty final file on a failed file sync and retries after a directory sync failure', async () => {

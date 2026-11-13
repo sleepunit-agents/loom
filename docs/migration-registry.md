@@ -57,7 +57,10 @@ read installed program trees.
 Comms key prerequisite: `publishMigrationCommsKey(snapshotKey, home)` is an
 internal offline helper, not a registered importer. Its caller must manifest-verify
 the snapshot, resolve its input with `snapshotPath`, and hold the destination's
-stopped-daemon gate. It preserves the snapshot key bytes, accepts an identical
+stopped-daemon gate, and run migration-all's receipt-bound publication-pair
+recovery before calling the helper on a resumed destination. The helper itself
+refuses every hard-linked key; it does not authorize standalone crash-pair
+recovery without a matching migration receipt. It preserves the snapshot key bytes, accepts an identical
 existing private regular key and refuses a different one; it never generates one.
 It fsyncs a private exclusive temporary file before linking the final name and
 fsyncing the directory. Retry also fsyncs the directory when the final file exists.
