@@ -1,3 +1,4 @@
+import { controlScope } from './control.js';
 /** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
 import { z } from 'zod';
 import { operation, OperationError, mayAct, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
@@ -14,7 +15,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   function assigned(viewer: Viewer, id: string): boolean {
     const job = store.read('job', id), box = job && store.read('box', job.box);
     return viewer.kind === 'runner' && !!job && !!box && box.id === viewer.id && box.revokedAt === undefined
-      && mayAct(viewer, { ...job, type: 'runtime.job' }, sharing(), 'report-job');
+      && mayAct(viewer, controlScope(store,job,sharing()), sharing(), 'report-job');
   }
   function save(ctx: { now: number; changed(type: string, id: string): void }, id: string, state: RuntimeRecords['job']['state']) {
     const { changedAt: _, ...job } = store.read('job', id)!;

@@ -416,10 +416,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    ctx.changed('message',messageId(t.id,result.seq));return {thread:t.id,seq:result.seq};
   },
  }));
- async function post(agent:string,place:string,raw:AgentPost,terminal=false) {
+ async function post(agent:string,place:string,raw:AgentPost,terminal=false,binding?: import('./role.js').ReadBinding) {
   const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,on:z.unknown().optional().transform(value=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9.-]{0,23}$/.test(value)?value:undefined),run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
   const available=()=>{
    const t=requireAgent(agent,place);
+   if(binding&&(!binding.valid()||binding.agent!==agent||binding.conversation!==t.conversation))return fail('denied','Body binding ended');
    if(closed||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
    if(t.archived!==null)return fail('conflict','Thread archived');
    return t;
@@ -536,7 +537,14 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+ return {confirmStart(agent,place,seq,generation) {
+   const t=requireAgent(agent,place);
+   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,seq,t.member) as MessageRow|undefined;
+   if(closed||t.archived!==null||!row||!see({kind:'member',id:t.member},t)||(JSON.parse(row.record).generation??0)!==generation||!row.words||row.at+days*day<=clock.now())return;
+   if((t.startedThrough??0)>=seq)return;
+   t.working=true;t.workingSince=t.workingSince??clock.now();t.workingBeat=clock.now();t.startedThrough=seq;
+   saveThread(db,t);touched(t);progressChanged(t);
+  },bodyPost:(binding,place,message)=>post(binding.agent,place,message,false,binding),post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
   spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:(t,seqs)=>{touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));progressChanged(t);}}),
   announcements(member) {
    if(closed)return [];

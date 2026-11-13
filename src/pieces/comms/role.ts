@@ -49,6 +49,10 @@ export interface ReplyAnnouncement {
 }
 export interface SpawnThread { conversation: string; text: string; parent?: string; run?: string }
 export interface Comms {
+ /** Assigned runner confirmed this accepted message generation started. */
+ confirmStart(agent: string, thread: string, seq: number, generation: number): void;
+ /** Runtime proof is checked again inside the encrypted write transaction. */
+ bodyPost(binding: ReadBinding, thread: string, message: AgentPost): Promise<{seq: number}>;
  /** Trusted runtime creation only; supplied authoritative spawn conversation is preserved. */
  spawn(agent: string, input: SpawnThread): Promise<{thread: string}>;
  /** Trusted frame role only. Recompute immediately before push; do not cache across awaits.

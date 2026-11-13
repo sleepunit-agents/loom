@@ -5,7 +5,7 @@ export type Viewer =
   | { kind: 'runner'; id: string }
   | { kind: 'service'; id: string };
 export interface Scope { project?: string; agent?: string; member?: string }
-export interface RecordScope extends Scope { type?: string; runner?: string }
+export interface RecordScope extends Scope { type?: string; runner?: string; /** Trusted runtime binding proof; never an input field. */ privateControl?: boolean }
 export interface Sharing {
   members: Record<string, { owner: boolean; agents: string[] }>;
   projects: Record<string, { members: string[]; agents: string[] }>;
@@ -29,6 +29,8 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
 export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
   // A runner may update its own box report without gaining registry read access.
   if (action === 'report-box') return v.kind === 'runner' && r.type === 'runtime.box' && r.runner === v.id && r.member === undefined;
+  // Control of an assigned job reveals no private words or registry visibility.
+  if (action === 'report-job' && v.kind === 'runner') return r.type === 'runtime.job' && r.runner === v.id && (r.member === undefined || r.privateControl === true);
   if (!maySee(v, r, s)) return false;
   if (v.kind === 'service') return action === 'act' && !!operation && !!entry(s.services, v.id)?.operations.includes(operation);
   if (v.kind === 'runner') return action === 'report-job';

@@ -20,20 +20,21 @@ async function setup(beforeOpen?: () => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'signin-window-'));
   cleanups.push(() => rmSync(home, {recursive: true, force: true}));
   fixture(home);
-  const clock = new FakeClock(), app = await startLoom({home, clock, next: true, stdout: () => {}});
+  const clock = new FakeClock(), key = await loadKey(home);
+  let comms!: ReturnType<typeof installComms>;
+  const app = await startLoom({home, clock, next: true, stdout: () => {}, install: app => {
+    comms = installComms({db: app.db, operations: app.operations, live: app.live, clock,
+      sharing: () => new SharingDatabase(app.db, home).sharing(), key: {...key, async open(blob) { await beforeOpen?.(); return key.open(blob); }},
+      runtime: {async deliver() {}, async end() {}}, hold: effect => effect(),
+      attention: {answer: () => ({ok: false, code: 'unavailable', message: 'Not installed'})},
+      recipients: () => ({agents: ['art'], default: 'art'}),
+    });
+  }});
   cleanups.push(app.close);
+  cleanups.push(comms.close);
   const auth = signin(app), bearer = randomBytes(32).toString('hex');
   auth.tokens.change(tokens => tokens.push({role: 'owner', member: 'jonathan', label: 'window-test', sha256: hash(bearer), created: new Date(clock.now()).toISOString()}));
   const cookie = auth.createSession(hash(bearer));
-  // Real central auth and transport; only external runtime/attention are fakes.
-  const key = await loadKey(home);
-  const comms = installComms({db: app.db, operations: app.operations, live: app.live, clock,
-    sharing: () => new SharingDatabase(app.db, home).sharing(), key: {...key, async open(blob) { await beforeOpen?.(); return key.open(blob); }},
-    runtime: {async deliver() {}, async end() {}}, hold: effect => effect(),
-    attention: {answer: () => ({ok: false, code: 'unavailable', message: 'Not installed'})},
-    recipients: () => ({agents: ['art'], default: 'art'}),
-  });
-  cleanups.push(comms.close);
   const headers = {cookie: `loom_ui=${cookie}`, origin: app.url};
   const resolve = (extra: Record<string, string> = {}, method = 'GET') => auth.resolve({headers: {...headers, ...extra}, method} as IncomingMessage);
   async function socket(extra: Record<string, string> = {}) {

@@ -13,4 +13,7 @@ CREATE TABLE runtime_inputs (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), b
 ` }, { number: 3, sql: `
 -- Output words are not registry/live records; reads use current job scope.
 CREATE TABLE runtime_results (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)));
+` }, { number: 4, sql: `
+-- Private routing receipts contain no message words or credentials.
+CREATE TABLE runtime_deliveries (id TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES runtime_jobs(id));
 ` }];

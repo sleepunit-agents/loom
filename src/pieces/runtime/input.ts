@@ -1,3 +1,4 @@
+import { controlScope } from './control.js';
 /** Executable input release is asynchronous and outside the registry transaction. */
 import { z } from 'zod';
 import { operation, OperationError, mayAct, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
@@ -8,12 +9,13 @@ import { configuredHouse, sameHouse } from './builds.js';
 import { meets } from './placement.js';
 import { buildIdentity } from './records.js';
 
-export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects) {
+export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects, body?: { issue(agent: string, job: string): string; valid(job: string): boolean }) {
   const store = runtimeStore(db);
   const assigned = (viewer: Viewer, id: string) => {
     const job = store.read('job', id), box = job && store.read('box', job.box);
     return viewer.kind === 'runner' && !!job && !!box && job.box === viewer.id && box.revokedAt === undefined
-      && mayAct(viewer, { ...job, type: 'runtime.job' }, sharing(), 'report-job');
+      && (job.member === undefined || !!body?.valid(id))
+      && mayAct(viewer, controlScope(store,job,sharing()), sharing(), 'report-job');
   };
   const snapshot = (viewer: Viewer, id: string) => {
     if (!assigned(viewer, id)) throw new OperationError('denied', 'Input unavailable');
@@ -21,6 +23,7 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
     if (job.state !== 'starting' || job.claimedAt === undefined) throw new OperationError('conflict', 'Job is not awaiting start');
     if (!canHost(box, job.agent, sharing()) || !sameHouse(job.made, configuredHouse(store.read('settings', job.agent))))
       throw new OperationError('denied', 'Execution configuration changed; reconcile this job');
+    if (job.member !== undefined && !body?.valid(id)) throw new OperationError('denied', 'Private binding unavailable');
     const input = db.prepare('SELECT brief, needs FROM runtime_inputs WHERE job=?').get(id) as { brief: string; needs: string } | undefined;
     if (!input) throw new OperationError('conflict', 'Job has no input');
     const needs = z.array(z.string().min(1).max(200)).max(32).parse(JSON.parse(input.needs));
@@ -33,7 +36,7 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
   operations.register(operation({
     name: 'runtime.takeInput', doors: ['http', 'direct'],
     input: z.object({ job: z.string().min(1).max(200) }).strict(),
-    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional() }),
+    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional(), conversation:z.string().optional(), credential:z.string().optional() }),
     may: (viewer, input) => assigned(viewer, input.job),
     async prepare(input, { viewer }) {
       const value = snapshot(viewer, input.job);
@@ -47,7 +50,7 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
     run(ctx, input, prepared) {
       const current = snapshot(ctx.viewer, input.job);
       if (JSON.stringify(current) !== JSON.stringify(prepared)) throw new OperationError('conflict', 'Input changed during release');
-      return current;
+      return {...current,...(body?.valid(input.job)?{conversation:store.read('job',input.job)!.conversation,credential:body.issue(current.agent,input.job)}:{})};
     },
   }));
 }
