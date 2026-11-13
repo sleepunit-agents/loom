@@ -988,3 +988,6 @@ one-off quotas and the conversation mutation boundary remain unfinished.
 The in-process schedule-capacity fixtures cover the twenty-first refusal without
 partial rows/events, owner exemption, replacement/removal, disabled and historical
 rows, separate target-agent shares, ignored forged origin and restart persistence.
+Matching origin cannot bypass revoked project policy or the private local dispatch
+hold; both probes have a permitted ordinary Runtime-call positive control.
+Archived origin text remains uncounted and unstamped after restart.
