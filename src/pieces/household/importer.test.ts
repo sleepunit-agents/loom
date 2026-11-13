@@ -87,3 +87,28 @@ it('recovers a missing cookie key on an unchanged repeat without resetting sessi
   expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(f.files['ui-cookie.key']);
   expect(store.spendLink('link',1001)).toBeNull();
 });
+it('compares piece ids independent of locale or SQLite ordering', async () => {
+  const f = await fixture();
+  for (const id of ['Z','a','a-b','ab']) { const dir = join(f.from,'pieces',id); mkdirSync(dir); writeFileSync(join(dir,'settings.json'),JSON.stringify({id})); }
+  expect(importHousehold(f.app.db,f.home,f.from,1000)).toMatchObject({ imported:true,counts:{pieces:5} });
+});
+it('refuses a reconstructed content discrepancy and rolls every concern back', async () => {
+  const f = await fixture();
+  expect(() => importHousehold(f.app.db,f.home,f.from,1000,{interrupt:()=>new HouseholdRows(f.app.db,'members').put('pollock',{person:'pollock',role:'member',agents:[]})})).toThrow('content comparison failed');
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+});
+it('retries after interruption between durable key publication and committing the receipt', async () => {
+  const f = await fixture();
+  // Abort on receipt insertion, after the durable key exists. The schema and
+  // all app tables roll back; the filesystem key is deliberately retained.
+  const { migrateHouseholdTables } = await import('../../core/household/schema.js');
+  migrateHouseholdTables(f.app.db);
+  f.app.db.exec("CREATE TRIGGER interrupt_receipt BEFORE INSERT ON household_imports BEGIN SELECT RAISE(ABORT, 'power lost after key'); END");
+  expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('power lost after key');
+  expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(f.files['ui-cookie.key']);
+  expect(new HouseholdDatabase(f.app.db).document()).toBeUndefined();
+  expect(new HouseholdRows(f.app.db,'imports').entries()).toEqual([]);
+  f.app.db.exec('DROP TRIGGER interrupt_receipt');
+  expect(importHousehold(f.app.db,f.home,f.from,1000).imported).toBe(true);
+  expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(f.files['ui-cookie.key']);
+});

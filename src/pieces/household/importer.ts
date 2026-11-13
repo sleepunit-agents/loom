@@ -83,10 +83,10 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     const pieces = new HouseholdRows(db, 'piece_settings');
     for (const [id, value] of settings) pieces.put(id, value);
     options.interrupt?.();
-    const same = (a: unknown, b: unknown) => { if (!isDeepStrictEqual(a,b)) throw new Error('Household import content comparison failed'); };
-    same(new HouseholdDatabase(db).document(), raw);
-    same(tokenStore.document(), tokens); same(tokenStore.used(), used);
-    same(sessionStore.read(), sessions); same(pieces.entries(), [...settings].sort(([a],[b]) => a.localeCompare(b)));
+    const assertImportContentEqual = (a: unknown, b: unknown) => { if (!isDeepStrictEqual(a,b)) throw new Error('Household import content comparison failed'); };
+    assertImportContentEqual(new HouseholdDatabase(db).document(), raw);
+    assertImportContentEqual(tokenStore.document(), tokens); assertImportContentEqual(tokenStore.used(), used);
+    assertImportContentEqual(sessionStore.read(), sessions); assertImportContentEqual(Object.fromEntries(pieces.entries()), Object.fromEntries(settings));
     if (checksumOf(snapshot(from)) !== checksum) throw new Error('Source changed during household import');
     if (key && !previousKey) copyKey(home, key);
     receipts.put('legacy-home', { checksum, at: now });
