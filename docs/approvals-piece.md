@@ -107,13 +107,12 @@ using `LOOM_URL` and `LOOM_TOKEN_FILE`. The compatibility client is transport
 only and never opens old state. LOOM_URL is an HTTP(S) origin without URL credentials, path, query or fragment; redirects are refused. The client validates daemon output and preserves one operation id across at most four attempts. Returning to the old side restarts it on its
 untouched stores until the owner retires those stores.
 
-## Remaining before merge
+## Shipped and remaining integration
 
-- Finish browser verification of the kit app, open confirmation guard, Rules and history.
-- Register in the new next-mode composition when that root lands (fixture, standalone startLoom and app registry are wired).
-- Complete old contract cases and independent CLI output/exit oracle fixtures.
+- The piece, importer, API client and kit app shipped in #856; #869 fixes mobile wrapping. CI verified the two-window answer/stale guard, Rules and history, with six inspected screenshots at 390, 1280 and 1920 in Neon Noir and Daylight. Evidence: loom notes `loom/2026-11-12-approvals-ci-evidence` and `loom/2026-11-12-approvals-mobile-evidence`. No local browser suite was run.
+- Next mode now registers approvals on the same database, operations and Live instance as Sharing and Tasks, without requiring a fixture installer. The existing app registry supplies `/p/approvals-preview`. HTTP coverage verifies request, open, restricted answer, exact spend/retry, persisted history across restart and rollback when an application role is absent. Poisoned old JSON stores are ignored.
+- The independent frozen CLI corpus covers 62 old-program cases; broader parser abbreviations, complex quoting and combinations of errors are not exhaustive.
+- Supply trusted new-runtime caller resolution, proven conversation membership and project repository metadata. Until then callers remain unknown, body-supplied principal/project/conversation fields confer no authority, and no conversation is attached.
 - Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
-- Complete owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
+- Complete actual owner-application integration cases. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes have tests.
 - Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. The separate persistence/importer/client review also stopped at three rounds: final BLOCKING with two CRITICAL findings, both folded with regression tests (command stderr credential redaction and map-only project scope). No fourth read and no CLEAR claimed; final folds are unreviewed. Full ledger: loom note loom/2026-11-12-approvals-importer-client-review.
-- One two-window app test; screenshots at 390, 1280, 1920 in Neon Noir and
-  Daylight as CI artifacts; no browser suite on loom's machine.

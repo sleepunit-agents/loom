@@ -28,7 +28,8 @@ export interface Ask extends RaiseAsk {
   state: 'open' | 'answered' | 'resolved';
   createdAt: number;
   changedAt: number;
-  answer?: AskAnswer & { by: Viewer; at: number };
+  /** Legacy imports know a reply was delivered, never its words. Not accepted by answer writes. */
+  answer?: (AskAnswer | { kind: 'replied' }) & { by: Viewer; at: number };
   resolution?: string;
 }
 export interface AgentStatus extends Scope {

@@ -122,3 +122,23 @@ This is a prerequisite for the two Knowledge actions, not their registration.
 The helper alone supplies no receipt spanning the content store and loom.db.
 The action integration must avoid repeating a committed verification when saving
 the core retry receipt fails, and publish live changes after a successful commit.
+
+## Source inventory and transport ownership
+
+`mindSources(db, home)` reads a startup snapshot of the household metadata in
+`loom.db`. It returns the commons knowledge/people paths and each listed agent's
+memories path. Missing metadata returns no inventory, even if household.json is
+present. It neither creates directories/stores nor discovers unlisted agents.
+Household source changes take effect on restart; the caller supplies the home.
+
+`listenForTouchSources(operations, sources)` owns a group of source listeners.
+If one bind fails, startup closes all listeners it acquired and preserves the
+original error. Closing a successful group is idempotent, including concurrent
+close calls. The foundation's synchronous reader shutdown remains separate:
+composition must await transport shutdown before closing readers and loom.db.
+
+These are additive composition helpers, not next-mode enablement. Composition
+still must select existing stores, supply source viewers and canonical resolvers,
+hold the daemon home lock, and handle stale endpoints before starting the group.
+An occupied endpoint is always refused; this helper never removes one. Knowledge
+actions/receipts and the complete source binding remain required before enablement.

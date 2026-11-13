@@ -24,6 +24,8 @@ export const recordTurnInput = z.object({ agent: agentId, project: slug.optional
   if (own.has(input.turn.kind) && (input.turn.from.kind !== 'agent' || input.turn.from.id !== input.agent)) ctx.addIssue({ code: 'custom', message: 'Own turn must come from its conversation agent' });
 });
 export interface Conversation extends Scope {
+  /** Original bounds retained when old lexical timestamp comparisons need repair. */
+  legacyBounds?: { started: string; last: string };
   id: string; agent: string; venue: string; place: string; label: string | null;
   people: string[]; agents: string[]; projects: string[]; started: string; last: string; turns: number;
 }

@@ -3,11 +3,16 @@ import { migrate, operation, maySee, mayAct, type Db, type Operations, type Live
 import { records, type RecordKind } from './records.js';
 import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
+import { installBoxOperations } from './boxes.js';
+import { installRevokeBox } from './revoke.js';
+import type { RuntimeCredentials } from './credentials.js';
 const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
-/** Metadata reads only. Mutating operations are installed with their runner/delivery implementations. */
-export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+/** Control metadata. Execution is installed separately with its runner implementation. */
+export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: { credentials?: RuntimeCredentials } = {}) {
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
+  installBoxOperations(db, operations, sharing);
+  installRevokeBox(db, operations, sharing, options.credentials);
   const names = { box: 'listBoxes', job: 'listJobs', settings: 'listSettings', binding: 'listBindings' };
   for (const kind of Object.keys(records) as RecordKind[]) {
     const type = `runtime.${kind}`, name = `runtime.${names[kind]}`;

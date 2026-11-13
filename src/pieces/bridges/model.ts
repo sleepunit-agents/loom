@@ -18,6 +18,7 @@ export interface Message {
   id: string; channel: string; parent?: string; thread?: string; dm: boolean; group?: boolean;
   /** Original platform event time; never the receipt time. */
   at?: string; label?: string;
+  /** Explicit summons after platform resolution, not the gateway's raw reply-ping list. */
   user: string; text: string; mentions: string[]; bot?: boolean; webhook?: string;
 }
 export interface Address { channel: string; thread?: string; dm: boolean; group?: boolean }
