@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,6 +8,10 @@ vi.mock('../pieces/attention/importer.js', () => ({ importAttention: vi.fn(() =>
 vi.mock('../pieces/clock/importer.js', () => ({ importClock: vi.fn(() => 'clock-result') }));
 vi.mock('../pieces/approvals/importer.js', () => ({ importApprovals: vi.fn(() => 'approvals-result') }));
 vi.mock('../pieces/changes/importer.js', () => ({ importChanges: vi.fn(() => 'changes-result') }));
+vi.mock('../pieces/comms/importer.js', () => ({ importComms: vi.fn(async () => 'comms-result') }));
+vi.mock('./migration-comms-key.js', () => ({ publishMigrationCommsKey: vi.fn() }));
+import { importComms } from '../pieces/comms/importer.js';
+import { publishMigrationCommsKey } from './migration-comms-key.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
@@ -18,7 +22,7 @@ import { importChanges } from '../pieces/changes/importer.js';
 import { createMigrationRegistry, type MigrationContext } from './migration-registry.js';
 let root: string;
 afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); vi.clearAllMocks(); });
-it('forwards destination, resolved inputs, options and results to all six import functions', () => {
+it('forwards destination, resolved inputs, options and results to all seven import functions', async () => {
   root = mkdtempSync(join(tmpdir(), 'migration-adapters-'));
   mkdirSync(join(root, 'input')); mkdirSync(join(root, 'second'));
   // Sentinel database is never opened: mocks distinguish each direct function and its arguments.
@@ -27,8 +31,10 @@ it('forwards destination, resolved inputs, options and results to all six import
   const options = { marker: 'exact-options-object' };
   const entries = createMigrationRegistry().order().importers;
   for (const entry of entries) {
-    const paths = entry.name === 'attention' ? ['input', 'second'] : ['input'];
-    expect(entry.run(context, { paths, options })).toBe(`${entry.name}-result`);
+    const paths = entry.name === 'comms' ? ['comms.db','household.db','comms.key','comms.salt'].map(name => `input/${name}`)
+      : entry.name === 'attention' ? ['input', 'second'] : ['input'];
+    if (entry.name === 'comms') for (const path of paths) writeFileSync(join(root,path),'sentinel');
+    expect(await entry.run(context, { paths, options })).toBe(`${entry.name}-result`);
   }
   const input = join(root, 'input');
   expect(importHousehold).toHaveBeenCalledExactlyOnceWith(db, context.home, input, 123);
@@ -37,5 +43,7 @@ it('forwards destination, resolved inputs, options and results to all six import
   expect(importClock).toHaveBeenCalledExactlyOnceWith(db, input, 123);
   expect(importApprovals).toHaveBeenCalledExactlyOnceWith(db, input, 123, options);
   expect(importChanges).toHaveBeenCalledExactlyOnceWith(db, input, options);
-  for (const entry of entries.filter(e => e.name !== 'attention')) expect(() => entry.run(context, { paths: [], options })).toThrow('exactly one');
+  expect(publishMigrationCommsKey).toHaveBeenCalledExactlyOnceWith(join(input,'comms.key'), context.home);
+  expect(importComms).toHaveBeenCalledExactlyOnceWith(db, input, context.home, {}, openSnapshotSqlite);
+  for (const entry of entries.filter(e => e.name !== 'attention' && e.name !== 'comms')) expect(() => entry.run(context, { paths: [], options })).toThrow('exactly one');
 });
