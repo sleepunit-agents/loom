@@ -10,6 +10,7 @@ import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
 import { bindComposerViewport } from './viewport';
 import { bindThreadRead } from './read';
+import { folderThreads } from './threads';
 import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
@@ -84,7 +85,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
 export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){
  const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);const path=shellPath??localPath;const selected=path.split('/thread/')[1]?`th:${path.split('/thread/')[1]}`:undefined;const base='/p/comms-preview';
  const [folder,setFolder]=useState('live');const [creating,setCreating]=useState(false);const [agent,setAgent]=useState('');
- const {records,status}=useRecords<Thread>('thread',folder==='archived'?'archived':undefined);
+ const {records,status}=useRecords<Thread>('thread','all');
  const [who,setWho]=useState<Call<{member:string;agents:string[]}>>();const identity=useRequest(who);
  useEffect(()=>{if(status==='live')setWho(call('comms.agents',{}));},[status]);
  const mine=identity.result?.ok?identity.result.value:undefined;
@@ -93,10 +94,10 @@ export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:str
  const conversationPath=path.startsWith(`${base}/conversation/`)?path.slice(`${base}/conversation/`.length):undefined;
  let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
  if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
- const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
- return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle="Threads" listMeta={records.length}
+ const listed=folderThreads(records,folder);const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
+ return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'background',label:'Background work'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle={folder==='background'?'Background work':folder==='archived'?'Archived':'Threads'} listMeta={listed.length}
   listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button></div>}
-  list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{[...records].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.last-a.last).map(t=><Row key={t.id} title={t.title??`New thread with ${t.agent}`} meta={t.agent} unread={t.unread} selected={selected===t.id} onClick={()=>navigate(t.id)}/>)}</List>}
+  list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{listed.map(t=><Row key={t.id} title={t.title??`New thread with ${t.agent}`} meta={t.agent} unread={t.unread} selected={selected===t.id} onClick={()=>navigate(t.id)}/>)}</List>}
   reader={creating&&mine?<div className="grid gap-3 p-4"><h1>New thread</h1><label>Agent<select value={ownedAgent} onChange={e=>setAgent(e.target.value)}>{mine.agents.map(id=><option key={id}>{id}</option>)}</select></label>{ownedAgent?<Composer key={ownedAgent} member={mine.member} agent={ownedAgent} onOpened={navigate} enabled={status==='live'}/>:<Empty title="No agents available"/>}</div>:current?<ThreadReader key={current.id} thread={current} onDeleted={()=>navigate()}/>:selected?<Empty title="This thread is no longer in view"/>:null}
   open={!!selected||creating} onBack={()=>navigate()} backLabel="Threads" blank={<Empty title="Open a thread" text="Choose a thread or start one with your agent."/>}/>
 }

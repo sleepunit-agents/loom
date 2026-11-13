@@ -67,15 +67,23 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
  const bodyAlive = (t:Thread) => t.working && typeof t.aliveAt==='number' && t.aliveAt >= (t.workingSince??t.last)-60_000 && t.aliveAt <= clock.now()+60_000
   ? {at:t.aliveAt,...(typeof t.aliveTokens==='number'?{tokens:t.aliveTokens}:{})} : undefined;
+ const jobState = (t:Thread) => {
+  const conversation=o.conversation?.(t.conversation);
+  const ownConversation=`cv-${createHash('sha256').update(`${t.agent}\0loom\0${t.id}`).digest('hex').slice(0,12)}`;
+  const job=t.conversation!==ownConversation&&conversation?.agent===t.agent&&conversation.venue==='spawn';
+  const background=job&&!db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='message' AND sender=? LIMIT 1").get(t.id,t.member);
+  return {job,background};
+ };
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
   const {firstHash, firstId, aliveAt, aliveTokens, inFront, ...record} = t;
-  return {...record,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),unread:(reply.seq ?? 0)>t.readSeq};
+  return {...record,...jobState(t),...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),unread:(reply.seq ?? 0)>t.readSeq};
  };
  live.register({name:'thread',windowOnly:true,
   ids:()=> (db.prepare('SELECT id FROM comms_threads').all() as {id:string}[]).map(r=>r.id),
   read:(id,v)=> { const t=thread(db,id); return t && see(v,t) ? visibleThread(t) : undefined; },
-  inScope:(r,scope)=> scope === 'archived' ? r.archived !== null : r.archived === null,
+  inScope:(r,scope)=> scope==='all'||(scope==='archived'?r.archived!==null:r.archived===null&&(scope==='background'?r.background===true:r.background!==true)),
+  refreshOn:change=>change.type==='conversation',
  });
  live.register({name:'message',windowOnly:true,
   ids:scope=>scope ? messageRows(db,scope).map(r=>messageId(r.thread,r.seq)) : [],
@@ -87,7 +95,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional(),endGeneration:z.number().int().optional()});
  const hashText=(text:string)=>{const salt=db.prepare("SELECT value FROM comms_meta WHERE key='legacy-salt'").get() as {value:string}|undefined;return salt?createHmac('sha256',Buffer.from(salt.value,'base64')).update(`words\0${text}`).digest('hex'):key.hash(text);};
  const agentThreads = (member:string) => (db.prepare('SELECT record FROM comms_threads WHERE member=?').all(member) as {record:string}[])
-  .map(r=>JSON.parse(r.record) as Thread).filter(t=>t.archived===null&&see({kind:'member',id:member},t)).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
+  .map(r=>JSON.parse(r.record) as Thread).filter(t=>t.archived===null&&!jobState(t).background&&see({kind:'member',id:member},t)).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
  const agentSummaries = (member:string) => {
   const agents=[...(o.sharing().members[member]?.agents??[])];
   const threads=agentThreads(member);

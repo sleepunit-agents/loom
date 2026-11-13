@@ -214,3 +214,15 @@ it('shows thinking only for a retained pending turn, clearing on progress, termi
  expect(thinkingView(thread,[send],false)).toBeNull();
  expect(thinkingView(thread,[],true)).toBeNull();
 });
+
+import { folderThreads } from '../../web/src/pieces/comms/threads.js';
+it('keeps background work separate, promotes member follow-ups and ranks pins then unread',()=>{
+ const base={archived:null,pinned:false,unread:false,last:100};
+ const rows=[{...base,id:'ordinary'},{...base,id:'unread',unread:true,last:1},{...base,id:'pin',pinned:true,last:0},{...base,id:'job',background:true},{...base,id:'archive',background:true,archived:5}];
+ expect(folderThreads(rows,'live').map(t=>t.id)).toEqual(['pin','unread','ordinary']);
+ expect(folderThreads(rows,'background').map(t=>t.id)).toEqual(['job']);
+ expect(folderThreads(rows,'archived').map(t=>t.id)).toEqual(['archive']);
+ const selected=rows[3];selected.background=false;
+ expect(folderThreads(rows,'live')).toContain(selected);expect(folderThreads(rows,'background')).toEqual([]);
+ expect(rows.map(t=>t.id)).toEqual(['ordinary','unread','pin','job','archive']);
+});

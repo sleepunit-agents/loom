@@ -226,5 +226,31 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByText('Conversation unavailable',{exact:true}).count()).toBe(1);
   expect(await b.getByText('Conversation label 101',{exact:true}).count()).toBe(0);
   await a.getByRole('button',{name:'Delete',exact:true}).click();await a.getByRole('button',{name:'Keep thread',exact:true}).click();expect(await a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
+  // Explicit fixture job: preserve a supplied spawn conversation without starting
+  // it through Comms. Production spawn creation remains a separate role.
+  const job=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturejobaaaaaa',text:'Assigned job brief'},'fixture-job',true);
+  if(!job.ok)throw new Error('job fixture failed');const jobPlace=(job.value as {thread:string}).thread;await comms.deliver('art',jobPlace,1);
+  const jobRow=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(jobPlace) as {record:string}).record);
+  jobRow.conversation='cv-spawn-fixture';jobRow.title='Assigned background job';
+  loom.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(jobRow),jobPlace);
+  loom.db.prepare("UPDATE comms_messages SET sender='art' WHERE thread=? AND kind='message'").run(jobPlace);
+  conversations.set('cv-spawn-fixture',{agent:'art',venue:'spawn',version:'one'});loom.live.changed([{type:'conversation',id:'cv-spawn-fixture'}]);
+  await b.clock.setSystemTime(clock.now());await b.clock.resume();await b.setViewportSize({width:1280,height:900});
+  await b.goto(`${loom.url}/p/comms-preview`);
+  await expect.poll(()=>b.getByRole('button',{name:'New thread',exact:true}).isEnabled()).toBe(true);
+  expect(await b.getByText('Assigned background job',{exact:true}).count()).toBe(0);
+  await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Background work',exact:true}).click();
+  await expect.poll(()=>b.getByText('Assigned background job',{exact:true}).count()).toBe(1);
+  await b.getByText('Assigned background job',{exact:true}).click();
+  await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
+  const startsBeforeJoin=starts.length;
+  await b.getByRole('textbox',{name:'Message',exact:true}).fill('A member follow-up');await b.getByRole('button',{name:'Send',exact:true}).click();
+  await expect.poll(()=>starts.length).toBe(startsBeforeJoin+1);
+  await expect.poll(()=>b.getByRole('heading',{name:'Assigned background job',exact:true}).count()).toBe(1);
+  // Promotion removes the list row but preserves the direct-link reader.
+  await expect.poll(()=>b.getByLabel('Thread list').getByText('Assigned background job',{exact:true}).count()).toBe(0);
+  await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Threads',exact:true}).click();
+  await expect.poll(()=>b.getByLabel('Thread list').getByText('Assigned background job',{exact:true}).count()).toBe(1);
+
  }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60000);

@@ -13,6 +13,63 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('groups assigned spawn threads until their member writes, with scoped Live promotion',async()=>{
+ const conversations=new Map<string,{agent:string;venue:string;version:string}>();
+ const s=await setup({conversation:id=>conversations.get(id)});const place=await s.open();await s.comms.deliver('art',place,1);
+ const saved=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ saved.conversation='cv-spawn-fixture';s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(saved),place);
+ conversations.set(saved.conversation,{agent:'art',venue:'spawn',version:'one'});
+ s.app.db.prepare("UPDATE comms_messages SET sender='art' WHERE thread=? AND kind='message'").run(place);
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ const snapshot=(scope?:string)=>new Promise<Record<string,unknown>[]>(resolve=>{const receive=(raw:Buffer)=>{const frame=JSON.parse(raw.toString());if(frame.kind==='set'&&frame.type==='thread'&&frame.scope===scope){ws.off('message',receive);resolve(frame.records);}};ws.on('message',receive);ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope}));});
+ expect(await snapshot()).toEqual([]);
+ expect(await snapshot('background')).toMatchObject([{id:place,job:true,background:true}]);
+ expect(await snapshot('all')).toMatchObject([{id:place,job:true,background:true}]);
+ const summaries=await s.call('agents',{});expect(summaries).toMatchObject({ok:true,value:{summaries:[{agent:'art',unread:0}]}});
+ expect(JSON.stringify(summaries)).not.toContain(place);
+ // Merely reading the job does not promote it.
+ await s.call('change',{thread:place,action:'read',seq:1});
+ expect(await snapshot('background')).toHaveLength(1);
+ const frames:Record<string,unknown>[]=[];let promoted=()=>{};const promotion=new Promise<void>(resolve=>{promoted=resolve;});ws.on('message',raw=>{const frame=JSON.parse(raw.toString());frames.push(frame);if(frame.kind==='put'&&frame.scope==='all'&&frame.record.background===false)promoted();});
+ await s.call('send',{thread:place,id:'followupaaaaaaaa',text:'Join this work'});await s.comms.deliver('art',place,2);await promotion;
+ expect(frames).toContainEqual({kind:'del',type:'thread',scope:'background',id:place});
+ expect(frames.some(f=>f.kind==='put'&&f.scope===undefined&&(f.record as {id?:string}).id===place)).toBe(true);
+ expect(await snapshot()).toMatchObject([{id:place,job:true,background:false}]);
+ await s.restart();expect(await s.call('agents',{})).toMatchObject({ok:true,value:{summaries:[{last:{thread:place}}]}});
+});
+it('refreshes background classification on authoritative conversation changes and keeps archived jobs in archive',async()=>{
+ const conversations=new Map<string,{agent:string;venue:string;version:string}>();
+ const s=await setup({conversation:id=>conversations.get(id)});const place=await s.open();await s.comms.deliver('art',place,1);
+ const saved=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const cv='cv-spawn-fixture';saved.conversation=cv;s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(saved),place);
+ s.app.db.prepare("UPDATE comms_messages SET sender='art' WHERE thread=?").run(place);
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ const snapshot=(scope?:string)=>new Promise<Record<string,unknown>[]>(resolve=>{const receive=(raw:Buffer)=>{const frame=JSON.parse(raw.toString());if(frame.kind==='set'&&frame.type==='thread'&&frame.scope===scope){ws.off('message',receive);resolve(frame.records);}};ws.on('message',receive);ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope}));});
+ expect(await snapshot()).toMatchObject([{id:place,job:false,background:false}]);
+ conversations.set(cv,{agent:'other-agent',venue:'spawn',version:'one'});
+ expect(await snapshot()).toHaveLength(1);
+ conversations.set(cv,{agent:'art',venue:'spawn',version:'two'});
+ const update=once(ws,'message');s.app.live.changed([{type:'conversation',id:cv}]);
+ expect(JSON.parse((await update)[0].toString())).toEqual({kind:'del',type:'thread',id:place});
+ expect(await snapshot('background')).toHaveLength(1);
+ await s.call('change',{thread:place,action:'archive'});
+ // Use a fresh connection to avoid queued updates for existing subscriptions.
+ ws.terminate();
+ const ws2=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan','x-window':'yes'}});cleanup.push(()=>ws2.terminate());await once(ws2,'open');
+ const next=once(ws2,'message');ws2.send(JSON.stringify({kind:'subscribe',type:'thread',scope:'archived'}));
+ expect(JSON.parse((await next)[0].toString()).records).toMatchObject([{id:place,background:true}]);
+});
+for(const scope of ['background','all'] as const)it(`keeps ${scope} thread scopes restricted to the owning member window`,async()=>{
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one'})});const place=await s.open();await s.comms.deliver('art',place,1);
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ t.conversation='cv-job';s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),place);
+ s.app.db.prepare("UPDATE comms_messages SET sender='art' WHERE thread=?").run(place);
+ for(const [who,window] of [['other',true],['jonathan',false]] as const){
+  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':who,'x-window':window?'yes':'no'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+  const answer=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope}));const frame=JSON.parse((await answer)[0].toString());
+  if(window)expect(frame.records).toEqual([]);else expect(frame.code).toBe('denied');
+ }
+});
 it('offers unread reply notifications only to the opener, with metadata and stable latest-reply keys',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  for(const kind of ['card','ask','error'] as const)await s.comms.post('art',place,{id:kind,kind,text:`private ${kind} words`});
@@ -86,12 +143,12 @@ it('refreshes foreground presence on unchanged reads without moving activity or 
  expect((await s.call('change',{thread:place,action:'read',seq:1},member,false)).ok).toBe(false);
  expect(saved()).toEqual(before);
 });
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
+async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
  const start=()=>startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{receipt:overrides.receipt,deliver:async d=>{await overrides.deliver?.(d);deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,conversation:overrides.conversation,runtime:{receipt:overrides.receipt,deliver:async d=>{await overrides.deliver?.(d);deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
  });let app=await start();cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
@@ -612,7 +669,8 @@ it('accepts the base32 alphabet and deduplicates first sends and later sends',as
 });
 it('binds runtime readers to trusted agent and house conversations with bounded read-only pages',async()=>{
  const s=await setup();const place=await s.open();const other=await s.open();
- const cv=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
+ const saved=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const cv='cv-spawn-fixture';saved.conversation=cv;s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(saved),place);
  const reader=s.comms.reader({agent:'art',conversation:cv,houseConversations:[cv],valid:()=>true});
  await s.comms.post('art',place,{id:'r1',kind:'reply',text:'first'});
  await s.comms.post('art',place,{id:'r2',kind:'reply',text:'second'});

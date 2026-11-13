@@ -65,7 +65,7 @@ data does not remove the behavior it delivered.
 
 | Old surface | New home | State / remaining behavior |
 | --- | --- | --- |
-| `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list and pins work; background jobs and aggregate unread still missing. |
+| `/comms` list, archive filter, pins | `thread` records and kit list | Partial: own-thread list, pins/unread ranking and separate Background work grouping work; spawn creation and aggregate unread UI remain missing. |
 | `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend rejects ids outside that format before encryption or writes. |
 | `/comms/agents`, `agentsComms` | `comms.agents` | Backend present: owned ids plus latest open thread, count of unread open threads and first unread line (160 graphemes). Desk UI binding remains. Summaries recheck ownership, exact thread/message snapshots and retention after crypto; read results are never persisted in retry storage. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
@@ -81,7 +81,7 @@ data does not remove the behavior it delivered.
 | Adapter `reconcile` | Runtime role | Partial: message recovery supports accepted/not-accepted/unknown runtime receipts with snapshot/ownership/retention checks; production binding and full continuation/deleted/deadline semantics remain missing. |
 | Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
-| Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
+| Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Partial: authoritative spawn metadata groups assigned jobs separately until a member message promotes them; runtime spawn creation preserving the supplied conversation, brief/parent and report dedupe remain missing. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
 | Activity route, `postActivity` | `Comms.activityCards` and `Comms.post` | Partial: trusted private batches now validate atomically, preserve original tool/timing/deadline and enforce body/detail/plan bounds; runtime capture/redaction and production binding remain missing. The generic trusted `post` path still exists for replies/asks/errors and legacy card callers; it is not the validated activity-batch API. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
@@ -663,3 +663,33 @@ server timestamp: the foreground test's new 30-second advance had made the
 relative 14-day jump expire the row before Load earlier. No assertion was
 removed. Current-head browser CI must validate this correction; no browser ran
 locally. Review budgets remain backend/security 2/3 and importer 1/3.
+
+
+Assigned spawn jobs now appear in a separate Background work folder until their
+member writes in them. Classification requires authoritative new-side metadata
+for the same agent and a spawn conversation distinct from the thread's normal
+Comms conversation. Reading or opening a job does not promote it. A member
+message promotes it even after its words expire; sequence/sender metadata remains.
+Background jobs do not contribute to the ordinary agent desk summaries. Archived
+jobs appear in Archived. The default thread scope excludes background jobs;
+`background` and `all` scopes retain the same member-window ownership policy.
+Conversation metadata changes refresh the derived flags through Live.
+
+The app subscribes to all its member's thread metadata, filters folders locally,
+and keeps direct-link selection separate from folder membership. Sending a
+follow-up therefore removes the background row while preserving the reader.
+Lists now rank pinned, then unread, then recent threads. This unit does not
+create spawn threads or implement Watch/Join controls; production must supply
+authoritative conversation metadata and emit conversation changes. Missing
+metadata follows the legacy non-job classification, without any old-store lookup.
+
+Two new socket regressions first failed because spawn jobs stayed in Threads
+and the job/background flags were absent. Four backend cases now cover scoped
+promotion, restart, desk exclusion, metadata changes, archive and other-member /
+non-window denial. A helper case covers folder membership and ranking. All 323
+affected tests, root TypeScript and the web production build pass. The existing
+single browser proof now covers folder separation, opening a job, follow-up
+promotion and preserving its reader. Current-head CI must validate the new
+browser assertions; no browser ran locally. Incoming c185bb6 passed its complete
+Comms browser proof and all CodeQL checks; main CI was still queued at inspection.
+Aggregate review budgets remain backend/security 2/3 and importer 1/3.
