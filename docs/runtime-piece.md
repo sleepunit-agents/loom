@@ -768,3 +768,25 @@ A failure after running/waiting is never described as a failure to start.
 
 Automatic bounded start retries and broader execution reconciliation remain
 part of t-2209, along with its enrollment, accounts, screens, importer and client.
+
+
+## Trusted Approvals caller
+
+`conversationRuntime(...).approvalCaller(viewer, proof)` is composed as
+`ApprovalOptions.caller` in next mode. The optional string is untrusted and does
+not establish identity. Central Signin retains authenticated agent/service identity even without a job,
+and optional job proof on the exact Viewer object; copying a Viewer removes that proof. Runtime
+rechecks job state, current house/hosting eligibility and box revocation, then
+uses the same current binding and Comms membership checks as private body reads.
+A proven member is the principal (household owners become `owner`), and its one
+person, conversation and current project come from the database. The `who.where`
+value is the job id with the centrally authenticated service suffix in parentheses
+when present, preserving Approvals' service-house spend constraint. A service
+credential without a job retains its suffix with `a body` as the location, even
+though its principal remains unknown; losing that suffix would widen spending.
+
+A shared agent credential, missing job or copied Viewer establishes no principal.
+An authenticated job without current private membership remains `?`; starting a
+job or carrying a project is not evidence of its requesting person. Runtime's
+owner application for grant, principal-reset and box-write-off remains pending.
+This resolver reads only next-mode state and creates no authority store.
