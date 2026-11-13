@@ -1017,3 +1017,47 @@ Importer verification requires the new attempt table to remain empty: archived
 old failures do not become new automatic starts. External execution/history,
 original queued-delivery reconciliation, owner gate/policy adoption, trusted
 Bridges intake/replies and their notifications remain unfinished full-rebuild work.
+
+## Body policy preparation for external delivery
+
+`body-policy.ts` ports the old `policy.mjs` compilation boundary without
+installing a public operation. The owning source must supply authenticated
+senders, current gates and policy, complete platform roster and current
+principal history. Platform descriptions explicitly name `kind: channel|dm|group`;
+Every platform description names the actual gate venue identifier.
+A DM has exactly one member and a group has at least two; only a DM can carry
+a person’s exclusive standing authority. Channels never carry that authority.
+DMs and groups require the complete member roster, while channels use owner
+policy and gate venue readers. Missing kind or malformed gate keys refuse.
+Adapter tiers, grants, cards and brief prose cannot supply
+that authority. Standing restrictions follow every named person; standing
+authority appears only for a tier-2 person alone, asking solely for themselves,
+with no other or unknown historical sender or owner participation.
+
+Guest status includes the sender, every room member, configured guest places,
+gate venues and retained narrowing. A guest requires a deny list, a repo floor
+reference, complete bounded readers and all of their cards; another member's
+card is never included while a guest reads. Invalid rosters/readers fail rather
+than being truncated. All file references must be inside the agent repository.
+The compiler does no filesystem IO; the separate runner must resolve every
+required reference and refuse missing, empty, oversized or escaping files.
+
+The complete effective rules (including gates words, deny list, file references
+and included cards) determine the session key. `sameBodyRules` permits only an
+exact match, so policy edits cannot keep a body with older rules. Compilation
+snapshots inputs before asynchronous card lookups; owning delivery must recheck
+current policy and authenticated binding after awaits before any release.
+Compilation never grants a registry permission or authorizes a launch.
+
+| Old helper | New helper / remaining owning work |
+| --- | --- |
+| `policyProblem` | `bodyPolicy` validates the whole document |
+| `rulesFor`, `gatesWords` | `compileBodyRules`: typed sections, narrowing and complete effective-rule key |
+| `sameRules` | `sameBodyRules`: exact effective-key match, including policy and file changes |
+| `briefs.mjs` filesystem composition | Remains separate-runner execution work; no host files read in the daemon |
+
+Persisting/adopting archived gates, policies and original proposals, authenticated
+Bridges intake, body feed/reseat/history, runner file composition and actual
+reply integration remain required on t-2209 before external delivery is usable.
+The existing Bridges missing-role hold remains installed. This compiler alone
+activates no archived restrictions or authority and starts no bodies.
