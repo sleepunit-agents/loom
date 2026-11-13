@@ -308,3 +308,45 @@ claim a body started. `runtime.startBody` and the Clock adapter remain
 unimplemented until they can honor their started/held/uncertain contract.
 Input retention/cleanup must be part of the final job lifecycle; this slice
 retains inputs and provides no deletion operation. No old route is retired.
+
+
+## House build configuration
+
+The build-identity portion of old `set-agent` / `setAgent` maps to
+`runtime.configureHouse {agent, house: {repo, houseFile?, branch?}}`. The central
+`agent-setup` rule requires the calling member to own this agent. Household
+ownership alone does not confer setup of another member's agent; agents,
+runners and services cannot configure houses. The acknowledgement is `{agent}`.
+
+`runtime.settings.house` stores the build identity, visible through the existing
+centrally scoped settings collection/live type. Only credential-free HTTPS
+URLs with a nonempty raw authority and no userinfo or query/fragment delimiters
+(including empty ones), `git@host:path` locators and absolute
+repository paths are accepted. Git hostnames contain only letters, digits, dot,
+underscore or hyphen and start with a letter or digit. The structured API deliberately refuses old
+HTTPS locators containing credentials or query/fragment material: repositories
+are metadata, never a credential carrier. Private repository access must use
+the future secret-reference grant path. Nothing opens or checks the repository.
+`houseFile` is a relative repository path with no empty, dot or parent segments,
+defaulting to `house/house.json`; branch uses the old bounded character grammar.
+These are data, never shell commands; a future runner must pass them as arguments.
+
+Each save replaces the build identity (omitting branch clears it) while
+preserving box preferences and model settings. Preference saves preserve house
+configuration. Existing settings need no rewrite: the JSON record gains an
+optional field, with no new SQL migration. Identical saves preserve `changedAt`
+and publish nothing; changed saves publish `runtime.settings` after commit.
+Configuration, notification and retry receipt use the shared transaction. A
+replay returns its old acknowledgement without restoring an older configuration.
+
+This operation grants no nested containers, GPU, ports, tailnets, secrets,
+repository credentials, harness logins, scopes or steering rights. Those old
+`set-agent` fields remain required in a separate centrally authorized grant path,
+including alias/scope preservation and checks; they are strictly rejected here.
+No capabilities are inferred from a repository or house file. Build reports and
+invalidation are still pending; execution must bind the effective configuration
+and invalidate stale build identity when repository, houseFile or branch changes.
+`queueBody` continues to accept nonexecutable intent before configuration.
+Configured build identity alone does not enable input fetch, credentials,
+`startBody`, slots/sessions, daemon staging release or runner execution. Those
+obligations in Durable body requests remain required before the final move.
