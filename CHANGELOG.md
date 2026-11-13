@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
+- Show Comms thread activity times in CT and live working state in the thread list.
 
 - Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
+
+- Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.
 
 - Keep a neighboring next-mode app's narrow reader from taking focus away from the chosen tile.
 
@@ -69,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
 - Preserve project scope on explicit Clock owner-vouch cards, reject mixed scopes and recheck the card scope before applying owner Allow.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
@@ -1071,6 +1074,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
 
 - Record token and session last use on the new side, including activity in open windows.
+
+- Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
 
 ## [0.16.1] - 2026-10-25
 

@@ -959,3 +959,14 @@ This completes the made-here portion only. References cited in words, note refs,
 ref chip resolution and reverse “From” links remain required. The current runtime binding is documented in runtime-piece.md; its remaining parity and final integration acceptance still need checking. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
 
 Cold review for this work-panel unit stopped at the three-round bound, raw final BLOCKING. All reported defects were folded with component/socket/browser regressions afterward; these final fixes are author-tested and CI-verified, not cold-clear. Exact raw results and reconciliation are in loom note `loom/2026-11-13-comms-work-review`. No fourth round.
+
+
+## Thread list activity
+
+The list now shows each thread's last activity time in CT and a live “working…”
+label from the existing authorized thread record. Starting or finishing work
+updates the row without selecting it or polling. The displayed activity time
+stays the thread's last activity; a heartbeat does not invent a new message time.
+The existing single browser proof checks the semantic timestamp, working/done
+updates and six list screenshots. Newest digest summaries, agent portraits,
+row gestures and dock unread counts remain unfinished.

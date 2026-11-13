@@ -41,3 +41,7 @@ export { vouchOf } from './targets.js';
 export type { ApprovalApplication } from './apply.js';
 
 export { vouchDetails, type VouchWords } from './vouch-details.js';
+
+/** Trusted consumer validation and provenance contract. */
+export { callerSchema } from './validation.js';
+export type { Caller } from './model.js';
