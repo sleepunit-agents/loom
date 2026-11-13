@@ -135,8 +135,12 @@ describe('durable daemon clock', () => {
     const between = app.set(); app.clock.advance(60_000); app.value('cancel', { id: between.id }); await settled(); expect(startBody).not.toHaveBeenCalled();
     const late = app.set(); app.clock.advance(60_000); await invoked.promise; app.value('cancel', { id: late.id });
     result.resolve({ state: 'started', body: 'racing-body' }); await settled();
-    expect(wake(app.db, late.id)).toMatchObject({ state: 'cancelled', outcome: 'Cancellation raced dispatch; a body may have started' });
+    expect(wake(app.db, late.id)).toMatchObject({ state: 'held', hold: 'uncertain', outcome: 'Cancellation raced dispatch; a body may have started' });
     expect(startBody).toHaveBeenCalledTimes(1);
+    app.value('cancel', { id: late.id });
+    app.clock.advance(86400_000); await settled();
+    expect(wake(app.db, late.id)).toMatchObject({ state: 'held', hold: 'uncertain' });
+    expect(app.call('now', { id: late.id })).toMatchObject({ ok: false, code: 'invalid' });
   });
   it('holds paused due wakes and releases in order one minute apart', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const)), app = await loom({ runtime: { startBody } });
@@ -370,6 +374,29 @@ describe('durable daemon clock', () => {
     expect(wake(app.db, uncertain.id)).toEqual(uncertain);
     expect(app.call('now', { id: uncertain.id })).toMatchObject({ ok: false, code: 'invalid' });
     expect(wakes(app.db).filter(w => w.state === 'pending')).toHaveLength(verb === 'laneAssign' ? 1 : 0);
+  });
+  it('attributes replacement schedule work to its authenticated editor', async () => {
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
+    const app = await loom({ runtime: { startBody } });
+    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '00:01', prompt: 'Owner words', note: 'daily' });
+    const agent: Viewer = { kind: 'agent', id: 'art' };
+    expect(app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '00:01', prompt: 'Agent words', note: 'daily' }, agent).by).toEqual(agent);
+    const pending = wakes(app.db).find(w => w.state === 'pending' && w.schedule === 'daily')!;
+    app.clock.advance(pending.due - app.clock.now()); await settled();
+    expect(startBody).toHaveBeenCalledWith(expect.objectContaining({ viewer: agent, wake: expect.objectContaining({ by: agent, prompt: 'Agent words' }) }));
+  });
+  it('includes an otherwise empty paused agent in each new live subscription', async () => {
+    const app = await loom();
+    app.value('pause', { agent: 'art' });
+    for (let n = 0; n < 2; n++) {
+      const ws = new WebSocket(app.url.replace('http:', 'ws:')+'/live');
+      await once(ws, 'open');
+      const initial = once(ws, 'message');
+      ws.send(JSON.stringify({ kind: 'subscribe', type: 'clock' }));
+      const [raw] = await initial;
+      expect(JSON.parse(raw.toString())).toMatchObject({ kind: 'set', records: [{ id: 'art', paused: true }] });
+      ws.terminate(); await once(ws, 'close');
+    }
   });
   it('removes terminal wakes from the live scope exactly a day later', async () => {
     const app = await loom(), w = app.set(); app.value('cancel', { id: w.id });

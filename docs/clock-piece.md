@@ -276,3 +276,18 @@ validation both before commit and before delivery, immutable delivery across
 recovery, no retry of a failed continuation, quota reset plus one minute, and
 suppression of the runtime-quota triage wake itself. These remain runtime/domain
 integration obligations; the new implementation must not restore old launchers.
+
+## Foundation review corrections
+
+Dispatch revalidates target create/give-work policy, including when a member keeps
+project visibility after losing ownership of the target agent. Existing fire-now
+and ordinary schedule run-now require target give-work policy too. Replacing an
+ordinary schedule binds its new words and subsequent occurrences to the authenticated
+editor; it never retains a previous author's authority for new words.
+
+Cancelling a firing intent leaves it held uncertain, with its attempt and original
+attribution retained. Repeated cancellation cannot turn it into expiring terminal
+history or make fire-now eligible. This is conservative even if cancellation wins
+before the runtime microtask invokes the role; reconciliation owns its resolution.
+Pause records enumerate the pause table as well as work, so an otherwise empty
+paused agent is present on first subscription and reconnect.

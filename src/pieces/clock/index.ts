@@ -74,8 +74,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return (db.prepare('SELECT wake,record FROM clock_events ORDER BY seq').all() as { wake: string; record: string }[]).filter(r => ids.has(r.wake)).map(r => JSON.parse(r.record)).filter(r => (i.since === undefined || r.at >= i.since) && (!i.grep || JSON.stringify(r).includes(i.grep)));
   });
   register('cancel', idInput, true, (v, i) => !wake(db, i.id) || act(v, get(i.id)), (ctx, i) => {
-    const w = get(i.id); if (!active(w)) return w;
-    const firing = w.state === 'firing'; w.state = 'cancelled'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
+    const w = get(i.id); if (!active(w) || w.hold === 'uncertain') return w;
+    const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
   });
@@ -107,7 +107,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const old = schedule(db, i.id);
     if (old?.laneDetails) invalid('Edit household lanes with laneSet');
     if (old && (old.agent !== i.agent || old.project !== i.project || old.member !== i.member)) invalid('Remove a schedule before changing its scope');
-    const s: Schedule = { ...i, at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: old?.by ?? ctx.viewer, enabled: true, changedAt: ctx.now };
+    const s: Schedule = { ...i, at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
     cancelOccurrences(ctx, s.id, 'Schedule changed');
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
@@ -235,7 +235,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     inScope: (r, agent, now) => (!agent || r.agent === agent) && (type === 'schedule' || active(r as unknown as Wake) || Number(r.changedAt) + day > now),
     expires: r => type === 'wake' && !active(r as unknown as Wake) ? Number(r.changedAt) + day : undefined,
   });
-  live.register({ name: 'clock', ids: () => [...new Set([...wakes(db), ...schedules(db)].map(w => w.agent))], read: (id, v) => see(v, { agent: id, note: '' }) ? { id, paused: paused(db, id) } : undefined, inScope: () => true });
+  live.register({ name: 'clock', ids: () => [...new Set([...wakes(db).map(w => w.agent), ...schedules(db).map(s => s.agent), ...(db.prepare('SELECT agent FROM clock_pauses').all() as { agent: string }[]).map(p => p.agent)])], read: (id, v) => see(v, { agent: id, note: '' }) ? { id, paused: paused(db, id) } : undefined, inScope: () => true });
   const unsubscribe = options.approvals?.subscribe(() => { parksChanged = true; queue(); });
   queue();
   return { close() { if (closed) return; closed = true; cancelTimer?.(); unsubscribe?.(); } };
