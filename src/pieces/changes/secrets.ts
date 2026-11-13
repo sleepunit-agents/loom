@@ -1,6 +1,5 @@
 import { OperationError } from '../../core/index.js';
-import { secretName } from '../secrets/input.js';
-import type { SecretUse } from '../secrets/service.js';
+import { secretName, type SecretUse } from '../secrets/role.js';
 import type { Secrets } from './roles.js';
 
 /** Trusted composition supplies public forge owners and secret names, never values.
