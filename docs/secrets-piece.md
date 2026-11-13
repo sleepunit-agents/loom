@@ -7,6 +7,27 @@ needs an injected mutation holder. No public value read operation is exposed.
 Authenticated holder reads are explicitly configured for Changes; runtime sinks
 and authenticated write/remove/rotation composition remain required.
 
+## Daemon retry fingerprints
+
+`installSecretValues` requires an explicit independent 32-byte random daemon
+fingerprint key as its fifth argument (Attention, when used, is sixth). Both
+value operations use domain-separated HMAC-SHA-256 of core's full canonical
+input for their retry receipts. The input and key never enter retry storage;
+the public result remains a fixed acknowledgement. The installer snapshots
+caller-owned key bytes; composition must erase its input and load the same key
+on restart, from private storage outside loom.db and its backups. This daemon
+key is separate from the holder's receipt key and age identity. Missing or
+incorrectly sized keys refuse before either value operation is registered.
+Fixed keys in fixture installers are synthetic test data only.
+
+No key is generated, discovered, installed or rotated here. Changing the key
+makes existing core retry IDs conflict rather than replay; do not use a fresh
+random key at every startup. Existing unkeyed receipts are not rewritten by
+this change and remain guessable until removed under a separately verified
+migration or expired. Production value operations are still uninstalled;
+authenticated async holder composition, persistent key loading and safe key
+rotation remain required before enabling them. No real database is changed.
+
 ## Holder storage prerequisite
 
 `openHolderStore(directory, identityFile, fingerprintKeyFile)` is holder-process

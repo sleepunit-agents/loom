@@ -324,7 +324,12 @@ it('keeps every maximum-size selection id and due time under the owning details 
   expect(s.call('clock.askVouch',{target:`art:${which.join(',')}`},{kind:'agent',id:'art'}).ok).toBe(true);
   const details=load(s.app.db).approvals[0].details!;
   expect(details.length).toBeLessThanOrEqual(1000);
-  for(const id of which) expect(details).toContain(`${id} fires ${new Date(base.due).toISOString()}`);
+  for(const id of which) {
+    const line = details.split('\n').find(line => line.startsWith(id))!;
+    expect(line).toContain(`${id} fires ${new Date(base.due).toISOString()}`);
+    expect(line).toContain('runs: Review my queue');
+    expect(line).toContain('...');
+  }
 });
 
 it('does not copy private or project-scoped saved words into an agent-scoped approval even for an owner', async () => {
@@ -342,4 +347,38 @@ it('fails closed with no owning filing composition and leaves no card or receipt
   expect(s.call('clock.askVouch',{target:`art:${ids[0]}`},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'unavailable'});
   expect(wakes(s.app.db)).toEqual(before); expect(load(s.app.db)).toEqual(approvals);
   expect(s.app.db.prepare('SELECT * FROM core_operations ORDER BY viewer,id').all()).toEqual(receipts);
+});
+
+it('shows what Allow would run alongside the saved note without changing held work', async () => {
+  const s = await setup();
+  s.change(ids[0], {note:'Queue review', prompt:'Review overdue tasks and report blockers'});
+  s.change(ids[1], {note:'Lane review', prompt:undefined, file:'routines/review.md'});
+  const before = wakes(s.app.db);
+  expect(s.call('clock.askVouch', {target:`art:${ids.slice(0,2).join(',')}`} ).ok).toBe(true);
+  const details = load(s.app.db).approvals[0].details!;
+  expect(details).toContain('Queue review');
+  expect(details).toContain('runs: Review overdue tasks and report blockers');
+  expect(details).toContain('Lane review');
+  expect(details).toContain('file: routines/review.md');
+  expect(wakes(s.app.db)).toEqual(before);
+});
+it('keeps executable words visible when a note fills the card budget', async () => {
+  const s = await setup();
+  s.change(ids[0], {note:'Ａ'.repeat(3000), prompt:'Inspect the queue'});
+  expect(s.call('clock.askVouch', {target:`art:${ids[0]}`} ).ok).toBe(true);
+  const details = load(s.app.db).approvals[0].details!;
+  expect(details).toContain('runs: Inspect the queue');
+  expect(details).toContain('AAA');
+  expect(details.length).toBeLessThanOrEqual(1000);
+});
+
+it('uses the card space for the executable excerpt when no note was saved', async () => {
+  const s = await setup();
+  s.change(ids[0], {note:'', prompt:'Inspect\n' + 'Ｂ'.repeat(2000)});
+  expect(s.call('clock.askVouch', {target:`art:${ids[0]}`} ).ok).toBe(true);
+  const details = load(s.app.db).approvals[0].details!;
+  expect(details).toContain('runs: Inspect BBB');
+  expect(details.endsWith('...')).toBe(true);
+  expect(details).not.toContain('\n');
+  expect(details.length).toBeLessThanOrEqual(1000);
 });

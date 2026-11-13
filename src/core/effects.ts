@@ -27,6 +27,7 @@ export function installEffects(app: Foundation, sharing: () => Sharing, staging:
     inScope: r => r.state !== 'done',
   });
   return {
+    status(id: string): Effect['state'] | undefined { return read(app.db,id)?.state; },
     onReleased(listener: (id: string) => void) { released.add(listener); return () => { released.delete(listener); }; },
     /** Call immediately before IO, outside an operation. A stable job id claims at most once. */
     beforeOutside(effect: Pick<Effect, 'id' | 'kind' | 'title'>): boolean {

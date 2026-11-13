@@ -13,5 +13,4 @@
 .desk-home-identity{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding-bottom:16px;border-bottom:1px solid var(--v-border)}
 .desk-home-identity h2{font:600 30px/1.1 var(--font-display);color:var(--v-text)}
 .desk-home-identity p{flex-basis:100%;font:500 11px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.1em;color:var(--v-text-2)}
-@media(min-width:1024px){.desk-home-card{max-height:calc(100dvh - 300px);min-height:360px;overflow:auto}}
 @container(max-width:600px){.desk-home-content{padding:12px}.desk-home-needs{padding:12px}.desk-home-needs [aria-label="First three asks"]{display:grid}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}

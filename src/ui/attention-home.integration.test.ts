@@ -100,6 +100,23 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       }));
       writeFileSync(join(shots,`home-${look}-${width}-layout.json`),JSON.stringify(dimensions,null,2));
       if(dimensions.home[1]>dimensions.home[0] || dimensions.page[1]>dimensions.page[0])overflows.push({look,width,...dimensions});
+      const details=b.getByRole('region',{name:'Art E Fish desk details',exact:true});
+      const scrolling=await details.evaluate(node=>({height:node.clientHeight,content:node.scrollHeight,overflow:getComputedStyle(node).overflowY}));
+      if(width>=1024){
+        expect(scrolling.overflow).toBe('auto');expect(scrolling.height).toBeLessThanOrEqual(630);
+        expect(scrolling.content).toBeGreaterThan(scrolling.height);
+        const heading=b.getByRole('heading',{name:'Art E Fish',exact:true});
+        await details.focus();
+        const before=await heading.boundingBox();
+        await b.keyboard.press('End');
+        await expect.poll(()=>details.evaluate(node=>node.scrollHeight-node.clientHeight-node.scrollTop)).toBeLessThanOrEqual(1);
+        expect(await heading.boundingBox()).toEqual(before);
+        await details.evaluate(node=>{node.scrollTop=0;});
+        await expect.poll(()=>details.evaluate(node=>node.scrollTop)).toBe(0);
+        await b.locator('[data-attention-home]').evaluate(node=>{node.scrollTop=0;});
+      }else{
+        expect(scrolling.overflow).toBe('visible');expect(scrolling.content).toBe(scrolling.height);
+      }
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       await b.getByRole('region',{name:'Art E Fish clock',exact:true}).scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`home-clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
