@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
 import { createMigrationRegistry } from './migration-registry.js';
+import { legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import type { IOStreams } from './io.js';
 
 export interface SnapshotManifest {
@@ -77,11 +78,19 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   if (within(target, source) || within(source, target)) refusal('<destination>', 'source and destination must be separate');
   if (existsSync(target)) refusal('<destination>', 'destination already exists');
   const importerPatterns = createMigrationRegistry().order().importers.flatMap(entry => [...(entry.sourceReads ?? [])]);
-  let patterns = [...importerPatterns];
+  let patterns: readonly string[] = [...importerPatterns, '**/*.key', '**/review.pub', '**/keys/**'];
   // Key material stays in files even when no current importer consumes it.
-  patterns.push('**/*.key', '**/review.pub', '**/keys/**');
   const inventory: SnapshotInventory = { consistency: 'per-database', copies: [], skipped: [], followed: [] };
   const seen = new Set<string>();
+  let rootId = 0;
+  const claims = new Map<string, number>();
+  const addCopy = (path: string, input: string, bytes: number) => {
+    if (claims.has(path) && claims.get(path) !== rootId) refusal('<roots>', 'source roots collide in the snapshot');
+    claims.set(path, rootId);
+    const previous = inventory.copies.find(file => file.path === path);
+    if (previous && previous.source !== input) refusal('<roots>', 'source roots collide in the snapshot');
+    if (!previous) inventory.copies.push({path, bytes, source: input});
+  };
   const skipRule = (path: string, directory: boolean, input: string): string | undefined => {
     const parts = path.split('/');
     if (parts.slice(0, directory ? undefined : -1).some(p => excluded.has(p)) || (path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')) return 'installed program or runtime directory';
@@ -110,26 +119,26 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     }
     if (stat.isDirectory()) {
       if (ancestors.has(input)) { inventory.skipped.push({path: label(logical), rule: 'cyclic directory alias', bytes: null}); return; }
-      const visitKey = `${input}\0${logical}`;
+      const visitKey = `${rootId}\0${input}\0${logical}`;
       if (seen.has(visitKey)) return;
       seen.add(visitKey);
       const parents = new Set(ancestors).add(input);
       for (const name of guarded(path, 'cannot list data directory', () => readdirSync(input).sort())) visit(join(input, name), logical === '.' ? name : `${logical}/${name}`, parents);
     } else if (!stat.isFile()) inventory.skipped.push({ path: label(path), rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
-      if (inventory.copies.some(file => file.path === `${prefix}/${path}` && file.source !== input)) refusal('<roots>', 'source roots collide in the snapshot');
-      if (!inventory.copies.some(file => file.path === `${prefix}/${path}`)) inventory.copies.push({ path: `${prefix}/${path}`, bytes: stat.size, source: input });
+      addCopy(`${prefix}/${path}`, input, stat.size);
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
-      if (fileAlias && logical !== path && importerPatterns.some(pattern => matches(logical, pattern)) && !inventory.copies.some(file => file.path === `${prefix}/${logical}`)) inventory.copies.push({path:`${prefix}/${logical}`,bytes:stat.size,source:input});
+      if (fileAlias && logical !== path && patterns.some(pattern => matches(logical, pattern))) addCopy(`${prefix}/${logical}`, input, stat.size);
       inventory.skipped = inventory.skipped.filter(entry => entry.path !== label(path));
     }
     else if (!inventory.copies.some(file => file.source === input)) inventory.skipped.push({ path: label(path), rule: 'not declared by a registered importer or key rule', bytes: stat.size });
   };
   visit(source);
-  const clockFiles = ['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json'];
+  const clockFiles = legacyClockAgentFiles;
   for (const [name, supplied] of Object.entries(roots)) {
     if (!supplied) continue;
+    rootId++;
     source = guarded(`<${name}>`, 'source root must exist', () => realpathSync(supplied));
     if (within(target, source) || within(source, target)) refusal(`<${name}>`, 'source and destination must be separate');
     const stat = guarded(`<${name}>`, 'cannot inspect source root', () => lstatSync(source));

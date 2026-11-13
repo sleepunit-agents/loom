@@ -315,3 +315,34 @@ test('external roots refuse overlap, missing inputs and colliding clock agents b
   }
   await expect(createSnapshot(home,join(clock,'snapshot'),undefined,{clock})).rejects.toThrow('separate');
 });
+
+test('flat wake file aliases retain importer-visible names and archived-only sources are verified', async () => {
+  const {root,home,to} = fixture();
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const wake=join(root,'wake');mkdirSync(wake);
+  writeFileSync(join(wake,'data.json'),'{}');symlinkSync('data.json',join(wake,'schedules.json'));
+  await createSnapshot(home,to,undefined,{wake});
+  expect(readFileSync(join(to,'clock/art/schedules.json'),'utf8')).toBe('{}');
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  rmSync(to,{recursive:true});rmSync(join(wake,'schedules.json'));rmSync(join(wake,'data.json'));
+  writeFileSync(join(wake,'wake.log'),'archival-only fixture');
+  await createSnapshot(home,to,undefined,{wake});
+  expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  const {runMigrationAll} = await import('./migration-all.js'); const {verifyMigration} = await import('./migration-verify.js');
+  const dest=join(root,'new-home');await runMigrationAll(to,dest);
+  expect((await verifyMigration(to,dest)).status).toBe('verified');
+  const db=new Database(join(dest,'loom.db'));db.prepare("UPDATE clock_meta SET value='corrupt' WHERE key='legacy-snapshot'").run();db.close();
+  expect((await verifyMigration(to,dest))).toMatchObject({status:'different',differences:expect.arrayContaining([expect.objectContaining({piece:'clock',table:'clock_meta'})])});
+});
+
+test('identical physical clock inputs still collide across roots and invalid explicit Changes refuses planning', async () => {
+  const {root,home,to} = fixture(); const clock=join(root,'clock');mkdirSync(join(clock,'art'),{recursive:true});
+  writeFileSync(join(clock,'art/schedules.json'),'{}');
+  await expect(createSnapshot(home,to,undefined,{clock,wake:join(clock,'art')})).rejects.toThrow('collide');expect(existsSync(to)).toBe(false);
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const changes=join(root,'export.json');writeFileSync(changes,'{"v":2,"changes":[]}');
+  await createSnapshot(home,to,undefined,{changes});
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(()=>prepareMigrationPlan(to)).toThrow('Invalid explicit Changes');
+});

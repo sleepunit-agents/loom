@@ -7,7 +7,7 @@ import { openSnapshotSqlite } from './migration-sqlite.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
 import { importAttention, type ImportScopes } from '../pieces/attention/importer.js';
-import { importClock } from '../pieces/clock/importer.js';
+import { importClock, legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import { importApprovals } from '../pieces/approvals/importer.js';
 import { importComms } from '../pieces/comms/importer.js';
 import { publishMigrationCommsKey } from './migration-comms-key.js';
@@ -106,7 +106,7 @@ export function createMigrationRegistry(): MigrationRegistry {
     run: (context, input) => importTasks(context.db, single(context, input), context.now, input.options, openSnapshotSqlite) });
   registry.register<ImportScopes>({ name: 'attention', dependencies: ['household'], reads: ['home/**/memories.db (conversation tables)'], sourceReads: ['**/memories.db'],
     run: (context, input) => importAttention(context.db, input.paths.map(path => snapshotPath(context, path)), input.options, {}, openSnapshotSqlite) });
-  registry.register({ name: 'clock', dependencies: ['household'], reads: ['clock/ (WAKE_DATA plus flat Art wake files), or home/<old WAKE_DATA>/'], sourceReads: ['**/lanes.json', '**/fire', ...['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json'].map(name => `**/*/${name}`)],
+  registry.register({ name: 'clock', dependencies: ['household'], reads: ['clock/ (WAKE_DATA plus flat Art wake files), or home/<old WAKE_DATA>/'], sourceReads: ['**/lanes.json', '**/fire', ...legacyClockAgentFiles.map(name => `**/*/${name}`)],
     run: (context, input) => importClock(context.db, single(context, input), context.now) });
   registry.register<Parameters<typeof importApprovals>[3]>({ name: 'approvals', dependencies: ['household'], reads: ['approvals/ or home/<old approvals directory>/'], sourceReads: ['**/approvals.json', '**/rules.json', '**/audit.jsonl'],
     run: (context, input) => importApprovals(context.db, single(context, input), context.now, input.options) });
