@@ -363,3 +363,32 @@ parity obligation is tracked on t-2201. Non-owner member requests remain explici
 extra work. This deliberately narrows the old local clock's file matching while
 preserving its six-hour boundary. The generated client must render this result
 as `already scheduled: <schedule>, next at <time> (nothing armed)`.
+
+
+## Desk reads
+
+`clock.agentNext {agent}` and `clock.jobs {agent}` are read-only projections,
+exposed to other pieces by `clockRole(operations)`. Both retain the caller and use
+central wake visibility: the agent's clock must be visible and every returned
+wake is checked separately, including private member scope. Counts and selection
+use only those visible active wakes. Consumers must call with the actual viewer,
+not an owner synthesized for the desk.
+
+`agentNext` returns `{agent,paused,held,next}`. `next` is the earliest pending
+wake's `{id,due,text}`, or null when paused or no pending wake is visible. A park's
+answer-check deadline and a held or firing intent are not a scheduled body start;
+this deliberately makes the old Next reading more precise. `held` counts visible
+held rows. `jobs` includes every visible active wake, ordered by deadline and id,
+with scheduled, waiting (parked/held/paused), or running (firing) status. Finished,
+failed and cancelled work disappears immediately. A firing row remains running
+even if the clock is subsequently paused. Recurring jobs use their schedule name;
+other labels use the note or file name, capped at 300 characters. Unique task ids
+come from the note. Prompt words, continuation/approval handles, saved viewers and
+opaque import metadata are not returned. Authenticated conversation links remain
+owed with runtime provenance; legacy metadata is never promoted into them.
+
+All deadlines are epoch milliseconds for the consuming kit to format in the
+viewer's timezone. The Clock preview link is reserved for the app still to land.
+These reads do not write Attention status or duplicate its runtime job state;
+composition into the desk and live refresh remain later integration work on
+t-2201. The existing live wake/clock records signal refreshes.

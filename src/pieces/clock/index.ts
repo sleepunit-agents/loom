@@ -5,6 +5,7 @@ import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
+import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
 import type { Approvals } from './dependencies/approvals.js';
 const day = 86400_000;
@@ -127,6 +128,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     ctx.changed('clock', i.agent); return { agent: i.agent, paused: false, released: n };
   });
   register('status', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (_ctx, i) => ({ id: i.agent, paused: paused(db, i.agent) }));
+  const deskWakes = (v: Viewer, agent: string) => wakes(db).filter(w => w.agent === agent && active(w) && see(v, w));
+  register('jobs', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => deskJobs(deskWakes(ctx.viewer, i.agent), paused(db, i.agent)));
+  register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx.viewer, i.agent), paused(db, i.agent)));
+
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
   register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, i) => {
     work(i); calendar(() => daysOf(i.days));

@@ -10,6 +10,7 @@ import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { installClock, type ClockOptions } from './index.js';
+import { clockRole } from './role.js';
 import { wake, wakes, schedules, type Schedule, type Wake } from './store.js';
 import type { StartResult } from './dependencies/runtime.js';
 vi.mock('node:fs', { spy: true });
@@ -32,6 +33,83 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 // Drain the known dispatch promise chain, without wall-clock sleeps.
 const settled = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('durable daemon clock', () => {
+  it('reports complete desk jobs in due order with waiting work and no finished entries', async () => {
+    const app = await loom({ approvals: { check: () => ({ state: 'pending' }), subscribe: () => () => {} } });
+    const later = app.value('in', { agent: 'art', prompt: 'Later', note: 't-2201 finish t-2201 and t-2190', when: '2h' });
+    const parked = app.value('park', { agent: 'art', prompt: 'Wait', note: 'Await an answer', on: 'a-test' });
+    const first = app.set();
+    expect(app.value('jobs', { agent: 'art' })).toEqual([
+      { id: parked.id, wake: parked.id, agent: 'art', status: 'waiting', text: 'Await an answer', at: parked.due, tasks: [], href: '/p/clock-preview' },
+      { id: first.id, wake: first.id, agent: 'art', status: 'scheduled', text: 'check', at: first.due, tasks: [], href: '/p/clock-preview' },
+      { id: later.id, wake: later.id, agent: 'art', status: 'scheduled', text: 't-2201 finish t-2201 and t-2190', at: later.due, tasks: ['t-2201', 't-2190'], href: '/p/clock-preview' },
+    ]);
+    expect(app.value('agentNext', { agent: 'art' })).toEqual({ agent: 'art', paused: false, held: 0, next: { id: first.id, due: first.due, text: 'check' } });
+    for (const w of [first, later, parked]) app.value('cancel', { id: w.id });
+    expect(app.value('jobs', { agent: 'art' })).toEqual([]);
+    expect(app.value('agentNext', { agent: 'art' })).toEqual({ agent: 'art', paused: false, held: 0, next: null });
+  });
+  it('reports paused and staging-held work without promising another wake, including after restart', async () => {
+    const app = await loom();
+    const first = app.set();
+    app.value('pause', { agent: 'art' });
+    expect(app.value('agentNext', { agent: 'art' })).toEqual({ agent: 'art', paused: true, held: 0, next: null });
+    expect(app.value<Array<{ status: string }>>('jobs', { agent: 'art' })[0].status).toBe('waiting');
+    app.clock.advance(60_000); await settled();
+    expect(app.value('agentNext', { agent: 'art' })).toEqual({ agent: 'art', paused: true, held: 1, next: null });
+    app.value('resume', { agent: 'art' });
+    app.clock.advance(60_000); await settled();
+    expect(wake(app.db, first.id)?.hold).toBe('staging');
+    await app.close();
+    const restarted = await loom({}, app.dir, app.clock);
+    expect(restarted.value('agentNext', { agent: 'art' })).toEqual({ agent: 'art', paused: false, held: 1, next: null });
+    expect(restarted.value<Array<{ status: string }>>('jobs', { agent: 'art' })[0].status).toBe('waiting');
+  });
+  it('filters desk reads per wake and rechecks current visibility without exposing words or imported provenance', async () => {
+    const access = structuredClone(sharing);
+    access.members.helper = { owner: false, agents: ['art'] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    const privateWake = app.value('in', { agent: 'art', member: 'jonathan', prompt: 'Private words', note: 'Private note', when: '1m' });
+    const publicWake = app.set('2m');
+    const helper: Viewer = { kind: 'member', id: 'helper' };
+    for (const viewer of [helper, { kind: 'agent', id: 'art' } as Viewer]) {
+      expect(app.value<Array<{ id: string }>>('jobs', { agent: 'art' }, viewer).map(w => w.id)).toEqual([publicWake.id]);
+      expect(app.value('agentNext', { agent: 'art' }, viewer)).toMatchObject({ next: { id: publicWake.id } });
+    }
+    expect(app.value('agentNext', { agent: 'art' })).toMatchObject({ next: { id: privateWake.id } });
+    expect(JSON.stringify(app.value('jobs', { agent: 'art' }))).not.toContain('Private words');
+    for (const verb of ['jobs', 'agentNext']) {
+      expect(app.call(verb, { agent: 'art' }, { kind: 'member', id: 'guest' })).toMatchObject({ ok: false, code: 'denied' });
+      expect(app.call(verb, { agent: 'art' }, { kind: 'agent', id: 'stranger' })).toMatchObject({ ok: false, code: 'denied' });
+    }
+    access.members.helper.agents = [];
+    expect(app.call('jobs', { agent: 'art' }, helper)).toMatchObject({ ok: false, code: 'denied' });
+  });
+
+  it('exposes the desk role without writes and distinguishes running jobs from scheduled occurrences', async () => {
+    const starting = deferred<StartResult>();
+    const app = await loom({ runtime: { startBody: () => starting.promise } });
+    const role = clockRole(app.operations);
+    const s = app.value<Schedule>('scheduleSet', { id: 'nightly-upkeep', agent: 'art', at: '03:31', prompt: 'Secret routine words', note: 't-2201 upkeep' });
+    const occurrence = wakes(app.db)[0];
+    app.clock.advance(occurrence.due - app.clock.now()); await settled();
+    const before = app.db.prepare('SELECT * FROM clock_wakes ORDER BY id').all();
+    expect(role.jobs(owner, { agent: 'art' })).toMatchObject({ ok: true, value: [
+      { id: occurrence.id, status: 'running', text: 'nightly upkeep' },
+      { status: 'scheduled', text: 'nightly upkeep' },
+    ] });
+    const future = wakes(app.db).find(w => w.schedule === s.id && w.state === 'pending')!;
+    expect(role.agentNext(owner, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { id: future.id } } });
+    expect(app.db.prepare('SELECT * FROM clock_wakes ORDER BY id').all()).toEqual(before);
+    // Central type grants permit collection reads but never private member rows.
+    const access = structuredClone(sharing);
+    access.services.desk = { types: ['wake'], operations: [] };
+    const other = await loom({}, home(), new FakeClock(), access);
+    other.set();
+    other.value('in', { agent: 'art', member: 'jonathan', prompt: 'Private', note: 'Private', when: '1m' });
+    expect(other.value<unknown[]>('jobs', { agent: 'art' }, { kind: 'service', id: 'desk' })).toHaveLength(1);
+    for (const viewer of [{ kind: 'service', id: 'unknown' }, { kind: 'runner', id: 'box' }] as Viewer[])
+      expect(other.call('agentNext', { agent: 'art' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+  });
   it('answers a file lane self-rearm within six hours without creating another wake, even at capacity', async () => {
     const app = await loom();
     const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: 'routines/upkeep.md' });
