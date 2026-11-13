@@ -56,3 +56,16 @@ it('schedules the next poll five seconds after a deferred successful read comple
     clock.advance(1);await settle();expect(generation).toHaveBeenCalledTimes(2);
   } finally {monitor.close();}
 });
+
+it('never starts provider IO when closed before its queued initial read runs',async()=>{
+  const clock=new FakeClock(),generation=vi.fn(async()=>first);
+  const monitor=bridgeCredentials({generation},clock);monitor.close();
+  await settle();clock.advance(60_000);await settle();
+  expect(generation).not.toHaveBeenCalled();expect(monitor.current()).toBeUndefined();
+});
+it('does not schedule another poll when an observer closes during publication',async()=>{
+  const clock=new FakeClock(),generation=vi.fn(async()=>first);
+  const monitor=bridgeCredentials({generation},clock);monitor.observe(()=>monitor.close());
+  await settle();clock.advance(60_000);await settle();
+  expect(generation).toHaveBeenCalledOnce();expect(monitor.current()).toBeUndefined();
+});
