@@ -120,6 +120,16 @@ it('rejects oversized age payload before decrypt and clears owned input on encry
   await expect(f.s.set(who(),'api-key',value(),'add')).rejects.toThrow(/^Secret holder storage unavailable$/);
   expect(owned).toBeDefined();expect([...owned!].every(n=>n===0)).toBe(true);
 });
+it('erases decrypted plaintext when the holder closes before an awaited read resumes', async () => {
+  const {s}=await setup();await s.set(who(),'api-key',value(),'add');
+  let complete!:(bytes:Uint8Array)=>void;
+  const pending=new Promise<Uint8Array>(resolve=>{complete=resolve;});
+  const decrypt=vi.spyOn(Decrypter.prototype,'decrypt').mockReturnValueOnce(pending);
+  const read=s.read('api-key');expect(decrypt).toHaveBeenCalledOnce();
+  s.close();const bytes=value();complete(bytes);
+  await expect(read).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect([...bytes].every(n=>n===0)).toBe(true);
+});
 it('refuses public, symlinked or hardlinked database files and public key or directory', async () => {
   const f=await setup();f.s.close();const path=join(f.home,'holder.db');
   chmodSync(path,0o644);await expect(f.open()).rejects.toThrow(/^Secret holder storage unavailable$/);chmodSync(path,0o600);
