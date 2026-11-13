@@ -136,3 +136,16 @@ it('refuses a missing original receipt without spending or changing audit',async
   expect(load(s.app.db)).toEqual(before);
   expect(s.app.db.prepare("SELECT key FROM approvals_meta WHERE key LIKE 'local-standing-use:%'").all()).toEqual([]);
 });
+
+it('rechecks current policy before replaying a committed use receipt, within and beyond core retention',async()=>{
+  const s=await setup();s.every();const receipt=randomUUID(),first=s.call({},caller,receipt);
+  expect(first.ok).toBe(true);const before=load(s.app.db);
+  for(const elapsed of [0,31*86400_000]) {
+    s.clock.advance(elapsed);
+    s.access.projects.pond.agents=[];expect(s.call({},caller,receipt)).toMatchObject({ok:false,code:'denied'});
+    s.access.projects.pond.agents=['art'];
+    s.access.services.clock.operations=[];expect(s.call({},caller,receipt)).toMatchObject({ok:false,code:'denied'});
+    s.access.services.clock.operations=['approvals.piece-standing-local','approvals.piece-standing-local-check'];
+    expect(s.call({},caller,receipt)).toEqual(first);expect(load(s.app.db)).toEqual(before);
+  }
+});

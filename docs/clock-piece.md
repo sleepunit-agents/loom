@@ -806,6 +806,9 @@ The standing record must name that original receipt and retain its full digest,
 details, owner decision and caller. Turning it off or a later target Deny refuses.
 Standing authority survives the original one-shot expiry or consumption.
 
+This seam opts into a foundation policy recheck before cached write replay, so
+revoked service or assignee/project access also refuses a reused use receipt.
+
 Mode `use` calls direct-only `approvals.piece-standing-local`, increments use and
 audit atomically, and privately retains the exact use result in `approvals_meta`
 so retries still deduplicate after the core receipt expires at 30 days. Mode `check` calls the
