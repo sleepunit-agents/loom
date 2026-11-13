@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.

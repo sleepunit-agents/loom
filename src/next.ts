@@ -19,6 +19,7 @@ import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installChanges } from './pieces/changes/index.js';
+import { changesApprovals } from './pieces/changes/approvals.js';
 import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
@@ -72,6 +73,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
+    approvals: changesApprovals(app.operations),
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
     attribution: () => householdAttribution(app.db, options.home),
     knownAgents: () => new HouseholdDatabase(app.db).household(options.home)?.agents ?? [],
