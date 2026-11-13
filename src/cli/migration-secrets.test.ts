@@ -99,3 +99,16 @@ it('rejects hardlinked source inputs before SQLite can chmod their destination a
  expect(await run(['secrets','--home',f.home,'--from',f.source,'--identities',map],io)).toBe(1);
  expect(statSync(input).mode).toBe(before);expect(readdirSync(f.home)).toEqual(['loom.db']);
 });
+
+it('standalone and all CLI report only the fixed Secrets check on invalid audit metadata',async()=>{
+ const f=await setup(),io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:vi.fn(),stderr:vi.fn()};
+ const map=join(f.dir,'map.json');writeFileSync(map,JSON.stringify(f.plan.importers.secrets.options));
+ writeFileSync(join(f.source,'audit.jsonl'),JSON.stringify({at,event:'always',secret:'API',PRIVATE_FIELD:'PRIVATE_VALUE'}));
+ const app=createFoundation({home:f.home});importHousehold(app.db,f.home,f.old,now);app.close();
+ expect(await run(['secrets','--home',f.home,'--from',f.source,'--identities',map],io)).toBe(1);
+ expect(io.stderr.mock.calls).toEqual([['Secrets import refused: audit-schema\n']]);
+ const snapshot=join(f.dir,'invalid-snapshot');await createSnapshot(f.old,snapshot);
+ io.stderr.mockClear();
+ expect(await run(['all','--snapshot',snapshot,'--home',join(f.dir,'all-home')],io)).toBe(1);
+ expect(io.stderr.mock.calls).toEqual([['Secrets import refused: audit-schema\n']]);
+});

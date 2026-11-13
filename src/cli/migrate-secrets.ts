@@ -5,7 +5,7 @@ import { canonicalSnapshotPath } from './migration-snapshot.js';
 import { parseArgs } from 'node:util';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { createFoundation } from '../core/app.js';
-import { importSecrets } from '../pieces/secrets/importer.js';
+import { importSecrets, SecretsImportRefusal } from '../pieces/secrets/importer.js';
 import { assertSeparateSecretPaths, assertCopiedSecretSource, secretImportOptions } from '../pieces/secrets/import-source.js';
 import type { IOStreams } from './io.js';
 const usage='usage: loom migrate secrets --home <stopped-home> --from <secrets-directory> --identities <map.json>\n';
@@ -24,6 +24,6 @@ export async function migrateSecrets(argv:string[],io:IOStreams):Promise<number>
     const app=createFoundation({home:args.values.home});
     try {io.stdout(JSON.stringify(importSecrets(app.db,args.values.home,args.values.from,Date.now(),options))+'\n');return 0;}
     finally {app.close();}
-  } catch {io.stderr('Secrets import refused; check source, identities and imported household, and stop the destination daemon.\n');return 1;}
+  } catch (error) {if(error instanceof SecretsImportRefusal){io.stderr(error.message+'\n');return 1;}io.stderr('Secrets import refused; check source, identities and imported household, and stop the destination daemon.\n');return 1;}
   finally {release?.();}
 }

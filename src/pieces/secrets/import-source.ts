@@ -11,9 +11,12 @@ import type { SecretName } from './role.js';
 import type { SecretChange } from './history.js';
 import type { SecretUsage } from './usage.js';
 
+export type SecretImportCheck = 'copied-source' | 'identity-options' | 'source-files' | 'encrypted-store'
+  | 'policy-request-plan' | 'identity-mapping' | 'audit-schema' | 'audit-projection';
+
 /** Fixed diagnostics only; never carry parser errors or source values. */
 export class SecretImportSourceError extends Error {
-  constructor(readonly check: string) { super(`Invalid legacy secrets source or identity mapping: ${check}`); }
+  constructor(readonly check: SecretImportCheck) { super(`Invalid legacy secrets source or identity mapping: ${check}`); }
 }
 
 export const secretImportOptions = z.object({
@@ -52,7 +55,7 @@ export function assertCopiedSecretSource(from: string): void {
 /** Raw encrypted bytes affect receipt only. They never enter the projection. */
 export function readSecretImport(from: string, now: number, input: SecretImportOptions,
   registered: {agents: readonly string[]; members: readonly string[]}) {
-  let check = 'copied-source';
+  let check: SecretImportCheck = 'copied-source';
   try {
     assertCopiedSecretSource(from);
     check = 'identity-options';

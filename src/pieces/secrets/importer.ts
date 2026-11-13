@@ -5,8 +5,13 @@ import { migrate, type Db } from '../../core/index.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { schema } from './schema/001.js';
 import { prepareAttentionImport } from '../attention/role.js';
-import { SecretImportSourceError, assertSeparateSecretPaths, canonicalSecretImport, readSecretImport, type SecretImportOptions } from './import-source.js';
+import { SecretImportSourceError, assertSeparateSecretPaths, canonicalSecretImport, readSecretImport, type SecretImportCheck, type SecretImportOptions } from './import-source.js';
 export { readSecretImport } from './import-source.js';
+
+/** Safe public refusal; raw database/parser exceptions are never attached. */
+export class SecretsImportRefusal extends Error {
+  constructor(check?: SecretImportCheck) { super(check ? `Secrets import refused: ${check}` : 'Secrets import refused'); }
+}
 
 export function importSecrets(db: Db, home: string, from: string, now: number, options: SecretImportOptions,
   hooks: {interrupt?:()=>void}={}) {
@@ -49,5 +54,5 @@ export function importSecrets(db: Db, home: string, from: string, now: number, o
     db.prepare('INSERT INTO secrets_meta VALUES (?,?)').run('source-checksum',expected.checksum);
     db.prepare('INSERT INTO secrets_meta VALUES (?,?)').run('source-options',expected.options);
     return {imported:true,checksum:expected.checksum,names:expected.records.length,requests:expected.requests.length,grants:expected.grants.length};
-  })(); } catch (error) { throw Error(error instanceof SecretImportSourceError ? `Secrets import refused: ${error.check}` : 'Secrets import refused'); }
+  })(); } catch (error) { throw new SecretsImportRefusal(error instanceof SecretImportSourceError ? error.check : undefined); }
 }
