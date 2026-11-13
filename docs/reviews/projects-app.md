@@ -107,3 +107,8 @@ Final raw verdict stays BLOCKING / UNCONVERGED. Real findings are folded with
 checks; there is no known blocking defect in the authored final result. No
 permission rule, source content, host, systemd, installed piece or real import
 changed. Final exact-head CI and hosted screenshots are still required to merge.
+
+A second GitHub-reported conflict followed Home PR927 landing. Rebased onto
+63e7d64, preserving HomeSurface, Home, Clock, People and Projects registration.
+All 77 affected tests and root TypeScript pass on that composition. Neither
+rebase touched the live main checkout or any merged branch.
