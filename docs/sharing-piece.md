@@ -31,3 +31,15 @@ The final move imports household metadata and tasks with all the other pieces,
 starts the whole new side, and verifies sharing before old stores are retired.
 There is no per-piece cutover switch. See [tasks-piece.md](tasks-piece.md) for
 the task import procedure and the web foundation's “Moving there” for the move.
+
+Owners can set optional public agent attribution with
+`household.setAgentAccounts({agent, accounts: {github: [...]}})`. GitHub logins
+are normalized to lower case, duplicates collapse, and a login cannot belong
+to two current household agents. An empty list clears the mapping. Unknown
+agents and non-owner writes are refused. These are public account names, never
+tokens or permission grants; matching a login does not authorize a caller.
+`HouseholdAccounts` reads the metadata from existing household settings rows
+keyed by agent, without changing the lossless imported agent-id rows or reading
+legacy files. The owner-only `household.sharing` record includes the mappings.
+Changes daemon composition will consume this metadata; this operation alone
+does not start GitHub synchronization or open merge controls.

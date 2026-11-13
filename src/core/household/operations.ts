@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { HouseholdAccounts, agentAccountsSchema } from './accounts.js';
 import type { Foundation } from '../app.js';
 import { operation } from '../operations/index.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
@@ -8,6 +9,16 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 export function installHouseholdProjects(app: Foundation, home: string): void {
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
+  app.operations.register(operation({
+    name: 'household.setAgentAccounts', write: true,
+    input: z.object({ agent: z.string().min(1).max(200), accounts: agentAccountsSchema }).strict(),
+    output: agentAccountsSchema, may: owner,
+    run(ctx, input) {
+      const accounts = new HouseholdAccounts(app.db, home).set(input.agent, input.accounts);
+      ctx.changed('household.sharing', 'household');
+      return accounts;
+    },
+  }));
   app.operations.register(operation({
     name: 'household.createProject', write: true, input: projectSchema, output: projectSchema,
     may: owner,
