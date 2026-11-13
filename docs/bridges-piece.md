@@ -538,17 +538,15 @@ terminates the socket and awaits credential/receipt work. Upstream errors and
 session IDs are never returned as records or diagnostics.
 
 The fake sockets/clock and disposable `startLoom` SQLite fixture prove protocol,
-commit ordering, rollback and daemon-restart resume. This fixture is not the
-production composition: the private store below still needs metadata normalization,
-service authentication, credential-generation wiring and root registration. No history poller fills gaps when Discord invalidates or expires
+commit ordering, rollback and daemon-restart resume. The opt-in daemon below composes these building blocks with an injected holder generation and handoff. CLI and real engine composition remain required. No history poller fills gaps when Discord invalidates or expires
 a session; resume is bounded by Discord's retained events, not lossless recovery.
-Opening the preview or starting the current next root starts no Discord socket.
+Opening the preview starts no Discord socket. Only an explicit trusted `bridges` root option enables the daemon below.
 
 | Legacy intake behavior | New transport / remaining work |
 | --- | --- |
 | Poll latest message, then cursor/lookback scans | Identify receives new events; session/sequence Resume replays retained missed events |
-| In-memory delivery queue | Atomic private raw/session store below; production composition still required |
-| Adapter process reconnect | Gateway heartbeat, Resume/Identify and bounded backoff; daemon registration still required |
+| In-memory delivery queue | Atomic private raw/session store below; opt-in daemon composition below |
+| Adapter process reconnect | Gateway heartbeat, Resume/Identify and bounded backoff; opt-in daemon registration below |
 
 ## Discord private receipt and session store
 
@@ -574,8 +572,7 @@ the first receipt. The caller must serialize commits and reset (as the Gateway
 does), and consume only after normalized receipt commits or definite discard.
 No callback may join an enclosing transaction.
 
-This is an unregistered store, not an activated receiver. Metadata normalization,
-authenticated setup/credential composition, staging-gated root lifecycle, obsolete
+The opt-in daemon below binds this private store to authentication and staging. Obsolete
 identity disposition and a migration/move plan remain required. No old store is
 read and no running home is changed.
 
@@ -583,12 +580,11 @@ read and no running home is changed.
 | --- | --- |
 | Memory-only Gateway cursor | Atomic private SQLite session and raw message commit |
 | Replay after reconnect | Permanent platform message-id tombstone per receiving identity/generation |
-| Process-local message queue | Bounded pending receipt reads; normalization and root registration remain required |
+| Process-local message queue | Bounded pending receipt reads; normalization and opt-in root registration below |
 
 ## Discord fresh REST evidence
 
-`discordApi` is an unregistered service client for the next normalization/lifecycle
-slice. `authenticate` calls [Get Current User](https://docs.discord.com/developers/resources/user#get-current-user)
+`discordApi` is the service client used by the opt-in daemon below. `authenticate` calls [Get Current User](https://docs.discord.com/developers/resources/user#get-current-user)
 and [Get Guild](https://docs.discord.com/developers/resources/guild#get-guild),
 requiring the configured bot user (`bot: true`) and configured guild. This is
 point-in-time identity/access evidence, never an admission or credential lease.
@@ -610,13 +606,12 @@ returning evidence. No credentials are retained or returned. Requests use only
 Discord's fixed HTTPS v10 origin with canonical uint64 path IDs, reject redirects,
 time out after 15 seconds, and bound streamed replies to 1 MiB. No upstream error
 text escapes. There is no cache or automatic HTTP retry: the durable drain owns
-retry and expiry. Raw drain, authenticated root/store/Gateway binding and daemon
-registration remain required. Nothing starts a socket or reads an old store here.
+retry and expiry. The raw drain and opt-in daemon below provide authenticated root/store/Gateway binding. Nothing starts a socket or reads an old store here.
 
 | Legacy metadata behavior | New building block / remaining work |
 | --- | --- |
-| Bot-token identity/configuration | `discordApi.authenticate`; root lifetime binding still required |
-| Channel/thread-parent lookup | Fresh `discordApi.channel`, safe parent label; raw drain still required |
+| Bot-token identity/configuration | `discordApi.authenticate`; opt-in root lifetime binding below |
+| Channel/thread-parent lookup | Fresh `discordApi.channel`, safe parent label; raw drain below |
 | DM sender/place inference | Fresh one-recipient DM match; runtime admission still required |
 
 ## Discord raw receipt normalization
@@ -638,7 +633,44 @@ permanently stops that drain; staging retains words until release. Close cancels
 retry timers and awaits in-flight work. The injected metadata role must be the
 fresh service-scoped REST client; it grants no runtime admission.
 
-This is an unregistered building block. Authentication, Gateway/store/drain
-composition, daemon startup/release hooks and real holder-generation sources are
-still required before Discord activation. Peer/webhook identity and legacy
+The opt-in daemon below supplies authentication, Gateway/store/drain composition and startup/release hooks. Real holder-generation sources and CLI/engine composition remain required before production activation. Peer/webhook identity and legacy
 receipt disposition remain in the earlier intake inventory on t-2210.
+
+
+## Discord opt-in daemon lifecycle
+
+`startLoom({next:true,bridges:...})` now starts `installDiscordDaemon` beside the
+Slack daemon. It uses the real grant-checked bridges service `SecretUse` from the
+injected holder source, authenticates the configured bot and guild, then binds
+Gateway commits and normalization to the same setup revision and public credential
+generation. `discordSocket` is a trusted test transport injection; Slack's existing
+`socket` option stays specific to Slack. No operation input can supply either.
+
+Staging holds holder reads, authentication and dialing behind a connection effect.
+Release permits reconnects and fresh metadata for that one lifetime, including
+transient authentication retries. Setup edits (including restore), secret/access
+notifications, credential rotation or restart end the lifetime; replacements need
+a new staging release. A separate five-second detector invalidates generation
+changes even while authentication or normalized handoff is pending. Startup,
+raw commits and release flush saved receipts. Gateway progress waits only for the
+atomic raw/checkpoint commit. Shutdown invalidates synchronously once daemon close
+starts, cancels timers, terminates sockets and awaits holder, metadata and handoff
+work before SQLite closes, including root startup failure.
+
+This is trusted programmatic composition with an injected durable `receive` role
+and public `credentialEpoch` callback. It does not claim CLI activation, a real
+keyholder generation source, People name composition or a bridge-compatible runtime
+admission/delivery/stop implementation. Those and legacy engine secret-role removal
+remain required on t-2210; the current Comms runtime installer is private to Comms.
+Old stores, running homes and deployed services are untouched.
+
+| Legacy lifecycle | New composition / remaining work |
+| --- | --- |
+| Discord adapter start/reconnect | `installDiscordDaemon`: fresh bot/guild authentication, private inbox, Gateway, REST and drain |
+| Process-local receipt progress | Atomic raw/checkpoint commit, independent normalized drain, startup recovery |
+| Adapter shutdown | Invalidation and awaited Gateway/drain close before database shutdown |
+| Credential replacement | Trusted public generation plus setup/access invalidation; real holder-generation source remains required |
+
+The Discord and Slack daemon lifecycle loops remain separate in this slice. This
+keeps each transport binding explicit while their authentication, cursor and
+receipt contracts differ; lifecycle fixes must be checked against both daemons.

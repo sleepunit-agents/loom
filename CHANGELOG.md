@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
 ### Added
 
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.

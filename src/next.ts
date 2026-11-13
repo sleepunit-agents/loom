@@ -26,6 +26,7 @@ import { installClock } from './pieces/clock/index.js';
 import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
+import { installDiscordDaemon, type DiscordDaemonOptions } from './pieces/bridges/discord-daemon.js';
 import { installSlackDaemon, type SlackDaemonOptions } from './pieces/bridges/slack-daemon.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
@@ -81,9 +82,9 @@ export interface NextChangesOptions {
   request?: typeof fetch;
   interval?: number;
 }
-export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource }
+export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource; discordSocket?: DiscordDaemonOptions['socket'] }
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
-const bridgeDaemons = new WeakMap<Foundation, ReturnType<typeof installSlackDaemon>>();
+const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
@@ -183,7 +184,9 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (options.bridges && !bridgeDaemons.has(app)) {
     if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
     const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
-    bridgeDaemons.set(app,installSlackDaemon(app,effects,{...options.bridges,secrets}));
+    const slack=installSlackDaemon(app,effects,{...options.bridges,secrets});
+    const discord=installDiscordDaemon(app,effects,{...options.bridges,secrets,socket:options.bridges.discordSocket});
+    bridgeDaemons.set(app,{async close(){await Promise.all([slack.close(),discord.close()]);}});
   }
   installAttentionMaintenance(app);
   if (!app.operations.has('comms.open')) {
