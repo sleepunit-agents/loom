@@ -15,8 +15,8 @@ export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: stri
  * Numbered metadata migrations run at install; verification and its receipt
  * insertion share one immediate source transaction.
  */
-export function installMindKnowledgeActions(operations: Operations, options: { path: string; sharing(): Sharing; verify: KnowledgeVerifier }) {
-  const db = existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
+export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier }) {
+  const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
   try { if (db) migrateMindReceipts(db); } catch (error) { db?.close(); throw error; }
   const recover = (ctx: Context) => {
     if (!db || !ctx.receipt) return;

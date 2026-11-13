@@ -22,6 +22,15 @@ import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
 import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
+import { mindSources } from './pieces/mind/sources.js';
+import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
+import { installMindKnowledge } from './pieces/mind/index.js';
+import { installMindKnowledgeActions } from './pieces/mind/actions.js';
+import { verifyKnowledgePages } from './backends/knowledge-verification.js';
+import { installTouched, type TouchSource } from './core/touched/index.js';
+import { listenForTouchSources } from './core/touched/group.js';
+import { prepareTouchSources } from './core/touched/prepare.js';
+const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
 export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
@@ -59,9 +68,24 @@ export function installNext(app: Foundation, options: NextOptions) {
     attribution: () => ({ agents: {}, ownerLogins: [] }),
     knownAgents: () => [],
   });
+  const inventory = mindSources(app.db, options.home);
+  if (!app.operations.has('mind.knowledgeList')) {
+    const path = inventory?.commons.knowledge;
+    const reader = installMindKnowledge(app.operations, app.live, { path, sharing });
+    app.onClose(() => reader.close());
+    const actions = installMindKnowledgeActions(app.operations, { path, sharing, verify: verifyKnowledgePages });
+    app.onClose(() => actions.close());
+  }
+
+  const sources = mindTouchSources(inventory);
+  if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
+  mindTransports.set(app, sources);
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
+  const sources = mindTransports.get(app) ?? [];
+  await prepareTouchSources(sources);
+  const stopTouches = await listenForTouchSources(app.operations, sources);
   const auth = options.authenticate ?? nextSessionResolver(app);
   const api = httpDoor(app, auth);
   const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
@@ -102,7 +126,6 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const detaches: (() => void)[] = [];
   const sockets = new Set<Socket>();
   const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
-  if (!hosts.length) throw new Error('next mode needs a bind host');
   let port = options.port ?? 0;
   const close = async () => {
     detaches.forEach(detach => detach());
@@ -111,8 +134,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
       http.closeAllConnections();
       return new Promise<void>(ok => http.close(() => ok()));
     }));
+    await stopTouches();
   };
   try {
+    if (!hosts.length) throw new Error('next mode needs a bind host');
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
         if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }

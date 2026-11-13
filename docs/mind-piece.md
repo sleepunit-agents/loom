@@ -200,3 +200,49 @@ If an installed source receipt reader fails, new writes fail closed: the source
 may already reserve that viewer/id. Cached core retries remain available. This
 couples new-write availability to the installed source's metadata reader; silently
 skipping an unreadable source would sacrifice the global conflict guarantee.
+
+## Next-mode Knowledge app
+
+`serve --next` now installs Knowledge reads and the two check actions at startup,
+with the verifier injected by the composition root. No metadata means an empty
+reader, even if unlisted files exist. Missing files remain absent; inventory and
+file presence are a startup snapshot. Reader/action connections close with the
+foundation, after HTTP/WebSocket and source transports have stopped.
+
+Existing source files select private touch endpoints: commons admits Knowledge
+slugs and directory people (`commons:<slug>`); listed agents admit memory refs,
+people and project cards (`<agent>:<local-id>`). The socket binds the source
+identity and the operation checks its canonical namespace. Only Knowledge has a
+record reader in this unit; announcing another type does not expose content.
+Startup probes endpoints under the daemon home lock, preserves live listeners and
+non-socket files, and removes only refused socket endpoints whose inode still
+matches. Failed binding closes acquired listeners before readers and the lock.
+
+The registered app is `/p/knowledge-preview`, in `web/src/pieces/knowledge`.
+It uses the kit Split and the shared live feed, including a scoped page feed for
+direct links beyond the 2,000-page list. It preserves topics, title/domain search,
+recent and due folders, freshness, markdown, sources, referring pages and both
+check actions. Calls start only in handlers and retain their retry state. Missing,
+loading and connection/access failures are separate states. The old Add a fact
+link was a conversation composer entry, not a Knowledge content operation; that
+entry belongs to the new Conversations app rather than the old composer.
+
+| Old page surface | New surface |
+| --- | --- |
+| `/knowledge` list and topic/search filters | `knowledge` live records + local filters |
+| `/knowledge?p=<slug>` and page/cited-by navigation | scoped `knowledge` live records + `/p/knowledge-preview/page/<slug>` |
+| Still true / Check again | `mind.knowledgeVerify` / `mind.knowledgeRecheck` |
+| Add a fact (conversation composer) | new Conversations app, when composed; no legacy composer call |
+
+CI's single two-window test writes six screenshots to `artifacts/knowledge-app`
+(390/1280/1920; Neon Noir/Daylight), retained in its shard artifact. It exercises
+checks, reload, markdown links, cited-by navigation, search, time aging and an
+outside archive. In-process tests cover metadata-only selection, no creation,
+source namespace refusal, two-window outside writes, retries after restart,
+occupied/non-socket preservation and stale endpoint recovery.
+
+No host rollout is included. The coordinator must assemble the final new home,
+verify copied existing content paths and database household metadata, stop any
+competing source listener, and start/verify next mode at the final coordinated
+move. There is no Mind importer or content-table migration.
+People, Projects and Activity remain separate app units under t-2207.

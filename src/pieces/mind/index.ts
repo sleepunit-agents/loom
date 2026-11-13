@@ -7,10 +7,10 @@ import { knowledgeView, type KnowledgeOpen } from './knowledge.js';
 
 /** Composition supplies paths from household database metadata, never household.json. */
 export function installMindKnowledge(operations: Operations, live: Live, options: {
-  path: string; sharing(): Sharing;
+  path?: string; sharing(): Sharing;
 }) {
   // One retained read-only connection, including across live notifications.
-  const db = existsSync(options.path) ? new BetterSqlite3(options.path, { readonly: true, fileMustExist: true, timeout: 0 }) : undefined;
+  const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { readonly: true, fileMustExist: true, timeout: 0 }) : undefined;
   const visible = (viewer: Viewer) => maySee(viewer, { type: 'knowledge' }, options.sharing());
   const view = (slug?: string) => {
     const load = () => knowledgeView(db, operations.clock.now(), slug, slug !== undefined);
