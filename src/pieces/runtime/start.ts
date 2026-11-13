@@ -1,7 +1,8 @@
 /** A start intent is durable work, never evidence that the runner started it. */
+import { rememberStart } from './start-retries.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { operation, OperationError, mayAct, mayCreate, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, OperationError, mayAct, mayCreate, type Db, type Operations, type Sharing, type Viewer, type Scope } from '../../core/index.js';
 import { runtimeStore } from './store.js';
 import { enqueueBody } from './queue.js';
 import { configuredHouse } from './builds.js';
@@ -11,6 +12,11 @@ export const startInput = z.object({
   brief: z.string().min(1).max(100_000), box: id.optional(), model: id.optional(), account: id.optional(),
   conversation: id.optional(), source: z.object({kind:z.enum(['wake','spawn','conversation','manual']),id}).strict().optional(),
 }).strict();
+export function mayStart(viewer:Viewer,input:Scope,access:Sharing):boolean {
+  const scope={...input,type:'runtime.job'};
+  return mayCreate(viewer,scope,access,'runtime.startBody')
+    && (viewer.kind!=='member'||mayAct(viewer,scope,access,'give-work'));
+}
 export function startJobId(viewer: Viewer, agent: string, source: {kind:string;id:string}): string {
   return 'start-'+createHash('sha256').update(JSON.stringify([viewer.kind,viewer.id,agent,source])).digest('hex').slice(0,40);
 }
@@ -19,13 +25,11 @@ export function installStartBody(db: Db, operations: Operations, sharing: () => 
   operations.register(operation({name:'runtime.startBody',write:true,input:startInput,
     output:z.object({job:id,state:z.string()}),
     may(viewer,input) {
-      const scope={type:'runtime.job',agent:input.agent,project:input.project,member:input.member};
-      const access=sharing();
+      const scope={agent:input.agent,project:input.project,member:input.member};
       // Same creation rule as Clock: members must own the target, agents need
       // independently visible agent/project scope. Service grants alone confer
       // no agent authority under central mayCreate.
-      return mayCreate(viewer,scope,access,'runtime.startBody')
-        && (viewer.kind!=='member' || mayAct(viewer,scope,access,'give-work'));
+      return mayStart(viewer,scope,sharing());
     },
     run(ctx,input) {
       if(input.account!==undefined) throw new OperationError('unavailable','Model account selection is not installed');
@@ -42,8 +46,10 @@ export function installStartBody(db: Db, operations: Operations, sharing: () => 
         return {job,state:old.state};
       }
       if(!configuredHouse(store.read('settings',input.agent))) throw new OperationError('conflict','Agent has no house configuration');
-      return enqueueBody(ctx,sharing(),{id:job,agent:input.agent,project:input.project,member:input.member,title:input.title,
+      const queued = enqueueBody(ctx,sharing(),{id:job,agent:input.agent,project:input.project,member:input.member,title:input.title,
         conversation:input.conversation,model:input.model,account:input.account,startRequest:{box:input.box}},input);
+      rememberStart(ctx,job,input);
+      return queued;
     },
   }));
 }
