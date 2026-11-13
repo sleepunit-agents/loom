@@ -53,6 +53,7 @@ export function installConversations(db: Db, operations: Operations, live: Live,
       const record: Turn = { ...metadata, agent: c.agent, ...(c.project ? { project: c.project } : {}), ...(c.member ? { member: c.member } : {}), id: `${id}:${seq}`, conversation: id, seq, writer: ctx.viewer };
       if (t.kind === 'reply') {
         const lastReply = (db.prepare("SELECT max(seq) AS seq FROM attention_turns WHERE conversation=? AND json_extract(record,'$.kind')='reply'").get(id) as { seq: number | null }).seq ?? 0;
+        // Arrival order is the old contract (ORDER BY seq), including delayed deliveries.
         const waiting = db.prepare("SELECT record FROM attention_turns WHERE conversation=? AND seq>? AND json_extract(record,'$.kind')='message' ORDER BY seq LIMIT 1").get(id, lastReply) as { record: string } | undefined;
         if (waiting) record.latency_ms = Math.max(0, Date.parse(t.at) - Date.parse((JSON.parse(waiting.record) as Turn).at));
       }

@@ -56,7 +56,11 @@ it('rejects words, unknown nested fields and invalid own turns before any storag
   for (const bad of [
     { ...turn, text: 'secret words' }, { ...turn, from: { ...turn.from, text: 'secret words' } },
     { ...turn, run: 'run-1' }, { ...turn, model: 'test' }, { ...turn, harness: 'test' }, { ...turn, outcome: 'none' },
-    { ...turn, kind: 'reply' }, { ...turn, kind: 'action', from: { kind: 'agent', id: 'other' }, run: 'run-1', outcome: 'none' },
+    { ...turn, kind: 'reply' },
+    ...['reply', 'action', 'note'].flatMap(kind => [
+      { ...turn, kind, from: { kind: 'agent', id: 'art' }, outcome: 'none' },
+      { ...turn, kind, from: { kind: 'agent', id: 'art' }, run: 'run-1' },
+    ]), { ...turn, kind: 'action', from: { kind: 'agent', id: 'other' }, run: 'run-1', outcome: 'none' },
     { ...turn, kind: 'note', from: { kind: 'agent', id: 'art' }, run: 'bad run', outcome: 'none' },
     { ...turn, venue: 'Bad' }, { ...turn, place: '' }, { ...turn, at: 'not-time' }, { ...turn, label: 'x'.repeat(81) },
   ]) expect(write(bad)).toMatchObject({ code: 'invalid' });
@@ -134,4 +138,11 @@ it('persists project scope on both records and refuses changing or removing it',
     expect(types.get(name)!.read(recordId, art)).toMatchObject({ project: 'shared', agent: 'art' });
     expect(types.get(name)!.read(recordId, { kind: 'member', id: 'carol' })).toBeUndefined();
   }
+});
+
+it('times the first recorded pending message even when later deliveries have earlier timestamps', async () => {
+  const { write } = await setup();
+  write({ ...turn, at: '2026-11-12T00:00:20Z' });
+  write({ ...turn, at: '2026-11-12T00:00:10Z' });
+  expect(write({ ...turn, at: '2026-11-12T00:00:23Z', kind: 'reply', from: { kind: 'agent', id: 'art' }, run: 'run-1', outcome: 'answered' })).toMatchObject({ value: { latency_ms: 3000 } });
 });
