@@ -1,6 +1,8 @@
 import type { BridgeBodies } from './bridges.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
+import { principalFromHistory } from './provenance.js';
+import type { ClockProvenanceReader } from './role.js';
 import type { Caller } from '../approvals/role.js';
 import { attentionRole } from '../attention/role.js';
 import { controlScope, currentExecution } from './control.js';
@@ -202,7 +204,20 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  // Capacity uses only an owning live binding. A public startBody conversation
  // string or a copied Viewer cannot create a separate share. No principal is issued.
  const capacityConversation=(viewer:Viewer)=>bound(viewer)?.binding.id ?? bridges?.bound(viewer)?.conversation;
- return {delivery,privateStart,refile,approvalCaller,capacityConversation,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
+ const clockProvenance:ClockProvenanceReader=viewer=>{
+  // Unlike capacity, principal issuance requires owning sender history as well
+  // as the current source binding. Never infer a requester from a job string.
+  const job=bound(viewer)?.job ?? bridges?.bound(viewer);
+  if(!job?.conversation||!job.member)return;
+  const source=provenanceStore(db).read(job.conversation);
+  if(!source||source.agent!==job.agent)return;
+  const owners=Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
+  const service=proof(viewer)?.service;
+  return {agent:job.agent,conversation:job.conversation,member:job.member,
+   ...(job.project?{project:job.project}:{}),...(service?{service}:{}),
+   principal:principalFromHistory(source.history,owners)};
+ };
+ return {delivery,privateStart,refile,approvalCaller,capacityConversation,clockProvenance,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   async close(){closed=true;unobserve();await notices;},
  };

@@ -25,12 +25,18 @@ Runtime dispatch must also replace the existing ordinary-wake background use of
 That pre-existing path is not used for newly supported private local dispatch;
 private local wakes are explicitly held before intent and before Runtime.
 
-Independent work remains: exact local-approval filing/recovery,
-standing-job rechecks and app/client flow; and other imported provenance recovery
-or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
-mutation/join, original schedule principal narrowing, agent-authored self-rearm eligibility, and
-continuation issuer/handle/deadline/place validation. These are gaps, not deliberate
-drops. Archived strings and caller-supplied handles cannot fill them.
+Local filing, exact recovery, standing rechecks, generated commands and the
+private-chat/Clock decision and recovery flow are merged through #1107. API-origin
+schedule capacity (#1112) and shared/API/conversation one-off capacity (#1116)
+are merged too. `next.ts` already wires Runtime's `capacityConversation` callback;
+that callback issues only a capacity bucket, never a principal or mutation right.
+
+Remaining work: conversation-bound mutation/join, original schedule principal
+narrowing, agent-authored self-rearm eligibility, continuation issuer/handle/
+deadline/place validation, real service-identity dispatch and private delivery,
+and other imported provenance recovery or explicit deliberate drops. These are
+gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
+fill them.
 
 Merged evidence: foundation/importer #864; capacity/quota #878; exact unpark #887;
 owner-authored self-rearm #901; continuation failure #910; desk reads #917;
@@ -1013,3 +1019,23 @@ This metadata is capacity only: it supplies no principal, visibility, mutation,
 join or dispatch authority. Original schedule principal narrowing, authenticated
 mutation/join rules and agent-authored six-hour self-chain suppression remain
 unfinished, as does service-identity dispatch and actual private Runtime delivery.
+
+
+### Owning current conversation provenance
+
+Runtime exposes `clockProvenance(viewer)` as a trusted in-process role, separately
+from both capacity and local `approvalCaller`. It accepts the exact central Signin
+Viewer only while the body owns a current private Comms or bridge binding, with
+current source access, execution policy and a running/waiting job. A public job's
+conversation argument and a copied Viewer issue nothing. Missing or other-agent
+sender history also issues nothing.
+
+The role derives principal from Runtime's monotonic sender history using the
+current household owner list; consuming the input queue does not erase history.
+It retains member, project and credential service separately from principal.
+Private member scope survives even when the principal is unknown or names a
+different person. This is internal metadata: no public operation, record, Live
+feed or export is added. Consumers must preserve scope and still check central
+policy. Clock mutation/join, principal persistence/narrowing and self-rearm do
+not consume this new role yet and remain unfinished above. Local approval
+semantics and actual private delivery are unchanged.

@@ -1,3 +1,4 @@
+import * as conversationModule from './conversations.js';
 import * as services from '../../core/services.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { wakes } from '../clock/store.js';
@@ -19,6 +20,7 @@ import { FakeClock, type Result } from '../../core/index.js';
 import { fixture } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
+const realConversationRuntime=conversationModule.conversationRuntime;
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
@@ -660,4 +662,77 @@ it('shares the proven one-off quota with private local recovery and refuses befo
  expect(wakes(f.app.db).find(w=>w.id===recovered.id)).toMatchObject({member:'jonathan',apiCapacity:{origin:'art',bucket}});
  expect(readApproval(f.app.db,card.id)?.state).toBe('used');
  expect(await f.post(body,'clock.list',{agent:'art'})).toMatchObject({ok:true,value:expect.not.arrayContaining([expect.objectContaining({id:recovered.id})])});
+});
+
+
+it('issues current Clock principal history only through the exact private body binding',async()=>{
+ let role:ReturnType<typeof realConversationRuntime>;
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ expect(role!.clockProvenance(viewer)).toBeUndefined();
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ const expected={agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}};
+ expect(role!.clockProvenance(viewer)).toEqual(expected);
+ expect(provenanceStore(f.app.db).read(conversation)?.queue).toEqual([]);
+ for(const v of [{...viewer},{kind:'agent',id:'art'},{kind:'member',id:'jonathan'},{kind:'runner',id:'a'},{kind:'service',id:'clock'}] as const)
+  expect(role!.clockProvenance(v)).toBeUndefined();
+ const restricted=f.token(`agent:art/slack@${job}`);
+ expect(role!.clockProvenance(signin(f.app).token(hash(restricted))!.viewer)).toEqual({...expected,service:'slack'});
+ // A public, member-free start with the same conversation does not own it.
+ const forged=value<{job:string}>(await f.post(f.owner,'runtime.startBody',{agent:'art',conversation,brief:'Public work',title:'Public'})).job;
+ await f.post(f.runner,'runtime.claimJob',{job:forged});await f.post(f.runner,'runtime.takeInput',{job:forged});await f.post(f.runner,'runtime.reportJob',{job:forged,state:'running'});
+ expect(role!.clockProvenance(signin(f.app).token(hash(f.token(`agent:art@${forged}`)))!.viewer)).toBeUndefined();
+ // History, not the latest owner message, determines principal after steering.
+ f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{key:'unknown-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']))();
+ expect(role!.clockProvenance(viewer)).toEqual({...expected,principal:{for:'?',people:[]}});
+ await f.restart();
+ const current=signin(f.app).token(hash(body))!.viewer;
+ expect(role!.clockProvenance(current)).toEqual({...expected,principal:{for:'?',people:[]}});
+ const before=provenanceStore(f.app.db).read(conversation)!;
+ f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run(conversation);
+ expect(role!.capacityConversation(current)).toBe(conversation);
+ expect(role!.clockProvenance(current)).toBeUndefined();
+ f.app.db.transaction(()=>provenanceStore(f.app.db).put(conversation,{...before,agent:'mark'}))();
+ expect(role!.clockProvenance(current)).toBeUndefined();
+ f.app.db.transaction(()=>provenanceStore(f.app.db).put(conversation,before))();
+ f.app.db.prepare("UPDATE runtime_bindings SET record=json_set(record,'$.job','another-job') WHERE id=?").run(conversation);
+ expect(role!.clockProvenance(current)).toBeUndefined();
+ // Restore the binding before archiving so that archive is an independent gate.
+ f.app.db.prepare("UPDATE runtime_bindings SET record=json_set(record,'$.job',?) WHERE id=?").run(job,conversation);
+ expect(role!.clockProvenance(current)).toBeDefined();
+ value(await f.socket('comms.change',{thread,action:'archive'}));
+ expect(role!.clockProvenance(current)).toBeUndefined();
+});
+
+it('retains Clock private project scope and re-evaluates former owners without changing local approval semantics',async()=>{
+ let role:ReturnType<typeof realConversationRuntime>;
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ value(await f.socket('comms.change',{thread,action:'project',project:'pond'}));
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'owner',people:[]}});
+ // Local approvalCaller retains the member requester, independently of history.
+ const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ f.app.db.transaction(()=>provenanceStore(f.app.db).note(cv,'art',{key:'steering',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']))();
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'?',people:[]}});
+ expect(role!.approvalCaller(viewer)).toMatchObject({for:'owner',member:'jonathan',people:['jonathan'],project:'pond'});
+ // Recounting current owners must not retain a former owner's broad principal.
+ f.app.db.transaction(()=>{
+  const source=provenanceStore(f.app.db).read(cv)!;
+  provenanceStore(f.app.db).put(cv,{...source,history:{...source.history,unknown:false}});
+  const store=runtimeStore(f.app.db),{changedAt:_,...box}=store.read('box','a')!;
+  store.put('box',{...box,lentTo:['art']},f.clock.now());
+  new HouseholdDatabase(f.app.db).change(f.home,raw=>{
+   raw.owner='pollock';
+   raw.members=[{person:'pollock',role:'owner',agents:'*'},{person:'jonathan',role:'member',agents:['art']}];
+  });
+ })();
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'jonathan',people:['jonathan']}});
 });

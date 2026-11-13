@@ -1,3 +1,5 @@
+import * as conversationModule from './conversations.js';
+import {provenanceStore} from './provenance-store.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -19,8 +21,9 @@ import {put} from '../bridges/store.js';
 import {discordInbox} from '../bridges/discord-inbox.js';
 import {slackInbox} from '../bridges/slack-inbox.js';
 import {runtimeStore} from './store.js';
+const realConversationRuntime=conversationModule.conversationRuntime;
 const cleanups:Array<()=>Promise<void>>=[];
-afterEach(async()=>{for(const f of cleanups.splice(0).reverse())await f();});
+afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
 const value=<T>(r:Result)=>{expect(r.ok,JSON.stringify(r)).toBe(true);return (r as {ok:true;value:T}).value;};
 async function until(condition:()=>boolean){for(let i=0;i<5000;i++){if(condition())return;await Promise.resolve();}throw Error('condition not reached');}
 async function setup(staging=false,platform:'slack'|'discord'='slack',prepareInput?:()=>Promise<void>){
@@ -297,4 +300,22 @@ it('uses only the live bridge source binding for Clock conversation capacity',as
  // even if its body credential and Runtime job have not yet been cleaned up.
  f.app.db.transaction(()=>put(f.app.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'}))();
  expect(await f.post(body,'clock.in',input)).toMatchObject({ok:false,code:'invalid'});
+});
+
+
+it('issues Clock provenance from current bridge history and loses it when the venue binding changes',async()=>{
+ let role:ReturnType<typeof realConversationRuntime>;
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
+ const {body}=await f.running(),viewer=signin(f.app).token(hash(body))!.viewer;
+ const job=runtimeStore(f.app.db).read('job',runtimeStore(f.app.db).ids('job')[0])!,conversation=job.conversation!;
+ expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}});
+ expect(role!.clockProvenance({...viewer})).toBeUndefined();
+ f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{key:'other-person',sender:{kind:'person',person:'pollock'},at:f.clock.now()},['jonathan']))();
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['pollock']}});
+ await f.restart();
+ const current=signin(f.app).token(hash(body))!.viewer;
+ expect(role!.clockProvenance(current)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['pollock']}});
+ f.app.db.transaction(()=>put(f.app.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'}))();
+ expect(role!.clockProvenance(current)).toBeUndefined();
 });
