@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { fixture, fixtureSharing, installFixture } from '../../fixture.js';
 import { FakeClock, type RecordType, type Sharing, type Viewer } from '../../core/index.js';
+import { DataStore, type Socket } from '../../../web/src/data/store.js';
 const closes: (()=>Promise<void>)[] = [], homes: string[] = [];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});});
 async function setup() {
@@ -53,4 +54,45 @@ it('installs only records in next mode: no scheduled Attention work, retention o
     expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
     expect(app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
   }finally{network.mockRestore();}
+});
+
+it.each([false,true])('rechecks ownership on a queued Home write retry; committed response lost=%s',async(committed)=>{
+  const {app,setSharing}=await setup();
+  const initial=fixtureSharing();initial.members.pollock.agents=['art'];setSharing(initial);
+  const owner:Viewer={kind:'member',id:'jonathan'},viewer:Viewer={kind:'member',id:'pollock'};
+  expect(app.operations.call('direct',owner,'attention.raise',{id:'shared',agent:'art',project:'pond',ask:'Proceed?',source:{kind:'piece',id:'test'}},'shared-raise').ok).toBe(true);
+  const frames:string[]=[],sockets:FakeSocket[]=[],timers:(()=>void)[]=[];
+  let first=true;
+  class FakeSocket implements Socket {
+    readyState=0;onopen:(()=>void)|null=null;onmessage:((event:{data:string})=>void)|null=null;onclose:((event:{code:number})=>void)|null=null;onerror:(()=>void)|null=null;
+    send(wire:string){
+      frames.push(wire);const frame=JSON.parse(wire) as {name:string;input:unknown;id:string;request:string};
+      if(first&&!committed){first=false;return;}
+      const result=app.operations.call('socket',viewer,frame.name,frame.input,frame.id);
+      if(first){first=false;return;}
+      this.onmessage?.({data:JSON.stringify({kind:'result',request:frame.request,result})});
+    }
+    close(){this.readyState=3;}
+    open(){this.readyState=1;this.onopen?.();}
+    drop(){this.readyState=3;this.onclose?.({code:1006});}
+  }
+  const store=new DataStore({socket:()=>{const socket=new FakeSocket();sockets.push(socket);return socket;},id:()=>'home-write',after:(_ms,fn)=>{timers.push(fn);return()=>{};}});
+  try {
+    const pending=store.call('attention.answer',{id:'shared',answer:{kind:'yes'},requireOwnership:true});sockets[0].open();
+    expect(pending.getSnapshot().pending).toBe(true);sockets[0].drop();
+    const revoked=fixtureSharing();revoked.members.pollock.agents=[];setSharing(revoked);
+    expect(app.operations.call('direct',viewer,'attention.get',{id:'shared'}).ok).toBe(true); // project visibility survives
+    timers.shift()!();sockets[1].open();
+    const result=await pending.result;
+    expect(frames).toHaveLength(2);expect(frames[1]).toBe(frames[0]);
+    if(committed){
+      expect(result).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'yes',by:viewer}}});
+      expect(app.db.prepare("SELECT * FROM core_operations WHERE id='home-write'").all()).toHaveLength(1);
+    }else{
+      expect(result).toMatchObject({ok:false,code:'denied'});
+      expect(app.operations.call('direct',viewer,'attention.get',{id:'shared'})).toMatchObject({ok:true,value:{state:'open'}});
+      // Inbox still permits this project-visible person's answer, without the Home-only restriction.
+      expect(app.operations.call('direct',viewer,'attention.answer',{id:'shared',answer:{kind:'no'}},'inbox-answer')).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'no'}}});
+    }
+  }finally{store.close();}
 });

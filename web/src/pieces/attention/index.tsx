@@ -21,7 +21,7 @@ type Confirmation = { records: readonly Ask[]; request: Call<Ask> };
 export function AnswerReceipt({ ask }: { ask: Ask }) {
   return ask.answer ? <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section> : null;
 }
-export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void }) {
+export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened, requireOwnership = false }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void; requireOwnership?: boolean }) {
   const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
   const [request,setRequest] = useState<Call<Ask>>();
   const [checking,setChecking] = useState(false), [draft,setDraft] = useState('');
@@ -52,7 +52,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       if (latest.current.status !== 'live' || latest.current.records !== records || !fresh.ok || fresh.value.id !== ask.id || fresh.value.state !== 'open') {
         setConfirmation(undefined); setMessage('This ask changed or could not be checked. Nothing was recorded.'); return;
       }
-      const write = call<Ask>('attention.answer',{id:ask.id,answer:value});
+      const write = call<Ask>('attention.answer',{id:ask.id,answer:value,...(requireOwnership ? {requireOwnership:true} : {})});
       setRequest(write); setConfirmation(undefined);
       await write.result;
     } finally { sending.current = false; guard.setBusy(false); if (mounted.current) setChecking(false); }

@@ -21,3 +21,14 @@ Frozen75d60a517a0a0aa554ffc90b55f689250f8ccfa9 at /home/art/scratch/attention-ho
 - Standards NIT, actionable: shared the existing stamp formatter between AskReader receipts and Home status.
 - Spec MAJOR, actionable: added next-mode startup test with old foldable turn, fake clock advanced two full days, observed fetch boundary and core_effects table; asserts no retention/fold or outside effects occur. Foundation receipt-expiry timers are permitted and are not external jobs.
 - Author browser correction: reboot shell at every screenshot width, rather than resizing an already chosen desktop shell into a narrow viewport. The 390 capture now exercises the actual phone shell.
+
+## Round 3 — BLOCKING; review complete at the three-round bound
+
+Frozen0597493a5458fb85b0a7a415133a406e24e6ae5f at /home/art/scratch/attention-home-review/round-3/tree. TREE sha256:ff5a73ea82997f7e2bd2b7e08728a8c0aa904ea8c12daba7f3e0df9be754038d. Own ledger excluded from archive/diff; reply beside tree. No fourth round.
+
+- Standards: none.
+- Spec CRITICAL, actionable: an already queued Home write survives reader unmount; if first sent only after ownership loss, ordinary project-visible answer policy would still permit it. Added optional literal `requireOwnership: true` to attention.answer and role input. Home AskReader supplies it, Inbox omits it. The daemon combines ordinary answer-person policy and central give-work ownership in the same transaction as the write. Retry receipts retain the original fact when already committed; an uncommitted retry rechecks current policy.
+- Tests use the actual DataStore with controlled dropped request / dropped committed response, mutable Sharing, next-mode fixture and fake clock. They assert byte-identical retry id/input, denial after ownership removal with project access retained, open ask after refusal, unchanged Inbox authority, and original receipt after an already committed write. Component test requires Home's narrowing flag.
+- Final bound judgment: every actionable finding folded; no known remaining hole. Final verdict remains BLOCKING and is reported in PR/task. R3 carried a new reachable transport case rather than the previous prewrite-only test gap. The standing rebuild brief caps review at three rounds; implementation ships by author judgment after affected tests and current-head CI, not by a claim of CLEAR.
+
+Signed main merge225b054973ce7e1e4fc948636885316636f248ed preserves main012f55df2d29724f1eed2ecce0e744828528e193; only web/src/apps.ts conflicted, resolved additively with Bridges and Home. No history rewrite.89 affected tests/8files pass after final implementation fold; root TypeScript/web build/diff-check and current-head CI/screenshots are recorded on the PR/task.

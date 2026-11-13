@@ -54,8 +54,12 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     may: (viewer, input) => { const r = readAsk(input.id); return !!r && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),
   }));
-  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), 'answer-person', 'attention.answer'); },
+  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
+    may: (viewer, input) => {
+      const r = readAsk(input.id), held = sharing();
+      return !!r && mayAct(viewer, scoped('attention.ask', r), held, 'answer-person', 'attention.answer')
+        && (!input.requireOwnership || mayAct(viewer, { agent: r.agent }, held, 'give-work'));
+    },
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return failure('conflict', 'Ask is no longer open');

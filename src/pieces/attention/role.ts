@@ -48,7 +48,7 @@ export interface AgentStatus extends Scope {
 export interface Attention {
   raise(viewer: Viewer, input: RaiseAsk, operationId: string): Result;
   resolve(viewer: Viewer, input: { id: string; reason: string }, operationId: string): Result;
-  answer(viewer: Viewer, input: { id: string; answer: AskAnswer }, operationId: string): Result;
+  answer(viewer: Viewer, input: { id: string; answer: AskAnswer; requireOwnership?: true }, operationId: string): Result;
   get(viewer: Viewer, input: { id: string }): Result;
   reportStatus(viewer: Viewer, input: Omit<AgentStatus, 'changedAt'>, operationId: string): Result;
 }

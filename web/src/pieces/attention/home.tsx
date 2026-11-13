@@ -33,7 +33,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
             return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
               <header><h2 className="text-xl font-semibold">{agent.name}</h2><p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
-              {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} /> : <p>Nothing needs you from {agent.name}.</p>}
+              {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
               <section><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></p>}</>}</section>
