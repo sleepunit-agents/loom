@@ -11,7 +11,7 @@ import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
 import { migrateMindReceipts } from './receipt-schema.js';
 import { installMindKnowledge } from './index.js';
-import { verifyKnowledgePages } from '../../backends/knowledge-verification.js';
+import { verifyKnowledgePages, deriveSlaClass } from '../../backends/knowledge-verification.js';
 import { installMindKnowledgeActions } from './actions.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -30,7 +30,7 @@ async function fixture(missing = false) {
   async function start() {
     const app = await startLoom({ home: join(home, 'daemon'), clock, next: true, sharing: () => access, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
       const reader = installMindKnowledge(app.operations, app.live, { path, sharing: () => access }); app.onClose(() => reader.close());
-      const actions = installMindKnowledgeActions(app.operations, { path, sharing: () => access, verify: verifyKnowledgePages }); app.onClose(() => actions.close());
+      const actions = installMindKnowledgeActions(app.operations, { path, sharing: () => access, verify: verifyKnowledgePages, classify: domain => deriveSlaClass(null, domain) }); app.onClose(() => actions.close());
     } });
     let stopped = false;
     const close = async () => { if (stopped) return; stopped = true; await app.close(); };
@@ -211,4 +211,24 @@ it('attributes a confirmed check to a differently named authenticated owner', as
   access.members['another-owner'] = { owner: true, agents: [] };
   expect(app.operations.call('direct', { kind: 'member', id: 'another-owner' }, 'mind.knowledgeVerify', { slug: 'fact' }, 'attribution')).toMatchObject({ ok: true });
   expect(await backend!.getVerifications('fact')).toEqual([expect.objectContaining({ verifier: 'another-owner', outcome: 'confirmed' })]);
+});
+it('adds facts atomically with source citations, attribution and durable recovery; never overwrites a title',async()=>{
+  const {app,db,backend,start,clock}=await fixture();
+  const input={title:'A new Fact',domain:'OURS/loom',body:'Words about the artifact',source:''};
+  const add=(id:string,fields=input)=>app.operations.call('direct',owner,'mind.knowledgeAdd',fields,id);
+  expect(add('add')).toMatchObject({ok:true,value:{slug:'a-new-fact',sourcing:'provisional'}});
+  expect(await backend!.getPage('a-new-fact')).toMatchObject({author:'owner',created_by:'owner',verified_at:new Date(clock.now()).toISOString(),sourcing:'provisional',domain:'ours/loom'});
+  expect(db!.prepare('SELECT claim,source_kind,source_locator FROM citations WHERE page_id=(SELECT id FROM pages WHERE slug=?)').get('a-new-fact')).toEqual({claim:'A new Fact',source_kind:'conversation',source_locator:"owner on loom's page"});
+  expect(add('add')).toMatchObject({ok:true});expect(add('duplicate')).toMatchObject({code:'conflict'});
+  for(const fields of [{...input,title:'!!!'},{...input,title:'Different',source:'javascript:bad'}])expect(add('invalid',fields)).toMatchObject({code:'invalid'});
+  expect(app.operations.call('direct',{kind:'member',id:'partial'},'mind.knowledgeAdd',{...input,title:'Forbidden'},'denied-add')).toMatchObject({code:'denied'});
+  db!.exec("CREATE TRIGGER fail_add BEFORE INSERT ON mind_operation_receipts BEGIN SELECT RAISE(ABORT,'fail'); END");
+  expect(add('rollback',{...input,title:'Rollback'})).toMatchObject({code:'unavailable'});expect(await backend!.getPage('rollback')).toBeNull();db!.exec('DROP TRIGGER fail_add');
+  app.db.exec("CREATE TRIGGER fail_core_add BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'fail'); END");
+  const sourced={title:'A device',domain:'music/gear',body:'Device facts',source:'https://example.com/device'};
+  expect(add('recover-add',sourced)).toMatchObject({code:'unavailable'});
+  expect(await backend!.getPage('a-device')).toMatchObject({sourcing:'sourced',sla_class:'device'});app.db.exec('DROP TRIGGER fail_core_add');await app.close();
+  const next=await start();expect(next.operations.call('direct',owner,'mind.knowledgeAdd',sourced,'recover-add')).toMatchObject({ok:true,value:{slug:'a-device'}});
+  expect(db!.prepare('SELECT COUNT(*) AS n FROM citations WHERE page_id=(SELECT id FROM pages WHERE slug=?)').get('a-device')).toEqual({n:1});
+  expect(next.operations.call('direct',owner,'mind.knowledgeVerify',{slug:'fact'},'recover-add')).toMatchObject({code:'conflict'});
 });

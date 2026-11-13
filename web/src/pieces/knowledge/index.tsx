@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useRecords, call, type Call } from '../../data';
-import { Split, List, Row, Empty, Loading, Error, Input, Button, prose, type SplitFolder } from '../../kit';
+import { Split, List, Row, Empty, Loading, Error, Input, Textarea, Button, prose, type SplitFolder } from '../../kit';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
@@ -41,7 +41,11 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, [go]);
   const [requests, setRequests] = useState(() => new Map<string, Call>());
-  const access = useRecords<{ id: string; allowed: boolean; canVerify: boolean; canRecheck: boolean }>('knowledge.access');
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ title: '', domain: '', body: '', source: '' });
+  const addRequest = requests.get('$add');
+  const addAnswer = useSyncExternalStore(addRequest?.subscribe ?? noop, addRequest?.getSnapshot ?? (() => idle));
+  const access = useRecords<{ id: string; canAdd: boolean; allowed: boolean; canVerify: boolean; canRecheck: boolean }>('knowledge.access');
   const permission = access.status === 'live' ? access.records[0] : undefined;
   const feed = useRecords<Page>('knowledge');
   // A direct URL or cited-by target can lie beyond the bounded list.
@@ -64,14 +68,27 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
   if (access.status === 'loading') return <Loading label="Opening knowledge…" />;
   if (access.status !== 'live') return unavailable(access.status);
   if (!permission?.allowed) return unavailable('denied');
+  const addForm = <form aria-label="Add a fact" className="grid gap-4 p-5" onSubmit={event => {
+    event.preventDefault(); if (!permission.canAdd || addAnswer.pending) return;
+    const request = call('mind.knowledgeAdd', draft);
+    setRequests(previous => new Map(previous).set('$add', request));
+  }}><h1>Add a fact</h1><p>Every fact says where it came from. Without a link, it stays provisional.</p>
+    <fieldset disabled={!permission.canAdd || addAnswer.pending || addAnswer.result?.ok === true} className="grid gap-3">
+      {(['title','domain','body','source'] as const).map(field => <label key={field} className="grid gap-1">{{title:'Title',domain:'Topic',body:'What it says',source:'Where it came from'}[field]}
+        {field === 'body' ? <Textarea required value={draft[field]} onChange={e => setDraft({...draft,[field]:e.target.value})} /> : <Input type={field === 'source' ? 'url' : 'text'} required={field !== 'source'} value={draft[field]} onChange={e => setDraft({...draft,[field]:e.target.value})} />}</label>)}
+      <Button type="submit">Add</Button>
+    </fieldset>
+    {addAnswer.pending ? <Loading label="Saving fact…" /> : addAnswer.result && (!addAnswer.result.ok ? <Error text={`${addAnswer.result.code}: ${addAnswer.result.message}`} /> : <p role="status">Added to Knowledge<Button type="button" onClick={() => { const result = addAnswer.result; if (result?.ok) { setAdding(false); navigate((result.value as {slug:string}).slug); } }}>Open fact</Button><Button type="button" onClick={() => { setDraft({title:'',domain:'',body:'',source:''}); setRequests(previous => { const next=new Map(previous);next.delete('$add');return next; }); }}>Add another</Button></p>)}
+  </form>;
   return <Split className="h-full" label="Knowledge" folders={folders} folder={query.trim() ? '' : folder} onFolder={id => { setFolder(id); setQuery(''); }}
     search={<label className="grid gap-1">Search knowledge<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
+    listTop={<div className="p-3"><Button disabled={!permission.canAdd} onClick={() => setAdding(true)}>Add a fact</Button></div>}
     listTitle={query.trim() ? `Matching “${query.trim()}”` : listTitle} listMeta={`${shown.length} pages`}
-    list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => navigate(page.slug)} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
-    reader={feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
+    list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => { setAdding(false); navigate(page.slug); }} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
+    reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
       if (requests.get(current.slug)?.getSnapshot().pending) return;
       const request = call(`mind.${verb}`, { slug: current.slug });
       setRequests(previous => new Map(previous).set(current.slug, request));
     }} /> : selected ? <Empty title="This page is no longer available" text="It may have been archived or moved." /> : null}
-    open={!!selected} onBack={() => navigate()} backLabel="Knowledge" blank={<Empty title="Open a page" text="Choose a fact to read its sources and check it." />} />;
+    open={!!selected || adding} onBack={() => { setAdding(false); navigate(); }} backLabel="Knowledge" blank={<Empty title="Open a page" text="Choose a fact to read its sources and check it." />} />;
 }

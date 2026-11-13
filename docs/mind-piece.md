@@ -225,16 +225,21 @@ recent and due folders, freshness, markdown, sources, referring pages and both
 check actions. Calls start only in handlers and retain their retry state. Missing,
 loading and connection/access failures are separate states. A content-free
 `knowledge.access` record carries the current viewer’s central-policy result and
-per-action eligibility; an empty store cannot masquerade as a denied surface. The old Add a fact
-link was a conversation composer entry, not a Knowledge content operation; that
-entry belongs to the new Conversations app rather than the old composer.
+per-action eligibility (including create); an empty store cannot masquerade as a denied surface. Add a fact uses `mind.knowledgeAdd`, preserving title-derived create-only slugs,
+trimmed/lowercase topics, sourced web citations or provisional owner citations,
+actor attribution and the existing freshness class derivation. Page, citation
+and retry receipt commit in one immediate source transaction. Core receipt
+failure recovers the source receipt without creating a second page/citation.
+Missing stores stay absent; an existing title (including archived) conflicts.
+The form retains its draft/request across disconnect; a successful request must
+be reset with Add another before another submission.
 
 | Old page surface | New surface |
 | --- | --- |
 | `/knowledge` list and topic/search filters | `knowledge` live records + local filters |
 | `/knowledge?p=<slug>` and page/cited-by navigation | scoped `knowledge` live records + `/p/knowledge-preview/page/<slug>` |
 | Still true / Check again | `mind.knowledgeVerify` / `mind.knowledgeRecheck` |
-| Add a fact (conversation composer) | new Conversations app, when composed; no legacy composer call |
+| Add a fact (`newFactPage` / `fact-add`) | retained form + `mind.knowledgeAdd` |
 
 CI's single two-window test writes six screenshots to `artifacts/knowledge-app`
 (390/1280/1920; Neon Noir/Daylight), retained in its shard artifact. It exercises
@@ -243,6 +248,7 @@ outside archive. In-process tests cover metadata-only selection, no creation,
 source namespace refusal, two-window outside writes, retries after restart,
 occupied/non-socket preservation and stale endpoint recovery.
 
+The action installer also receives the pure freshness classifier from composition.
 No host rollout is included. The coordinator must assemble the final new home,
 verify copied existing content paths and database household metadata, stop any
 competing source listener, and start/verify next mode at the final coordinated

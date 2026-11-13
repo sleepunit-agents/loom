@@ -30,6 +30,7 @@ export function installMindKnowledge(operations: Operations, live: Live, options
   // Permission state is explicit: an empty authorized store differs from denial.
   live.register({ name: 'knowledge.access', ids: () => ['knowledge'],
     read: (_id, viewer) => ({ id: 'knowledge', allowed: visible(viewer),
+      canAdd: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeAdd'),
       canVerify: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeVerify'),
       canRecheck: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeRecheck') }),
     inScope: () => true,

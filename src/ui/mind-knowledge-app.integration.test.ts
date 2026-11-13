@@ -11,7 +11,8 @@ import { migrateHouseholdTables } from '../core/household/schema.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
-const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
+const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
+if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new Error('Knowledge browser evidence requires Chrome and the built next app in CI');
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
@@ -58,16 +59,25 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     }
     await b.setViewportSize({width:390,height:900});await b.getByRole('button',{name:'Knowledge',exact:true}).last().click();
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);
-    await b.getByRole('textbox',{name:'Search knowledge',exact:true}).fill('backup');
+    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('backup');
     await expect.poll(()=>row(b,'Six voices').count()).toBe(0);expect(await row(b,'Nightly backup').count()).toBe(1);
     await source.archivePage({slug:'six-voices'});
     await expect.poll(()=>a.getByText('This page is no longer available',{exact:true}).count()).toBe(1);
-    await b.getByRole('textbox',{name:'Search knowledge',exact:true}).fill('');
+    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
     clock.advance(31*86400_000);
-    await b.getByRole('textbox',{name:'Search knowledge',exact:true}).fill('');
+    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
+    await b.getByRole('button',{name:'Add a fact',exact:true}).click();
+    await b.getByRole('textbox',{name:'Title',exact:true}).fill('A shared new fact');
+    await b.getByRole('textbox',{name:'Topic',exact:true}).fill('systems');
+    await b.getByRole('textbox',{name:'What it says',exact:true}).fill('Added through the new Knowledge app.');
+    await b.getByRole('button',{name:'Add',exact:true}).click();
+    await expect.poll(()=>b.getByText('Added to Knowledge',{exact:false}).count()).toBe(1);
+    await expect.poll(()=>row(a,'A shared new fact').count()).toBe(1);
+    await b.getByRole('button',{name:'Open fact',exact:true}).click();
+    await expect.poll(()=>b.getByRole('heading',{name:'A shared new fact',exact:true}).count()).toBe(1);
   }finally{await browser.close();await app.close();source.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

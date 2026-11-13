@@ -7,7 +7,7 @@ vi.mock('../../web/src/data',()=>({useRecords:(type:string,scope?:string)=>type=
 vi.mock('../../web/src/kit',()=>({
   prose:(text:string)=>text,
   Split:(p:{list:unknown;reader:unknown})=>h('div',null,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),
-  Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Button:'button',
+  Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',
 }));
 import Knowledge from '../../web/src/pieces/knowledge/index';
 // React's renderer uses this documented global to flush updates in act().

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const fault=vi.hoisted(()=>({path:''}));
@@ -11,15 +11,24 @@ vi.mock('node:fs',async importOriginal=>{
   }};
 });
 import { createFoundation } from '../app.js';
-import { installTouched, touchSocketPath } from './index.js';
-import { listenForTouchSources } from './group.js';
+import { startLoom } from '../../foundation.js';
+import { FakeClock } from '../clock.js';
+import { migrateHouseholdTables } from '../household/schema.js';
+import { HouseholdDatabase } from '../household/document.js';
+import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import { touchSocketPath } from './index.js';
 it('closes the newly bound socket and earlier listeners if post-bind chmod fails',async()=>{
-  const h=mkdtempSync(join(tmpdir(),'touch-chmod-'));const app=createFoundation({home:join(h,'daemon')});
-  const sources=['one','two'].map(id=>({directory:join(h,id),viewer:{kind:'agent' as const,id},resolve:(c:{type:string;id:string})=>c}));
-  installTouched(app.operations,(_v,c)=>c);fault.path=touchSocketPath(sources[1].directory);
+  const home=mkdtempSync(join(tmpdir(),'touch-chmod-'));
+  // Seed metadata/content offline; every listener starts through startLoom.
+  const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
+  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner'}))();metadata.close();
+  const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
+  await source.writePage({slug:'fact',title:'Fact',domain:'systems',body:'Body'});
+  const agent=join(home,'agents/art');mkdirSync(agent,{recursive:true});writeFileSync(join(agent,'memories.db'),'');
+  const sources=[join(home,'commons'),agent];fault.path=touchSocketPath(agent);
   try{
-    await expect(listenForTouchSources(app.operations,sources)).rejects.toThrow('injected endpoint chmod failure');
-    for(const source of sources)expect(existsSync(touchSocketPath(source.directory))).toBe(false);
-    fault.path='';const stop=await listenForTouchSources(app.operations,sources);await stop();
-  }finally{fault.path='';app.close();rmSync(h,{recursive:true,force:true});}
+    await expect(startLoom({home,next:true,clock:new FakeClock()})).rejects.toThrow('injected endpoint chmod failure');
+    for(const directory of sources)expect(existsSync(touchSocketPath(directory))).toBe(false);
+    fault.path='';const app=await startLoom({home,next:true,clock:new FakeClock()});await app.close();
+  }finally{fault.path='';source.close();rmSync(home,{recursive:true,force:true});}
 });

@@ -26,7 +26,7 @@ import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
 import { installMindKnowledge } from './pieces/mind/index.js';
 import { installMindKnowledgeActions } from './pieces/mind/actions.js';
-import { verifyKnowledgePages } from './backends/knowledge-verification.js';
+import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
 import { installTouched, type TouchSource } from './core/touched/index.js';
 import { listenForTouchSources } from './core/touched/group.js';
 import { prepareTouchSources } from './core/touched/prepare.js';
@@ -73,7 +73,7 @@ export function installNext(app: Foundation, options: NextOptions) {
     const path = inventory?.commons.knowledge;
     const reader = installMindKnowledge(app.operations, app.live, { path, sharing });
     app.onClose(() => reader.close());
-    const actions = installMindKnowledgeActions(app.operations, { path, sharing, verify: verifyKnowledgePages });
+    const actions = installMindKnowledgeActions(app.operations, { path, sharing, verify: verifyKnowledgePages, classify: domain => deriveSlaClass(null, domain) });
     app.onClose(() => actions.close());
   }
 

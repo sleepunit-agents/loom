@@ -68,3 +68,36 @@ Raw verdict BLOCKING: one critical, two major, one nit.
 
 All actionable findings folded with checks; no finding left standing. Third and
 final review pending; no fourth round.
+
+## Round 3 — bounded stop
+
+Frozen commit ddd92e8070465e4dd2e8a2616eb3e0c6d0f75570.
+TREE sha256:72aeed6bbea61a2b233f73a6d905b967a45e174040ed514d54ff31e6adaefc92.
+Raw verdict BLOCKING: one critical, two major. Review is UNCONVERGED; no fourth
+round. All three findings were actionable and folded afterward:
+
+- Major / valid actionable: the new chmod-failure server test bypassed startLoom.
+  Reworked it to seed metadata offline, then exercise failing and successful
+  startup through next-mode startLoom with FakeClock.
+- Critical / valid actionable: browser selectors treated a search input as a
+  textbox. Corrected every Search knowledge selector to role searchbox.
+- Major / valid actionable: browser detection omitted chromium-browser accepted
+  by CI. Added that executable and made missing Chrome/build fail explicitly in
+  CI instead of silently skipping the Knowledge evidence test.
+
+Convergence audit: all findings folded; critical/major count stayed at three;
+none repeats a defect previously reported fixed. The three-round bound wins:
+review remains raw BLOCKING / UNCONVERGED, with no known finding left unfixed.
+CI browser execution is required before merge.
+
+## Scope correction after the frozen rounds
+
+Author inspection of `newFactPage` / `householdAct('fact-add')` showed the earlier
+mapping of Add a fact to Conversations was false. That was the author's mistake,
+not an owner ruling. Restored the actual create-only Knowledge form/operation in
+this PR. It uses the same central Knowledge policy and source receipt recovery,
+adds no schema or permission rule, and injects the existing pure freshness
+classifier. Author-tested: provisional/web citations, attribution, duplicate and
+invalid refusal, partial-member denial, source rollback, core failure/restart
+recovery, namespace conflict and a two-window create path. This addition is after
+the frozen review bytes and is not claimed cold-clear. No fourth review was run.
