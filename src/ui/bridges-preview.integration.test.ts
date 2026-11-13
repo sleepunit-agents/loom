@@ -105,6 +105,30 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
     }
     await b.setViewportSize({ width: 1280, height: 900 });
     for (const p of [a, b]) {
+      await p.getByRole('button', { name: 'Person links', exact: false }).click();
+      await row(p, 'jonathan').click();
+      await expect.poll(() => p.getByRole('button', { name: 'Save person link', exact: true }).isEnabled()).toBe(true);
+    }
+    await a.getByRole('textbox', { name: 'Platform user ID', exact: true }).fill('201');
+    await a.getByRole('button', { name: 'Save person link', exact: true }).click();
+    await expect.poll(() => row(b, 'jonathan').textContent()).toContain('Account: 201');
+    await expect.poll(() => b.getByRole('button', { name: 'Save person link', exact: true }).isDisabled()).toBe(true);
+    await b.getByRole('button', { name: 'Try again', exact: true }).click();
+    await expect.poll(() => b.getByRole('textbox', { name: 'Platform user ID', exact: true }).inputValue()).toBe('201');
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await b.setViewportSize({ width, height: 900 });
+      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
+      await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      await b.locator('.loom-split__reader').evaluate(el => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        for (let pane: HTMLElement | null = el as HTMLElement; pane; pane = pane.parentElement) pane.scrollTop = 0;
+      });
+      await b.screenshot({ path: join(shots, `bridges-link-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+      const geometry = await b.locator('.loom-split').evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth }));
+      expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
+    }
+    await b.setViewportSize({ width: 1280, height: 900 });
+    for (const p of [a, b]) {
       await p.getByRole('button', { name: 'Routes', exact: false }).click();
       await expect.poll(() => row(p, '300').count()).toBe(1);
       await p.getByRole('button', { name: 'Pending sends', exact: false }).click();

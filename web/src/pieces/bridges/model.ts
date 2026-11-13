@@ -36,3 +36,11 @@ export function venueInput(v: VenueRecord): VenueInput {
     tokenSecret: v.tokenSecret, appSecret: v.appSecret, enabled: v.enabled,
     only: v.only, ignore: v.ignore, botRoles: v.botRoles };
 }
+
+export interface LinkRecord extends LiveRecord {
+  id: string; platform: 'discord' | 'slack'; workspace: string; user: string; person: string;
+}
+export type LinkInput = Pick<LinkRecord, 'id' | 'platform' | 'workspace' | 'user' | 'person'>;
+export function linkInput(link: LinkRecord): LinkInput {
+  return { id: link.id, platform: link.platform, workspace: link.workspace, user: link.user, person: link.person };
+}

@@ -71,7 +71,9 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return failure('conflict', 'Ask is no longer open');
-      if (input.answer.kind === 'words' && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
+      // Private reply wording belongs in encrypted Comms, never this row or its retry receipt.
+      if (input.answer.kind === 'words' && record.member !== undefined) return failure('invalid', 'Reply in the private conversation');
+      if (input.answer.kind === 'words' && managed(record) && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
       if ((input.answer.kind === 'yes' || input.answer.kind === 'no') && record.answers === 'words') return failure('invalid', 'Ask needs words');
       record.state = 'answered'; record.changedAt = ctx.now;
       record.answer = { ...input.answer, by: ctx.viewer, at: ctx.now };

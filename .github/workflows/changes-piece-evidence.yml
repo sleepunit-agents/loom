@@ -2,6 +2,9 @@ name: Changes piece evidence
 on:
   pull_request:
     paths:
+      - 'src/next.ts'
+      - 'src/foundation.ts'
+      - 'src/changes-*.ts'
       - 'src/pieces/changes/**'
       - 'web/src/pieces/changes/**'
       - 'src/ui/changes-piece.integration.test.ts'

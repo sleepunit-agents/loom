@@ -2,7 +2,7 @@ import type { LiveRecord } from '../../data';
 export interface Ask extends LiveRecord {
   agent?: string; project?: string; member?: string;
   ask: string; why?: string; if_yes?: string; if_no?: string; href?: string; refs?: string[];
-  answers?: 'yes-no' | 'words';
+  answers?: 'yes-no' | 'words'; sourceManaged?: true;
   waits_on?: { approval: string } | { task: string };
   source: { kind: 'conversation' | 'approval' | 'task' | 'piece'; id: string };
   state: 'open' | 'answered' | 'resolved'; createdAt: number; changedAt: number;

@@ -39,6 +39,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});
     await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
+    await a.getByRole('textbox',{name:'Or answer in your own words'}).fill('Continue after the small fix.');
+    expect(await yes(a).isDisabled()).toBe(true);
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
       await b.setViewportSize({width,height:900});
@@ -47,10 +49,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await b.screenshot({path:join(shots,`inbox-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
-    await yes(a).click();
+    await a.getByRole('button',{name:'Record answer',exact:true}).click();
     await expect.poll(()=>yes(b).count()).toBe(0);
-    await expect.poll(()=>b.getByText(/yes · jonathan/).count()).toBe(1);
-    expect(loom.operations.call('direct',owner,'attention.get',{id:'public'})).toMatchObject({ok:true,value:{answer:{kind:'yes',by:owner}}});
+    await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);
+    await expect.poll(()=>b.getByText('Continue after the small fix.',{exact:true}).count()).toBe(1);
+    expect(loom.operations.call('direct',owner,'attention.get',{id:'public'})).toMatchObject({ok:true,value:{answer:{kind:'words',text:'Continue after the small fix.',by:owner}}});
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Answered/}).click();
     await expect.poll(()=>b.locator('[data-split-row]').filter({hasText:'Continue the Attention rebuild?'}).count()).toBe(1);
