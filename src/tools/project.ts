@@ -22,7 +22,7 @@ import { existsSync } from 'node:fs';
 import { conversationsSection, type ConversationSelection } from '../conversations.js';
 import type { HubConversation } from '../backends/conversations.js';
 import BetterSqlite3 from 'better-sqlite3';
-import { resolveIdentityName } from '../config.js';
+import { resolveIdentityName, type MemorySelection } from '../config.js';
 import { expiresAt, notesDbPath, type Lifespan } from '../notes.js';
 import { CardError, fieldState, marker } from '../backends/cards.js';
 import type { CardValue } from '../backends/people.js';
@@ -60,8 +60,9 @@ function errorText(e: unknown): string {
   return `Error: ${(e as Error).message ?? String(e)}`;
 }
 
-function withStore<T>(contextDir: string, fn: (s: ProjectsStore) => T, opts: { readonly?: boolean; now?: () => number } = {}): T | null {
-  const store = openProjectsStore(contextDir, { ...opts, actor: opts.readonly ? undefined : resolveIdentityName(contextDir) });
+/** Explicit selection uses the context-local private store and actor; omission preserves legacy routing. */
+function withStore<T>(contextDir: string, fn: (s: ProjectsStore) => T, opts: { readonly?: boolean; now?: () => number; selection?: MemorySelection } = {}): T | null {
+  const store = openProjectsStore(contextDir, { ...opts, actor: opts.readonly ? undefined : resolveIdentityName(contextDir, opts.selection) });
   if (!store) return null;
   try {
     return fn(store);
@@ -70,9 +71,9 @@ function withStore<T>(contextDir: string, fn: (s: ProjectsStore) => T, opts: { r
   }
 }
 
-function writing(contextDir: string, fn: (s: ProjectsStore) => unknown): string {
+function writing(contextDir: string, fn: (s: ProjectsStore) => unknown, selection?: MemorySelection): string {
   try {
-    return json(withStore(contextDir, fn));
+    return json(withStore(contextDir, fn, { selection }));
   } catch (e) {
     return errorText(e);
   }
@@ -80,45 +81,46 @@ function writing(contextDir: string, fn: (s: ProjectsStore) => unknown): string 
 
 // ─── Writes ──────────────────────────────────────────────────────────────────
 
-export async function projectWrite(contextDir: string, input: ProjectWriteInput): Promise<string> {
-  return writing(contextDir, (s) => s.write(input));
+export async function projectWrite(contextDir: string, input: ProjectWriteInput, selection?: MemorySelection): Promise<string> {
+  return writing(contextDir, (s) => s.write(input), selection);
 }
 
 export async function projectVerify(
   contextDir: string,
   input: { slug: string; fields: string[]; verified_at?: string; source?: string },
+  selection?: MemorySelection,
 ): Promise<string> {
-  return writing(contextDir, (s) => s.verify(input));
+  return writing(contextDir, (s) => s.verify(input), selection);
 }
 
-export async function projectArchive(contextDir: string, input: { slug: string; reason: string }): Promise<string> {
+export async function projectArchive(contextDir: string, input: { slug: string; reason: string }, selection?: MemorySelection): Promise<string> {
   // The actor is the calling agent's name, as person_archive.
-  return writing(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir) }));
+  return writing(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir, selection) }), selection);
 }
 
-export async function projectRestore(contextDir: string, input: { slug: string }): Promise<string> {
-  return writing(contextDir, (s) => s.restore(input));
+export async function projectRestore(contextDir: string, input: { slug: string }, selection?: MemorySelection): Promise<string> {
+  return writing(contextDir, (s) => s.restore(input), selection);
 }
 
-export async function projectRevisionRestore(contextDir: string, input: { slug: string; revision_id: number }): Promise<string> {
-  return writing(contextDir, (s) => s.revisionRestore(input));
+export async function projectRevisionRestore(contextDir: string, input: { slug: string; revision_id: number }, selection?: MemorySelection): Promise<string> {
+  return writing(contextDir, (s) => s.revisionRestore(input), selection);
 }
 
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
 /** The `project` read. Throws on an invalid name or an unreadable row. */
-export function readProject(contextDir: string, name: string, includeArchived = false): ProjectReadResult {
+export function readProject(contextDir: string, name: string, includeArchived = false, selection?: MemorySelection): ProjectReadResult {
   assertName(name);
-  return withStore(contextDir, (s) => s.read(name, includeArchived), { readonly: true }) ?? { found: false };
+  return withStore(contextDir, (s) => s.read(name, includeArchived), { readonly: true, selection }) ?? { found: false };
 }
 
-export function projectHistoryOf(contextDir: string, name: string): { revisions: ReturnType<ProjectsStore['history']>; resolved_from?: string } {
+export function projectHistoryOf(contextDir: string, name: string, selection?: MemorySelection): { revisions: ReturnType<ProjectsStore['history']>; resolved_from?: string } {
   assertName(name);
   return (
     withStore(contextDir, (s) => {
       const from = s.resolvedFrom(name);
       return { revisions: s.history(name), ...(from ? { resolved_from: from } : {}) };
-    }, { readonly: true }) ?? { revisions: [] }
+    }, { readonly: true, selection }) ?? { revisions: [] }
   );
 }
 
@@ -146,6 +148,7 @@ function latest(...times: Array<string | null | undefined>): string {
 export function listProjects(
   contextDir: string,
   opts: { status?: string; include_archived?: boolean; nowMs?: number } = {},
+  selection?: MemorySelection,
 ): ProjectListEntry[] {
   if (opts.status !== undefined && !(STATUSES as readonly string[]).includes(opts.status)) {
     throw new CardError(`status: must be one of ${STATUSES.join(', ')}`);
@@ -183,7 +186,7 @@ export function listProjects(
               ...(card ? {} : { unreadable: true as const }),
             };
           }),
-        { readonly: true, now: () => nowMs },
+        { readonly: true, now: () => nowMs, selection },
       ) ?? [];
     // Most recent activity first; ties by slug, so the order is stable.
     return entries.sort((a, b) => Date.parse(b.activity) - Date.parse(a.activity) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
@@ -192,8 +195,8 @@ export function listProjects(
   }
 }
 
-export function projectOrphans(contextDir: string): Array<{ tag: string; count: number }> {
-  return withStore(contextDir, (s) => s.orphans(), { readonly: true }) ?? [];
+export function projectOrphans(contextDir: string, selection?: MemorySelection): Array<{ tag: string; count: number }> {
+  return withStore(contextDir, (s) => s.orphans(), { readonly: true, selection }) ?? [];
 }
 
 // ─── The hub ─────────────────────────────────────────────────────────────────
@@ -234,6 +237,8 @@ export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard;
 export const noPieceSections: PieceSectionSource = async () => [];
 
 export interface HubOptions {
+  /** Project cards and hub memories share this private database; independent of People and conversations. */
+  memorySelection?: MemorySelection;
   peopleSelection?: PeopleSelection;
   conversationSelection?: ConversationSelection;
   nowMs?: number;
@@ -373,7 +378,7 @@ export async function projectHubOf(
   assertName(input.slug);
   const nowMs = opts.nowMs ?? Date.now();
   const since = parseSince(input.since, nowMs);
-  const store = openProjectsStore(contextDir, { readonly: true, now: () => nowMs });
+  const store = openProjectsStore(contextDir, { readonly: true, now: () => nowMs, selection: opts.memorySelection });
   if (!store) return { found: false };
   try {
     const found = store.resolve(input.slug);
@@ -436,12 +441,12 @@ async function text(fn: () => unknown | Promise<unknown>): Promise<string> {
   }
 }
 
-export async function project(contextDir: string, input: { slug: string; include_archived?: boolean }): Promise<string> {
-  return text(() => readProject(contextDir, input.slug, input.include_archived ?? false));
+export async function project(contextDir: string, input: { slug: string; include_archived?: boolean }, selection?: MemorySelection): Promise<string> {
+  return text(() => readProject(contextDir, input.slug, input.include_archived ?? false, selection));
 }
 
-export async function projectList(contextDir: string, input: { status?: string; include_archived?: boolean }): Promise<string> {
-  return text(() => listProjects(contextDir, input));
+export async function projectList(contextDir: string, input: { status?: string; include_archived?: boolean }, selection?: MemorySelection): Promise<string> {
+  return text(() => listProjects(contextDir, input, selection));
 }
 
 export async function projectHub(
@@ -452,10 +457,10 @@ export async function projectHub(
   return text(() => projectHubOf(contextDir, input, { pieceSections: opts.conversationSelection === undefined ? managedPieceSections() : noPieceSections, ...opts }));
 }
 
-export async function projectOrphansText(contextDir: string): Promise<string> {
-  return text(() => projectOrphans(contextDir));
+export async function projectOrphansText(contextDir: string, selection?: MemorySelection): Promise<string> {
+  return text(() => projectOrphans(contextDir, selection));
 }
 
-export async function projectHistory(contextDir: string, input: { slug: string }): Promise<string> {
-  return text(() => projectHistoryOf(contextDir, input.slug));
+export async function projectHistory(contextDir: string, input: { slug: string }, selection?: MemorySelection): Promise<string> {
+  return text(() => projectHistoryOf(contextDir, input.slug, selection));
 }
