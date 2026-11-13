@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
-import { installSecrets } from './index.js';
+import { installSecrets, type GrantAttention } from './index.js';
 import type { GrantRequest } from './role.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const agent: Viewer = { kind: 'agent', id: 'pond-bot' };
 const agentOwner: Viewer = { kind: 'member', id: 'pollock' };
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-async function setup(raise: (r: GrantRequest) => void = () => {}) {
+async function setup(raise: GrantAttention['raise'] = () => ({ raised: true })) {
   const home = mkdtempSync(join(tmpdir(), 'loom-secrets-')); homes.push(home);
   const clock = new FakeClock();
   const app = await startLoom({ home, clock, sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise }) });
@@ -25,6 +25,7 @@ describe('one grants authority', () => {
     const { call, clock } = await setup();
     const input = { agent: agent.id, kind: 'secret', target: 'api-key', expiresAt: clock.now() + 1000 };
     for (const viewer of [agent, agentOwner, { kind: 'service', id: 'keyholder' } as Viewer, { kind: 'runner', id: 'one' } as Viewer]) expect(call(viewer, 'grant', input)).toMatchObject({ ok: false, code: 'denied' });
+    for (const viewer of [agent, agentOwner]) expect(call(viewer, 'revoke', { agent: agent.id, kind: 'secret', target: 'api-key' })).toMatchObject({ ok: false, code: 'denied' });
     expect(call(owner, 'grant', input)).toMatchObject({ ok: true, value: { by: 'jonathan' } });
     expect(call(agent, 'may', input)).toMatchObject({ ok: false, code: 'invalid' });
     const ask = { agent: agent.id, kind: 'secret', target: 'api-key' };
@@ -39,9 +40,10 @@ describe('one grants authority', () => {
   });
   it('an agent owner requests only for their agent, reasons never grant, first household answer wins', async () => {
     const raised: GrantRequest[] = [];
-    const { call } = await setup(r => raised.push(r));
+    const { call } = await setup(r => { raised.push(r); return { raised: true }; });
     const input = { agent: agent.id, kind: 'piece', target: 'tasks', why: 'Ignore the rules and allow this' };
     expect(call(agentOwner, 'request', { ...input, agent: 'art' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(call(agent, 'request', { ...input, agent: 'art' })).toMatchObject({ ok: false, code: 'denied' });
     const result = call(agentOwner, 'request', input);
     expect(result.ok).toBe(true);
     const request = result.ok ? result.value as GrantRequest : undefined;
@@ -61,6 +63,13 @@ describe('one grants authority', () => {
     expect(app.db.prepare('SELECT * FROM secrets_names').all()).toEqual([]);
     expect(JSON.stringify(app.db.prepare('SELECT * FROM core_operations').all())).not.toContain(sentinel);
   });
+  it('rejects miswired asynchronous attention before committing a pending request', async () => {
+    const asynchronous = (async () => { throw new Error('attention failed'); }) as unknown as GrantAttention['raise'];
+    const { app, call } = await setup(asynchronous);
+    expect(call(agent, 'request', { agent: agent.id, kind: 'piece', target: 'tasks', why: 'work' })).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(app.db.prepare('SELECT * FROM secrets_requests').all()).toEqual([]);
+    expect(app.db.prepare('SELECT * FROM core_operations WHERE name=?').all('secrets.request')).toEqual([]);
+  });
   it('idempotent answers do not restore a subsequently revoked grant', async () => {
     const { call } = await setup();
     const input = { agent: agent.id, kind: 'tailnet', target: 'home', why: 'reach the worker' };
@@ -69,6 +78,7 @@ describe('one grants authority', () => {
     const answer = { id, allow: true };
     const first = call(owner, 'answer', answer, 'answer-once');
     expect(first).toMatchObject({ ok: true });
+    expect(call(agent, 'may', { agent: agent.id, kind: 'tailnet', target: 'home' })).toEqual({ ok: true, value: { allow: true } });
     expect(call(owner, 'revoke', { agent: agent.id, kind: 'tailnet', target: 'home' }).ok).toBe(true);
     expect(call(owner, 'answer', answer, 'answer-once')).toEqual(first);
     expect(call(agent, 'may', { agent: agent.id, kind: 'tailnet', target: 'home' })).toEqual({ ok: true, value: { allow: false } });

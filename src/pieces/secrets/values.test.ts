@@ -18,7 +18,7 @@ afterEach(async () => { for (const close of closes.splice(0)) await close(); for
 it('writes a value but leaks none to records, operation results, live feed, or logs; pages have no read operation', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-secret-value-')); homes.push(home);
   const seen: string[] = [];
-  const holder: KeyHolder = { names: () => [], set: (_n, value) => { seen.push(Buffer.from(value).toString()); }, handTo: vi.fn(), remove: vi.fn(), rotate: vi.fn() };
+  const holder: KeyHolder = { names: () => [], set: (_n, value) => { seen.push(Buffer.from(value).toString()); }, handTo: vi.fn(() => sentinel), remove: vi.fn(), rotate: vi.fn() };
   const clock = new FakeClock();
   const app = await startLoom({ home, clock, sharing: fixtureSharing, authenticate: () => ({ viewer: owner, valid: () => true }), install: a => {
     installSecrets(a.db, a.operations, a.live, fixtureSharing);
@@ -30,7 +30,7 @@ it('writes a value but leaks none to records, operation results, live feed, or l
   const warn = vi.spyOn(console, 'warn').mockImplementation((...a) => { logs.push(a); });
   const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
   const messages: unknown[] = [];
-  const wait = (predicate: (m: any) => boolean) => new Promise<any>(resolve => {
+  const wait = (predicate: (m: { kind?: string }) => boolean) => new Promise<unknown>(resolve => {
     const listener = (raw: Buffer) => { const m = JSON.parse(raw.toString()); if (predicate(m)) { ws.off('message', listener); resolve(m); } };
     ws.on('message', listener);
   });

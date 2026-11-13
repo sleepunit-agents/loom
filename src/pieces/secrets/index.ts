@@ -4,13 +4,13 @@ import { migrate, operation, failure, mayAct, maySee, type Db, type Operations, 
 import { schema } from './schema/001.js';
 import type { Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+import { secretName as name } from './input.js';
 const agent = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and
  * deliver only its first household owner's yes/no. No caller can inject an answer. */
 export interface GrantAttention {
-  raise(request: GrantRequest): void;
+  raise(request: GrantRequest): { raised: true };
 }
 const tables = { 'secret.name': 'secrets_names', 'secret.grant': 'secrets_grants', 'secret.request': 'secrets_requests' } as const;
 function read<T>(db: Db, table: string, id: string): T | undefined {
@@ -65,7 +65,15 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       if (old) return old;
       if (!attention) return failure('unavailable', 'Grant requests need the attention role');
       const record: GrantRequest = { ...input, id: `q-${randomUUID()}`, state: 'pending', askedBy: { kind: ctx.viewer.kind, id: ctx.viewer.id }, createdAt: ctx.now };
-      saveRequest(record); attention.raise(record); ctx.changed('secret.request', record.id); return record;
+      saveRequest(record);
+      const acknowledgement: unknown = attention.raise(record);
+      if (acknowledgement instanceof Promise) {
+        // A miswired async role must neither commit nor leave an unhandled rejection.
+        void acknowledgement.catch(() => {});
+        return failure('unavailable', 'Attention must acknowledge synchronously');
+      }
+      if (!acknowledgement || typeof acknowledgement !== 'object' || !('raised' in acknowledgement) || acknowledgement.raised !== true) return failure('unavailable', 'Attention did not acknowledge the ask');
+      ctx.changed('secret.request', record.id); return record;
     },
   }));
   operations.register(operation({ name: 'secrets.answer', write: true, input: z.object({ id: z.string().min(1).max(200), allow: z.boolean() }).strict(), output: z.unknown(),

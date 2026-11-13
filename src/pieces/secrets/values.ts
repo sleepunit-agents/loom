@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { operation, mayAct, OperationError, type Db, type Operations, type Sharing } from '../../core/index.js';
 import { grantsRole } from './index.js';
 import type { KeyHolder } from './keyholder.js';
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+import { secretName as name } from './input.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
  * The registry stores only an input hash and this fixed acknowledgement.
  */
