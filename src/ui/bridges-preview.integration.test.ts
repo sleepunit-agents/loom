@@ -64,7 +64,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status a
     await a.getByRole('textbox', { name: 'Primary agent', exact: true }).fill('mark');
     await a.getByRole('textbox', { name: 'Note references', exact: true }).fill('house/brief');
     await a.getByRole('button', { name: 'Save route', exact: true }).click();
-    await expect.poll(() => b.getByText('Primary: mark', { exact: true }).count()).toBe(1);
+    await expect.poll(() => row(b, '300').getByText('Primary: mark', { exact: true }).count()).toBe(1);
     await expect.poll(() => b.getByRole('button', { name: 'Save route', exact: true }).isDisabled()).toBe(true);
     await b.getByRole('button', { name: 'Try again', exact: true }).click();
     await expect.poll(() => b.getByRole('textbox', { name: 'Primary agent', exact: true }).inputValue()).toBe('mark');
