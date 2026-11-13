@@ -34,6 +34,50 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 // Drain the known dispatch promise chain, without wall-clock sleeps.
 const settled = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('durable daemon clock', () => {
+  it.each(['in', 'at', 'scheduleSet', 'park'] as const)('rejects conflicting continuation inputs to %s before recording work', async verb => {
+    const check = vi.fn(() => ({ state: 'pending' as const }));
+    const app = await loom({ approvals: { check, subscribe: () => () => {} } });
+    const base = { agent: 'art', prompt: 'Report once', note: 'report', continuation: 'opaque-report-handle',
+      ...(verb === 'in' ? { when: '1m' } : verb === 'at' ? { when: '2099-01-01 12:31' } : verb === 'park' ? { on: 'q-test' } : { id: 'report', at: '12:31' }) };
+    for (const fields of [{ file: 'routines/report.md', prompt: undefined }, { slot: 'report' }, { place: 'alert:report' },
+      { approval: 'a-local' }, { prompt: '<!-- house: local -->\nReport once' }]) {
+      const result = app.call(verb, { ...base, ...fields });
+      expect(result).toMatchObject({ ok: false, code: 'invalid' });
+      expect(wakes(app.db)).toEqual([]);
+      expect(schedules(app.db)).toEqual([]);
+      expect(app.db.prepare('SELECT * FROM clock_events').all()).toEqual([]);
+    }
+    expect(app.call(verb, base)).toMatchObject({ ok: true });
+    expect(wakes(app.db)).toHaveLength(1);
+  });
+
+  it('preserves dispatch of an existing schedule with historical conflicting continuation fields', async () => {
+    const startBody = vi.fn(async (): Promise<StartResult> => ({ state: 'started', body: 'body-existing' }));
+    const app = await loom({ runtime: { startBody } });
+    const s = app.value<Schedule>('scheduleSet', { id: 'existing', agent: 'art', at: '12:31', prompt: 'Existing', note: 'existing' });
+    const occurrence = wakes(app.db)[0];
+    s.continuation = 'opaque-historical'; s.slot = 'existing';
+    app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(s), s.id);
+    occurrence.continuation = s.continuation; occurrence.slot = s.slot;
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(occurrence), occurrence.id);
+    app.clock.advance(occurrence.due - app.clock.now()); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    expect(wake(app.db, occurrence.id)?.state).toBe('fired');
+    expect(wakes(app.db).find(w => w.id !== occurrence.id)).toMatchObject({ schedule: s.id, state: 'pending', continuation: s.continuation, slot: s.slot });
+  });
+  it('retains the original schedule and occurrence when a conflicting replacement is refused', async () => {
+    const app = await loom();
+    const input = { id: 'report', agent: 'art', at: '12:31', prompt: 'Original', note: 'report' };
+    app.value('scheduleSet', input);
+    const before = { wakes: wakes(app.db), schedules: schedules(app.db), events: app.db.prepare('SELECT * FROM clock_events').all() };
+    expect(app.call('scheduleSet', { ...input, prompt: 'Replacement', continuation: 'opaque', slot: 'report' }))
+      .toMatchObject({ ok: false, code: 'invalid' });
+    expect({ wakes: wakes(app.db), schedules: schedules(app.db), events: app.db.prepare('SELECT * FROM clock_events').all() }).toEqual(before);
+    const result = app.value<{ exit: number; stderr: string }>('command', { agent: 'art', argv: ['in', '1m', '-f', 'routines/report.md', '--continuation', 'opaque'] });
+    expect(result).toMatchObject({ exit: 1 });
+    expect(result.stderr).toContain('without a lane file, slot or place');
+    expect(wakes(app.db)).toEqual(before.wakes);
+  });
   it('reports complete desk jobs in due order with waiting work and no finished entries', async () => {
     const app = await loom({ approvals: { check: () => ({ state: 'pending' }), subscribe: () => () => {} } });
     const later = app.value('in', { agent: 'art', prompt: 'Later', note: 't-2201 finish t-2201 and t-2190', when: '2h' });
@@ -189,10 +233,11 @@ describe('durable daemon clock', () => {
     app.value('scheduleSet', { id: 'agent', agent: 'art', at: '03:31', file: input.file, note: 'agent' }, agent);
     expect(app.value('in', input, agent).state).toBe('pending');
     app.value('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.', source: input.file });
-    for (const fields of [{ project: 'pond' }, { continuation: 'opaque' }, { approval: 'a-local' }, { place: 'conversation' }])
+    for (const fields of [{ project: 'pond' }, { approval: 'a-local' }, { place: 'conversation' }])
       expect(app.value('in', { ...input, ...fields }, agent).state).toBe('pending');
     expect(app.value('in', input, { kind: 'member', id: 'helper' }).state).toBe('pending');
     // Invalid work and unauthorized callers cannot turn the no-op into success.
+    expect(app.call('in', { ...input, continuation: 'opaque' }, agent)).toMatchObject({ ok: false, code: 'invalid' });
     expect(app.call('in', { ...input, prompt: 'Both' }, agent)).toMatchObject({ ok: false, code: 'invalid' });
     expect(app.call('in', input, { kind: 'agent', id: 'stranger' })).toMatchObject({ ok: false, code: 'denied' });
     access.members.jonathan.owner = false;

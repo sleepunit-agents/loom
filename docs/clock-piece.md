@@ -527,3 +527,15 @@ approval or grants access, and runtime dispatch remains held until its owning
 implementation is composed. Local-wake filing/recovery/standing and vouch
 applications remain separate unfinished flows. This composition replaces the
 previously missing next-mode approval parking seam.
+
+
+### Continuation input exclusions
+
+New wake, park and schedule writes reject a continuation combined with a lane
+file, slot, place, explicit approval or the exact `<!-- house: local -->` marker.
+Validation precedes storing work or replacing a schedule. These are the legacy
+`cmd_set` exclusions, applied to the shared work validator so API clients cannot
+bypass the command grammar. A plain prompt continuation remains accepted as
+opaque data; issuer authentication, handle/deadline inspection and dispatch-time
+validation remain unfinished and runtime dispatch remains held by default.
+This change does not validate or adopt imported capabilities.
