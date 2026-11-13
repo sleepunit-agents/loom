@@ -2,7 +2,9 @@
 import { z } from 'zod';
 import type { Message, Venue } from './model.js';
 
-const snowflake = z.string().regex(/^\d+$/);
+// Canonical positive uint64 strings; never coerce through a lossy JS number.
+const snowflake = z.string().regex(/^[1-9]\d{0,19}$/)
+  .pipe(z.string().refine(id => BigInt(id) <= 18_446_744_073_709_551_615n));
 const payload = z.object({
   id: snowflake, channel_id: snowflake, guild_id: snowflake.optional(),
   type: z.number().int(), content: z.string(), timestamp: z.string().optional(),

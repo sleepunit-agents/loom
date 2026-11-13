@@ -54,6 +54,12 @@ describe('Discord intake contract',()=>{
     expect(convert({type:19})).not.toBeNull();
     expect(discordMessage(null,art,channel,[art])).toBeNull();
   });
+  it.each(['0','-1','01','1.5','1e3','18446744073709551616','9'.repeat(100)])('rejects noncanonical or out-of-range snowflake %s',id=>{
+    for (const extra of [{id},{author:{id}},{mentions:[{id}]},{mention_roles:[id]},{webhook_id:id}]) expect(convert(extra)).toBeNull();
+  });
+  it('accepts the full positive uint64 snowflake range without numeric rounding',()=>{
+    for (const id of ['1','18446744073709551615']) expect(convert({id})!.id).toBe(id);
+  });
   it('accepts direct messages only without a guild and preserves original time and words',()=>{
     const dm: DiscordChannel={id:'300',kind:'dm'};
     expect(convert({},dm)).toBeNull();
