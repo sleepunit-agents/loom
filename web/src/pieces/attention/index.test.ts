@@ -151,3 +151,12 @@ it.each(['denied','closed'] as const)('offers no answer after a %s display read'
   expect(buttons('Yes')).toHaveLength(0);expect(text()).toContain(mode==='denied'?'No longer visible':'This ask is no longer open.');
   expect(f.call).toHaveBeenCalledTimes(1);
 });
+
+it('keeps a source-managed yes/no ask in its declared mode',async()=>{
+  const record=ask('managed',{sourceManaged:true}),shown=request<Ask>();
+  f.call.mockReturnValueOnce(shown.call);
+  await draw(h(AskReader,{ask:record,snapshot:{records:[record],status:'live'},go:vi.fn()}));
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Yes')).toHaveLength(1);
+  expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+});
