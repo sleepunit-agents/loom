@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
 - Let the owner review and count eligible unknown imported wakes as their work in the Clock app, retaining saved words, due times and current authority checks.
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
+- Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
 - Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
