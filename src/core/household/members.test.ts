@@ -1,3 +1,4 @@
+import BetterSqlite3 from 'better-sqlite3';
 import { PeopleStore } from '../../backends/people.js';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -29,7 +30,12 @@ async function setup() {
   for(const slug of ['jonathan','pollock','guest','second','third','legacy','new-owner']) people.write({slug,name:slug});
   people.write({slug:'archived',name:'Archived'});
   people.archive({slug:'archived',reason:'fixture',actor:'fixture'});
+  people.write({slug:'merged-guest',name:'Merged Guest'});
+  people.archive({slug:'merged-guest',reason:'merged into guest',actor:'fixture'});
   people.close();
+  const directory=new BetterSqlite3(join(home,'commons','people.db'));
+  directory.prepare("INSERT INTO person_merges (from_slug,into_slug,merged_at,merged_by,counts_json) VALUES (?,?,?,?,?)").run('merged-guest','guest','2026-01-01T00:00:00Z','fixture','{}');
+  directory.close();
   const clock = new FakeClock();
   const app = await startLoom({ next: true, home, clock, install: installFixture }); closes.push(app.close);
   const household = new HouseholdDatabase(app.db), tokens = new TokenDatabase(app.db);
@@ -84,12 +90,14 @@ it('preserves raw fields, projects and credentials; supports ordinary members an
 
 it('refuses the last household owner, unknown removals and invalid input without writes', async () => {
   const {app,household}=await setup(), before=household.document();
-  for (const input of [{person:'jonathan',agents:['art']},{person:'jonathan',agents:[]},{person:'guest',agents:['missing']},{person:'../bad',agents:'*'},{person:'guest',agents:[]},{person:'guest',agents:'*',role:'owner'},{person:'nonexistent',agents:'*'},{person:'archived',agents:'*'}]) {
+  expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:merged-guest'})).toMatchObject({ok:true,value:{slug:'guest',mergedFrom:'merged-guest'}});
+  for (const input of [{person:'jonathan',agents:['art']},{person:'jonathan',agents:[]},{person:'guest',agents:['missing']},{person:'../bad',agents:'*'},{person:'guest',agents:[]},{person:'guest',agents:'*',role:'owner'},{person:'nonexistent',agents:'*'},{person:'archived',agents:'*'},{person:'merged-guest',agents:'*'}]) {
     expect(app.operations.call('direct',owner,'household.setMember',input,'invalid')).toMatchObject({code:'invalid'});
   }
   expect(app.operations.call('direct',owner,'household.removeMember',{person:'jonathan'},'last')).toMatchObject({code:'invalid'});
   expect(app.operations.call('direct',owner,'household.removeMember',{person:'absent'},'absent')).toMatchObject({code:'not-found'});
   expect(household.document()).toEqual(before);
+  expect(app.db.prepare("SELECT * FROM core_operations WHERE id='invalid'").get()).toBeUndefined();
 });
 
 it.each(['remove','narrow'] as const)('pins first-owner token bindings before %s and never transfers browser credentials', async action => {
