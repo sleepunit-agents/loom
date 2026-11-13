@@ -60,6 +60,44 @@ export class SharingDatabase {
   setMembers(slug: string, members: string[]): HouseholdProject { return this.change(slug, { members }); }
   setAgents(slug: string, agents: string[]): HouseholdProject { return this.change(slug, { agents }); }
 
+  /** Replace one member's project list; project rows remain the authority for sharing. */
+  setMemberProjects(person: string, projects: string[]): { projects: string[]; changed: string[] } {
+    this.requireTransaction();
+    const h = new HouseholdDatabase(this.db).household(this.home);
+    if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+    if (!h.members.some(m => m.person === person)) throw new OperationError('not-found', 'Member does not exist');
+    const selected = new Set(projects);
+    const all = this.projectIds().map(id => this.project(id)!);
+    if (projects.some(id => !all.some(p => p.slug === id))) throw new OperationError('invalid', 'Unknown household project');
+    // Validate every resulting row before writing any of them. The enclosing operation
+    // also rolls back the whole list if a row or its retry receipt cannot be stored.
+    const updates = all.filter(p => p.members.includes(person) !== selected.has(p.slug)).map(p => this.validate({
+      ...p, members: selected.has(p.slug) ? [...p.members, person] : p.members.filter(id => id !== person),
+    }));
+    const rows = new HouseholdRows(this.db, 'projects');
+    for (const p of updates) rows.put(p.slug, p);
+    return { projects: [...selected], changed: updates.map(p => p.slug) };
+  }
+
+  /** Change a member's scoped ownership without changing household-owner authority. */
+  setOwnedAgents(person: string, agents: string[]): string[] {
+    this.requireTransaction();
+    const household = new HouseholdDatabase(this.db);
+    const h = household.household(this.home);
+    if (!h) throw new OperationError('unavailable', 'Household has not been imported');
+    const member = h.members.find(m => m.person === person);
+    if (!member) throw new OperationError('not-found', 'Member does not exist');
+    if (member.agents === '*') throw new OperationError('invalid', 'Household owners already own every agent');
+    if (agents.some(id => !h.agents.includes(id))) throw new OperationError('invalid', 'Unknown household agent');
+    const next = [...new Set(agents)];
+    if (member.role === 'owner' && !next.length) throw new OperationError('invalid', 'A scoped owner must own an agent');
+    household.change(this.home, raw => {
+      const members = raw.members as Array<Record<string, unknown>>;
+      raw.members = members.map(m => m.person === person ? { ...m, agents: next } : m);
+    });
+    return next;
+  }
+
   private change(slug: string, values: Partial<HouseholdProject>): HouseholdProject {
     this.requireTransaction();
     const before = this.project(slug);

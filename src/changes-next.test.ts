@@ -42,7 +42,7 @@ it('next installs Changes without a fixture and reads current household project 
   loom.db.transaction(()=>new SharingDatabase(loom.db,home).setMembers('pond',[]))();
   expect(await call('pollock','list')).toMatchObject({ok:true,value:[]});
   expect(await call('stranger','list')).toMatchObject({ok:true,value:[]});
-  expect(loom.operations.has('changes.commit-sync')).toBe(false);
+  expect(loom.operations.has('changes.commit-sync')).toBe(true);
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
 
@@ -75,9 +75,9 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   expect(await list()).toMatchObject({ok:true,value:[{id:change().id,agent:'art'}]});
   expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
   expect((await list()).value).toHaveLength(1); // Agent metadata cannot grant private project access.
-  expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:false}});
-  const answer=await fetch(`${loom.url}/api/changes/answer`,{method:'POST',headers:{authorization:'jonathan','content-type':'application/json'},body:JSON.stringify({id:'uncomposed-answer',input:{id:change().id,head:change().head.id,action:'yes'}})});
-  expect(await answer.json()).toMatchObject({ok:false,code:'unavailable',message:'Approvals is unavailable'});
+  expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:true}});
+  const answer=await fetch(`${loom.url}/api/changes/answer`,{method:'POST',headers:{authorization:'pollock','content-type':'application/json'},body:JSON.stringify({id:'member-answer',input:{id:change().id,head:change().head.id,action:'yes'}})});
+  expect(await answer.json()).toMatchObject({ok:false,code:'denied'});
   expect(assign('art',[])).toMatchObject({ok:true});
   expect(await next()).toMatchObject({kind:'del',id:change().id});
   expect(await list()).toMatchObject({ok:true,value:[]});

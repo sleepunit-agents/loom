@@ -4,6 +4,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus, AttentionSources } from './role.js';
+import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
 import type { DigestReferences } from './project-references.js';
@@ -24,9 +25,14 @@ const answer = z.union([
 const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
+// Capabilities are tied to the exact in-process registry, never reconstructed
+// from persisted data or a request's source label.
+const installedSources = new WeakMap<Operations, AttentionSources>();
+export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
+  installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
@@ -55,12 +61,19 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     may: (viewer, input) => { const r = readAsk(input.id); return !!r && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),
   }));
-  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), managed(r) ? 'household' : 'answer-person', 'attention.answer'); },
+  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
+    may: (viewer, input) => {
+      const r = readAsk(input.id), held = sharing();
+      return !!r && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
+        && (!input.requireOwnership || mayAct(viewer, { agent: r.agent }, held, 'give-work'));
+    },
+
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return failure('conflict', 'Ask is no longer open');
-      if (input.answer.kind === 'words' && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
+      // Private reply wording belongs in encrypted Comms, never this row or its retry receipt.
+      if (input.answer.kind === 'words' && record.member !== undefined) return failure('invalid', 'Reply in the private conversation');
+      if (input.answer.kind === 'words' && managed(record) && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
       if ((input.answer.kind === 'yes' || input.answer.kind === 'no') && record.answers === 'words') return failure('invalid', 'Ask needs words');
       record.state = 'answered'; record.changedAt = ctx.now;
       record.answer = { ...input.answer, by: ctx.viewer, at: ctx.now };
@@ -140,6 +153,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       },
     };
   } };
+  installedSources.set(operations, role);
   return role;
 
 }

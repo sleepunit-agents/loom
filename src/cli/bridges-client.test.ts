@@ -30,7 +30,7 @@ async function setup() {
 const venue: BridgesInputs['putVenues'] = { id: 'v1', platform: 'slack', agent: 'art', workspace: 'T1', bot: 'U1', tokenSecret: 'TOKEN_REFERENCE', appSecret: 'APP_REFERENCE' };
 const route: BridgesInputs['putRoutes'] = { id: 'r1', platform: 'slack', workspace: 'T1', channel: 'G1', primary: 'art', readers: ['jonathan'] };
 const link: BridgesInputs['putLinks'] = { id: 'l1', platform: 'slack', workspace: 'T1', user: 'U2', person: 'jonathan' };
-it('generates help and registry metadata for exactly the six existing setup writes', async () => {
+it('generates help and registry metadata for setup writes and terminal send disposition', async () => {
   const app = await setup();
   const offered = app.operations.offered('http').filter(o => o.name.startsWith('bridges.'));
   expect(offered.map(o => o.cli)).toEqual(bridgeCommands);
@@ -56,7 +56,7 @@ it('keeps schema validation and owner authorization in the daemon, never trustin
   expect(await app.run(['putLinks', JSON.stringify({ ...link, actor: 'jonathan' })])).toMatchObject({ code: 1, stdout: '' });
   writeFileSync(app.tokenFile, 'reader-token');
   for (const command of bridgeCommands) {
-    expect(await app.run([command.name, JSON.stringify(command.name.startsWith('remove') ? { id: 'missing' } : command.name === 'putVenues' ? venue : command.name === 'putRoutes' ? route : link)])).toMatchObject({ code: 1, stdout: '' });
+    expect(await app.run([command.name, JSON.stringify(command.name === 'dismissSend' ? { id: 'missing', state: 'uncertain' } : command.name.startsWith('remove') ? { id: 'missing' } : command.name === 'putVenues' ? venue : command.name === 'putRoutes' ? route : link)])).toMatchObject({ code: 1, stdout: '' });
   }
   expect(app.db.prepare('SELECT count(*) AS n FROM bridges_venues').get()).toEqual({ n: 0 });
   expect(app.db.prepare('SELECT count(*) AS n FROM bridges_links').get()).toEqual({ n: 0 });
@@ -125,4 +125,19 @@ it('retries server errors with the same id and offers offline help without any t
     expect(await runBridgesClient(args, { stdout: s => stdout += s, stderr: () => {}, stdin: Readable.from([]), stdinIsTTY: false, env: {} }, { request: async () => { throw Error('must not request'); }, retry: async () => { throw Error('must not retry'); } })).toBe(0);
     expect(stdout).toContain('usage: loom-bridges');
   }
+});
+
+it('dismisses a held send through HTTP with a stable retry after its acknowledgement is lost', async () => {
+  const app = await setup();
+  app.db.prepare("INSERT INTO bridges_outbox VALUES ('reply','incoming','v1','identity','{}','private words','held',NULL,0)").run();
+  let calls=0;
+  const result=await app.run(['dismissSend',JSON.stringify({id:'reply',state:'held'} satisfies BridgesInputs['dismissSend'])],async(url,init)=>{
+    const response=await fetch(url,init);
+    if(++calls===1){await response.body?.cancel();throw Error('lost response');}
+    return response;
+  });
+  expect(result).toMatchObject({code:0,stdout:'{\n  "id": "reply"\n}\n',stderr:''});
+  expect(result.bodies).toHaveLength(2);expect(new Set(result.bodies).size).toBe(1);
+  expect(app.db.prepare('SELECT state,text FROM bridges_outbox').get()).toEqual({state:'dismissed',text:'private words'});
+  expect(app.db.prepare("SELECT count(*) AS n FROM core_operations WHERE name='bridges.dismissSend'").get()).toEqual({n:1});
 });

@@ -46,8 +46,11 @@ Both transports reject redirects. The client validates HTTP status and command
 response shape before printing, and redacts credentials from its output. Closed
 pagination continues past recently updated old closures to retain newer closures.
 A failed repository keeps its last successful snapshot. Staging holds external
-reads. The root must authorize the job viewer centrally and call the job's
-`close()` before closing the foundation; a late response cannot commit afterward.
+reads. The job commits as the installed `changes` service, through central policy
+for the exact `changes.commit-sync` operation and `change` record type. Members,
+agents, runners and other services cannot commit snapshots, including household
+owners. The operation is direct-only. The foundation stops the job before its
+database closes; manual job close is idempotent and also refuses later commits.
 
 Approval rules and answers use the injected synchronous Approvals role. Changes
 never manufactures a trusted principal or grants itself service access. A visible
@@ -88,14 +91,24 @@ account metadata (owner-only `household.setAgentAccounts`), never cached/importe
 labels. Assignment, clearing and household edits reproject existing records and
 invalidate live Changes rows. Owner logins and branch guesses remain empty; public
 agent account assignments grant no project membership or service authority.
-Confirmation/answers remain closed until the real Approvals role is composed. Refresh records a durable request but
-does not start a forge read in this read-only composition.
+The next root composes the real Approvals role: owner rule lookup uses `for=agent`,
+and answers retain the authenticated member Viewer for grant and project-rule operations.
+No Caller is supplied or invented by Changes. Yes and Not yet apply only to the
+current head and selected principal, retaining Approvals’ existing denial semantics:
+a newer denial revokes earlier unspent allowances across principals and denies
+pending sibling requests without a conversation. Conversation asks keep their
+existing handling. Always sets `project:<slug>` to `do` and grants
+that head in the same outer operation transaction. Refresh records a durable request
+and wakes the root-owned job after the operation commits.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
-current project membership/revocation, and closed approval controls.
+current project membership/revocation and approval controls.
+`src/changes-approvals.test.ts` covers real grants, denial then allowance in the
+same clock tick, stale heads, project rules, person-specific requests, and loss
+of ownership. Equal-timestamp approval receipts resolve to the newest inserted
+receipt, so a later Yes supersedes Not yet even within one second.
 
-Cutover still requires daemon startup/shutdown in the next root, a centrally authorized job
-viewer, the real Approvals adapter, and an injected Secrets role (fake secrets
-until that piece lands). Those integrations remain open. No production import,
+Next mode starts the daemon on the foundation clock, including durable refresh and restart scheduling.
+The daemon owns its installed service Viewer and registers shutdown with the foundation. No production import,
 deployment, old-service shutdown or live-home modification is part of this branch.
 
 ## Evidence
@@ -112,8 +125,9 @@ The Changes piece evidence CI job builds the app, runs only
 that browser proof, and uploads six screenshots under `artifacts/changes-piece`
 (390, 1280 and 1920; Neon Noir and Daylight). It checks two windows, live checks,
 citations and answers, viewer project scope, navigation/reload and merged expiry.
-Browser execution belongs in CI. Artifact links and the mandatory cold credential,
-permission and importer review will be recorded in the PR before it is ready.
+The same proof opens the linked Tasks reader in both windows, checks live checks
+and review badges, and reloads one window before checking subsequent updates.
+Browser execution belongs in CI; each PR records its own exact-head artifact evidence.
 
 Credential reader/client cold review stopped at its three-round bound, last
 verdict BLOCKING with all CRITICAL/MAJOR findings folded and tested. The fixes
@@ -122,7 +136,8 @@ configuration, response validation, safe pagination and malformed PR states.
 Missing or invalid upstream states fail the read and preserve the prior snapshot.
 The injected secret helper remains as an intentional paired boundary. Ledger
 and full transcripts are retained in loom note
-`loom/2026-11-12-changes-credential-review`. Actual root/Approvals integration remains open. This credential unit does not claim a CLEAR verdict.
+`loom/2026-11-12-changes-credential-review`. Root/Approvals integration subsequently
+landed as described above. This credential unit does not claim a CLEAR verdict.
 
 The daemon rechecks project mappings and agent attribution inside the snapshot
 commit transaction, including preserved rows from failed reads. A refresh request
@@ -141,8 +156,8 @@ helper and ownership-revocation coverage during an in-flight read. The full ledg
 prompts and transcripts are retained in loom note
 `loom/2026-11-12-changes-permission-review`. All 69 affected backend, importer,
 client and architecture tests pass, along with TypeScript and diff checks. No
-additional importer or credential review was run. Runtime root/Approvals composition
-remains a follow-up; no live home or service was changed.
+additional importer or credential review was run for that unit. Runtime root/Approvals
+composition subsequently landed; no live home or service was changed.
 
 ## Built-in service registration
 
@@ -154,8 +169,8 @@ The registry is rebuilt on installation after restart; household metadata cannot
 create a service, and another home cannot inherit one. Private member records,
 household setup and person answers retain their central policy restrictions.
 No cross-piece permission is implied: Changes still needs an explicit grant when
-calling another piece. This supplies the authority source; daemon composition and
-the job's action check are separate follow-ups.
+calling another piece. The job uses this authority for its own snapshot operation;
+the next root now starts and stops the daemon with the foundation.
 
 ## GitHub service credentials
 
@@ -168,5 +183,22 @@ The adapter snapshots the bindings and delegates each use to Secrets, which chec
 current service registration, owner service grants, expiry and `never` policy,
 including after the value source replies. Agent grants cannot authorize it and
 installation creates no grants. The existing fixed GitHub transport still owns
-redaction and generic read failures. Root wiring and the actual authenticated
-value source remain separate composition work; this adapter discovers no files.
+redaction and generic read failures. The next root accepts trusted `startLoom({next: true, changes: {source, github,
+request?, interval?}})` composition. It installs Secrets metadata and owner service
+grant operations when this explicit configuration is supplied, then binds the real
+`secretUseRole` to the installed Changes service. It never creates a name or grant.
+`request` is an in-process transport seam, not a caller-controlled URL. `interval`
+is clamped by the job. Without configuration the daemon still runs; an unmapped
+repository fails before any value acquisition or forge request and preserves its
+previous snapshot. Staging holds both acquisition and forge calls even with a grant.
+
+The production authenticated holder transport is still being built by Secrets
+(t-2208). Neither `loom serve --next` nor this unit invents one: the CLI currently
+starts with no credential configuration. Only trusted embedding code can supply
+`source` and public owner/name bindings; neither is accepted through an operation,
+HTTP input, environment token, old token file or runtime identity guess. Completing
+that transport and its final CLI configuration remains required before live reads
+can be activated. This unit exercises real grants with an explicit fixture source,
+not production credential delivery. `src/changes-startup.test.ts` covers automatic
+startup, HTTP refresh, denied agent grants, real service grant/revoke, staging,
+unconfigured startup, revocation during acquisition and close during acquisition.

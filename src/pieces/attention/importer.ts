@@ -41,12 +41,35 @@ export function assertSeparateAttentionSources(from: string[], destination: stri
 }
 
 /** A whole migration batch (one or more per-agent memories.db copies). Caller owns stopped-home lock. */
-export function importAttention(db: Db, from: string[], scopesInput: ImportScopes, options: { interrupt?: () => void; afterSourceConversations?: () => void } = {}) {
+export function importAttention(db: Db, from: string[], scopesInput: ImportScopes, options: { interrupt?: () => void; afterSourceConversations?: () => void } = {}, openSource: (path: string) => Db = (path: string) => new Database(path, { readonly: true, fileMustExist: true })) {
+  if (db.name && db.name !== ':memory:') assertSeparateAttentionSources(from,db.name);
+  const { expected, checksum, counts } = readAttentionImport(from, scopesInput, options, openSource);
+  return db.transaction(() => {
+    migrate(db,'attention',attentionMigrations);
+    const marker = db.prepare("SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
+    if (marker) { if (marker.checksum !== checksum) throw Error('A different attention source was already imported'); return { ok: true, imported: false, checksum, counts }; }
+    for (const t of [...destinations,'attention_statuses']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
+    for (const table of destinations) for (const row of expected[table]) {
+      const columns = Object.keys(row);
+      db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
+    }
+    options.interrupt?.();
+    for (const table of destinations) {
+      const actual = (db.prepare(`SELECT * FROM ${table}`).all() as Row[]).sort((a,b) => String(a.id).localeCompare(String(b.id)));
+      const sorted = [...expected[table]].sort((a,b) => String(a.id).localeCompare(String(b.id)));
+      check(canonical(actual) === canonical(sorted), `${table} comparison failed: ids, counts or content differ`);
+    }
+    db.prepare("INSERT INTO attention_import VALUES ('source',?)").run(checksum);
+    return { ok: true, imported: true, checksum, counts };
+  })();
+}
+
+/** Pure source projection; never opens or writes the destination. */
+export function readAttentionImport(from: string[], scopesInput: ImportScopes, options: { afterSourceConversations?: () => void } = {}, openSource: (path: string) => Db = path => new Database(path, { readonly: true, fileMustExist: true })) {
   check(from.length > 0, 'at least one source required');
   const scopes = scopesSchema.parse(scopesInput);
-  if (db.name && db.name !== ':memory:') assertSeparateAttentionSources(from,db.name);
   const snapshots = from.map(path => {
-    const source = new Database(path, { readonly: true, fileMustExist: true });
+    const source = openSource(path);
     try {
       return source.transaction(() => {
         const held = new Set((source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));
@@ -166,22 +189,5 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   }
   for (const c of conversations.values()) expected.attention_conversations.push({ id: c.id, record: JSON.stringify(c) });
   const counts = Object.fromEntries(destinations.map(t => [t,expected[t].length]));
-  return db.transaction(() => {
-    migrate(db,'attention',attentionMigrations);
-    const marker = db.prepare("SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
-    if (marker) { if (marker.checksum !== checksum) throw Error('A different attention source was already imported'); return { ok: true, imported: false, checksum, counts }; }
-    for (const t of [...destinations,'attention_statuses']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
-    for (const table of destinations) for (const row of expected[table]) {
-      const columns = Object.keys(row);
-      db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
-    }
-    options.interrupt?.();
-    for (const table of destinations) {
-      const actual = (db.prepare(`SELECT * FROM ${table}`).all() as Row[]).sort((a,b) => String(a.id).localeCompare(String(b.id)));
-      const sorted = [...expected[table]].sort((a,b) => String(a.id).localeCompare(String(b.id)));
-      check(canonical(actual) === canonical(sorted), `${table} comparison failed: ids, counts or content differ`);
-    }
-    db.prepare("INSERT INTO attention_import VALUES ('source',?)").run(checksum);
-    return { ok: true, imported: true, checksum, counts };
-  })();
+  return { expected, checksum, counts };
 }

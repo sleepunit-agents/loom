@@ -123,3 +123,145 @@ the receipt; interruption or comparison/receipt failure rolls everything back.
 The source file is unchanged. Names, requests, grants, carry/revocation and old
 audit import remain required; this slice does not claim the complete secrets
 migration or final command, and does not perform a real import.
+
+## Offline request source model
+
+`parseLegacySecretRequests(Buffer)` in `request-source.ts` parses stored v1
+`requests.json` metadata only. It preserves IDs, original stored states (an
+expired grant is still `granted`), exact house/service presence, timestamps,
+minutes, policy/owner decision, actual answering member when present, Always,
+and both carry links. It neither grants access nor reads a file or clock.
+Missing attribution on old owner decisions stays missing; no owner is invented.
+
+Malformed/unsupported sources, unknown fields, mismatched map IDs, self links
+and impossible local decision metadata refuse with a fixed value-free error.
+Unlike the old runtime's empty-store fallback, migration refuses corruption.
+Historical carry partners can have been pruned by the old 200-record retention;
+links are retained even when their other row is absent. This source model does
+not assert cross-row consistency or authorize a missing partner. The final
+importer must validate effective carry/revocation semantics and import matching
+scoped grants, names, policy and audit in its enclosing transaction. This slice
+has no DB writes, receipt, filesystem discovery, command or daemon registration.
+
+The source model retains any string agent identity, matching legacy `houseOf`;
+the final importer must map it to a registered principal without normalizing it
+or granting agent-wide access. Unsupported new-side identities must refuse at
+that composition boundary. Parsing alone never makes a principal authoritative.
+
+
+## Strict offline JSON metadata
+
+Policy and request inputs share a fatal UTF-8 decoder and a JSON token walk
+that rejects duplicate decoded object keys at every depth, including escaped
+aliases. A duplicated `default`, secret rule or `grant` cannot silently discard
+an earlier Never rule. Unknown fields cannot be hidden behind a duplicate key.
+Both public parsers keep their fixed redacted error messages. This is input
+validation only; it adds no command, daemon registration or real import.
+
+## Offline carry-link validation
+
+`parseLegacySecretRequestLinks(Buffer)` layers cross-row validation over the
+request source parser. Surviving partners must be reciprocal, keep the same
+agent, secret, exact service and expiry, move to a different house, and represent
+a plain owner Allow moved only once. Paired revocations must agree in state and
+revocation time. Multiple rows cannot claim the same partner, even if retention
+pruned that partner. A pruned middle row cannot hide a second carry, and carry
+creation must precede the inherited expiry even for a later-revoked row.
+Contradictions refuse with a fixed value-free error.
+
+The function returns the original metadata, including expired stored grants and
+missing historical partners, without inventing member attribution. It performs
+no current-time check, principal mapping, grant creation or DB/file access.
+Missing partners are retained for history, never proof of authorization; the
+final importer must refuse unsupported effective-grant composition, suppress
+claimed originals and map every identity to a registered principal. The complete
+transactional importer and daemon registration remain pending on t-2208.
+
+## Offline request authority plan
+
+`planLegacySecretRequests(bytes, principals, snapshotAt)` in `request-plan.ts`
+adds explicit principal resolution and effective-grant planning to the validated
+source model. It performs no IO, DB writes or current-clock lookup, and is not
+registered with the migration CLI or daemon. The caller supplies snapshot time
+and exact legacy-string bindings to a set of registered new-side agent IDs.
+Any source creation or decision after snapshot time refuses, including pending,
+denied and revoked history: the planner cannot rewind a later stored state.
+Events exactly at snapshot time are accepted.
+There is no same-name fallback or normalization; two distinct source principals
+cannot map to the same new principal, including historical/pending rows.
+
+The plan retains every original request field under `source` alongside its
+mapped agent. Exact `who` attribution stays on the original row, including
+revoked history; it is not copied onto an unattributed carry. Missing owner
+attribution stays missing. Its grant proposals are
+only the live `granted` rows at snapshot time, scoped to the exact house and
+service presence, with the stored expiry. Expired, denied, pending, revoked and
+claimed-original rows confer no authority. Always and policy grants remain
+house-scoped and temporary; standing policy must be imported separately.
+A live carry requires the surviving reciprocal original and cannot predate that
+original's decision. A missing original on an expired/revoked carry remains
+history; a missing original on a live carry refuses the plan. A claimed original
+whose target was pruned is retained as history and never grants access.
+
+Multiple live proposals for one mapped agent/name/exact house/service refuse,
+regardless of order or expiry. The new table stores one grant per exact scope;
+choosing one or unioning their durations would silently lose request provenance.
+Different services, houses and names remain distinct. This conservative refusal
+is an explicit unsupported-composition choice for the final offline import.
+
+These are proposals, not complete `Grant` records. The final importer still
+owns atomic names/policy/requests/grants/audit persistence, checksum and content
+verification, attribution without invention, pending attention composition and
+non-authorizing moved-original records needed for paired revocation. It must use
+the household registry for `registered`, reconcile the same mappings with policy
+membership, and preserve the original metadata for history. No real import is
+performed by this increment.
+
+## Combined offline policy/request plan
+
+`planLegacySecretMetadata(policyBytes, requestBytes, principals, snapshotAt)`
+resolves the union of request identities and every policy `agents`/`houses`
+entry with the same explicit registered bindings. Distinct legacy identities
+cannot map to one agent across inputs, separate rules or membership fields,
+even for inactive rules or denied history. Repeated identical identities are
+preserved; unused bindings do not create membership. Startup and request lists
+remain independent, and levels, omissions, empty lists and clamped durations
+retain the strict policy parser's meaning. Unsupported legacy policy IDs still
+refuse rather than normalize. The strict policy decoder now lives in pure
+`policy-source.ts`; `policy-importer.ts` keeps its existing parser export and
+persistence behavior.
+
+The result contains validated original policy membership, mapped policy and the
+existing request plan. It performs no IO or registration. Names, actual member
+attribution mapping, pending attention, moved-original revocation storage, audit,
+atomic persistence/receipts and independent content verification remain the final
+importer's work. This plan does not activate a runtime permission or import data.
+
+## Offline destination request/grant records
+
+`planLegacySecretRecords` builds on the combined policy/request plan without IO,
+DB writes or implicit time. A dedicated entry-point test forbids filesystem and
+subprocess calls, database dependencies and implicit clock access. It supplies runtime `GrantRequest` and `Grant` shapes,
+retaining the full validated original metadata separately. Grant IDs use the same
+pure helper as runtime writes. A live carried grant includes a moved-original
+record at the original scope: it never authorizes use, but lets revocation from
+either scope revoke the pair. An independent grant colliding with that record
+refuses rather than being overwritten. Exact service absence and original expiry
+are retained; expired, revoked, denied and pruned claimed originals create no
+usable grants. Policy decisions remain policy decisions; Always remains temporary.
+
+All surviving `who` fields require explicit injective bindings to registered
+household members, including historical decisions. No same-name or first-owner
+fallback exists. An unattributed historical request remains unattributed. A live
+owner grant without surviving mapped attribution refuses this composition; a live
+carry derives grant attribution from its surviving original while preserving its
+own absent `who`. This conservative unsupported-composition refusal avoids naming
+an invented answering member. The final importer must supply registered agents,
+members and actual stored secret names from its destination, not caller assertions.
+
+Pending requests refuse until the final importer can create trusted household
+Attention asks in the same transaction. Unsupported service IDs and active grants
+for absent names also refuse. This helper is unregistered and does not persist or
+activate anything. Atomic names/policy/requests/grants/audit import, source receipts,
+independent destination verification, pending Attention composition and migration
+registry/CLI wiring remain required by t-2208.

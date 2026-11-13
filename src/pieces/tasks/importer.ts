@@ -11,8 +11,30 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 /** Checksum is of the SQLite read snapshot, including WAL-visible committed records. */
-export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string>; agent?: string } = {}) {
-  const source = new Database(from, { readonly: true, fileMustExist: true });
+export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string>; agent?: string } = {}, openSource: (path: string) => Db = (path: string) => new Database(path, { readonly: true, fileMustExist: true })) {
+  const { original, expected, checksum, mapping, agent } = readTasksImport(from, now, options, openSource);
+  return db.transaction(() => {
+    migrate(db, 'tasks', schema);
+    const old = db.prepare("SELECT value FROM tasks_meta WHERE key='source-checksum'").get() as { value: string } | undefined;
+    if (old) {
+      if (old.value !== checksum || (db.prepare("SELECT value FROM tasks_meta WHERE key='source-projects'").get() as { value: string } | undefined)?.value !== mapping || ((db.prepare("SELECT value FROM tasks_meta WHERE key='source-agent'").get() as { value: string } | undefined)?.value ?? '') !== agent) throw new Error('A different tasks source was already imported');
+      return { ok: true, imported: false, checksum, tasks: original.tasks.length, links: original.links.length };
+    }
+    if (load(db).tasks.length || load(db).links.length) throw new Error('Tasks destination must be empty before import');
+    persist(db, expected, now);
+    options.interrupt?.();
+    const actual = load(db);
+    if (canonical(actual) !== canonical(expected)) throw new Error('Tasks import comparison failed: ids, counts or content differ');
+    db.prepare("INSERT INTO tasks_meta VALUES ('source-checksum',?)").run(checksum);
+    db.prepare("INSERT INTO tasks_meta VALUES ('source-projects',?)").run(mapping);
+    db.prepare("INSERT INTO tasks_meta VALUES ('source-agent',?)").run(agent);
+    return { ok: true, imported: true, checksum, tasks: expected.tasks.length, links: expected.links.length };
+  })();
+}
+
+/** Pure source projection; never opens or writes the destination. */
+export function readTasksImport(from: string, now: number, options: { afterSourceTasks?: () => void; projects?: Record<string,string>; agent?: string } = {}, openSource: (path: string) => Db = path => new Database(path, { readonly: true, fileMustExist: true })) {
+  const source = openSource(from);
   let original: StoreState;
   try {
     original = source.transaction(() => {
@@ -31,46 +53,30 @@ export function importTasks(db: Db, from: string, now: number, options: { interr
   const agent = options.agent ?? '';
 
   const checksum = createHash('sha256').update(canonical(options.agent === undefined ? original : { source: original, agent: options.agent })).digest('hex');
-  return db.transaction(() => {
-    migrate(db, 'tasks', schema);
-    const old = db.prepare("SELECT value FROM tasks_meta WHERE key='source-checksum'").get() as { value: string } | undefined;
-    if (old) {
-      if (old.value !== checksum || (db.prepare("SELECT value FROM tasks_meta WHERE key='source-projects'").get() as { value: string } | undefined)?.value !== mapping || ((db.prepare("SELECT value FROM tasks_meta WHERE key='source-agent'").get() as { value: string } | undefined)?.value ?? '') !== agent) throw new Error('A different tasks source was already imported');
-      return { ok: true, imported: false, checksum, tasks: original.tasks.length, links: original.links.length };
-    }
-    if (load(db).tasks.length || load(db).links.length) throw new Error('Tasks destination must be empty before import');
-    const checked = apply(emptyState(), { op: 'import', tasks: original.tasks, links: original.links, actor: 'migration', at: new Date(now).toISOString() });
-    if (!checked.result.ok) throw new Error(`Invalid source: ${JSON.stringify(checked.result)}`);
-    if (checked.state.seq > original.seq) throw new Error('Source sequence would reuse a generated id');
-    // Preserve the original records exactly; validation must not quietly drop fields.
-    const expected: StoreState = structuredClone(original);
-    const byId = new Map(expected.tasks.map(t => [t.id, t as ScopedTask]));
-    for (const task of expected.tasks as ScopedTask[]) {
-      delete task.project;
-      let ancestor = task;
-      const seen = new Set<string>();
-      for (;;) {
-        if (seen.has(ancestor.id)) throw new Error('Parent cycle in source');
-        seen.add(ancestor.id);
-        if (ancestor.type === 'epic') {
-          const raw = original.tasks.find(t => t.id === ancestor.id) as ScopedTask;
-          if (Object.hasOwn(projectMap, ancestor.id) && raw.project !== undefined && raw.project !== projectMap[ancestor.id]) throw new Error('Epic project map conflicts with source project');
-          const project = raw.project ?? (Object.hasOwn(projectMap, ancestor.id) ? projectMap[ancestor.id] : undefined);
-          if (typeof project === 'string' && project) { task.project = project; break; }
-        }
-        const parent = expected.links.find(l => l.type === 'parent-child' && l.id === ancestor.id);
-        if (!parent) break;
-        const next = byId.get(parent.dependsOn); if (!next) throw new Error('Unknown source parent'); ancestor = next;
+  const checked = apply(emptyState(), { op: 'import', tasks: original.tasks, links: original.links, actor: 'migration', at: new Date(now).toISOString() });
+  if (!checked.result.ok) throw new Error(`Invalid source: ${JSON.stringify(checked.result)}`);
+  if (checked.state.seq > original.seq) throw new Error('Source sequence would reuse a generated id');
+  // Preserve the original records exactly; validation must not quietly drop fields.
+  const expected: StoreState = structuredClone(original);
+  const byId = new Map(expected.tasks.map(t => [t.id, t as ScopedTask]));
+  for (const task of expected.tasks as ScopedTask[]) {
+    delete task.project;
+    let ancestor = task;
+    const seen = new Set<string>();
+    for (;;) {
+      if (seen.has(ancestor.id)) throw new Error('Parent cycle in source');
+      seen.add(ancestor.id);
+      if (ancestor.type === 'epic') {
+        const raw = original.tasks.find(t => t.id === ancestor.id) as ScopedTask;
+        if (Object.hasOwn(projectMap, ancestor.id) && raw.project !== undefined && raw.project !== projectMap[ancestor.id]) throw new Error('Epic project map conflicts with source project');
+        const project = raw.project ?? (Object.hasOwn(projectMap, ancestor.id) ? projectMap[ancestor.id] : undefined);
+        if (typeof project === 'string' && project) { task.project = project; break; }
       }
+      const parent = expected.links.find(l => l.type === 'parent-child' && l.id === ancestor.id);
+      if (!parent) break;
+      const next = byId.get(parent.dependsOn); if (!next) throw new Error('Unknown source parent'); ancestor = next;
     }
-    if (options.agent !== undefined) for (const task of expected.tasks as ScopedTask[]) if (task.project === undefined) task.agent = options.agent;
-    persist(db, expected, now);
-    options.interrupt?.();
-    const actual = load(db);
-    if (canonical(actual) !== canonical(expected)) throw new Error('Tasks import comparison failed: ids, counts or content differ');
-    db.prepare("INSERT INTO tasks_meta VALUES ('source-checksum',?)").run(checksum);
-    db.prepare("INSERT INTO tasks_meta VALUES ('source-projects',?)").run(mapping);
-    db.prepare("INSERT INTO tasks_meta VALUES ('source-agent',?)").run(agent);
-    return { ok: true, imported: true, checksum, tasks: expected.tasks.length, links: expected.links.length };
-  })();
+  }
+  if (options.agent !== undefined) for (const task of expected.tasks as ScopedTask[]) if (task.project === undefined) task.agent = options.agent;
+  return { original, expected, checksum, mapping, agent };
 }

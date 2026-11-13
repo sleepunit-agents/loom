@@ -12,17 +12,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
+- Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
+- Add owner-controlled runtime house grant configuration with preserved secret scopes and repository-secret build provenance.
+
+- Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
+- Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
+
+- Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
+- Add read-only `migrate verify` that independently compares imported IDs, counts, metadata and content against the snapshot and full plan on every invocation.
+- Add offline `migrate plan` and resumable `migrate all` with snapshot-bound receipts and stopped-home destination checks.
+- Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
+
+- Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+- Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
+
+- Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
+
+- Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
+- Add person-link creation, editing and confirmed removal to the next-mode Bridges preview with shared pending and stale-draft guards.
+- Add owner-only terminal Bridges send dismissal through the registry and typed CLI, without replaying held or uncertain replies.
+- Add connection creation, editing and confirmed removal to the Bridges preview, with secret-name references and shared pending setup guards.
+- Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
+- Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
+- Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
+- Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
+- Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
+
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
 
+- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
+
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
+- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 - Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+- Attention next-mode digests now resolve project aliases and venue filing through visible Projects cards for the conversation’s agent.
+
+- Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
+- Attention: public yes/no asks also accept a words answer in Inbox and Home; unsent drafts guard other answers, and private reply words are refused before central storage.
+- Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
 
@@ -30,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode Knowledge on live records: topics, page reader and durable check actions, with source socket lifecycle owned by the daemon.
 
 - Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
+- Add the opt-in `loom-wake-client` API command for the new clock, with daemon-side command metadata, legacy scheduling text and bounded idempotent retries.
 - Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
@@ -940,6 +977,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rollback or new settings, and removed with the piece. `keepChildren: true`
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
+
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
+
+- Add the owner-only `household.setMemberProjects` operation to replace one member's project assignments atomically and refresh open windows.
+
+- Add owner-only next-mode registration of existing agent contexts with atomic retries and live household updates.
+
+- Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
 
 ## [0.16.1] - 2026-10-25
 

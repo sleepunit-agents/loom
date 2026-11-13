@@ -1,6 +1,6 @@
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
-import { migrate, mayAct, maySee, type Sharing } from '../../core/index.js';
+import { migrate, mayAct, maySee, OperationError, type Sharing } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
 import { operation } from './commands.js';
 import { schema } from './schema/001.js';
@@ -43,6 +43,21 @@ export function installBridges(app: Foundation, sharing: () => Sharing) {
       return { ...r, connection: status?.state ?? 'disconnected', changedAt: status?.changed ?? 0, ...traffic };
     }, inScope: () => true });
   }
+  operations.register(operation({ name: 'bridges.dismissSend', write: true,
+    input: z.object({ id: z.string().min(1), state: z.enum(['held', 'uncertain']) }).strict(),
+    output: z.object({ id: z.string() }),
+    may: v => mayAct(v, { type: 'bridges.send' }, sharing(), 'household'),
+    run(ctx, { id, state }) {
+      const row = db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get(id) as { state: string } | undefined;
+      if (!row) throw new OperationError('not-found', 'No reply send');
+      // Disposition is terminal, never a retry. Retain the original payload for permanent reply-id deduplication.
+      if (row.state === 'dismissed') return { id };
+      if (row.state !== state) throw new OperationError('conflict', 'Reply state changed; reload before dismissing');
+      db.prepare("UPDATE bridges_outbox SET state='dismissed' WHERE id=?").run(id);
+      ctx.changed('bridges.send', id);
+      return { id };
+    },
+  }));
   live.register({ name: 'bridges.send', ids: () => (db.prepare("SELECT id FROM bridges_outbox WHERE state NOT IN ('sent','dismissed')").all() as {id:string}[]).map(r => r.id),
     read(id,v) { if (!maySee(v,{type:'bridges.send'},sharing())) return;
       return db.prepare('SELECT id,venue,incoming,state,remote_id AS remoteId,created FROM bridges_outbox WHERE id=?').get(id) as {id:string} | undefined;

@@ -236,12 +236,12 @@ the command inventory above, the source has these domain obligations:
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
 | `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | Current continuation field is opaque data only; validation and runtime capability inspection remain unfinished. It must not convey authority by its presence. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
-| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note is implemented below; question-role composition remains unfinished. |
+| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
-| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notice integration remains unfinished. |
-| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history exists; attention role publication and owner notices remain unfinished. |
+| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notices are implemented through the Attention source described below. |
+| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices and scoped Next/jobs reads exist; desk composition remains unfinished. |
 
 The client still owes exact stdout/stderr/exit fixtures, including the runtime
 relay refusal, nested verb options, and schedule/list/log formatting. The app
@@ -319,8 +319,8 @@ not-started outcome; there is no old HTTP delivery-id adapter. It records
 cancels the triage wake and records `quota-notice`, preventing recursive triage
 when no model has room. Other alert work still waits. Only a structured quota
 code selects this behavior; arbitrary reason text conveys no status or authority.
-Runtime/attention composition and publication of the owner's quota notice remain
-separate unfinished work; this unit does not publish one itself.
+The Attention source below publishes one owner notice per wake; repeated quota
+waits do not reopen it. Runtime dispatch composition remains unfinished.
 
 ## Parked continuation messages
 
@@ -416,11 +416,114 @@ imported provenance. Those workflows remain part of later server slices.
 
 Next mode owns Clock's lifecycle and stops its timer before database shutdown.
 Until runtime dispatch composition exists, every start remains held by Clock's
-default runtime even outside staging; nothing calls the old program. Next-mode
-approval parking composition still remains.
+default runtime even outside staging; nothing calls the old program. Next mode composes scoped approval and secret answers as described below.
 
 One in-process browser test exercises two windows, live creation/cancellation,
 pause, lane text edits/reassignment, direct-link reload, phone confirmations,
 staging hold and member isolation. It captures Neon Noir and Daylight at 390,
 1280 and 1920 pixels in `artifacts/clock-app/`. CI uploads that directory with
 its shard artifact.
+
+## Opt-in wake client
+
+`loom-wake-client` uses `LOOM_URL`, `LOOM_TOKEN_FILE` and optional `WAKE_AGENT`.
+It does not replace `loom wake` (identity) or install a host command. Agent tokens
+default to their own clock; members select `--agent` or `WAKE_AGENT`. The shared
+command declarations generate registry CLI metadata and help. Parsing, calendar
+validation, policy and human formatting run in `clock.command` in the daemon.
+One outer write receipt covers nested operations and exact stdout/stderr/exit;
+transport retries keep the same body and id. Redirects are refused, retry counts
+are bounded and bearer text is redacted from errors and output.
+
+Timed `-f` remains a relative repository filename for the runtime. Only `lane set
+-f` reads a file in the caller's filesystem and sends its text and relative source
+name. The daemon opens no prompt files. Absolute source names are deliberately
+refused by the new lane operation. No local account or default agent is inferred
+from old config. Legacy model defaults are replaced by runtime model choice.
+
+Fixtures cover at/in token joining, set/list/cancel, parked messages, pause/resume,
+fresh now, schedule set/list/run/rm, lane set/assign/text/rm, six-hour suppression,
+global agent selection, scoped refusals, retry receipts and runtime relay refusal.
+The daemon owns rearming; its new confirmation replaces obsolete systemd counts.
+Empty list says `no pending wakes`: no missing-deadman warning before explicit
+deadman configuration. List reports real held/firing states, never a transient
+unit's armed status. Log prints structured new event time/kind/outcome or note,
+with legacy duration/grep/last-2000 filtering; old subprocess log details are not
+reconstructed. Schedule ids created here are namespaced by agent; existing raw
+ids remain addressable only on their own agent's clock.
+
+Vouch/ask-vouch remain explicit refusals until the owning provenance workflow
+lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
+refused in favor of the daemon, runtime, Clock app and core migration. This client
+slice does not claim completion of provenance, local approvals, runtime dispatch
+or importer-all registration; those remain on t-2201.
+
+
+| Old client detail | New client choice and reason |
+| --- | --- |
+| Full argparse usage/error paragraphs | Concise `wake:` diagnostics; usage errors exit 2, operation/connection refusals exit 1. Interpreter-specific usage wrapping is not retained. |
+| Implicit local agent/model from installed configuration | Agent token identity or explicit clock selection; runtime chooses an omitted model. New clients read no old configuration. |
+| Raw per-agent schedule names | Namespaced internal ids, names shown in confirmations. Legacy raw ids and household lanes remain addressable on their own agent's clock. An ambiguous new-side name refuses instead of choosing work. |
+| Old empty-spool warning, systemd armed flag and boot counts | Truthful empty/held/firing states and daemon rearm confirmation; no transient unit exists. |
+| Subprocess-dependent log messages | New structured event time, kind and outcome/note, filtered as displayed, with the legacy duration and last-2000 rule. |
+| A separate lane registry surviving removal of its schedule | One owning schedule row. Removing it through either command removes the lane; no orphaned registry is kept. |
+| Caller-supplied principal statement | Refused; only the authenticated viewer and future runtime resolver can establish provenance. |
+
+## Attention start-failure notices
+
+When composed with Attention's trusted household source, each wake raises one
+notice at the third definite start failure, one when automatic retries stop
+(including the first failed continuation), and one on model quota deferral or
+suppressed quota triage. Stable wake-and-kind identities prevent receipt retries,
+repeated quota waits and restarts from reopening an acknowledged notice. The
+outcome and notice commit together. A source failure rolls back both; the daemon
+then holds the dispatch uncertain rather than retrying an unrecorded outcome.
+
+Notices link to Clock and carry only the wake id, generic explanation and failure
+category. Prompt, note, file, project/member scope and runtime error text never
+enter a household notice. Only household owners can see or acknowledge them under
+Attention's existing policy. Acknowledgement does not retry, cancel, approve or
+start work; the Clock reader remains the place to inspect the wake. Next mode
+registers this source using the installed Attention registry capability, including
+when an installer already supplied Attention. Independent Clock installations
+may omit it. Existing staging/uncertain outcomes do not report definite failures.
+
+The offline registry merged in #951 already registers Clock after household;
+`loom migrate all` invokes the same transactional importer as the standalone
+command, with its old WAKE_DATA directory selected from the validated snapshot.
+No import or live move is performed by either implementation slice.
+
+## Home Clock composition
+
+The new Home subscribes to the scoped live `wake` and `clock` records. Each owned
+agent card shows Clock's Next and complete active Clock jobs, independently of a
+reported runtime status. The browser and server share the same projection; paused
+clocks, parked answer checks and held starts never become a promised Next. Job
+rows open the Clock app. Reported jobs remain separately labelled as reports.
+Both streams must be live before Home shows Clock words or times. Losing either
+stream clears stale values; losing ownership removes the card. The existing Home
+browser proof checks two-window create/pause/cancel updates and captures the
+composed panels in its six-size/look evidence. No caller authority or dispatch
+capability is added by these read-only panels.
+
+## Parked-answer composition
+
+Next mode supplies Clock with read-only owning roles for Approvals and, when
+installed in the same foundation, Secrets requests. Each read retains the wake's
+original viewer and checks the owning piece's current central visibility. Missing
+or invisible requests remain unreadable; saved kind/target fields cannot stand
+in for a current answer. Approval expiry is computed at the current clock time.
+Secret revocation is reported as cancellation. No secret names, house scope,
+values or request details enter this answer projection.
+
+Committed approval, secret-request and access changes notify parked work through
+the live observer; Clock removes its observer on close. Restart uses the same
+roles and persisted park deadlines. Existing unpark messages distinguish Allow,
+Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
+request again; it never carries a house grant forward. Other resource questions
+report that their piece applied the access and ask the body to check it; they
+never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
+approval or grants access, and runtime dispatch remains held until its owning
+implementation is composed. Local-wake filing/recovery/standing and vouch
+applications remain separate unfinished flows. This composition replaces the
+previously missing next-mode approval parking seam.

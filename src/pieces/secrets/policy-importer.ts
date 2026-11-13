@@ -2,38 +2,16 @@
  * gate and must include names, requests, grants and audit in the same transaction. */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { z } from 'zod';
 import { migrate, type Db } from '../../core/index.js';
-import { secretAgent, secretName } from './input.js';
-import { secretPolicy, type SecretPolicy } from './policy.js';
+import { parseLegacySecretPolicy } from './policy-source.js';
+export { parseLegacySecretPolicy } from './policy-source.js';
 import { schema } from './schema/001.js';
 
-const level = z.enum(['ask', 'auto', 'never']);
-const sourcePolicy = z.object({
-  v: z.literal(1).optional(),
-  default: level.default('ask'),
-  secrets: z.record(secretName, z.object({
-    grant: level.optional(),
-    agents: z.array(secretAgent).max(1000).optional(),
-    houses: z.array(secretAgent).max(1000).optional(),
-    // The old decide() clamps positive integer durations at eight hours.
-    minutes: z.number().positive().refine(Number.isInteger).transform(n => Math.min(n, 480)).optional(),
-  }).strict()).default({}),
-}).strict();
 const canonical = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, v]) => `${JSON.stringify(key)}:${canonical(v)}`).join(',')}}`;
   return JSON.stringify(value);
 };
-
-/** No raw source or validation diagnostics escape: a malformed metadata file may
- * contain an accidental value. Unknown fields are refused, never copied to DB. */
-export function parseLegacySecretPolicy(bytes: Buffer): SecretPolicy {
-  try {
-    const parsed = sourcePolicy.parse(JSON.parse(bytes.toString('utf8')));
-    return secretPolicy.parse({ default: parsed.default, secrets: parsed.secrets });
-  } catch { throw new Error('Invalid legacy secret policy'); }
-}
 
 /** Explicit read-only policy.json input; never discovers a home or reads the
  * encrypted value store. Same bytes are a no-op, different bytes are refused. */

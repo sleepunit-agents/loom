@@ -4,8 +4,12 @@ import { migrate, operation, maySee, mayAct, type Db, type Operations, type Live
 import { records, type RecordKind } from './records.js';
 import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
+import { installHouseConfiguration } from './houses.js';
+import { installHouseGrants } from './grants.js';
+import { installQueueBody } from './queue.js';
 import { installBoxOperations } from './boxes.js';
 import { installRevokeBox } from './revoke.js';
+import { installRunnerJobs } from './runner-jobs.js';
 import { installRunnerReports } from './runner.js';
 import type { RuntimeCredentials } from './credentials.js';
 const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
@@ -15,7 +19,12 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);
+  installQueueBody(db, operations, sharing);
+  installHouseConfiguration(db, operations, sharing);
+  installHouseGrants(db, operations, sharing);
+
   installRunnerReports(db, operations, sharing);
+  installRunnerJobs(db, operations, sharing, options.credentials);
   installRevokeBox(db, operations, sharing, options.credentials);
   const names = { box: 'listBoxes', job: 'listJobs', settings: 'listSettings', binding: 'listBindings' };
   for (const kind of Object.keys(records) as RecordKind[]) {

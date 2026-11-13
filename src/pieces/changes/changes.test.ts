@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
+import { builtinServices } from '../../core/services.js';
 import { fixtureSharing } from '../../fixture.js';
 import { installChanges } from './index.js';
 import { change } from './fixture.js';
@@ -64,11 +65,11 @@ it('keeps a failed repository snapshot, replaces successful ones, holds staging 
  const app=await setup();const projects={list:()=>[{slug:'pond',name:'Pond',repos:['acme/app','bad/app']}]};const settings=()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]});
  replaceChanges(app.db,[change({id:'github:bad/app#3',repo:'github:bad/app',project:'pond'}),change({id:'github:gone/app#3',repo:'github:gone/app'})]);
  const read=vi.fn(async(repo:string)=>{if(repo==='github:bad/app') throw new Error('SECRET upstream');return [change()];});
- const job=startChangesJob(app,{knownAgents:()=>['art'],clock:app.clock,sharing:fixtureSharing,viewer:owner,projects,attribution:settings,read});
+ const job=startChangesJob(app,{knownAgents:()=>['art'],clock:app.clock,sharing:()=>({...fixtureSharing(),services:builtinServices(app.db)}),projects,attribution:settings,read});
  await job.run();expect(read).toHaveBeenCalledTimes(2);expect(loadChanges(app.db)).toHaveLength(2);expect(JSON.stringify(loadChanges(app.db))).not.toContain('SECRET');expect(loadChanges(app.db).find(c=>c.repo==='github:bad/app')?.syncError).toBe('GitHub read unavailable');
  await job.run();expect(read).toHaveBeenCalledTimes(2);
  app.call('refresh');await job.run();expect(read).toHaveBeenCalledTimes(4);job.close();
- const staged=await setup();replaceChanges(staged.db,loadChanges(app.db));const held=startChangesJob(staged,{knownAgents:()=>['art'],clock:staged.clock,sharing:fixtureSharing,viewer:owner,projects,attribution:settings,read,staging:true});staged.call('refresh');await held.run();expect(read).toHaveBeenCalledTimes(4);held.close();
+ const staged=await setup();replaceChanges(staged.db,loadChanges(app.db));const held=startChangesJob(staged,{knownAgents:()=>['art'],clock:staged.clock,sharing:()=>({...fixtureSharing(),services:builtinServices(staged.db)}),projects,attribution:settings,read,staging:true});staged.call('refresh');await held.run();expect(read).toHaveBeenCalledTimes(4);held.close();
  expect(app.db.prepare('SELECT running FROM changes_jobs').get()).toEqual({running:0});
 });
 
@@ -79,21 +80,21 @@ it('resumes a pending refresh after closing and reopening the database, preservi
  const open=()=>startLoom({home,clock,sharing:fixtureSharing,install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing)});
  const first=await open();
  const read=vi.fn(async()=>[change({title:'Before restart'})]);
- const job=startChangesJob(first,{knownAgents:()=>['art'],clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read});
+ const job=startChangesJob(first,{knownAgents:()=>['art'],clock,sharing:()=>({...fixtureSharing(),services:builtinServices(first.db)}),projects,attribution,read});
  await job.run();expect(read).toHaveBeenCalledOnce();
  expect(first.operations.call('direct',owner,'changes.refresh',{},'persisted-refresh')).toMatchObject({ok:true});
  job.close();await first.close();expect(first.db.open).toBe(false);
  const second=await open();closes.push(second.close);
  expect(loadChanges(second.db)).toMatchObject([{title:'Before restart'}]);
  const resumedRead=vi.fn(async()=>[change({title:'After restart'})]);
- const resumed=startChangesJob(second,{knownAgents:()=>['art'],clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read:resumedRead});
+ const resumed=startChangesJob(second,{knownAgents:()=>['art'],clock,sharing:()=>({...fixtureSharing(),services:builtinServices(second.db)}),projects,attribution,read:resumedRead});
  try {
   await resumed.run();expect(resumedRead).toHaveBeenCalledOnce();
   expect(loadChanges(second.db)).toMatchObject([{title:'After restart'}]);
  } finally {resumed.close();}
  await second.close();closes.pop();expect(second.db.open).toBe(false);
  const third=await open();closes.push(third.close);
- const future=startChangesJob(third,{knownAgents:()=>['art'],clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read:resumedRead});
+ const future=startChangesJob(third,{knownAgents:()=>['art'],clock,sharing:()=>({...fixtureSharing(),services:builtinServices(third.db)}),projects,attribution,read:resumedRead});
  try {await future.run();expect(resumedRead).toHaveBeenCalledOnce();}finally{future.close();}
 });
 
@@ -186,7 +187,7 @@ it('preserves the prior snapshot when an upstream change has a missing or invali
  for(const state of [undefined,null,'UNKNOWN',false,42,{}]) {
   const app=await setup();replaceChanges(app.db,[change({project:'pond',title:'Keep this snapshot'})]);
   const read=githubReader(secrets,async()=>Response.json({data:{repository:{pullRequests:{nodes:[{...node,number:3,state,closedAt:null,mergedAt:null}],pageInfo:{hasNextPage:false,endCursor:null}}}}}));
-  const job=startChangesJob(app,{knownAgents:()=>['art'],clock:app.clock,sharing:fixtureSharing,viewer:owner,projects:{list:()=>[{slug:'pond',name:'Pond',repos:['acme/app']}]},attribution:()=>({agents:{},ownerLogins:[]}),read});
+  const job=startChangesJob(app,{knownAgents:()=>['art'],clock:app.clock,sharing:()=>({...fixtureSharing(),services:builtinServices(app.db)}),projects:{list:()=>[{slug:'pond',name:'Pond',repos:['acme/app']}]},attribution:()=>({agents:{},ownerLogins:[]}),read});
   try {await job.run();expect(loadChanges(app.db)).toMatchObject([{title:'Keep this snapshot',syncError:'GitHub read unavailable'}]);expect(loadChanges(app.db)).toHaveLength(1);}finally{job.close();}
  }
 });

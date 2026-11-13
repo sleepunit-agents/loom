@@ -1,3 +1,4 @@
+import { installMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
@@ -10,16 +11,21 @@ import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
+import { maySee } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { installClock } from './pieces/clock/index.js';
+import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
-import { installChanges } from './pieces/changes/index.js';
-import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
+import { installSecrets } from './pieces/secrets/index.js';
+import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { githubSecrets } from './pieces/changes/secrets.js';
+import { changesApprovals } from './pieces/changes/approvals.js';
+import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
@@ -28,6 +34,10 @@ import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
+import { installMindProjects } from './pieces/mind/projects.js';
+import { projectTasks, projectChanges } from './pieces/mind/projects-roles.js';
+import { tasksRole } from './pieces/tasks/role.js';
+import { mindRole } from './pieces/mind/role.js';
 import { installMindPeople } from './pieces/mind/people.js';
 import { installMindPeopleActions } from './pieces/mind/people-actions.js';
 import { createPersonHalf } from './backends/people-creation.js';
@@ -37,19 +47,34 @@ import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verif
 import { installTouched, type TouchSource } from './core/touched/index.js';
 import { listenForTouchSources } from './core/touched/group.js';
 import { prepareTouchSources } from './core/touched/prepare.js';
+import { installAttentionMaintenance } from './pieces/attention/daemon.js';
+import { attentionProjects } from './pieces/attention/projects.js';
+import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
 export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
+/** Trusted in-process composition only; never accepted from an operation or HTTP input.
+ * source must be an authenticated separate holder transport delivering owned buffers.
+ * Bindings contain public forge owner names and secret names, never credential values.
+ */
+export interface NextChangesOptions {
+  source: SecretValueSource;
+  github: Readonly<Record<string, string>>;
+  request?: typeof fetch;
+  interval?: number;
+}
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
+  changes?: NextChangesOptions;
 }
 export function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)) }) : installedAttentionSources(app.operations);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
@@ -69,11 +94,22 @@ export function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
-  if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
-    projects: householdProjects(new SharingDatabase(app.db, options.home)),
-    attribution: () => householdAttribution(app.db, options.home),
-    knownAgents: () => new HouseholdDatabase(app.db).household(options.home)?.agents ?? [],
-  });
+  if (!app.operations.has('changes.list')) {
+    const attribution = () => householdAttribution(app.db, options.home);
+    const approvals = changesApprovals(app.operations);
+    // No default holder, legacy token lookup, or installation-time grant. An
+    // unconfigured reader fails before acquiring a value or contacting GitHub.
+    const credentials = options.changes;
+    if (credentials) {
+      if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing);
+      if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
+    }
+    const secrets = githubSecrets(credentials
+      ? secretUseRole(app.db, credentials.source, sharing, {kind: 'service', id: 'changes'}, () => app.operations.clock.now(), app.live)
+      : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
+    installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
+      staging: options.staging, interval: credentials?.interval, request: credentials?.request});
+  }
   const inventory = mindSources(app.db, options.home);
   if (!app.operations.has('mind.knowledgeList')) {
     const path = inventory?.commons.knowledge;
@@ -92,14 +128,25 @@ export function installNext(app: Foundation, options: NextOptions) {
       relationship: inventory?.agents.find(a => a.agent === agent)?.memories, agent, sharing, create: createPersonHalf });
     app.onClose(() => actions.close());
   }
+  if (!app.operations.has('mind.projectsList')) {
+    const projects = installMindProjects(app.operations, app.live, { agents: inventory?.agents ?? [], sharing, people: mindRole(app.operations),
+      tasks: projectTasks(tasksRole(app.operations), v => v.kind === 'member' && maySee(v, {type:'task'}, sharing())), changes: projectChanges(app.operations) });
+    app.onClose(() => projects.close());
+  }
+  if (!app.operations.has('mind.activityList')) {
+    const household = new HouseholdDatabase(app.db).household(options.home);
+    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github});
+    app.onClose(() => activity.close());
+  }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
   if (!app.operations.has('clock.list')) {
     // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing);
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
+  installAttentionMaintenance(app);
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

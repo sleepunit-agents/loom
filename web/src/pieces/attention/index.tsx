@@ -7,8 +7,8 @@ const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
   return useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle as CallState<T>));
 }
-const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
-interface Guard { lock: {current:boolean}; busy: boolean; setBusy(busy:boolean):void }
+export const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
+export interface Guard { lock: {current:boolean}; busy: boolean; setBusy(busy:boolean):void }
 function startCheck(guard: Guard, id: string): Call<Ask> | undefined {
   if (guard.lock.current) return;
   guard.lock.current = true; guard.setBusy(true);
@@ -17,7 +17,11 @@ function startCheck(guard: Guard, id: string): Call<Ask> | undefined {
   return request;
 }
 type Confirmation = { records: readonly Ask[]; request: Call<Ask> };
-export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void }) {
+/** A receipt always reads the central answer fact; Home keeps no answer cache. */
+export function AnswerReceipt({ ask }: { ask: Ask }) {
+  return ask.answer ? <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section> : null;
+}
+export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened, requireOwnership = false }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void; requireOwnership?: boolean }) {
   const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
   const [request,setRequest] = useState<Call<Ask>>();
   const [checking,setChecking] = useState(false), [draft,setDraft] = useState('');
@@ -48,7 +52,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       if (latest.current.status !== 'live' || latest.current.records !== records || !fresh.ok || fresh.value.id !== ask.id || fresh.value.state !== 'open') {
         setConfirmation(undefined); setMessage('This ask changed or could not be checked. Nothing was recorded.'); return;
       }
-      const write = call<Ask>('attention.answer',{id:ask.id,answer:value});
+      const write = call<Ask>('attention.answer',{id:ask.id,answer:value,...(requireOwnership ? {requireOwnership:true} : {})});
       setRequest(write); setConfirmation(undefined);
       await write.result;
     } finally { sending.current = false; guard.setBusy(false); if (mounted.current) setChecking(false); }
@@ -64,10 +68,10 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {ask.state === 'open' && !link && !ask.member && <>
       {!confirmed && <p role="status">{message || (checked.result?.ok === false ? `Couldn’t check this ask: ${checked.result.message}` : checked.result?.ok && checked.result.value.state !== 'open' ? 'This ask is no longer open.' : 'Checking whether this ask is still open…')}</p>}
       {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{const request=startCheck(guard,ask.id);if(request){setMessage('');setConfirmation({records:snapshot.records,request});}}}>Check again</Button>}
-      {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid gap-3">
+      {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid min-w-0 gap-3">
         <legend>Record your answer</legend>
-        {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" onClick={()=>void answer({kind:'no'})}>No</Button></div>}
-        {ask.answers === 'words' && <><label className="grid gap-1">Your answer<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
+        {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'no'})}>No</Button></div>}
+        {(!ask.sourceManaged || ask.answers === 'words') && <><label className="grid gap-1">{ask.answers === 'words' ? 'Your answer' : 'Or answer in your own words'}<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
         <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'done'})}>Mark done</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'dismiss'})}>Dismiss</Button></div>
       </fieldset>}
       <p>Answers are recorded here. Delivery to the agent is not connected in this preview.</p>
@@ -75,7 +79,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {saving.pending && <Loading label={saving.status === 'offline' ? 'Waiting for connection…' : 'Recording answer…'} />}
     {saving.result?.ok === false && <Error title="Couldn’t record your answer" text={saving.result.message} />}
     {saving.result?.ok && <p role="status">Answer recorded</p>}
-    {ask.answer && <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section>}
+    <AnswerReceipt ask={ask} />
     {ask.resolution && <section><h3>Resolved</h3><p>{ask.resolution}</p></section>}
     {(href || ask.refs?.length) && <section><h3>References</h3>{href && <a href={href} target="_blank" rel="noreferrer">Open reference</a>}{ask.refs?.length ? <ul>{ask.refs.map((ref,n)=><li key={n}>{ref}</li>)}</ul> : null}</section>}
   </article>;

@@ -210,3 +210,241 @@ remain required before the final move. No runner installation or live host
 change accompanies this endpoint. Earlier lifecycle helper descriptions of a
 future runner operation now refer to this facts-only endpoint; the broader
 runner API remains unfinished.
+
+## Runner claim and progress metadata
+
+| Old route | Registry operation | Delivered scope |
+| --- | --- | --- |
+| `claim` | `runtime.claimJob {job}` | Assigned queued job becomes starting; acknowledgement only |
+| `report` | `runtime.reportJob {job, state}` | Claimed job becomes running or waiting; acknowledgement only |
+
+The authenticated runner id must equal both the assigned job runner and its box
+id. The box must still be enrolled and unrevoked. Central `report-job` policy
+also excludes member-private jobs. Claims recheck current ownership/lending,
+host permission and report-only status. Reports remain accepted after hosting
+permission is withdrawn so an already claimed runner can describe progress.
+Unknown and off-assignment jobs share the same denial. No caller can reassign a
+job or set timestamps through this API. Reports use server `changedAt` and only
+publish when metadata changes. Registry receipts make lost-response retries
+safe without making a fresh claim of a starting job succeed.
+
+This is a metadata handshake, not permission to start a container. It returns
+no credentials, input words or results, calls no runner and performs no outside
+effect, including in staging. Input fetch, credential issuance and terminal
+reports with credential revocation remain required on this task before a real
+runner can execute. A runner cannot end, revive or report uncertain/lost work
+through these two operations. The fake runner test seeds queued jobs internally;
+public job creation and `startBody` remain unfinished.
+
+## Completion metadata and job credential revocation
+
+The completion portion of old `report` maps to `runtime.finishJob {job, state}`,
+where state is `done` or `failed`. Only the exact assigned authenticated runner
+may complete a starting, running or waiting job, using the same central
+`report-job` check, enrolled box and privacy restrictions as progress reports.
+Withdrawing hosting permission does not prevent a claimed job from finishing.
+The acknowledgement contains only `{job, state}`. Server time sets `endedAt`
+and `changedAt`. A new report cannot overwrite a terminal job; a retry with the
+original registry id returns its original acknowledgement without revoking
+again or changing timestamps.
+
+`RuntimeCredentials.revokeJob` synchronously revokes every central agent token
+with the exact `@job` suffix, including service-qualified agent roles. Runner
+credentials, unbound agent credentials and other jobs remain valid. It uses
+the same central role grammar as box revocation and never matches display
+labels. Earlier revocations keep their timestamps. Missing token documents
+need no cleanup. The job update, central revocation and retry receipt share one
+transaction; a failure or asynchronous credential role rolls everything back.
+An after-commit `core.access` change invalidates existing authentication handles.
+An installer without central credentials fails unavailable before changing data.
+
+This is completion metadata only. Exit codes, log/result words, builds, native
+history collection, cooperative stop, written-off jobs and service restarts
+remain to be implemented with their owning lifecycle operations. `stopped` and
+`lost` are not accepted here: there is no stop-intent or write-off protocol yet.
+Input delivery and execution still require the outside-effect staging gate;
+this endpoint releases no work and performs no outside effect, even in staging.
+Earlier text describing terminal reports as future work now refers to those
+remaining result and lifecycle portions, rather than done/failed metadata.
+
+
+## Durable body requests
+
+`runtime.queueBody {agent, title, brief, project?, member?, box?, needs?}`
+creates a queued job and its private input in one registry transaction. It
+returns only `{job, state:"queued"}`. The caller must satisfy central
+`give-work` and `mayCreate` for every supplied scope. An owner may give work
+only to an agent they own; project membership alone cannot give work to an
+agent. Private requests must name the calling member. Agents, runners and
+services cannot queue through this operation under the current central rule.
+
+Placement uses `placeBody`, including canonical box references, ordered
+preferences, ownership/lending, hosting permission and capability needs. An
+explicit silent box can receive queued work. The server chooses the job id,
+runner/box, state and timestamps. There is no caller-supplied conversation,
+source authority, credential, model or account selection in this operation.
+A registry retry returns the original acknowledgement without re-placement,
+even after the selected box is revoked; a changed request with the same id
+conflicts. Independent request ids create independent jobs.
+
+The caller-supplied `title` is visible job metadata, like the existing
+`runtime.job.title`; use a nonprivate summary, never a copy of sensitive brief
+content. Central scope controls who receives that metadata. The full `brief`
+and capability needs are private inputs.
+
+`runtime_inputs` stores the brief and capability needs separately from live
+job metadata. It is not a registry collection; no input-read operation is
+provided yet. Job, input and retry receipt commit together, and only committed
+job changes publish. Words never enter acknowledgement/retry results. The
+additive second runtime migration preserves existing metadata.
+
+This replaces only the durable request/placement portion of old `up`, not its
+house configuration validation, slots, sessions or trusted body-host creation.
+A queued request is not executable: house configuration, model/account
+resolution, input-fetch authorization, credential issuance and daemon release
+through `OutsideEffects.beforeOutside` must land before any runner receives
+its inputs. Queueing performs no outside effect in either mode and does not
+claim a body started. `runtime.startBody` and the Clock adapter remain
+unimplemented until they can honor their started/held/uncertain contract.
+Input retention/cleanup must be part of the final job lifecycle; this slice
+retains inputs and provides no deletion operation. No old route is retired.
+
+
+## House build configuration
+
+The build-identity portion of old `set-agent` / `setAgent` maps to
+`runtime.configureHouse {agent, house: {repo, houseFile?, branch?}}`. The central
+`agent-setup` rule requires the calling member to own this agent. Household
+ownership alone does not confer setup of another member's agent; agents,
+runners and services cannot configure houses. The acknowledgement is `{agent}`.
+
+`runtime.settings.house` stores the build identity, visible through the existing
+centrally scoped settings collection/live type. Only credential-free HTTPS
+URLs with a nonempty raw authority and no userinfo or query/fragment delimiters
+(including empty ones), `git@host:path` locators and absolute
+repository paths are accepted. Git hostnames contain only letters, digits, dot,
+underscore or hyphen and start with a letter or digit. The structured API deliberately refuses old
+HTTPS locators containing credentials or query/fragment material: repositories
+are metadata, never a credential carrier. Private repository access must use
+the future secret-reference grant path. Nothing opens or checks the repository.
+`houseFile` is a relative repository path with no empty, dot or parent segments,
+defaulting to `house/house.json`; branch uses the old bounded character grammar.
+These are data, never shell commands; a future runner must pass them as arguments.
+
+Each save replaces the build identity (omitting branch clears it) while
+preserving box preferences and model settings. Preference saves preserve house
+configuration. Existing settings need no rewrite: the JSON record gains an
+optional field, with no new SQL migration. Identical saves preserve `changedAt`
+and publish nothing; changed saves publish `runtime.settings` after commit.
+Configuration, notification and retry receipt use the shared transaction. A
+replay returns its old acknowledgement without restoring an older configuration.
+
+This operation grants no nested containers, GPU, ports, tailnets, secrets,
+repository credentials, harness logins, scopes or steering rights. Those old
+`set-agent` fields remain required in a separate centrally authorized grant path,
+including alias/scope preservation and checks; they are strictly rejected here.
+No capabilities are inferred from a repository or house file. Claim snapshots and
+per-job build reporting are described below; agent-wide build discovery and
+execution invalidation still require the future daemon release path.
+`queueBody` continues to accept nonexecutable intent before configuration.
+Configured build identity alone does not enable input fetch, credentials,
+`startBody`, slots/sessions, daemon staging release or runner execution. Those
+obligations in Durable body requests remain required before the final move.
+
+
+## Claimed house identity and build reports
+
+The metadata part of old `claim` now snapshots the current `settings.house` as
+`job.made` and server `claimedAt`, atomically with the starting transition and
+receipt. A queued job can precede house setup, but claim conflicts until setup
+exists. Failed attempts leave the same operation id available after setup.
+A repeated successful claim preserves its original snapshot and time. A fresh
+claim clears any previous image metadata on the queued row.
+
+The build part of old `report` maps to `runtime.reportJob {job, state:"running",
+build?}`. The existing assigned-runner and central report-job checks apply.
+The image must match `loom-house-<agent>:<20 lowercase hex>` for this job's
+agent; an optional `localhost/` prefix is removed. Unlike the old route's
+silent ignoring of malformed tags, an explicit invalid tag is refused. The
+first reported image is immutable for this job; a later different image
+conflicts. Waiting reports cannot carry an image. Older jobs lacking a claim
+snapshot still accept ordinary progress, but cannot acquire build attribution.
+No caller can supply `made` or `claimedAt`. Fields are optional JSON metadata,
+so no SQL migration or rewrite of older jobs is needed.
+
+`configuredBuild(job, house)` is an internal helper for subsequent build
+selection: a build is usable only with claim provenance and an exact matching
+repo, houseFile and branch. A settings change keeps the historical job image
+and snapshot for inspection, while making that image ineligible for the new
+configuration. Changing any one of those fields suffices. The helper does not
+select a newest build across jobs or authorize execution. No global current
+build, build-check route, warm body-host upgrade or repo-secret binding is
+implemented yet; the separate secret grant path must extend build identity
+before private repository access can be released.
+
+Snapshots and image tags are centrally scoped job metadata, never input words
+or credential references. Report acknowledgements remain `{job,state}`; changes
+publish only after commit, no-ops do not publish, failed receipts roll back image
+writes, and retries cannot restore an earlier progress state. This remains a
+metadata handshake even in staging: it performs no repository/image IO, issues
+no credential and releases no executable input. The daemon must revalidate the
+claimed configuration and grants immediately before outside-effect release;
+these records are not an execution grant or authenticated body proof.
+
+## Owner house grants
+
+`runtime.configureGrants {agent, grants}` stores owner-controlled house grants
+separately from the build locator. Central `agent-setup` authorizes the exact
+agent; agent, runner and service callers cannot change them. This is the grant
+configuration part of old `set-agent`, alongside `runtime.configureHouse`.
+It preserves boxes, model and house settings, and those operations preserve the
+grants. Only references are stored: this operation reads no repository, socket,
+login or secret value and releases no work or credential.
+
+The structured fields are `nested`/`gpu` booleans, optional `repoSecret` store
+name, `secrets` mapping house alias to store name (32), `ports` as `{ip,port}`
+(8, IPv4, 1024–65535, unique port), `tailnets` as `{name,socket}` (4, unique
+name, absolute path ending in `tailscaled.sock` without dot/parent segments,
+including `/tailscaled.sock`),
+`logins` (`claude` and/or `codex`), `scopes`, and `steers`. Missing capabilities
+reset to false/empty; missing `repoSecret` removes that reference. No secret
+value, token, inferred principal or caller-provided scope history is accepted.
+
+Omitted or empty-object `scopes`/`steers` preserve existing restrictions, as an
+untouched old form does; the explicit string `none` clears them. A supplied
+nonempty map replaces the corresponding map. Scopes name house-visible secret
+aliases or `tailnet:<name>`, with up to ten `owner`, project slug or
+`service:<name>` words joined by `+`. New scope names must name an existing
+grant; old scopes survive removal so re-adding a secret does not drop its
+restriction. Internal `scopeStores` remembers those secrets' store names across
+multiple saves. Aliases of one store must have identical scope strings,
+including removed aliases still held by scope history. Aliases of one currently
+granted socket must also have identical scopes. As in the old path, tailnet
+history is by name; removing/renaming a socket needs explicit owner scope
+configuration. Scope strings compare exactly, as before (order matters).
+Map keys are stored in a canonical order; reordering a map on save does not
+change `changedAt` or publish a settings notification.
+
+Steers map a person slug to one through ten project slugs; `owner` is excluded
+from both. These are future release configuration, not proof that a given job
+acts for that person. Login omission preserves the prior list, `[]` grants
+none, and `default` removes the explicit choice; the eventual release path must
+apply the old household-owner/box-ownership defaults and eligibility, never
+interpret omission as a universal grant. CLI text parsing belongs to the
+future generated command client; this endpoint accepts structured lists/maps.
+
+A claim snapshots `repoSecret` with repo/file/branch in `job.made`.
+`configuredHouse(settings)` assembles the effective current build identity;
+`configuredBuild` now compares the repository-secret reference too. A historical
+job without that reference cannot provide a build for a currently credentialed
+repository. Rotating the value behind the same reference is not a different
+build identity, matching the old reference-based comparison. Historical records
+are unchanged; optional JSON fields need no SQL migration.
+
+These grants have no executable consumer yet. Before any input/secret/login or
+host capability is released, the aftercommit daemon must revalidate current
+central policy, house configuration, grants and authenticated job/principal
+provenance, apply scopes/steers, and pass `beforeOutside`. Unknown provenance
+must fail closed. Claim metadata is not a grant to execute; queue acknowledgements
+are not `started`. Actual secret-role lookup, repository access/build discovery,
+body-host lifecycle, dispatch and default-login resolution remain required.

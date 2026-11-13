@@ -10,7 +10,8 @@
     "loom-attention": "dist/attention-client.js",
     "loom-taskstore": "dist/taskstore-client.js",
     "loom-changes": "dist/changes-client.js",
-    "loom-approvals-client": "dist/approvals-client.js"
+    "loom-approvals-client": "dist/approvals-client.js",
+    "loom-wake-client": "dist/wake-client.js"
   },
   "files": [
     "dist",

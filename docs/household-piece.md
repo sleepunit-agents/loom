@@ -148,3 +148,168 @@ readers/writers need explicit routing separately, and the server's household
 gates still use legacy discovery. No entry point selects this configuration yet.
 Keep the local-and-active isolation guard until the entire memory path is
 explicit; this change does not enable the stdio cutover.
+
+Explicit offline servers now refuse `describe_self`, `comms_title` and
+`comms_thread` before discovering a legacy household or Comms store. These are
+app operations and require the daemon API; stdio metadata is not authority to
+change a profile or read thread words. A local offline `conversation_digest`
+still records continuity in the context, but does not infer a project from an
+app-backed thread or nudge the old app. Project inference from the local
+conversation's venue links stays available. Omitted selection keeps legacy
+behavior. Remaining conversation store path selection and the entry-point
+acceptance test are still required before next stdio is exposed.
+
+| Old MCP app behavior | Explicit offline replacement |
+| --- | --- |
+| describe_self updates old household profile | Refused; use the daemon's profile operation when available |
+| comms_title reads and changes the old Comms thread | Refused; use the daemon API |
+| comms_thread reads old thread words | Refused; runtime delivery to the bound body replaces transcript reads (web-foundation.md) |
+| digest uses old Comms project fallback and nudges old attention | Local continuity digest only; app project fallback and app notification are dropped offline |
+
+### Selected conversation storage
+
+Conversation SQL helpers accept the existing optional `MemorySelection`, including
+turns, digests, findings, needs, project-name resolution and retention. Explicit
+selection uses the context's `memories.db` and ignores `LOOM_SQLITE_DB_PATH`;
+omission retains the legacy override. Venue/household selection stays independent
+of memory selection. MCP conversation lists, views, findings, digest writes and
+the project hub forward both selections where needed.
+
+| Existing path | Explicit offline composition |
+| --- | --- |
+| Conversation list/view/findings read the global memory override | Selected context's records, including nested digests, stats and open asks |
+| Digest writes and project aliases use the global memory override | Selected context's digest and project tables |
+| Project conversation section reads the global memory override | Selected context's conversations; missing store means no section |
+
+The stdio entry point is still unchanged. This is storage routing, with no new
+app authority, schema change or import requirement.
+
+### Explicit next stdio entrypoint
+
+`loom mcp --next --home /path/to/home [--agent art]` now composes every
+per-server selection from `continuityTarget`. Omitting `--agent` uses the
+row-backed default. `loom --next --home /path/to/home` is the equivalent
+stdio shorthand. For a portable standalone context, use
+`loom mcp --next --context-dir /path/to/context`; it needs no app database.
+An explicit context outside a supplied household home is standalone, as in
+`continuityTarget`. Unknown in-house agents and missing household metadata fail.
+
+These explicit flags supply the target; legacy `LOOM_HOME`, `LOOM_AGENT`,
+`LOOM_CONTEXT_DIR`, memory/knowledge path overrides and `LOOM_IDENTITY` do not
+select it. No import receipt or discovered file enables next stdio. Without
+this opt-in the executable retains its old CLI and stdio behavior, including
+legacy environment resolution. `loom serve --next` remains the daemon command.
+
+The entrypoint reads household metadata once and closes that connection before
+serving MCP. In-process transport acceptance tests run two agents and a
+standalone context together after the old household/token/session JSON has
+been removed, and repeat with contradictory old files. They exercise identity,
+Owners, memory write/list/recall, shared knowledge and directory cards, and
+private relationships; the app database remains byte-identical. Both local
+and active memory/knowledge isolation guards remain in force. App-only tools
+retain the explicit offline refusals described above.
+
+| Old invocation | Explicit new-side invocation |
+| --- | --- |
+| bare `loom` using legacy context/environment discovery | `loom mcp --next --home HOME [--agent AGENT]` |
+| bare `loom` with a standalone context | `loom mcp --next --context-dir CONTEXT` |
+
+During the final coordinated move, update the harness's stdio arguments to the
+explicit new-side invocation after import verification. This PR performs no
+host or harness rollout. Earlier sections describe the incremental reader
+slices; this section supersedes their pending-entrypoint status.
+
+### Scoped agent ownership
+
+`household.setOwnedAgents({person, agents})` replaces an existing scoped member's
+owned-agent list. It is a household-owner operation through the central policy;
+a scoped owner cannot administer it. Agents must already belong to the household.
+Duplicates collapse, ordinary members may own none, and imported scoped owners
+retain their role and must still own at least one agent. Unknown member fields
+and project memberships survive. The write and its retry result commit together;
+`core.access` refreshes open windows immediately to evict lost agent records.
+
+| Old owner action | New operation |
+| --- | --- |
+| Change a scoped member's owned agents (`setMember`) | `household.setOwnedAgents` |
+
+This operation does not create members or promote/demote household owners; those
+operations remain separate. Keeping wildcard ownership unchanged also keeps the
+first household owner and existing credential bindings unchanged.
+
+### A member's project list
+
+`household.setMemberProjects({person, projects})` replaces one existing member's
+explicit project assignments in one transaction. Only a household owner may call
+it. Every project must exist; duplicates collapse and an empty list clears all
+assignments. Each affected project keeps its other members, agents, repositories
+and unknown fields. Household membership and agent ownership stay as they were.
+The operation emits each changed `household.project` and `core.access` after the
+write and retry receipt commit, refreshing open windows immediately.
+
+| Existing action | New operation |
+| --- | --- |
+| Set a project's member list | Existing `household.setProjectMembers` |
+| Edit all project assignments for one member | `household.setMemberProjects` (new member-oriented form of the same project lists) |
+
+There is no old command or route for member project lists: projects are the new
+sharing boundary in web-foundation.md. This operation uses the existing project
+rows, with no second list stored on the household member. It neither creates
+members nor changes owner authority or credentials. Setup and the generated
+household client remain tracked by t-2203.
+
+### Registering an existing agent
+
+`household.addAgent({agent})` registers an existing portable context under
+`HOME/agents/<agent>`. Only a household owner may call it. The name follows the
+existing lowercase agent-name format; the context and its `agents` parent must
+be real directories, not symlinks. Missing contexts and files are refused. An
+already registered agent is a successful no-op, matching the old CLI helper.
+The operation leaves the default agent, members, ownership, projects, unknown
+metadata, context contents and credentials intact. Wildcard household owners
+own the new agent automatically; scoped members gain no ownership. Registration,
+its retry receipt and live sharing/access notifications commit together.
+
+| Old command or route | New operation |
+| --- | --- |
+| `loom household add <agent>` | `household.addAgent({agent})` |
+| Page `add-agent`: register its newly bootstrapped context | `household.addAgent({agent})` |
+| Page `add-agent`: bootstrap identity/rules, choose appearance, create first token | Separate setup and credential operations; not part of registration |
+
+There is no registration job. This operation creates neither a context directory
+nor a creed or token. The Setup screen and generated CLI binding remain in the
+full household task; the legacy command and page retain their existing behavior
+until the coordinated move.
+
+### Members and household ownership
+
+`household.setMember({person, agents})` adds a member or replaces their ownership,
+including `agents: "*"` for household ownership. `household.removeMember({person})`
+removes membership. Both require a household owner through central policy; a
+scoped owner cannot call them. At least one wildcard household owner must remain.
+New members have role `owner`, matching the old page action; existing ordinary
+members keep their role for scoped lists and become owners on wildcard promotion.
+Scoped owners must own at least one agent. Agent references must already exist.
+Setting membership requires an active, exact People directory entry, read through
+the next-mode People operation; a missing directory, archived entry or redirect
+slug cannot create household authority. Removal needs no directory entry.
+Unknown household/member fields and project assignments are preserved.
+
+| Old page action/helper | New operation |
+| --- | --- |
+| `member-set` / `setMember` | `household.setMember` |
+| `member-remove` / `removeMember` | `household.removeMember` |
+
+When the first wildcard owner changes, every unbound owner-token row is pinned to
+its original person in the same transaction as membership and the retry receipt.
+Explicit member bindings and other token roles stay unchanged. Removed members'
+tokens and browser sessions fail authentication immediately; narrowing retains
+the same member identity with the reduced scope. Revoked token rows are pinned
+too so no later first-owner fallback can reassign them. Existing credentials are
+not deleted. As on the old side, re-adding the same person restores their retained
+credentials and project assignments. Removing a person is not credential revocation;
+use the sign-in revoke operation when credentials must stay disabled.
+
+Both operations emit sharing and access changes after commit, refreshing open
+windows synchronously. No membership job, People-directory write, session mint or
+legacy-file write is added. Setup and generated clients remain in the full task.

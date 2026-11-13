@@ -6,6 +6,10 @@ on:
       - 'scripts/app-kit-legacy.json'
       - 'src/ui/*app*.test.ts'
       - 'web/src/pieces/people/**'
+      - 'web/src/pieces/projects/**'
+      - 'web/src/pieces/activity/**'
+      - 'src/pieces/mind/activity*.ts'
+      - 'src/pieces/mind/projects*.ts'
       - 'src/pieces/mind/people*.ts'
       - 'web/src/inbox*'
       - 'web/src/changes*'
@@ -64,6 +68,36 @@ jobs:
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           nice -n 19 npx vitest run src/ui/mind-people-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/people-browser.json
+      - name: Capture Projects on the hosted after runner
+        if: matrix.version == 'after'
+        env:
+          LOOM_PROJECTS_EVIDENCE: '1'
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          nice -n 19 npx vitest run src/ui/mind-projects-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/projects-browser.json
+      - name: Capture Activity on the hosted after runner
+        if: matrix.version == 'after'
+        env:
+          LOOM_ACTIVITY_EVIDENCE: '1'
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          nice -n 19 npx vitest run src/ui/mind-activity-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/activity-browser.json
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.version == 'after'
+        with:
+          name: activity-app-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/activity-app/
+            artifacts/activity-browser.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.version == 'after'
+        with:
+          name: projects-app-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/projects-app/
+            artifacts/projects-browser.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && matrix.version == 'after'
         with:

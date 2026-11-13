@@ -1,0 +1,236 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { afterEach, expect, it, vi } from 'vitest';
+import { startLoom } from '../../foundation.js';
+import { FakeClock, type Viewer } from '../../core/index.js';
+import { fixture } from '../../fixture.js';
+import { signin, hash } from '../../core/signin/index.js';
+import { runtimeStore } from './store.js';
+import { configuredBuild } from './builds.js';
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
+async function setup(staging = false) {
+  const home = mkdtempSync(join(tmpdir(), 'runtime-jobs-'));
+  cleanups.push(() => rmSync(home, { recursive: true, force: true })); fixture(home);
+  const clock = new FakeClock(), app = await startLoom({ home, clock, next: true, staging }); cleanups.push(app.close);
+  const store = runtimeStore(app.db), auth = signin(app);
+  app.db.transaction(() => {
+    auth.tokens.replace({ v: 1, tokens: [] }, {});
+    store.put('settings', { id: 'art', agent: 'art', boxes: [], house: { repo: '/fixture/art', houseFile: 'house/house.json' } }, 1);
+    for (const id of ['a', 'b']) store.put('box', { id, name: id, owner: 'jonathan', local: false, mayHost: '*', lentTo: [], facts: [], labels: [], alwaysOn: false, reportOnly: false, createdAt: 1 }, 1);
+    for (const id of ['j', 'other', 'private', 'terminal']) store.put('job', {
+      id, agent: 'art', box: id === 'other' ? 'b' : 'a', runner: id === 'other' ? 'b' : 'a', title: id,
+      state: id === 'terminal' ? 'done' : 'queued', createdAt: 1,
+      ...(id === 'private' ? { member: 'jonathan' } : {}), ...(id === 'terminal' ? { endedAt: 2 } : {}),
+    }, 1);
+  })();
+  let seq = 0;
+  const call = (op: string, input: unknown, viewer: Viewer = { kind: 'runner', id: 'a' }, id = `op-${++seq}`) => app.operations.call('direct', viewer, `runtime.${op}`, input, id);
+  const bearer = (runner: string) => {
+    app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'signin.setPrincipal', { kind: 'runner', id: runner, active: true }, `principal-${++seq}`);
+    const token = randomBytes(32).toString('hex');
+    auth.tokens.change(tokens => tokens.push({ role: `runner:${runner}`, label: `test-${++seq}`, sha256: hash(token), created: new Date(clock.now()).toISOString() }));
+    return token;
+  };
+  const post = async (token: string, op: string, input: unknown, id = `http-${++seq}`) => (await fetch(`${app.url}/api/runtime/${op}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ input, id }) })).json();
+  const box = (set: object) => app.db.transaction(() => { const { changedAt: _, ...before } = store.read('box', 'a')!; store.put('box', { ...before, ...set }, clock.now()); })();
+  return { app, home, clock, store, call, bearer, post, box };
+}
+it('fake runner claims only its queued job and reports progress over real bearer HTTP', async () => {
+  const f = await setup(), token = f.bearer('a');
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim')).toEqual({ ok: true, value: { job: 'j', state: 'starting' } });
+  const before = f.store.read('job', 'j');
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim')).toMatchObject({ ok: true });
+  expect(await f.post(token, 'claimJob', { job: 'j' })).toMatchObject({ ok: false, code: 'conflict' });
+  f.clock.advance(10);
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running' })).toEqual({ ok: true, value: { job: 'j', state: 'running' } });
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'waiting' })).toMatchObject({ ok: true });
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true });
+  expect(f.store.read('job', 'j')).toEqual({ ...before, state: 'running', changedAt: f.clock.now() });
+  expect(f.store.read('job', 'other')?.state).toBe('queued');
+});
+it('denies off-assignment, missing, private and other viewer kinds for both operations', async () => {
+  const f = await setup();
+  for (const op of ['claimJob', 'reportJob']) {
+    const body = (job: string) => ({ job, ...(op === 'reportJob' ? { state: 'running' } : {}) });
+    for (const job of ['other', 'missing', 'private']) expect(f.call(op, body(job))).toMatchObject({ ok: false, code: 'denied' });
+    for (const viewer of [{ kind: 'member', id: 'jonathan' }, { kind: 'agent', id: 'art' }, { kind: 'service', id: 'runtime' }] as Viewer[])
+      expect(f.call(op, body('j'), viewer)).toMatchObject({ ok: false, code: 'denied' });
+  }
+});
+it('rejects member, agent and service id collisions and independently checks job box assignment', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => {
+    for (const id of ['jonathan', 'art', 'runtime']) {
+      const { changedAt: _, ...box } = f.store.read('box', 'a')!;
+      f.store.put('box', { ...box, id, name: id }, 1);
+      f.store.put('job', { id, agent: 'art', box: id, runner: id, title: id, state: 'queued', createdAt: 1 }, 1);
+    }
+    f.store.put('job', { id: 'mismatch', agent: 'art', box: 'b', runner: 'a', title: 'mismatch', state: 'queued', createdAt: 1 }, 1);
+  })();
+  for (const viewer of [{ kind: 'member', id: 'jonathan' }, { kind: 'agent', id: 'art' }, { kind: 'service', id: 'runtime' }] as Viewer[]) {
+    expect(f.call('claimJob', { job: viewer.id }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    expect(f.call('reportJob', { job: viewer.id, state: 'running' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
+    expect(f.store.read('job', viewer.id)?.state).toBe('queued');
+  }
+  expect(f.call('claimJob', { job: 'mismatch' })).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.call('reportJob', { job: 'mismatch', state: 'running' })).toMatchObject({ ok: false, code: 'denied' });
+});
+it('refuses revoked/missing boxes, divergent job runner, report-only and withdrawn hosting eligibility', async () => {
+  const f = await setup();
+  for (const set of [{ reportOnly: true }, { mayHost: [] }, { owner: 'pollock' }, { revokedAt: 1 }]) {
+    f.box(set); expect(f.call('claimJob', { job: 'j' })).toMatchObject({ ok: false, code: 'denied' });
+    f.box({ reportOnly: false, mayHost: '*', owner: 'jonathan', revokedAt: undefined });
+  }
+  f.app.db.transaction(() => { const { changedAt: _, ...job } = f.store.read('job', 'j')!; f.store.put('job', { ...job, runner: 'b' }, 1); })();
+  expect(f.call('claimJob', { job: 'j' })).toMatchObject({ ok: false, code: 'denied' });
+  f.app.db.prepare("DELETE FROM runtime_boxes WHERE id='b'").run();
+  expect(f.call('claimJob', { job: 'other' }, { kind: 'runner', id: 'b' })).toMatchObject({ ok: false, code: 'denied' });
+});
+it('never reports unclaimed/terminal work or accepts state, identity and timestamp injection', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => {
+    for (const state of ['failed', 'stopped', 'lost', 'uncertain'] as const)
+      f.store.put('job', { id: state, agent: 'art', box: 'a', runner: 'a', title: state, state, createdAt: 1, endedAt: 2 }, 1);
+  })();
+  for (const job of ['failed', 'stopped', 'lost', 'uncertain']) {
+    const before = f.store.read('job', job);
+    expect(f.call('claimJob', { job })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(f.call('reportJob', { job, state: 'running' })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(f.store.read('job', job)).toEqual(before);
+  }
+  for (const job of ['j', 'terminal']) expect(f.call('reportJob', { job, state: 'running' })).toMatchObject({ ok: false, code: 'conflict' });
+  for (const input of [{ job: 'j', runner: 'b' }, { job: 'j', createdAt: 1 }]) expect(f.call('claimJob', input)).toMatchObject({ ok: false, code: 'invalid' });
+  for (const state of ['queued', 'starting', 'done', 'failed', 'stopped', 'lost', 'uncertain']) expect(f.call('reportJob', { job: 'j', state })).toMatchObject({ ok: false, code: 'invalid' });
+  f.call('claimJob', { job: 'j' });
+  const before = f.store.read('job', 'j');
+  for (const extra of [{ runner: 'b' }, { box: 'b' }, { changedAt: 1 }]) {
+    expect(f.call('reportJob', { job: 'j', state: 'running', ...extra })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(f.store.read('job', 'j')).toEqual(before);
+  }
+  f.box({ reportOnly: true, mayHost: [] });
+  expect(f.call('reportJob', { job: 'j', state: 'waiting' })).toMatchObject({ ok: true });
+  f.box({ revokedAt: f.clock.now() });
+  expect(f.call('reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: false, code: 'denied' });
+});
+it('rolls back claims/reports and receipts on failure; only committed state changes notify', async () => {
+  const f = await setup(), changed = vi.spyOn(f.app.live, 'changed');
+  // Other installed daemons also publish on the shared foundation clock.
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  for (const [op, input, state] of [['claimJob', { job: 'j' }, 'queued'], ['reportJob', { job: 'j', state: 'running' }, 'starting']] as const) {
+    changed.mockClear();
+    f.app.db.exec("CREATE TRIGGER abort_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
+    expect(f.call(op, input, undefined, op)).toMatchObject({ ok: false });
+    expect(f.store.read('job', 'j')?.state).toBe(state); expect(runtimeChanges()).toEqual([]);
+    f.app.db.exec('DROP TRIGGER abort_receipt');
+    expect(f.call(op, input, undefined, op)).toMatchObject({ ok: true });
+    expect(runtimeChanges()).toEqual([{ type: 'runtime.job', id: 'j' }]);
+    changed.mockClear(); f.clock.advance(1);
+    expect(f.call(op, input, undefined, op)).toMatchObject({ ok: true }); expect(runtimeChanges()).toEqual([]);
+  }
+  expect(f.call('reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true }); expect(runtimeChanges()).toEqual([]);
+});
+it('performs metadata handshake in staging without releasing an outside effect', async () => {
+  const f = await setup(true), token = f.bearer('a');
+  expect(await f.post(token, 'claimJob', { job: 'j' })).toMatchObject({ ok: true });
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true });
+  expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+  expect(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE ?').all('runtime.%')).not.toEqual([]);
+});
+
+it('requires configuration at claim time and snapshots the effective identity and server claim time', async () => {
+  const f = await setup(), token = f.bearer('a');
+  f.app.db.prepare("DELETE FROM runtime_settings WHERE id='art'").run();
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: { repo: '/new', branch: 'next' } }, 'setup-house').ok).toBe(true);
+  f.clock.advance(42);
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: true });
+  expect(f.store.read('job', 'j')).toMatchObject({ made: { repo: '/new', houseFile: 'house/house.json', branch: 'next' }, claimedAt: f.clock.now() });
+  f.clock.advance(42);
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: { repo: '/later' } }, 'later-house').ok).toBe(true);
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: true });
+  expect(f.store.read('job', 'j')?.made?.repo).toBe('/new');
+  expect(f.store.read('job', 'j')?.claimedAt).toBe(f.clock.now() - 42);
+});
+it('records only a matching immutable image for a claimed job through real runner authentication', async () => {
+  const f = await setup(), token = f.bearer('a'), build = 'loom-house-art:0123456789abcdef0123';
+  expect(await f.post(token, 'claimJob', { job: 'j' })).toMatchObject({ ok: true });
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  for (const image of ['loom-house-other:0123456789abcdef0123', build + 'a', build.toUpperCase(), 'docker.io/' + build, 'x'.repeat(121), '', 'image;cmd']) {
+    expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: image })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(f.store.read('job', 'j')).toEqual(before);
+  }
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'waiting', build })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(runtimeChanges()).toEqual([]);
+  expect(await f.post(token, 'reportJob', { job: 'other', state: 'running', build })).toMatchObject({ ok: false, code: 'denied' });
+  for (const extra of [{ made: before!.made }, { claimedAt: 5 }])
+    expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build, ...extra })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: 'localhost/' + build }, 'image')).toEqual({ ok: true, value: { job: 'j', state: 'running' } });
+  expect(f.store.read('job', 'j')).toMatchObject({ ...before, state: 'running', build });
+  expect(runtimeChanges()).toEqual([{ type: 'runtime.job', id: 'j' }]); changed.mockClear();
+  f.clock.advance(1);
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build })).toMatchObject({ ok: true });
+  expect(runtimeChanges()).toEqual([]);
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: 'loom-house-art:aaaaaaaaaaaaaaaaaaaa' })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.store.read('job', 'j')?.build).toBe(build);
+});
+it('keeps historical builds but excludes each changed repo, file or branch from configured reuse', async () => {
+  const f = await setup(), build = 'loom-house-art:0123456789abcdef0123';
+  expect(f.call('claimJob', { job: 'j' }).ok).toBe(true);
+  const house = f.store.read('job', 'j')!.made!;
+  // Changing configuration between claim and report cannot attribute the old build to the new house.
+  for (const replacement of [{ ...house, repo: '/other' }, { ...house, houseFile: 'other.json' }, { ...house, branch: 'next' }]) {
+    expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: replacement }, `configure-${JSON.stringify(replacement)}`).ok).toBe(true);
+    expect(f.call('reportJob', { job: 'j', state: 'running', build }).ok).toBe(true);
+    expect(configuredBuild(f.store.read('job', 'j')!, f.store.read('settings', 'art')?.house)).toBeUndefined();
+    expect(f.store.read('job', 'j')?.made).toEqual(house);
+  }
+  expect(configuredBuild(f.store.read('job', 'j')!, house)).toBe(build);
+  expect(configuredBuild(f.store.read('job', 'j')!, undefined)).toBeUndefined();
+  await f.app.close();
+  const restarted = await startLoom({ home: f.home, clock: f.clock, next: true }); cleanups.push(restarted.close);
+  expect(runtimeStore(restarted.db).read('job', 'j')).toMatchObject({ made: house, build });
+});
+it('refuses image attribution without claim provenance but preserves ordinary progress for older jobs', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => { const { changedAt: _, ...job } = f.store.read('job', 'j')!; f.store.put('job', { ...job, state: 'starting' }, 1); })();
+  expect(f.call('reportJob', { job: 'j', state: 'running', build: 'loom-house-art:0123456789abcdef0123' })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.call('reportJob', { job: 'j', state: 'running' }).ok).toBe(true);
+  expect(configuredBuild(f.store.read('job', 'j')!, f.store.read('settings', 'art')?.house)).toBeUndefined();
+});
+it('rolls image metadata back on receipt failure and makes durable retries preserve later progress', async () => {
+  const f = await setup(true), build = 'loom-house-art:0123456789abcdef0123';
+  f.call('claimJob', { job: 'j' });
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  f.app.db.exec("CREATE TRIGGER abort_image BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
+  expect(f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image')).toMatchObject({ ok: false });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  f.app.db.exec('DROP TRIGGER abort_image');
+  const result = f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image'); expect(result.ok).toBe(true);
+  expect(f.call('reportJob', { job: 'j', state: 'waiting' }).ok).toBe(true);
+  changed.mockClear();
+  expect(f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image')).toEqual(result);
+  expect(f.store.read('job', 'j')?.state).toBe('waiting'); expect(runtimeChanges()).toEqual([]);
+  expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+});
+
+it('clears a queued historical image and rolls the entire claim snapshot back on receipt failure', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => { const { changedAt: _, ...job } = f.store.read('job', 'j')!; f.store.put('job', { ...job, made: { repo: '/old', houseFile: 'old.json' }, claimedAt: 1, build: 'loom-house-art:aaaaaaaaaaaaaaaaaaaa' }, 1); })();
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  f.app.db.exec("CREATE TRIGGER abort_claim BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
+  expect(f.call('claimJob', { job: 'j' }, undefined, 'bind')).toMatchObject({ ok: false });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  f.app.db.exec('DROP TRIGGER abort_claim');
+  expect(f.call('claimJob', { job: 'j' }, undefined, 'bind').ok).toBe(true);
+  expect(f.store.read('job', 'j')).toMatchObject({ made: f.store.read('settings', 'art')!.house, claimedAt: f.clock.now() });
+  expect(f.store.read('job', 'j')?.build).toBeUndefined();
+});

@@ -229,8 +229,8 @@ export function hasTable(db: Database, table: string): boolean {
 }
 
 /** memories.db for writing, with the tables there. */
-export function openConversations(contextDir: string): Database {
-  const db = new BetterSqlite3(resolveSqliteDbPath(contextDir));
+export function openConversations(contextDir: string, selection?: MemorySelection): Database {
+  const db = new BetterSqlite3(resolveSqliteDbPath(contextDir, selection));
   db.pragma('busy_timeout = 5000');
   if (!CONVERSATION_TABLES.every((t) => hasTable(db, t))) createConversationTables(db);
   // needs_owner_href came after the table (t-1778): a store from before gets the column on its first write.
@@ -251,8 +251,8 @@ export function openConversationsReadonly(contextDir: string, selection?: Memory
   return db;
 }
 
-function withDb<T>(contextDir: string, f: (db: Database) => T): T {
-  const db = openConversations(contextDir);
+function withDb<T>(contextDir: string, f: (db: Database) => T, selection?: MemorySelection): T {
+  const db = openConversations(contextDir, selection);
   try { return f(db); } finally { db.close(); }
 }
 
@@ -324,7 +324,7 @@ const dayOf = (iso: string) => new Date(iso).toISOString().slice(0, 10);
  * `writer` is who wrote it (a role string), kept so the audit log can check that the
  * entry's writer is the turn's. Answers the conversation's id and the turn's seq.
  */
-export function recordTurn(contextDir: string, agent: string, turn: TurnInput, writer: string): { conversation: string; seq: number; latency_ms?: number } {
+export function recordTurn(contextDir: string, agent: string, turn: TurnInput, writer: string, selection?: MemorySelection): { conversation: string; seq: number; latency_ms?: number } {
   const id = conversationId(agent, turn.venue, turn.place);
   return withDb(contextDir, (db) => db.transaction(() => {
     const day = dayOf(turn.at);
@@ -357,7 +357,7 @@ export function recordTurn(contextDir: string, agent: string, turn: TurnInput, w
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       id, seq, turn.at, JSON.stringify(turn.from), turn.kind, turn.run ?? null, latency ?? null, turn.model ?? null, turn.harness ?? null, turn.outcome ?? null, writer);
     return { conversation: id, seq, ...(latency !== undefined ? { latency_ms: latency } : {}) };
-  }).immediate());
+  }).immediate(), selection);
 }
 
 interface ConvRow { id: string; agent: string; venue: string; place: string; label: string | null; people_json: string; agents_json: string; started: string; last: string; last_seq: number }
@@ -372,47 +372,47 @@ function turnOf(r: TurnRow, c: { venue: string; place: string }): Turn {
 }
 
 /** A conversation's turns still held (not folded), in seq order. */
-export function turnsOf(contextDir: string, conversation: string): Turn[] {
+export function turnsOf(contextDir: string, conversation: string, selection?: MemorySelection): Turn[] {
   return withReadonly(contextDir, [], (db) => {
     const c = db.prepare('SELECT venue, place FROM conversations WHERE id = ?').get(conversation) as { venue: string; place: string } | undefined;
     if (!c) return [];
     return (db.prepare('SELECT * FROM conversation_turns WHERE conversation = ? ORDER BY seq').all(conversation) as TurnRow[]).map((r) => turnOf(r, c));
-  });
+  }, selection);
 }
 
 /** Who wrote turn (conversation, seq), or undefined when there's no such turn. The audit log's order check. */
-export function turnWriter(contextDir: string, conversation: string, seq: number): string | undefined {
+export function turnWriter(contextDir: string, conversation: string, seq: number, selection?: MemorySelection): string | undefined {
   return withReadonly(contextDir, undefined, (db) =>
-    (db.prepare('SELECT writer FROM conversation_turns WHERE conversation = ? AND seq = ?').get(conversation, seq) as { writer: string } | undefined)?.writer);
+    (db.prepare('SELECT writer FROM conversation_turns WHERE conversation = ? AND seq = ?').get(conversation, seq) as { writer: string } | undefined)?.writer, selection);
 }
 
 /** One held turn with its conversation's agent, venue and place, and its writer: what the audit log and review read. */
 export interface TurnRecord extends Turn { agent: string; writer: string }
 
 /** Turn (conversation, seq) as held, or undefined when there's no such turn (never written, or folded). */
-export function turnRecord(contextDir: string, conversation: string, seq: number): TurnRecord | undefined {
+export function turnRecord(contextDir: string, conversation: string, seq: number, selection?: MemorySelection): TurnRecord | undefined {
   if (!isConversationId(conversation) || !Number.isSafeInteger(seq) || seq < 1) return undefined;
   return withReadonly(contextDir, undefined, (db) => {
     const c = db.prepare('SELECT agent, venue, place FROM conversations WHERE id = ?').get(conversation) as { agent: string; venue: string; place: string } | undefined;
     if (!c) return undefined;
     const r = db.prepare('SELECT * FROM conversation_turns WHERE conversation = ? AND seq = ?').get(conversation, seq) as TurnRow | undefined;
     return r ? { ...turnOf(r, c), agent: c.agent, writer: r.writer } : undefined;
-  });
+  }, selection);
 }
 
 /** Conversations with a held turn in [from, to): id, venue, people. The scorecard pass reads them per UTC day. */
-export function conversationsActive(contextDir: string, from: string, to: string): Array<{ id: string; venue: string; people: string[] }> {
+export function conversationsActive(contextDir: string, from: string, to: string, selection?: MemorySelection): Array<{ id: string; venue: string; people: string[] }> {
   return withReadonly(contextDir, [], (db) => (db.prepare(`SELECT c.id, c.venue, c.people_json FROM conversations c
       WHERE EXISTS (SELECT 1 FROM conversation_turns t WHERE t.conversation = c.id AND t.at >= ? AND t.at < ?) ORDER BY c.id`).all(from, to) as Array<{ id: string; venue: string; people_json: string }>)
     .map((r) => {
       let people: string[] = [];
       try { people = JSON.parse(r.people_json) as string[]; } catch { /* a bad row names no one */ }
       return { id: r.id, venue: r.venue, people };
-    }));
+    }), selection);
 }
 
 /** Every model and harness string this store has seen, held or folded: what redaction replaces. */
-export function modelsSeen(contextDir: string): { models: string[]; harnesses: string[] } {
+export function modelsSeen(contextDir: string, selection?: MemorySelection): { models: string[]; harnesses: string[] } {
   return withReadonly(contextDir, { models: [], harnesses: [] }, (db) => {
     const models = new Set<string>();
     const harnesses = new Set<string>();
@@ -424,11 +424,11 @@ export function modelsSeen(contextDir: string): { models: string[]; harnesses: s
       try { for (const m of Object.keys(JSON.parse(r.outcomes_json) as Record<string, unknown>)) if (m !== 'unknown') models.add(m); } catch { /* a bad row names nothing */ }
     }
     return { models: [...models], harnesses: [...harnesses] };
-  });
+  }, selection);
 }
 
 /** Every person slug this store's conversations have seen: their `people`, and every turn `from` a person (past the people cap too). */
-export function peopleSeen(contextDir: string): string[] {
+export function peopleSeen(contextDir: string, selection?: MemorySelection): string[] {
   return withReadonly(contextDir, [], (db) => {
     const out = new Set<string>();
     for (const r of db.prepare('SELECT people_json FROM conversations').all() as Array<{ people_json: string }>) {
@@ -438,11 +438,11 @@ export function peopleSeen(contextDir: string): string[] {
       if (r.s) out.add(r.s);
     }
     return [...out];
-  });
+  }, selection);
 }
 
 /** Every agent id this store's conversations have seen (beyond its own agent). */
-export function agentsSeen(contextDir: string): string[] {
+export function agentsSeen(contextDir: string, selection?: MemorySelection): string[] {
   return withReadonly(contextDir, [], (db) => {
     const out = new Set<string>();
     for (const r of db.prepare('SELECT agent, agents_json FROM conversations').all() as Array<{ agent: string; agents_json: string }>) {
@@ -450,7 +450,7 @@ export function agentsSeen(contextDir: string): string[] {
       try { for (const a of JSON.parse(r.agents_json) as string[]) out.add(a); } catch { /* skip */ }
     }
     return [...out];
-  });
+  }, selection);
 }
 
 // ─── Findings (conversations.md, "Review", step 3) ──────────────────────────
@@ -490,7 +490,7 @@ function createFindingsTable(db: Database): void {
  * conversation per UTC day (the turn's day): a second is a 409, so findings can't add up to
  * a transcript. The text is one printable line of at most 200 characters.
  */
-export function writeFinding(contextDir: string, f: { conversation: string; seq: number; measure: string; score: number | null; text: string }, now: Date = new Date()): Finding {
+export function writeFinding(contextDir: string, f: { conversation: string; seq: number; measure: string; score: number | null; text: string }, now: Date = new Date(), selection?: MemorySelection): Finding {
   if (typeof f.text !== 'string' || !f.text.trim().length || f.text.length > MAX_FINDING || !PRINTABLE.test(f.text)) fail(`a finding's text is one line of 1-${MAX_FINDING} printable characters`);
   return withDb(contextDir, (db) => db.transaction(() => {
     createFindingsTable(db);
@@ -507,7 +507,7 @@ export function writeFinding(contextDir: string, f: { conversation: string; seq:
     db.prepare('INSERT INTO findings (id, conversation, seq, day, measure, score, text, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
       out.id, out.conversation, out.seq, out.day, out.measure, out.score, out.text, out.at);
     return out;
-  }).immediate());
+  }).immediate(), selection);
 }
 
 // ─── Digests ────────────────────────────────────────────────────────────────
@@ -582,7 +582,7 @@ export function projectLookup(db: Database): ProjectLookup {
  * another run adds one. Projects resolve to slugs; with none named, the one live project whose
  * links.venues holds `<venue>:<place>` (none when several do).
  */
-export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date(), threadProject: string | null = null): Digest {
+export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date(), threadProject: string | null = null, selection?: MemorySelection): Digest {
   if (!isConversationId(at.conversation) || !isRunId(at.run)) fail('a digest is written for the conversation and run given at identity: pass conversation and run to identity first');
   const input = parseDigest(raw);
   return withDb(contextDir, (db) => db.transaction(() => {
@@ -617,7 +617,7 @@ export function writeDigest(contextDir: string, at: { conversation: string; run:
                   needs_owner = excluded.needs_owner, needs_owner_href = excluded.needs_owner_href, needs_owner_json = excluded.needs_owner_json`).run(
       d.id, d.conversation, d.run, d.at, d.summary, JSON.stringify(d.asks), JSON.stringify(d.decisions), JSON.stringify(d.tasks), JSON.stringify(d.projects), d.needs_owner, d.needs_owner_href, json);
     return d;
-  }).immediate());
+  }).immediate(), selection);
 }
 
 interface DigestRow { id: string; conversation: string; run: string; at: string; summary: string; asks_json: string; decisions_json: string; tasks_json: string; projects_json: string; needs_owner: string | null; needs_owner_href?: string | null; needs_owner_json?: string | null }
@@ -632,15 +632,15 @@ function digestOf(r: DigestRow): Digest {
 }
 
 /** Set a conversation's label (a Comms thread's title, comms.md): its own store's row, when it has one. */
-export function setConversationLabel(contextDir: string, conversation: string, label: string): boolean {
+export function setConversationLabel(contextDir: string, conversation: string, label: string, selection?: MemorySelection): boolean {
   if (!isConversationId(conversation)) return false;
-  return withDb(contextDir, (db) => db.prepare('UPDATE conversations SET label = ? WHERE id = ?').run(label.slice(0, MAX_LABEL), conversation).changes > 0);
+  return withDb(contextDir, (db) => db.prepare('UPDATE conversations SET label = ? WHERE id = ?').run(label.slice(0, MAX_LABEL), conversation).changes > 0, selection);
 }
 
 /** A conversation's digests, newest first. */
-export function digestsOf(contextDir: string, conversation: string): Digest[] {
+export function digestsOf(contextDir: string, conversation: string, selection?: MemorySelection): Digest[] {
   return withReadonly(contextDir, [], (db) =>
-    (db.prepare('SELECT * FROM conversation_digests WHERE conversation = ? ORDER BY at DESC, rowid DESC').all(conversation) as DigestRow[]).map(digestOf));
+    (db.prepare('SELECT * FROM conversation_digests WHERE conversation = ? ORDER BY at DESC, rowid DESC').all(conversation) as DigestRow[]).map(digestOf), selection);
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────
@@ -658,12 +658,12 @@ function conversationOf(db: Database, r: ConvRow): Conversation {
   };
 }
 
-export function getConversation(contextDir: string, id: string): Conversation | undefined {
+export function getConversation(contextDir: string, id: string, selection?: MemorySelection): Conversation | undefined {
   if (!isConversationId(id)) return undefined;
   return withReadonly(contextDir, undefined, (db) => {
     const r = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as ConvRow | undefined;
     return r ? conversationOf(db, r) : undefined;
-  });
+  }, selection);
 }
 
 export interface ListFilter {
@@ -704,7 +704,7 @@ function newestDigests(db: Database, ids: string[]): Map<string, DigestRow> {
 }
 
 /** This store's conversations, newest `last` first, at most 100. */
-export function listConversations(contextDir: string, f: ListFilter = {}): ConversationListItem[] {
+export function listConversations(contextDir: string, f: ListFilter = {}, selection?: MemorySelection): ConversationListItem[] {
   const limit = Math.min(Math.max(1, f.limit ?? LIST_MAX), LIST_MAX);
   return withReadonly(contextDir, [], (db) => {
     const where: string[] = [];
@@ -727,11 +727,11 @@ export function listConversations(contextDir: string, f: ListFilter = {}): Conve
       return { ...conversationOf(db, r), turns: r.last_seq, summary: d?.summary ?? null, needs_owner: open?.needs_owner ?? null,
         needs_digest: open?.id ?? null, needs_legacy: open ? !!needsOfRow(open)?.legacy : false };
     });
-  });
+  }, selection);
 }
 
 /** Turn counts by kind and outcomes by model, over held turns and folded days alike: the generic render's numbers. */
-export function turnStats(contextDir: string, conversation: string): { counts: Record<string, number>; outcomes: Record<string, number> } {
+export function turnStats(contextDir: string, conversation: string, selection?: MemorySelection): { counts: Record<string, number>; outcomes: Record<string, number> } {
   return withReadonly(contextDir, { counts: {}, outcomes: {} }, (db) => {
     const counts: Record<string, number> = {};
     const outcomes: Record<string, number> = {};
@@ -746,20 +746,20 @@ export function turnStats(contextDir: string, conversation: string): { counts: R
       }
     }
     return { counts, outcomes };
-  });
+  }, selection);
 }
 
 /** The folded days of a conversation, oldest first. */
-export function daysOf(contextDir: string, conversation: string): DayRow[] {
+export function daysOf(contextDir: string, conversation: string, selection?: MemorySelection): DayRow[] {
   return withReadonly(contextDir, [], (db) => (db.prepare('SELECT * FROM conversation_days WHERE conversation = ? ORDER BY day').all(conversation) as Array<{ conversation: string; day: string; counts_json: string; median_latency_ms: number | null; outcomes_json: string }>)
-    .map((r) => ({ conversation: r.conversation, day: r.day, counts: JSON.parse(r.counts_json), median_latency_ms: r.median_latency_ms, outcomes: JSON.parse(r.outcomes_json) })));
+    .map((r) => ({ conversation: r.conversation, day: r.day, counts: JSON.parse(r.counts_json), median_latency_ms: r.median_latency_ms, outcomes: JSON.parse(r.outcomes_json) })), selection);
 }
 
 /**
  * Findings on this agent's turns, newest first (conversations.md, "Introspection"): what
  * POST /api/loom/findings kept (writeFinding). A store with no finding yet has no table, and reads none.
  */
-export function findingsOf(contextDir: string, opts: { conversation?: string; since?: string } = {}): Array<Record<string, unknown>> {
+export function findingsOf(contextDir: string, opts: { conversation?: string; since?: string } = {}, selection?: MemorySelection): Array<Record<string, unknown>> {
   return withReadonly(contextDir, [], (db) => {
     if (!hasTable(db, 'findings')) return [];
     const where: string[] = [];
@@ -767,7 +767,7 @@ export function findingsOf(contextDir: string, opts: { conversation?: string; si
     if (opts.conversation) { where.push('conversation = ?'); args.push(opts.conversation); }
     if (opts.since) { where.push('at > ?'); args.push(new Date(opts.since).toISOString()); }
     return db.prepare(`SELECT * FROM findings ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY at DESC LIMIT 500`).all(...args) as Array<Record<string, unknown>>;
-  });
+  }, selection);
 }
 
 // ─── Needs you ──────────────────────────────────────────────────────────────
@@ -776,7 +776,7 @@ export function findingsOf(contextDir: string, opts: { conversation?: string; si
  * Conversations whose newest digest has needs_owner: what core asks the owner, until a later digest has none or the
  * owner answers it (answerNeeds: done, dismissed, or replied to).
  */
-export function openNeeds(contextDir: string): Array<{ conversation: Conversation; digest: Digest }> {
+export function openNeeds(contextDir: string, selection?: MemorySelection): Array<{ conversation: Conversation; digest: Digest }> {
   return withReadonly(contextDir, [], (db) => {
     const rows = (db.prepare(`SELECT d.* FROM conversation_digests d
       WHERE d.rowid = (SELECT d2.rowid FROM conversation_digests d2 WHERE d2.conversation = d.conversation ORDER BY d2.at DESC, d2.rowid DESC LIMIT 1)
@@ -786,7 +786,7 @@ export function openNeeds(contextDir: string): Array<{ conversation: Conversatio
       const c = db.prepare('SELECT * FROM conversations WHERE id = ?').get(r.conversation) as ConvRow | undefined;
       return c ? [{ conversation: conversationOf(db, c), digest: digestOf(r) }] : [];
     });
-  });
+  }, selection);
 }
 
 /**
@@ -804,7 +804,7 @@ export interface NeedsAnswer { digest: string; conversation: string; verdict: Ne
  * digest the agent rewrites later in the same run (a newer `at`) asks again, and so does a later run's. Kept is who
  * and how, never words: a reply's text went to the agent's conversation, and conversations hold none.
  */
-export function answerNeeds(contextDir: string, a: { conversation: string; digest: string; verdict: NeedsVerdict; by: string; reason?: string }, now: Date = new Date()): NeedsAnswer {
+export function answerNeeds(contextDir: string, a: { conversation: string; digest: string; verdict: NeedsVerdict; by: string; reason?: string }, now: Date = new Date(), selection?: MemorySelection): NeedsAnswer {
   if (!isConversationId(a.conversation)) fail('conversation is a conversation id (cv-…)');
   if (!NEEDS_VERDICTS.includes(a.verdict)) fail(`verdict is one of ${NEEDS_VERDICTS.join(', ')}`);
   return withDb(contextDir, (db) => db.transaction(() => {
@@ -819,12 +819,12 @@ export function answerNeeds(contextDir: string, a: { conversation: string; diges
     const out: NeedsAnswer = { digest: a.digest, conversation: a.conversation, verdict: a.verdict, by: a.by, at: now.toISOString(), reason: a.reason?.slice(0, 200) ?? null };
     db.prepare('INSERT OR REPLACE INTO conversation_needs_answers (digest, conversation, verdict, by, at, reason) VALUES (?, ?, ?, ?, ?, ?)').run(out.digest, out.conversation, out.verdict, out.by, out.at, out.reason);
     return out;
-  }).immediate());
+  }).immediate(), selection);
 }
 
 /** The id of the conversation's open Needs you digest (the Inbox's ask), else undefined. */
-export function openNeedDigest(contextDir: string, conversation: string): string | undefined {
-  return withReadonly(contextDir, undefined as string | undefined, (db) => openNeedsOf(db, conversation)?.id);
+export function openNeedDigest(contextDir: string, conversation: string, selection?: MemorySelection): string | undefined {
+  return withReadonly(contextDir, undefined as string | undefined, (db) => openNeedsOf(db, conversation)?.id, selection);
 }
 
 /** The conversation's newest digest when it needs the owner and isn't answered, else undefined. */
@@ -844,7 +844,7 @@ function isOpenNeed(db: Database, d: DigestRow): boolean {
 }
 
 /** The asks the owner answered done or replied to since `sinceIso`, newest first: the Inbox's history of them. */
-export function answeredNeeds(contextDir: string, sinceIso: string): Array<{ conversation: Conversation; digest: Digest; answer: NeedsAnswer }> {
+export function answeredNeeds(contextDir: string, sinceIso: string, selection?: MemorySelection): Array<{ conversation: Conversation; digest: Digest; answer: NeedsAnswer }> {
   return withReadonly(contextDir, [], (db) => {
     if (!hasTable(db, 'conversation_needs_answers')) return [];
     const rows = db.prepare("SELECT * FROM conversation_needs_answers WHERE at > ? AND verdict != 'dismissed' ORDER BY at DESC LIMIT 50").all(sinceIso) as NeedsAnswer[];
@@ -853,7 +853,7 @@ export function answeredNeeds(contextDir: string, sinceIso: string): Array<{ con
       const c = db.prepare('SELECT * FROM conversations WHERE id = ?').get(a.conversation) as ConvRow | undefined;
       return d && c && d.needs_owner !== null ? [{ conversation: conversationOf(db, c), digest: digestOf(d), answer: a }] : [];
     });
-  });
+  }, selection);
 }
 
 // ─── The project hub's section ──────────────────────────────────────────────
@@ -879,9 +879,9 @@ export interface HubConversation {
  * conversations with the newest `last` whose projects include `slug`. `since` marks `new`
  * (last after since); it doesn't filter. `venueLabel` names a venue for the page.
  */
-export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v, filed: readonly string[] = []): HubConversation[] {
+export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v, filed: readonly string[] = [], selection?: MemorySelection): HubConversation[] {
   const sinceMs = Date.parse(since);
-  return listConversations(contextDir, { project: slug, limit: HUB_MAX, orIds: filed }).map((c) => ({
+  return listConversations(contextDir, { project: slug, limit: HUB_MAX, orIds: filed }, selection).map((c) => ({
     id: c.id, venue: venueLabel(c.venue), label: c.label, people: c.people, last: c.last,
     summary: c.summary, needs_owner: c.needs_owner, needs_digest: c.needs_digest, needs_legacy: c.needs_legacy, new: Date.parse(c.last) > sinceMs,
   }));
@@ -913,8 +913,8 @@ export function median(xs: readonly number[]): number | null {
  * `conversation_days` row per conversation and day, then delete those turns. A day already
  * folded is never folded again (and takes no new turns). Conversations and digests stay.
  */
-export function foldConversations(contextDir: string, now: Date = new Date()): { days: number; turns: number } {
-  const path = resolveSqliteDbPath(contextDir);
+export function foldConversations(contextDir: string, now: Date = new Date(), selection?: MemorySelection): { days: number; turns: number } {
+  const path = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(path)) return { days: 0, turns: 0 };
   return withDb(contextDir, (db) => db.transaction(() => {
     const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString();
@@ -944,7 +944,7 @@ export function foldConversations(contextDir: string, now: Date = new Date()): {
       days++;
     }
     return { days, turns };
-  }).immediate());
+  }).immediate(), selection);
 }
 
 // ─── Measures from metadata (conversations.md, "What each kind is measured on") ─
@@ -970,6 +970,6 @@ export function dueToProgressSeconds(turns: readonly Pick<Turn, 'seq' | 'at' | '
 }
 
 /** A project name as the read tools take it: its slug when the projects store resolves it, else the name as given. */
-export function resolveProjectName(contextDir: string, name: string): string {
-  return withReadonly(contextDir, name, (db) => projectLookup(db).resolve(name) ?? name);
+export function resolveProjectName(contextDir: string, name: string, selection?: MemorySelection): string {
+  return withReadonly(contextDir, name, (db) => projectLookup(db).resolve(name) ?? name, selection);
 }

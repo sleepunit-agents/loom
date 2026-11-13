@@ -14,6 +14,7 @@ import { OperationError } from '../../core/index.js';
 import { venueSchema, routeSchema, type Message, type Venue } from './model.js';
 import { addressed } from './routing.js';
 import { eventTime } from './time.js';
+import { HouseholdDatabase } from '../../core/household/document.js';
 import { postReply } from './outbound.js';
 const sharing: Sharing = {members:{jonathan:{owner:true,agents:['art','mark']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['pond-bot']}},services:{}};
 const owner = {kind:'member',id:'jonathan'} as const;
@@ -50,6 +51,95 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   const message=(overrides: Partial<Message>={}): Message=>({at:'2026-11-12T17:00:00.123456Z',label:'House chat',id:'m1',channel:platform==='slack'?'D300':'300',user:'200',text:'hi',mentions:[],dm:platform==='slack',...overrides});
   return {runtime,admitted,types,secretGets, denySecret:()=>{secretAllowed=false;}, home,app,clock,engine,adapter,deliveries,stops,op,venue,message,close,setGate:(g:typeof gate)=>{gate=g;},failDelivery:()=>{failAfterDelivery=true;}};
 }
+describe('send disposition',()=>{
+  async function reply(staging=false) {
+    const f=await fixture('discord',staging);
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    const incomingId=[...f.deliveries.keys()][0];
+    f.engine.reply({id:'reply',incomingId,text:'the original reply'});
+    return {...f,incomingId};
+  }
+  it('dismisses an uncertain attempt without changing its receipt or permitting replay, including after restart',async()=>{
+    const f=await reply(); f.adapter.uncertain=true; await f.engine.flush();
+    f.app.db.prepare('UPDATE bridges_outbox SET remote_id=?').run('partial-platform-receipt');
+    const before=f.app.db.prepare('SELECT * FROM bridges_outbox').get() as {state:string};
+    expect(before.state).toBe('uncertain'); expect(f.adapter.posts).toHaveLength(1);
+    const changes: unknown[]=[];
+    const stop=f.app.live.observe(batch=>{
+      expect(f.app.db.inTransaction).toBe(false);
+      expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'dismissed'});
+      changes.push(...batch);
+    });
+    expect(f.op('dismissSend',{id:'reply',state:'uncertain'},'dismiss-once')).toEqual({ok:true,value:{id:'reply'}});
+    stop(); expect(changes).toEqual([{type:'bridges.send',id:'reply'}]);
+    expect(f.app.db.prepare('SELECT * FROM bridges_outbox').get()).toEqual({...before,state:'dismissed'});
+    const type=f.types.get('bridges.send')!;
+    expect(type.ids(undefined)).not.toContain('reply');
+    expect(type.inScope(type.read('reply',owner)!,undefined,f.clock.now())).toBe(false);
+    expect(f.op('dismissSend',{id:'reply',state:'uncertain'},'dismiss-once')).toEqual({ok:true,value:{id:'reply'}});
+    expect(f.op('dismissSend',{id:'reply',state:'uncertain'})).toEqual({ok:true,value:{id:'reply'}});
+    f.engine.reply({id:'reply',incomingId:f.incomingId,text:'the original reply'});
+    expect(()=>f.engine.reply({id:'reply',incomingId:f.incomingId,text:'changed'})).toThrow('Reply id reused');
+    await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); await restarted.engine.sync();
+    expect(restarted.app.db.prepare('SELECT * FROM bridges_outbox').get()).toEqual({...before,state:'dismissed'});
+    expect(restarted.adapter.posts).toEqual([]);
+  });
+  it('never sends a dismissed row retained in a drain snapshot behind an in-flight send',async()=>{
+    const f=await reply();
+    f.engine.reply({id:'second-reply',incomingId:f.incomingId,text:'must never send'});
+    const started=Promise.withResolvers<void>(), finish=Promise.withResolvers<void>();
+    const send=f.adapter.send.bind(f.adapter);
+    f.adapter.send=async(...args)=>{started.resolve();await finish.promise;return send(...args);};
+    const draining=f.engine.flush();await started.promise;
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.op('dismissSend',{id:'second-reply',state:'held'})).toEqual({ok:true,value:{id:'second-reply'}});
+    expect(f.op('putVenues',f.venue).ok).toBe(true);
+    finish.resolve();await draining;
+    expect(f.adapter.posts).toHaveLength(1);
+    expect(f.app.db.prepare('SELECT id,state FROM bridges_outbox ORDER BY id').all()).toEqual([
+      {id:'reply',state:'sent'},{id:'second-reply',state:'dismissed'},
+    ]);
+    await f.engine.flush();expect(f.adapter.posts).toHaveLength(1);
+  });
+  it('dismisses a held reply while a stale released staging effect cannot send it',async()=>{
+    const f=await reply(true); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM core_effects').get()).toEqual({state:'due'});
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.op('dismissSend',{id:'reply',state:'held'})).toEqual({ok:true,value:{id:'reply'}});
+    expect(f.op('putVenues',f.venue).ok).toBe(true);
+    expect(f.app.operations.call('direct',owner,'core.releaseEffect',{id:'bridges:reply'},'release').ok).toBe(true);
+    f.clock.advance(0); await f.engine.sync();
+    expect(f.adapter.posts).toEqual([]);
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'dismissed'});
+  });
+  it.each(['pending','sending','sent','held','uncertain'])('rejects stale or active %s disposition without changing any row',async state=>{
+    const f=await reply(true); await f.engine.flush();
+    f.app.db.prepare('UPDATE bridges_outbox SET state=?').run(state);
+    const before=f.app.db.prepare('SELECT * FROM bridges_outbox').all();
+    const observed=state==='held'?'uncertain':'held';
+    expect(f.op('dismissSend',{id:'reply',state:observed})).toMatchObject({ok:false,code:'conflict'});
+    expect(f.app.db.prepare('SELECT * FROM bridges_outbox').all()).toEqual(before);
+    expect(f.adapter.posts).toEqual([]);
+  });
+  it('requires household-owner policy on every door and rejects malformed or missing targets',async()=>{
+    const f=await reply(true); await f.engine.flush();
+    f.app.db.prepare("UPDATE bridges_outbox SET state='uncertain'").run();
+    const before=f.app.db.prepare('SELECT * FROM bridges_outbox').all();
+    for(const door of ['direct','http','socket','mcp'] as const) for(const viewer of [
+      {kind:'member',id:'pollock'},{kind:'agent',id:'art'},{kind:'runner',id:'box'},{kind:'service',id:'bridges'},
+    ] as const) {
+      expect(f.app.operations.call(door,viewer,'bridges.dismissSend',{id:'reply',state:'uncertain'},crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+      expect(f.app.db.prepare('SELECT * FROM bridges_outbox').all()).toEqual(before);
+    }
+    for(const input of [{id:'reply'},{id:'reply',state:'pending'},{id:'reply',state:'uncertain',retry:true}])
+      expect(f.op('dismissSend',input)).toMatchObject({ok:false,code:'invalid'});
+    expect(f.op('dismissSend',{id:'missing',state:'held'})).toMatchObject({ok:false,code:'not-found'});
+    expect(f.op('dismissSend',{id:'reply',state:'uncertain'})).toEqual({ok:true,value:{id:'reply'}});
+  });
+});
+
 describe('in-process bridge delivery',()=>{
   async function groupFixture(staging=false) {
     const f=await fixture('slack',staging);
@@ -429,6 +519,18 @@ describe('in-process bridge delivery',()=>{
     f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
     expect(f.secretGets).toHaveLength(gets); expect(f.adapter.posts).toHaveLength(0);
   });
+  it('holds pending intake on connection removal durably without later delivery',async()=>{
+    const f=await fixture(); f.setGate('wait');
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'venue removed'});
+    f.setGate('allow'); f.clock.advance(60_000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); await restarted.engine.flush();
+    expect(restarted.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'venue removed'});
+    expect(restarted.deliveries.size).toBe(0);
+  });
   it('announces held sends on venue removal and removes sent records from live scope',async()=>{
     const f=await fixture('discord',true); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     f.engine.reply({id:'held',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
@@ -462,6 +564,60 @@ describe('in-process bridge delivery',()=>{
   it('drops a known sender denied by runtime and erases the message words',async()=>{
     const f=await fixture(); f.setGate('drop'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     expect(f.deliveries.size).toBe(0); expect(f.app.db.prepare('SELECT message,reason FROM bridges_inbox').get()).toEqual({message:'{}',reason:'not admitted'});
+  });
+  it('refuses non-owner route edits and removal without changing saved routes',async()=>{
+    const f=await fixture();
+    const before=f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all();
+    const changed=routeSchema.parse({id:'channel',platform:'discord',workspace:'house',channel:'300',primary:'mark'});
+    for (const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const) {
+      for (const [name,input] of [['putRoutes',changed],['removeRoutes',{id:'channel'}]] as const) {
+        expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+        expect(f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all()).toEqual(before);
+      }
+    }
+    expect(f.op('putRoutes',changed).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all()).not.toEqual(before);
+    expect(f.op('removeRoutes',{id:'channel'}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id FROM bridges_routes').all()).toEqual([]);
+  });
+  it('refuses non-owner connection writes and removal with exact saved content unchanged',async()=>{
+    const f=await fixture();
+    const before=f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all();
+    const changed={...f.venue,bot:'replacement',enabled:false};
+    for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const){
+      for(const [name,input] of [['putVenues',changed],['removeVenues',{id:f.venue.id}]] as const){
+        expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+        expect(f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all()).toEqual(before);
+      }
+    }
+    expect(f.op('putVenues',changed).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all()).not.toEqual(before);
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id FROM bridges_venues').all()).toEqual([]);
+  });
+  it('refuses non-owner person-link edits and removal without changing saved identities',async()=>{
+    const f=await fixture();
+    const before=f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all();
+    const changed={id:'person',platform:'discord',workspace:'house',user:'200',person:'mark'};
+    const household=new HouseholdDatabase(f.app.db);
+    f.app.db.transaction(()=>household.replace(f.home,{v:1,agents:['art','mark'],default:'art',members:[
+      {person:'jonathan',role:'owner',agents:'*'},{person:'mark',role:'member',agents:['mark']},
+    ]}))();
+    const accessBefore=household.document(), sharingBefore=structuredClone(sharing);
+    const unchangedAccess=()=>{ expect(household.document()).toEqual(accessBefore); expect(sharing).toEqual(sharingBefore); };
+    for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const){
+      for(const [name,input] of [['putLinks',changed],['removeLinks',{id:'person'}]] as const){
+        expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+        expect(f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all()).toEqual(before);
+      }
+    }
+    const added={...changed,id:'added',user:'201'};
+    expect(f.op('putLinks',added).ok).toBe(true); unchangedAccess();
+    expect(f.op('removeLinks',{id:'added'}).ok).toBe(true); unchangedAccess();
+    expect(f.op('putLinks',changed).ok).toBe(true); unchangedAccess();
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_links ORDER BY id').all()).toEqual([{id:'person',record:JSON.stringify(changed)}]);
+    expect(f.op('removeLinks',{id:'person'}).ok).toBe(true); unchangedAccess();
+    expect(f.app.db.prepare('SELECT id FROM bridges_links').all()).toEqual([]);
   });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();
