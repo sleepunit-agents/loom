@@ -3,7 +3,7 @@
 .desk-home-content{display:grid;gap:16px;padding:4px 0 16px}
 .desk-home-needs{padding:14px 18px;border-left:3px solid var(--v-blue);background:color-mix(in srgb,var(--v-blue) 6%,var(--v-canvas));backdrop-filter:blur(8px)}
 .desk-home-needs h2{font:600 12px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-blue)}
-.desk-home-needs [aria-label="First three asks"]{display:flex;flex-wrap:wrap;gap:8px;border:0;background:none}
+.desk-home-needs [aria-label="First three asks"]{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;border:0;background:none}
 .desk-home-needs [aria-label="First three asks"]>button{flex:1 1 220px;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 60%,transparent)}
 .desk-home-agents{align-items:stretch}
 .desk-home-card{--c:var(--v-pink);position:relative;padding:26px 24px 24px;align-content:start;border:1px solid var(--v-border);border-radius:0;background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%)}
