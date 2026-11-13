@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
 - Keep bounded runtime job diagnostics outside live metadata, with scoped result reads and atomic completion.
 

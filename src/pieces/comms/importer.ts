@@ -56,7 +56,11 @@ export async function importComms(db:Db,from:string,newHome:string,options:{inte
  }
  const imported:Thread[]=threads.map(t=>{
   const opened=time(t.opened),last=time(t.last);if(!Number.isFinite(opened)||!Number.isFinite(last))throw new Error('Invalid source thread');
-  return {...t,id:String(t.id),agent:String(t.agent),member:String(t.member),conversation:String(t.conversation),title:t.title as string|null,titledBy:t.titled_by as Thread['titledBy'],project:t.project?String(t.project):undefined,pinned:!!t.pinned,archived:t.archived?time(t.archived):null,opened,last,readSeq:Number(t.read_seq),nextSeq:next.get(String(t.id))??1,stop:!!t.stop,firstId:String(t.first_id),firstHash:String(t.first_hash),working:!!t.working_since};
+  // Legacy associations are raw ref:/page: pointers. Only their destination-key
+  // fingerprint may survive in thread metadata; never spread the raw column.
+  const {about_key:aboutKey,...metadata}=t;
+  const association=typeof aboutKey==='string'&&aboutKey?{aboutHash:sealer.hash(`about\0${aboutKey}`)}:{};
+  return {...metadata,...association,id:String(t.id),agent:String(t.agent),member:String(t.member),conversation:String(t.conversation),title:t.title as string|null,titledBy:t.titled_by as Thread['titledBy'],project:t.project?String(t.project):undefined,pinned:!!t.pinned,archived:t.archived?time(t.archived):null,opened,last,readSeq:Number(t.read_seq),nextSeq:next.get(String(t.id))??1,stop:!!t.stop,firstId:String(t.first_id),firstHash:String(t.first_hash),working:!!t.working_since};
  });
  // Compare plaintext only here, in memory. It is never returned or included in an error.
  for(let n=0;n<messages.length;n++){

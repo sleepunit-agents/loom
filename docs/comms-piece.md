@@ -113,6 +113,14 @@ The app maps imported nested card tool/state and step details, ask question/reas
 lines, and kept answer verdicts. Answered, expired, freeform and unreferenced asks do not
 offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their trusted label writer and window reader now exist; production runtime/metadata binding and conversation-list navigation remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
 focused tests for both matching and different destination keys.
+Legacy attachment associations are translated from `about_key` (`ref:` or
+`page:` identity) into the destination key's domain-separated `aboutHash`.
+The raw source column is omitted from destination metadata. Matching works for
+both same-key and rekeyed imports without decrypting message words. It remains
+restricted to the opener and selected agent. Existing imported destinations
+are not repaired by a checksum-only repeat; migration verification and any
+repair procedure remain separate unfinished obligations.
+
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
 
