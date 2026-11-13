@@ -60,6 +60,15 @@ it('keeps notification metadata after words expire without using crypto or expos
  expect(s.app.db.prepare('SELECT words FROM comms_messages WHERE thread=? AND kind=\'reply\'').get(place)).toEqual({words:null});
  expect((await s.call('announcements',{member:'jonathan'})).ok).toBe(false);
 });
+it('does not notify assigned background work until the member writes in it',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ // An assigned job has an access member but no message from that member.
+ s.app.db.prepare("DELETE FROM comms_messages WHERE thread=? AND kind='message'").run(place);
+ await s.comms.post('art',place,{id:'report',kind:'reply',text:'private background report'});
+ expect(s.comms.announcements('jonathan')).toEqual([]);
+ expect((await s.call('send',{thread:place,id:'followupaaaaaaaa',text:'A follow-up'})).ok).toBe(true);
+ expect(s.comms.announcements('jonathan')).toHaveLength(1);
+});
 it('refreshes foreground presence on unchanged reads without moving activity or publishing Live changes',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  const saved=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);

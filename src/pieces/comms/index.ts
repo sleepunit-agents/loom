@@ -491,6 +491,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    // Read routing facts only: no ciphertext is selected or decrypted for push.
    return agentThreads(member).flatMap(t=>{
     if(typeof t.inFront==='number'&&clock.now()-t.inFront<120_000)return [];
+    // Assigned background work is not an opened conversation until the member writes.
+    if(!db.prepare("SELECT 1 FROM comms_messages WHERE thread=? AND kind='message' AND sender=? LIMIT 1").get(t.id,t.member))return [];
     const reply=db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
     if(reply.seq===null||reply.seq<=t.readSeq)return [];
     const name=t.agent.charAt(0).toUpperCase()+t.agent.slice(1);

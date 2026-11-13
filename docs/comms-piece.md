@@ -640,7 +640,9 @@ does not suppress it. Each candidate has a key based on thread and latest reply
 sequence, the opener member, agent, thread URL, fixed reply wording and the
 thread title. Message words, work details and ciphertext are never selected or
 decrypted. Expired words leave the same metadata candidate; archive, deletion,
-ownership loss and closing the piece remove it. Agent labels currently capitalize
+ownership loss and closing the piece remove it. Assigned background work without
+a member message produces no candidate; the member writing promotes it. Full
+spawn lifecycle integration remains missing. Agent labels currently capitalize
 the agent id, matching the rest of this app; authoritative display names remain
 part of production composition.
 
@@ -651,11 +653,11 @@ through staging. It must not cache eligibility across asynchronous work. No
 legacy push store or handler is used, and no production push delivery is claimed.
 
 The initial regressions failed with `announcements is not a function`.
-Seven new cases now cover opener isolation, reply-only unread state, stable replay/card
+Eight new cases now cover opener isolation, reply-only unread state, stable replay/card
 keys and newer replies, title-only payloads, another thread's presence,
 restart, the exact two-minute boundary, reads, archive/delete/close/revocation,
 retained metadata after word expiry, no crypto and no public operation.
-All 317 affected tests and root TypeScript checking pass. The single browser
+All 318 affected tests and root TypeScript checking pass. The single browser
 fixture also now anchors its first-message expiry to that message's original
 server timestamp: the foreground test's new 30-second advance had made the
 relative 14-day jump expire the row before Load earlier. No assertion was
