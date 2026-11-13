@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
 - Show Comms thread activity times in CT and live working state in the thread list.
 
