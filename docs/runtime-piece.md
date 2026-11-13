@@ -422,6 +422,8 @@ including removed aliases still held by scope history. Aliases of one currently
 granted socket must also have identical scopes. As in the old path, tailnet
 history is by name; removing/renaming a socket needs explicit owner scope
 configuration. Scope strings compare exactly, as before (order matters).
+Map keys are stored in a canonical order; reordering a map on save does not
+change `changedAt` or publish a settings notification.
 
 Steers map a person slug to one through ten project slugs; `owner` is excluded
 from both. These are future release configuration, not proof that a given job

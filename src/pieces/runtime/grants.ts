@@ -5,11 +5,15 @@ import type { RuntimeRecords } from './records.js';
 import { runtimeStore } from './store.js';
 type Grants = NonNullable<RuntimeRecords['settings']['grants']>;
 const own = <T>(map: Record<string, T> | undefined, key: string): T | undefined => map && Object.hasOwn(map, key) ? map[key] : undefined;
+const sorted = <T>(map: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(map).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+function restriction<T>(requested: Record<string, T> | 'none' | undefined, before: Record<string, T> | undefined): Record<string, T> {
+  return sorted(requested === 'none' ? {} : requested && Object.keys(requested).length ? requested : before ?? {});
+}
 function configuration(input: z.infer<typeof grantInput>, before: Grants | undefined): Grants {
   const { logins, scopes: requestedScopes, steers: requestedSteers, ...capabilities } = input;
   // Empty objects are an untouched old form field, not an instruction to widen a restriction.
-  const scopes = requestedScopes === 'none' ? {} : requestedScopes && Object.keys(requestedScopes).length ? requestedScopes : before?.scopes ?? {};
-  const steers = requestedSteers === 'none' ? {} : requestedSteers && Object.keys(requestedSteers).length ? requestedSteers : before?.steers ?? {};
+  const scopes = restriction(requestedScopes, before?.scopes);
+  const steers = restriction(requestedSteers, before?.steers);
   for (const key of Object.keys(scopes)) {
     const present = key.startsWith('tailnet:') ? input.tailnets.some(item => `tailnet:${item.name}` === key) : Object.hasOwn(input.secrets, key);
     if (!present && !Object.hasOwn(before?.scopes ?? {}, key)) throw new OperationError('invalid', 'A new scope must name a granted secret alias or tailnet');
@@ -30,7 +34,7 @@ function configuration(input: z.infer<typeof grantInput>, before: Grants | undef
       throw new OperationError('invalid', 'Aliases of the same tailnet socket must have identical scopes');
   }
   const keptLogins = logins === 'default' ? undefined : logins === undefined ? before?.logins : [...new Set(logins)];
-  return { ...capabilities, ...(keptLogins === undefined ? {} : { logins: keptLogins }), scopes, scopeStores, steers };
+  return { ...capabilities, secrets: sorted(capabilities.secrets), ...(keptLogins === undefined ? {} : { logins: keptLogins }), scopes, scopeStores: sorted(scopeStores), steers };
 }
 export function installHouseGrants(db: Db, operations: Operations, sharing: () => Sharing) {
   const store = runtimeStore(db);

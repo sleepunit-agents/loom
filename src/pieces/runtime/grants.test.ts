@@ -158,3 +158,16 @@ it('exposes grant references only through centrally scoped settings and keeps ac
   for (const viewer of [{ kind: 'member', id: 'pollock' }, { kind: 'agent', id: 'pond-bot' }, { kind: 'runner', id: 'art' }] as Viewer[])
     expect(list(viewer)).toEqual({ ok: true, value: { records: [] } });
 });
+it('keeps reordered maps quiet including remembered source history', async () => {
+  const f = await setup(), changed = vi.spyOn(f.app.live, 'changed');
+  const grants = { ...full, secrets: { github: 'github-store', extra: 'other-store' }, scopes: { ...full.scopes, extra: 'owner' }, steers: { patrick: ['pond'], mark: ['other'] } };
+  expect(f.call(grants).ok).toBe(true); changed.mockClear();
+  const before = f.store.read('settings', 'art'); f.clock.advance(100);
+  const reverse = <T>(map: Record<string, T>) => Object.fromEntries(Object.entries(map).reverse());
+  expect(f.call({ ...grants, secrets: reverse(grants.secrets), scopes: reverse(grants.scopes), steers: reverse(grants.steers) }).ok).toBe(true);
+  expect(f.store.read('settings', 'art')).toEqual(before); expect(changed).not.toHaveBeenCalled();
+  expect(f.call({ secrets: {}, scopes: reverse(grants.scopes) }).ok).toBe(true); changed.mockClear();
+  const removed = f.store.read('settings', 'art'); f.clock.advance(100);
+  expect(f.call({ secrets: {}, scopes: grants.scopes }).ok).toBe(true);
+  expect(f.store.read('settings', 'art')).toEqual(removed); expect(changed).not.toHaveBeenCalled();
+});
