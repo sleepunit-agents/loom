@@ -29,8 +29,8 @@ it('loads and forwards the coordinator epic-project map; malformed map fails wit
   const release = vi.fn(), close = vi.fn(); fakes.lock.mockReturnValue(release); fakes.create.mockReturnValue({ db: {}, close }); fakes.run.mockReturnValue({ ok: true });
   try {
     writeFileSync(path, JSON.stringify({ 't-1': 'pond' }));
-    expect(await migrateTasks(['--from','/fixture/source','--projects',path], io())).toBe(0);
-    expect(fakes.run.mock.calls[0][3]).toEqual({ projects: { 't-1': 'pond' } });
+    expect(await migrateTasks(['--from','/fixture/source','--projects',path,'--agent','pond-bot'], io())).toBe(0);
+    expect(fakes.run.mock.calls[0][3]).toEqual({ projects: { 't-1': 'pond' }, agent: 'pond-bot' });
     writeFileSync(path, '[]'); fakes.create.mockClear(); release.mockClear();
     expect(await migrateTasks(['--from','/fixture/source','--projects',path], io())).toBe(1);
     expect(fakes.create).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledOnce();

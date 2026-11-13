@@ -80,6 +80,20 @@ async function socket(app: { url: string }, viewer = 'jonathan') {
   return { ws, next };
 }
 describe('policy, live records, retry and role binding', () => {
+  it('keeps unscoped agent creates in its queue and member creates with the owners', async () => {
+    const app = await loom(), agent: Viewer = { kind: 'agent', id: 'art' };
+    const own = app.command('create', { title: 'My next step' }, agent);
+    expect(own).toMatchObject({ ok: true });
+    expect(app.call('show', { id: own.id }, agent)).toMatchObject({ task: { agent: 'art' } });
+    expect(app.call('show', { id: own.id }, { kind: 'agent', id: 'pond-bot' })).toMatchObject({ code: 'denied' });
+    const household = app.command('create', { title: 'Household work' });
+    expect(app.call('show', { id: household.id }).task).not.toHaveProperty('agent');
+    expect(app.call('show', { id: household.id }, agent)).toMatchObject({ code: 'denied' });
+    expect(app.command('create', { title: 'Member work' }, member)).toMatchObject({ code: 'denied' });
+    const epic = app.command('create', { title: 'Shared epic', type: 'epic', project: 'pond' });
+    const child = app.command('create', { title: 'Shared child', parent: epic.id }, agent);
+    expect(app.call('show', { id: child.id }).task).not.toHaveProperty('agent');
+  });
   it('derives readiness from hidden blockers and republishes it when they close', async () => {
     const app = await loom();
     const blocker = app.command('create', { title: 'Hidden blocker', project: 'other' }).id;
@@ -223,6 +237,21 @@ function source(path: string) {
   db.prepare("INSERT INTO meta VALUES ('seq','19')").run(); db.close(); return { ...seed, seq: 19 };
 }
 describe('offline transactional importer', () => {
+  it('defaults every projectless imported task to the queue agent and binds repeats to that default', async () => {
+    const path = join(home(), 'source.db'); source(path);
+    const app = await loom();
+    const first = importTasks(app.db, path, app.clock.now(), { agent: 'pond-bot' });
+    expect(load(app.db).tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'loose', agent: 'pond-bot' }),
+      expect.objectContaining({ id: 't-12', project: 'pond' }),
+    ]));
+    expect(load(app.db).tasks.find(t => t.id === 't-12')).not.toHaveProperty('agent');
+    expect(importTasks(app.db, path, app.clock.now(), { agent: 'pond-bot' })).toMatchObject({ imported: false, checksum: first.checksum });
+    expect(() => importTasks(app.db, path, app.clock.now(), { agent: 'art' })).toThrow('different tasks source');
+    expect(() => importTasks(app.db, path, app.clock.now())).toThrow('different tasks source');
+    const other = await loom();
+    expect(importTasks(other.db, path, other.clock.now(), { agent: 'art' }).checksum).not.toBe(first.checksum);
+  });
   it('copies ids/counts/content, infers epic projects, repeats by checksum, refuses another source, and rolls interruption back', async () => {
     const dir = home(), path = join(dir, 'source.db'), original = source(path), app = await loom();
     expect(() => importTasks(app.db, path, app.clock.now(), { interrupt: () => { throw new Error('power lost'); } })).toThrow('power lost');

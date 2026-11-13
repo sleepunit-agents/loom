@@ -11,7 +11,7 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 /** Checksum is of the SQLite read snapshot, including WAL-visible committed records. */
-export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string> } = {}) {
+export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string>; agent?: string } = {}) {
   const source = new Database(from, { readonly: true, fileMustExist: true });
   let original: StoreState;
   try {
@@ -26,13 +26,16 @@ export function importTasks(db: Db, from: string, now: number, options: { interr
   if (!Number.isSafeInteger(original.seq) || original.seq < 0) throw new Error('Invalid source sequence');
   const projectMap = options.projects ?? {};
   if (Object.values(projectMap).some(p => typeof p !== 'string' || !p)) throw new Error('Invalid epic project map');
+  if (options.agent !== undefined && !options.agent.trim()) throw new Error('Invalid default agent');
   const mapping = canonical(projectMap);
-  const checksum = createHash('sha256').update(canonical(original)).digest('hex');
+  const agent = options.agent ?? '';
+
+  const checksum = createHash('sha256').update(canonical(options.agent === undefined ? original : { source: original, agent: options.agent })).digest('hex');
   return db.transaction(() => {
     migrate(db, 'tasks', schema);
     const old = db.prepare("SELECT value FROM tasks_meta WHERE key='source-checksum'").get() as { value: string } | undefined;
     if (old) {
-      if (old.value !== checksum || (db.prepare("SELECT value FROM tasks_meta WHERE key='source-projects'").get() as { value: string } | undefined)?.value !== mapping) throw new Error('A different tasks source was already imported');
+      if (old.value !== checksum || (db.prepare("SELECT value FROM tasks_meta WHERE key='source-projects'").get() as { value: string } | undefined)?.value !== mapping || ((db.prepare("SELECT value FROM tasks_meta WHERE key='source-agent'").get() as { value: string } | undefined)?.value ?? '') !== agent) throw new Error('A different tasks source was already imported');
       return { ok: true, imported: false, checksum, tasks: original.tasks.length, links: original.links.length };
     }
     if (load(db).tasks.length || load(db).links.length) throw new Error('Tasks destination must be empty before import');
@@ -60,12 +63,14 @@ export function importTasks(db: Db, from: string, now: number, options: { interr
         const next = byId.get(parent.dependsOn); if (!next) throw new Error('Unknown source parent'); ancestor = next;
       }
     }
+    if (options.agent !== undefined) for (const task of expected.tasks as ScopedTask[]) if (task.project === undefined) task.agent = options.agent;
     persist(db, expected, now);
     options.interrupt?.();
     const actual = load(db);
     if (canonical(actual) !== canonical(expected)) throw new Error('Tasks import comparison failed: ids, counts or content differ');
     db.prepare("INSERT INTO tasks_meta VALUES ('source-checksum',?)").run(checksum);
     db.prepare("INSERT INTO tasks_meta VALUES ('source-projects',?)").run(mapping);
+    db.prepare("INSERT INTO tasks_meta VALUES ('source-agent',?)").run(agent);
     return { ok: true, imported: true, checksum, tasks: expected.tasks.length, links: expected.links.length };
   })();
 }

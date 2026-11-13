@@ -24,7 +24,9 @@ owner-ask name defaults to `jonathan`, as before. No task content is copied to a
 mutable JSON mirror: the API's export operation is the exit door.
 
 Task fields `project` and `agent` are optional strings. Create inherits its parent's
-project unless explicitly supplied; it never inherits the parent's agent. Update can
+project unless explicitly supplied; it never inherits the parent's agent. An agent
+creating a task with neither an effective project nor an agent gets its own agent
+scope; an owner member's unscoped create stays household-only. Update can
 set either field or clear it with an empty string. A scope-only update still validates
 ordinary domain attribution/time. Live records include full show content and numeric
 `changedAt` (daemon epoch milliseconds); list/ready/report retain upstream shapes.
@@ -52,7 +54,9 @@ work are ready. No implementation body runs them against the live home.
    is done. An epic's explicit project field is also recognized; a conflicting mapping is refused. Unmapped tasks without such an epic arrive without a project. Existing agent
    fields and other legacy content are preserved.
 3. With the built loom executable, run:
-   `node dist/index.js migrate tasks --home <home> --from <source-copy.db> --projects <epic-projects.json>`.
+   `node dist/index.js migrate tasks --home <home> --from <source-copy.db> --projects <epic-projects.json> --agent <queue-agent>`.
+   The default agent replaces the agent on every task with no inferred project,
+   participates in the checksum, and must match on a repeated import.
    The importer takes the production daemon's home lock, opens the source read-only,
    snapshots its ordered tasks, links and sequence in a read transaction, and hashes
    that canonical snapshot (rather than just the main database bytes, which omit WAL).
