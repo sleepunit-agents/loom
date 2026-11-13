@@ -17,9 +17,10 @@ function setup(read:(repo:string,now:number)=>Promise<Change[]>) {
  const home=mkdtempSync(join(tmpdir(),'changes-job-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock(),app=createFoundation({home,clock});cleanup.push(app.close);
  let job:ReturnType<typeof startChangesJob>;
- installChanges(app.db,app.operations,app.live,fixtureSharing,{onRefresh:()=>job.wake()});
- const config:{projects:Project[];attribution:Attribution;agents:string[]}={agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
- job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing:fixtureSharing,viewer:owner,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
+ const config:{projects:Project[];attribution:Attribution;agents:string[];owner:boolean}={owner:true,agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
+ const sharing=()=>{const value=fixtureSharing();value.members.jonathan.owner=config.owner;return value;};
+ installChanges(app.db,app.operations,app.live,sharing,{onRefresh:()=>job.wake()});
+ job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing,viewer:owner,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
  return {app,clock,job,config};
 }
 it('reapplies current attribution to failed snapshots so a removed agent cannot authorize an answer',async()=>{
@@ -71,4 +72,10 @@ it('keeps expired closed detail through successful and unavailable daemon reads 
  expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged'}});
  fail=true;app.operations.call('direct',owner,'changes.refresh',{},'failed');await job.run();
  expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged',syncError:'GitHub read unavailable'}});
+});
+it('rechecks the job viewer after ownership is revoked during an in-flight read',async()=>{
+ let release!:(rows:Change[])=>void;const {app,job,config}=setup(()=>new Promise<Change[]>(resolve=>{release=resolve;}));
+ const before=change({title:'Retain prior snapshot'});replaceChanges(app.db,[before]);const state=app.db.prepare('SELECT * FROM changes_jobs').all();
+ const running=job.run();config.owner=false;release([change({title:'Unauthorized replacement'})]);await running;
+ expect(loadChanges(app.db)).toEqual([before]);expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(state);
 });

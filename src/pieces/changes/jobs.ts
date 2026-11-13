@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, mayAct, type Clock, type Sharing, type Viewer } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import { attribute, currentAttribution, changeSchema, repoId, type Attribution, type Change } from './model.js';
-import { projectFor } from './importer.js';
+import { currentAttribution, changeSchema, repoId, type Attribution, type Change } from './model.js';
+import { projectChange } from './projection.js';
 import { loadChanges, replaceChanges } from './store.js';
 import type { Projects } from './roles.js';
 export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>Sharing;viewer:Viewer;projects:Projects;attribution:()=>Attribution;knownAgents:()=>string[];read(repo:string,now:number):Promise<Change[]>;interval?:number;staging?:boolean}) {
@@ -15,10 +15,7 @@ export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>
    // Only this job calls this operation; no external door offers a snapshot write.
    // Recheck destination mappings after network waits, inside the commit transaction.
    const projects=options.projects.list(),repos=new Set(projects.flatMap(p=>p.repos.map(repoId))),attribution=currentAttribution(options.attribution(),options.knownAgents());
-   const records=(input.records as Change[]).filter(c=>repos.has(c.repo)).map(c=>{
-    const value=attribute(c,attribution);delete value.project;
-    const project=projectFor(c.repo,projects);if(project)value.project=project;return value;
-   });
+   const records=(input.records as Change[]).filter(c=>repos.has(c.repo)).map(c=>projectChange(c,projects,attribution));
    for(const id of replaceChanges(app.db,records)) ctx.changed('change',id);
    // A refresh requested during this read remains due, including across restart.
    app.db.prepare('UPDATE changes_jobs SET due=CASE WHEN requested=? THEN ? ELSE due END,running=0 WHERE id=1').run(input.requested,input.due);

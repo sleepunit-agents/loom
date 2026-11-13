@@ -108,16 +108,24 @@ configuration, response validation, safe pagination and malformed PR states.
 Missing or invalid upstream states fail the read and preserve the prior snapshot.
 The injected secret helper remains as an intentional paired boundary. Ledger
 and full transcripts are retained in loom note
-`loom/2026-11-12-changes-credential-review`. Permission/daemon review and actual
-root/Approvals integration remain required; this does not claim a CLEAR verdict.
+`loom/2026-11-12-changes-credential-review`. Actual root/Approvals integration remains open. This credential unit does not claim a CLEAR verdict.
 
 The daemon rechecks project mappings and agent attribution inside the snapshot
 commit transaction, including preserved rows from failed reads. A refresh request
 increments a durable generation; an older in-flight read cannot consume it.
 Concurrent runs share one read, and configuration or commit failures back off
-rather than retrying continuously. Permission/daemon review evidence is pending.
+rather than retrying continuously. Permission/daemon review evidence is recorded below.
 Known agents come from the destination household rows. Read/answer/live projections
 also recheck these identities and repository mappings before the next forge read;
 household access/project events invalidate them. Closed detail survives later
 successful or unavailable syncs even after its one-week list expiry. Shutdown
 proof covers both late success and rejection, including a still-open foundation.
+
+Permission/daemon cold review completed in three rounds: BLOCKING, BLOCKING,
+then CLEAR. All findings were folded, including final nits for a shared projection
+helper and ownership-revocation coverage during an in-flight read. The full ledger,
+prompts and transcripts are retained in loom note
+`loom/2026-11-12-changes-permission-review`. All 69 affected backend, importer,
+client and architecture tests pass, along with TypeScript and diff checks. No
+additional importer or credential review was run. Runtime root/Approvals composition
+remains a follow-up; no live home or service was changed.

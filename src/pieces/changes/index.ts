@@ -5,21 +5,20 @@ import { randomUUID } from 'node:crypto';
 import { migrate, operation, maySee, mayAct, OperationError, type Db, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { tasksRole } from '../tasks/role.js';
 import { schema } from './schema.js';
-import { active, attribute, currentAttribution, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask, short, tasksCited } from './model.js';
+import { active, currentAttribution, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask, short, tasksCited } from './model.js';
 import { loadChanges } from './store.js';
-import { projectFor } from './importer.js';
+import { projectChange } from './projection.js';
 import type { Approvals, Projects } from './roles.js';
 const emptyAttribution:Attribution={agents:{},ownerLogins:[]};
 export function installChanges(db:Db, operations:Operations, live:Live, sharing:()=>Sharing, options:{onRefresh?:()=>void; approvals?:Approvals; attribution?:()=>Attribution;knownAgents?:()=>string[];projects?:Projects}={}) {
  migrate(db,'changes',schema);
  const scope=(c:Change)=>({type:'change',...(c.project?{project:c.project}:{}),...(c.agent?{agent:c.agent}:{})});
 
- const records=()=>loadChanges(db).map(c=>{
-  let value=c;
-  if(options.attribution&&options.knownAgents)value=attribute(value,currentAttribution(options.attribution(),options.knownAgents()));
-  if(options.projects){value={...value};delete value.project;const project=projectFor(value.repo,options.projects.list());if(project)value.project=project;}
-  return value;
- });
+ const records=()=>{
+  const attribution=options.attribution&&options.knownAgents?currentAttribution(options.attribution(),options.knownAgents()):undefined;
+  const projects=options.projects?.list();
+  return loadChanges(db).map(c=>projectChange(c,projects,attribution));
+ };
  const find=(id:string|undefined)=>records().find(c=>c.id===id);
  const see=(v:Viewer,c:Change)=>maySee(v,scope(c),sharing());
  const access=(v:Viewer,op:string)=>v.kind!=='service'||mayAct(v,{type:'change'},sharing(),'act',op);
