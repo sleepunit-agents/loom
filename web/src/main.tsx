@@ -2,7 +2,7 @@ import { lazy, Suspense, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
-import { appAt } from './apps';
+import { apps } from './apps';
 // The shell needs animation and focus/hover features, but no drag or layout projection.
 // Keep these synchronous so initial presence states paint and animate on the first frame.
 import { LazyMotion, domAnimation } from 'motion/react';
@@ -26,6 +26,6 @@ noTouchMenus();
 wearMotion(keptFollow('loom-motion'));
 wearContrast(keptFollow('loom-contrast'));
 
-const Screen = appAt(location.pathname)?.Screen ?? (location.pathname === '/_dev/live-example' ? lazy(() => import('./data-demo')) : App);
+const Screen = apps.find(app => location.pathname === app.preview || location.pathname.startsWith(`${app.preview}/`))?.Screen ?? (location.pathname === '/_dev/live-example' ? lazy(() => import('./data-demo')) : App);
 
 createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><Suspense fallback={null}><Screen /></Suspense></LazyMotion></StrictMode>);

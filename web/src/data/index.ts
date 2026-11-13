@@ -17,3 +17,10 @@ export function useRecords<T extends LiveRecord = LiveRecord>(type: string, scop
   );
 }
 export function call<T = unknown>(operation: string, input: unknown) { return store().call<T>(operation, input); }
+/** Compatibility consumers share the same socket and records as React apps. */
+export function recordsSnapshot<T extends LiveRecord = LiveRecord>(type: string, scope?: string): Snapshot<T> { return store().getSnapshot(type, scope) as Snapshot<T>; }
+export function watchRecords<T extends LiveRecord = LiveRecord>(type: string, scope: string | undefined, changed: (snapshot: Snapshot<T>) => void) {
+  const data = store();
+  const publish = () => changed(data.getSnapshot(type,scope) as Snapshot<T>);
+  const stop = data.subscribe(type,scope,publish); publish(); return stop;
+}

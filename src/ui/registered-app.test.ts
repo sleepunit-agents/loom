@@ -3,7 +3,6 @@ import { createElement as h } from '../../web/node_modules/react/index.js';
 import { act, create } from '../../web/node_modules/react-test-renderer/index.js';
 const f=vi.hoisted(()=>({fetch:vi.fn()}));
 vi.mock('../../web/src/loom',()=>({fetchView:f.fetch}));
-import { isUiRequest } from './handler.js';
 import { usePage, type PageState } from '../../web/src/page';
 import { nameOf } from '../../web/src/tiling/name';
 import { apps, appAt } from '../../web/src/apps';
@@ -20,9 +19,8 @@ it('a registered app opens through shell navigation without fetching a page or s
     await act(async()=>{await page.load('/p/tasks-preview',false);});
     expect(page.url).toBe('/p/tasks-preview');expect(page.waiting).toBe(false);expect(page.error).toBeNull();
     expect(f.fetch).not.toHaveBeenCalled();expect(timer).not.toHaveBeenCalled();
-    expect(isUiRequest({method:'GET',headers:{}} as any, apps[0].path)).toBe(true);
-    expect(appAt('/p/tasks')).toBeUndefined();
-    expect(nameOf(apps[0].path)).not.toBe(nameOf('/p/tasks'));
+    expect(appAt('/p/tasks')).toBe(apps[0]);
+    expect(nameOf(apps[0].path)).toBe(nameOf('/p/tasks'));
     expect(appAt('/p/tasks-preview')).toBe(apps[0]);expect(appAt('/p/tasks-preview/t-1')?.fit.ideal).toBe(1040);
   } finally { if(tree) await act(async()=>tree.unmount());timer.mockRestore();vi.unstubAllGlobals(); }
 });

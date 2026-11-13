@@ -1,3 +1,4 @@
+import { apps, appAt } from './apps';
 // Where each destination lives in the shell, once (no React here, so it's tested on its own: src/ui/nav-plain.test.ts).
 // Places holds the apps, Setup the household's configuration, and the account (the side's account menu on a desktop,
 // the avatar on a phone's dock) what's the signed-in member's own: their passkeys and signing out. Nothing is in two.
@@ -21,7 +22,7 @@ export const ACCESSIBILITY = { label: 'Accessibility', href: '/accessibility' } 
 
 /** The apps, where you go regularly: loom's own places and the pieces that are places. The Inbox has its own tab. */
 export function placesOf(s: ShellLike): Place[] {
-  return [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
+  return [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox' && !appAt(p.href)).concat(apps.filter(app => app.listed).map(app => ({ label: app.title, href: app.path, current: typeof location !== 'undefined' && !!appAt(location.pathname), icon: app.icon })));
 }
 
 /** Setup: the household's configuration (the pieces that are settings, then, for the household's owner, its members

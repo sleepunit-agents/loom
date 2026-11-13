@@ -1,3 +1,4 @@
+import { apps, appAt } from './apps';
 // The launcher's list (launcher.tsx): every app, grouped (t-1925 G; the app mockups, 2026-11-06). Plain, no React,
 // tested on its own (src/ui/nav-plain.test.ts); its own module so the first page doesn't carry it.
 import type { Tone } from './loom';
@@ -44,11 +45,13 @@ export function launcherOf(s: LaunchShell, own: { look?: string; motion?: string
   const inbox = core('/inbox');
   if (inbox) put('Work', { label: 'Inbox', href: '/inbox', count: inbox.count || undefined, sub: inbox.count ? `${inbox.count} need${inbox.count === 1 ? 's' : ''} you` : 'Nothing waiting' });
   for (const p of s.core) {
-    if (p.href === '/inbox') continue;
+    if (p.href === '/inbox' || appAt(p.href)) continue;
     const sec = p.href === '/comms' || p.href === '/people' ? 'People & agents' : p.href === '/knowledge' || p.href === '/mind' ? 'Library' : 'Work';
     put(sec, { label: p.label, href: p.href, count: p.count || undefined, ...(p.href === '/comms' ? { sub: p.count ? `${p.count} unread` : 'All read' } : {}) });
   }
+  for (const app of apps.filter(app => app.listed)) put('Work', {label:app.title,href:app.path,icon:app.icon});
   for (const p of s.pieces) {
+    if (appAt(p.href)) continue;
     const sec = SECTION[p.label] ?? (p.kind === 'setting' || SYSTEM.has(p.label) ? 'System' : 'Work');
     put(sec, { label: p.label, href: p.href, sub: p.stat, tone: p.tone, icon: p.icon, count: (p as { alerts?: number }).alerts || undefined });
   }

@@ -1,3 +1,5 @@
+import { recordsSnapshot, watchRecords } from './data';
+import type { Task } from './pieces/tasks/model';
 // The tasks' own records, live (t-2029; docs/specs/collections.md, "As built: tasks"): the tasks piece publishes every
 // task as `tasks/task`, and this tab holds the ones its Tasks pages show: every open or started task, and every task that
 // moved in the last eight days (done, commented, made). Held only while something shown reads them: a Tasks page, a
@@ -12,15 +14,8 @@
 import { collectionsRuntime } from './page';
 import type { CollectionRuntime, QuerySpec, Rec, ViewState } from './collections/runtime';
 
-const FIELDS = ['refState', 'title', 'type', 'status', 'priority', 'assignee', 'ask', 'goal', 'blocked', 'ready', 'updated', 'source'];
 const DAY = 86_400_000;
-/** Recently moved: a Tasks page's "Done in the last 7 days" and "Recently updated", with a day to spare. */
 export const RECENT_DAYS = 8;
-
-export const OPEN_SPEC: QuerySpec = { type: 'tasks/task@^1', where: [['status', 'in', ['open', 'in_progress']]], order: [['created', 'asc']], limit: 500, fields: FIELDS };
-export const recentSpec = (now = Date.now()): QuerySpec => ({
-  type: 'tasks/task@^1', where: [['updated', 'gte', new Date(now - RECENT_DAYS * DAY).toISOString()]], order: [['updated', 'desc']], limit: 500, fields: FIELDS,
-});
 
 /** The most records a subscription holds (src/collections/subs.ts MAX_WINDOW): past it, its tail leaves. */
 const WINDOW = 1000;
@@ -127,11 +122,23 @@ function group(specs: () => QuerySpec[]) {
   };
 }
 
-const tasks = group(() => [OPEN_SPEC, recentSpec()]);
-/** Hear the tasks move (the keys that moved, and every record held), keeping the set live while heard. */
-export const watchTasks = (csrf: string, f: Moved, snapshot = false): (() => void) => tasks.watch(csrf, f, snapshot);
-/** Whether the tasks are live and whole now. */
-export const tasksLive = (): boolean => tasks.live();
+/** Legacy Comms/Projects consumers adapt the foundation task feed; no task collection remains. */
+export const watchTasks = (_csrf: string, moved: Moved, snapshot = false): (() => void) => {
+  let previous = new Map<string, Rec>();
+  return watchRecords<Task>('task',undefined, state => {
+    const now = new Map<string,Rec>();
+    if (state.status === 'live') for (const task of state.records) {
+      const key = `tasks/task/${task.id}`;
+      const status = task.status === 'closed' ? 'Done' : task.assignee === 'jonathan' ? 'Needs Jonathan' : task.status === 'in_progress' ? 'In progress' : task.blocked ? 'Blocked' : 'Ready';
+      now.set(key,{...task,key,refState:{status,ownerStatus:task.assignee === 'jonathan' && task.status !== 'closed' ? 'Needs you' : status,owner:'jonathan',tone:task.status === 'closed' ? 'ok' : task.blocked || task.assignee === 'jonathan' ? 'warn' : null}});
+    }
+    const keys = movedKeys(previous,now);
+    if (state.status === 'live' && (keys.size || snapshot)) moved(keys,now);
+    else if (snapshot && previous.size) moved(new Set(),new Map());
+    previous = now;
+  });
+};
+export const tasksLive = (): boolean => recordsSnapshot('task').status === 'live';
 
 const CHANGE_FIELDS = ['ref', 'title', 'state', 'draft', 'checks', 'review', 'mergeable', 'head', 'updated', 'closed'];
 export const OPEN_CHANGES: QuerySpec = { type: 'changes/change@^1', where: [['state', 'eq', 'open']], order: [['updated', 'desc']], limit: 500, fields: CHANGE_FIELDS };

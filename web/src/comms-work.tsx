@@ -7,7 +7,7 @@
 // a change it shows does: the tasks' and the changes' own records, live (tasks-live.ts, t-2029). Every 60 s while the
 // page is visible only while those it needs aren't live.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { changesLive, tasksLive, watchChanges, watchTasks } from './tasks-live';
+import { changesLive, tasksLive, watchChanges, watchTasks } from './legacy-work-live';
 import './comms-work.css';
 
 export interface WorkItem { title: string; ref: string; status: string; tone?: 'bad' | 'warn' | 'ok'; when?: string; url?: string; made?: true; from: string }

@@ -1,3 +1,5 @@
+import type { Tasks } from './pieces/tasks/role.js';
+import { taskFor, taskStatus } from './ui/task-work.js';
 /**
  * The loom things a Comms thread names, as chips (docs/specs/comms.md, "Chips"): `GET /comms/<thread>/refs?r=…` answers,
  * for each ref asked, a small card (its title, its state, where it opens) or null. Null is "this viewer couldn't open
@@ -62,6 +64,7 @@ export function refShape(r: string): RefKind | 'at' | undefined {
 }
 
 export interface RefsDeps {
+  tasks?: Tasks;
   /** The pieces this member may hear from (the Inbox's filter). */
   pieces: () => Promise<PieceInfo[]>;
   /** The thread's work, as this member sees it (comms-work.ts threadWork). */
@@ -96,6 +99,11 @@ export async function resolveRefs(h: Household, env: NodeJS.ProcessEnv, t: Threa
     const kind = refShape(r);
     if (!kind) return null;
     if (kind === 'task') {
+      if (d.tasks) {
+        if (shows++ >= SHOWS_MAX) return null;
+        const task = taskFor(d.tasks,member.person,r);
+        return task ? {kind:'task',title:task.title.slice(0,200),status:taskStatus(task),page:`p/tasks/task/${task.id}`,...(task.status === 'closed' ? {tone:'ok' as const} : {})} : null;
+      }
       const w = (await work()).get(r);
       if (w) return fromWork(w, 'task');
       // A household owner's tasks piece answers them all; an agent owner's view of it is only the feed's.

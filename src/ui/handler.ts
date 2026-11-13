@@ -1,3 +1,4 @@
+import type { Tasks } from '../pieces/tasks/role.js';
 import { builtinWatchRegistry } from '../watch-sources.js';
 import { backgroundJob } from '../transport/stall-watch.js';
 import { sameAskWords } from './ask-words.js';
@@ -115,6 +116,7 @@ const SECURITY_HEADERS = {
 };
 
 export interface UiOptions {
+  tasks?: Tasks;
   contextDir: string;
   /** Who may log in to the page. */
   auth: UiAuth;
@@ -2118,7 +2120,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     let piecesOnce: Promise<PieceInfo[]> | undefined;
     let inboxOnce: ReturnType<NonNullable<Parameters<typeof commsRoute>[3]['inbox']>> | undefined;
     const commsPieces = () => (piecesOnce ??= pieceManifests(scopedEnv).then((x) => asksFor(forOwner(x.pieces, opts.ownerScope), full, lookerOf(opts, full))));
-    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
+    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome, tasks: opts.tasks,
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
       agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
       // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
@@ -2547,6 +2549,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   const query = pageQuery(url);
   const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
+  // Old agent-scoped Task links open the one app; task visibility is its live record policy.
+  const taskAlias = /^\/a\/[a-z][a-z0-9-]{0,39}\/p\/tasks(\/.*)?$/.exec(pathname);
+  if (taskAlias && req.method === 'GET') {
+    res.writeHead(303, { ...SECURITY_HEADERS, location: `/p/tasks${taskAlias[1] ?? ''}${url.search}` });
+    return void res.end();
+  }
   // Every page is the app (web/, docs/specs/ui-app.md; the old HTML renderer went 2026-10-29, Jonathan: "let's just
   // remove classic entirely"). A browser loads the app's one page at any path, and the app asks the same path for the
   // page's data as JSON: the same auth, scoping and CSRF answer both. Only the sign-in pages are still loom's HTML.
@@ -2557,6 +2565,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     return send(res, status, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
   };
   if (req.method === 'GET' && !asJson) return app();
+  // Tasks has no legacy page JSON or piece-page call after its cutover. Documents still open the app above.
+  if (/^\/p\/tasks(?:\/|$)/.test(pathname)) return sendJson(res, 410, { ok: false, code: 'not-found', message: 'This app uses live records.' });
   const flash = takeFlash(url.searchParams.get('_flash'));
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
   // Each agent's card and window, and the bar's agents at work, as this viewer may see them (atWorkFor).
@@ -2810,11 +2820,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const me = lookerOf(opts, hh);
       const sees = seesConversation(hh, me);
       const viewer = { key: me.person, sees: (cv: string) => sees(cv) };
-      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env, viewer }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
+      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env, viewer, nativeTasks: opts.tasks && who?.member ? {tasks:opts.tasks,member:who.member.person} : undefined }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
       const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
       const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
       const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
-      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env, viewer }) : null;
+      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env, viewer, nativeTasks: opts.tasks && who?.member ? {tasks:opts.tasks,member:who.member.person} : undefined }) : null;
       return send200(page ?? notFound, 'projects', ctxOf(pathname.slice(1)));
     }
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
@@ -2939,8 +2949,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   if (pathname === '/projects' || /^\/projects\/[a-z0-9][a-z0-9-]*$/.test(pathname)) {
     const owner = { dir: opts.contextDir };
-    const ix = pathname === '/projects' ? await projectsApp([owner], { env: opts.env }) : undefined;
-    const page = ix ? ix.page : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
+    const ix = pathname === '/projects' ? await projectsApp([owner], { env: opts.env, nativeTasks:opts.tasks && who?.member ? {tasks:opts.tasks,member:who.member.person} : undefined }) : undefined;
+    const page = ix ? ix.page : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env, nativeTasks:opts.tasks && who?.member ? {tasks:opts.tasks,member:who.member.person} : undefined });
     const ctx = { source: CORE, path: pathname.slice(1), query, csrf };
     const ch = chrome(req, opts, pieces, skippedNames, 'projects', csrf, flash);
     return view('page', { page: page ?? notFound, ctx, chrome: ch, ...(ix?.cards ? { projects: ix.cards } : {}) }, page ? 200 : 404);

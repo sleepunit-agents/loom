@@ -8,7 +8,7 @@ vi.mock('../../web/src/page', () => ({ collectionsRuntime: async () => ({ runtim
     return { state: () => ({ keys: fixture.keys, status: fixture.status, more: fixture.more, withheld: [] }), close: fixture.close, more: fixture.next }; },
 } }) }));
 import { projectDirectory } from '../../web/src/project-directory';
-import { watchProjects, projectsLive, PROJECTS_SPEC } from '../../web/src/tasks-live';
+import { watchProjects, projectsLive, PROJECTS_SPEC } from '../../web/src/legacy-work-live';
 it('shares a paged directory, drops partial/stale snapshots, publishes empty membership and recovers after reconnect', async () => {
   fixture.keys = Array.from({ length: 500 }, (_, i) => `loom/project/art:p${i}`);
   fixture.records = new Map(fixture.keys.map((key) => [key, { key }]));

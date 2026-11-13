@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskCardsOf } from '../../web/src/task-ref-cards';
+import { taskCardsOf } from '../../web/src/comms-task-cards';
 import type { Rec } from '../../web/src/collections/runtime';
 import type { RefCard } from '../../web/src/comms-refs';
 
@@ -44,10 +44,10 @@ describe('task chips read shared records after admission', () => {
     expect(got.size).toBe(cards.size);
   });
 
-  it('leaves missing historical records and malformed records alone', () => {
-    expect(taskCardsOf(cards, new Map())).toBe(cards);
+  it('drops task cards outside the live set while preserving foreign destinations', () => {
+    expect(taskCardsOf(cards, new Map()).get('t-1')).toBeNull();
     const malformed = new Map([['tasks/task/t-1', { key: 'tasks/task/t-1', title: null }]]);
-    expect(taskCardsOf(cards, malformed)).toBe(cards);
+    expect(taskCardsOf(cards, malformed).get('t-1')).toBeNull();
     const other = new Map<string, RefCard | null>([['t-1', { ...card, kind: 'note' }]]);
     expect(taskCardsOf(other, records('closed'))).toBe(other);
     const otherPiece = new Map<string, RefCard | null>([['t-1', { ...card, page: 'p/other/task/t-1' }]]);

@@ -8,7 +8,7 @@ export function taskCardsOf(cards: ReadonlyMap<string, RefCard | null>, records:
   for (const [ref, card] of cards) {
     if (!card || card.kind !== 'task' || !/^t-\d{1,9}$/.test(ref) || card.page !== `p/tasks/task/${ref}`) continue;
     const r = records.get(`tasks/task/${ref}`);
-    if (!r || typeof r.title !== 'string') continue;
+    if (!r || typeof r.title !== 'string') { (out ??= new Map(cards)).set(ref,null); continue; }
     // The provider's own formatter supplies both wordings. Older providers or malformed rows retain the resolver's
     // state. No inference from raw task status, assignee or blocked flags; TASKSTORE_OWNER belongs to the piece.
     const state = r.refState;

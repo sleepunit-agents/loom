@@ -6,3 +6,4 @@ export interface Tasks {
 export function tasksRole(operations: Operations): Tasks {
   return { call: (viewer, verb, input, id) => operations.call('direct', viewer, `tasks.${verb}`, input, id) };
 }
+export type { Task } from './domain.js';

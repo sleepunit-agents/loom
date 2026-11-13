@@ -1,3 +1,4 @@
+import type { Tasks } from '../pieces/tasks/role.js';
 /**
  * Comms' page routes (docs/specs/comms.md, "Routes"): JSON in and out, for a signed-in member. Every thread route asks
  * comms.ts threadFor first, so a member reaches only their own threads with agents they own; anything else is the same
@@ -44,6 +45,7 @@ import { refShape, resolveRefs, REFS_MAX } from '../comms-refs.js';
 import { parseAbout, routeFor, withAbout } from '../comms-about.js';
 
 export interface CommsContext {
+  tasks?: Tasks;
   household: Household;
   /** The household read fresh: a live stream asks it before each event, so a member who stops owning the agent is cut off. */
   live: () => Household | undefined;
@@ -315,13 +317,14 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         const r = await threadModel(c, t, m!); send(r.status, r.body); return true;
       }
       // Work in this thread (comms.md, "The panel"): live from the pieces, for this member only.
-      if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!)), true;
+      if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!, c.tasks)), true;
       // The loom things it names, as chips (comms.md, "Chips"): each ref's card, or null where this member can't open it.
       if (verb === 'refs' && dir === undefined) {
         const asked = new URL(req.url ?? '/', 'http://x').searchParams.getAll('r').filter((r) => r.length <= 220 && refShape(r)).slice(0, REFS_MAX);
         const refs = await resolveRefs(h, c.env, t, m!, asked, {
+          tasks: c.tasks,
           pieces: async () => (c.pieces ? c.pieces() : []),
-          work: () => threadWork(h, c.env, t, m!),
+          work: () => threadWork(h, c.env, t, m!, c.tasks),
           asks: () => asksOf(c, t),
           pending: async () => (c.inbox ? (await c.inbox()).items : []).filter((it) => it.box !== 'done').flatMap((it) =>
             [...(it.actions ?? []), ...(it.approval?.actions ?? [])].flatMap((b) => (typeof b.fields?.id === 'string' ? [{ id: b.fields.id, text: it.approval?.text ?? it.text, ...(it.agent ? { agent: it.agent } : {}) }] : []))),

@@ -3,8 +3,8 @@
  * them, when a set read in pages is whole, what moved, and which moves a thread's work panel reads again for.
  */
 import { describe, it, expect } from 'vitest';
-import { movedKeys, recordsOf } from '../../web/src/tasks-live';
-import { pulseOf, tasksPageKind } from '../../web/src/tasks-pages';
+import { movedKeys, recordsOf } from '../../web/src/legacy-work-live';
+import { pulseOf, tasksPageKind } from '../../web/src/legacy-work-pages';
 import { changesConcern, concerns, type WorkItem } from '../../web/src/comms-work';
 import type { Rec, ViewState } from '../../web/src/collections/runtime';
 
@@ -12,10 +12,9 @@ const rec = (id: string, more: Record<string, unknown> = {}): Rec => ({ key: `ta
 const state = (keys: string[], o: Partial<ViewState> = {}): ViewState => ({ keys, withheld: [], status: 'live', more: false, ...o });
 
 describe('the tasks\' live records', () => {
-  it('a Tasks work page is theirs alone; a task\'s own page and a project\'s read them too; nothing else does', () => {
-    expect(['/p/tasks', '/p/tasks?sort=new&show=open', '/p/tasks/', '/a/art/p/tasks'].map(tasksPageKind)).toEqual(['live', 'live', 'live', 'live']);
-    expect(['/p/tasks/task/t-12', '/projects', '/projects/art/app', '/projects/app?x=1'].map(tasksPageKind)).toEqual(['also', 'also', 'also', 'also']);
-    expect(['/', '/p/tasksx', '/inbox', '/a/art/p/approvals', '/projectsx'].map(tasksPageKind)).toEqual([null, null, null, null, null]);
+  it('only unmoved Changes and Projects pages consume legacy page pulses', () => {
+    expect(['/p/tasks','/p/tasks/task/t-12','/a/art/p/tasks'].map(tasksPageKind)).toEqual([null,null,null]);
+    expect(['/projects','/p/changes'].map(tasksPageKind)).toEqual(['also','also']);
   });
 
   it('a set is whole once it\'s live with no next page, and inside the window core keeps current', () => {
@@ -48,7 +47,7 @@ describe('the tasks\' live records', () => {
     expect(['/p/changes', '/p/changes/c/github/acme/app/3', '/a/art/p/changes'].map(pulseOf)).toEqual(['changes', 'changes', 'changes']);
     expect(['/p/changes', '/p/changes/c/github/acme/app/3'].map(tasksPageKind)).toEqual(['also', 'also']);
     expect(['/projects', '/projects/art/app'].map(pulseOf)).toEqual(['tasks,changes', 'tasks,changes']);
-    expect(['/p/tasks', '/p/tasks/task/t-1'].map(pulseOf)).toEqual(['tasks', 'tasks']);
+    expect(['/p/tasks', '/p/tasks/task/t-1'].map(pulseOf)).toEqual(['', '']);
     expect(['/', '/inbox', '/p/changesx'].map(pulseOf)).toEqual(['', '', '']);
   });
 

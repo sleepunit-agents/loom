@@ -1,3 +1,4 @@
+import type { Tasks } from '../pieces/tasks/role.js';
 /**
  * The Projects app (docs/specs/projects.md, "loom's page: the Projects app"): an index of every live project as a card
  * each (Jonathan's approved redesign, t-1925), and each project's hub as a page, computed live. The hub is drawn with
@@ -89,8 +90,8 @@ function viewing(hub: Hub, v: ProjectsViewer | undefined): Hub {
   };
 }
 
-const defaultHub = (env: NodeJS.ProcessEnv): Hub => (dir, slug, since) =>
-  projectHubOf(dir, { slug, ...(since ? { since } : {}) }, { pieceSections: managedPieceSections(env) });
+const defaultHub = (env: NodeJS.ProcessEnv, native?: {tasks:Tasks;member:string}): Hub => (dir, slug, since) =>
+  projectHubOf(dir, { slug, ...(since ? { since } : {}) }, { pieceSections: managedPieceSections(env,native) });
 
 const CHANGES = 'piece:changes';
 const DONE_WORDS = /^(merged|closed)$/i;
@@ -228,9 +229,9 @@ function cardOf(o: ProjectsOwner, p: ProjectListEntry, summary: string | undefin
  * index in loom's blocks (one row per project), for an app too old to draw the cards; `cards` is what the Projects app
  * draws. Without projects there are no cards, and the page says what a project is.
  */
-export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer } = {}): Promise<{ page: Page; cards?: ProjectCards }> {
+export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer; nativeTasks?: {tasks:Tasks;member:string} } = {}): Promise<{ page: Page; cards?: ProjectCards }> {
   const nowMs = opts.nowMs ?? Date.now();
-  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env), opts.viewer);
+  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env, opts.nativeTasks), opts.viewer);
   const rows: Array<{ o: ProjectsOwner; p: ProjectListEntry; summary?: string }> = [];
   for (const o of owners) {
     try {
@@ -279,7 +280,7 @@ export async function projectsApp(owners: ProjectsOwner[], opts: { env?: NodeJS.
 }
 
 /** The index as loom's blocks only (projectsApp's `page`). */
-export async function projectsIndex(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer } = {}): Promise<Page> {
+export async function projectsIndex(owners: ProjectsOwner[], opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; waitMs?: number; viewer?: ProjectsViewer; nativeTasks?: {tasks:Tasks;member:string} } = {}): Promise<Page> {
   return (await projectsApp(owners, opts)).page;
 }
 
@@ -341,9 +342,9 @@ function feedRow(piece: string, it: FeedGroup['items'][number], nowMs: number) {
 }
 
 /** A project's hub as a page; null when there's no such project. */
-export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; viewer?: ProjectsViewer } = {}): Promise<Page | null> {
+export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env?: NodeJS.ProcessEnv; nowMs?: number; hub?: Hub; viewer?: ProjectsViewer; nativeTasks?: {tasks:Tasks;member:string} } = {}): Promise<Page | null> {
   const nowMs = opts.nowMs ?? Date.now();
-  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env), opts.viewer);
+  const hub = viewing(opts.hub ?? defaultHub(opts.env ?? process.env, opts.nativeTasks), opts.viewer);
   let h: ProjectHubResult;
   try {
     h = await hub(o.dir, slug);

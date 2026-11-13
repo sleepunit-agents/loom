@@ -2,7 +2,7 @@ import { it, expect, vi } from 'vitest';
 import { CollectionRuntime, type Transport } from '../../web/src/collections/runtime';
 const shared = vi.hoisted(() => ({ runtime: null as unknown as CollectionRuntime }));
 vi.mock('../../web/src/page', () => ({ collectionsRuntime: async () => ({ runtime: shared.runtime }) }));
-import { watchProjects } from '../../web/src/tasks-live';
+import { watchProjects } from '../../web/src/legacy-work-live';
 it('repages the real runtime after reconnect during a pending continuation with an equal length first page', async () => {
   const handlers = new Map<string, (d: Record<string, unknown>) => void>();
   let resume: (() => void) | undefined;
