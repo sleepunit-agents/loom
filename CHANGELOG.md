@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
+
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 
 - Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.

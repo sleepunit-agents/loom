@@ -1,3 +1,5 @@
+import { bridgeImportOptions } from '../pieces/bridges/import-plan.js';
+import { bridgeSourcePath } from './migration-bridges.js';
 /** Offline preparation only: no destination, daemon, legacy programs or writable source opens. */
 import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync } from 'node:fs';
@@ -31,6 +33,7 @@ const options = {
   comms: z.object({}).strict(),
   secrets: secretImportOptions,
   runtime: runtimeImportOptions,
+  bridges: bridgeImportOptions,
 };
 export const supportedMigrationImporters: readonly string[] = Object.keys(options);
 const inputSchema = z.object({ paths: z.array(z.string().min(1)).min(1), options: z.json() }).strict();
@@ -193,6 +196,8 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     return false;
   }).map(p=>posix.dirname(p)))].sort();
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
+  const bridgePaths=[...files].filter(bridgeSourcePath).sort();
+  if(bridgePaths.length)discovered.bridges={paths:bridgePaths,options:{instances:bridgePaths.filter(p=>p.endsWith('/shuttle.json')).map(p=>({shuttle:p,people:posix.join(posix.dirname(p),'people.json'),routes:posix.join(posix.dirname(p),'routes.json')})),connections:[]}};
   const runtimePaths = [
     ...['home/commons/stores/runtime.db'].filter(p=>files.has(p)),
     ...(['runtime','runtime-data'] as const).filter(root=>manifest.runtimeRoots?.includes(root)||[...physical].some(p=>p.startsWith(root+'/'))),
@@ -236,11 +241,12 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     if (Object.hasOwn(options, name)) {
       const schema = options[name as keyof typeof options];
       input.options = schema.parse(input.options);
-      if (name !== 'attention' && name !== 'comms' && name !== 'runtime' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
+      if (name !== 'attention' && name !== 'comms' && name !== 'runtime' && name !== 'bridges' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
     }
   }
   if (plan.importers.comms && canonicalPlanValue(plan.importers.comms.paths) !== canonicalPlanValue(commsPaths)) throw Error('Comms must include every discovered input in order');
   if (plan.importers.runtime && canonicalPlanValue(plan.importers.runtime.paths)!==canonicalPlanValue(runtimePaths)) throw Error('Runtime must include every discovered source in order');
+  if(plan.importers.bridges&&canonicalPlanValue(plan.importers.bridges.paths)!==canonicalPlanValue(bridgePaths))throw Error('Bridges must include every discovered source in order');
   const taskOptions = plan.importers.tasks && options.tasks.parse(plan.importers.tasks.options);
   if (taskOptions) {
     if (plan.importers.tasks.paths[0] !== 'tasks/store.db') throw Error('Tasks must use copied taskstore');

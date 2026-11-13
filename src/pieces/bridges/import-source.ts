@@ -71,46 +71,8 @@ export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyB
         if (length > 8*1024*1024 || length !== stat.size) throw Error();
         bytes = buffer.subarray(0,length);
       } finally { closeSync(fd); }
-      // The reviver's source is essential: JSON.parse can round a fractional or
-      // unsafe numeric lexeme into a safe integer before schema validation.
-      // Unknown metadata remains ignored; selected numeric fields reject NaN.
-      const raw: unknown = JSON.parse(bytes.toString('utf8'),
-        (_key: string, value: unknown, context?: { source?: string }) =>
-          typeof value !== 'number' ? value : context?.source !== undefined
-            && /^(0|[1-9]\d*)$/.test(context.source) && Number.isSafeInteger(value) ? value : NaN);
       result.sources.push({name:file.name,kind:file.kind,sha256:hash(bytes),bytes:bytes.length});
-      if (file.kind === 'shuttle') {
-        const v = shuttle.parse(raw);
-        result.instances.push({source:file.name,agent:v.agent.slug,
-          ...(v.discord?.token_file === undefined ? {} : {discordSecret:v.discord.token_file}),
-          ...(v.slack?.secrets_env === undefined ? {} : {slackBundle:v.slack.secrets_env}),channelNotes:v.channel_notes ?? {}});
-      } else if (file.kind === 'people') {
-        const v = people.parse(raw);
-        for (const [section,kind] of [['people','person'],['agents','agent']] as const) {
-          for (const [owner,a] of Object.entries(v[section] ?? {})) {
-            if (owner.startsWith('_')) continue;
-            slug.parse(owner);
-            for (const user of a.discord === undefined ? [] : list(a.discord)) result.accounts.push({source:file.name,owner,kind,platform:'discord',user});
-            for (const [workspace,users] of Object.entries(a.slack ?? {})) for (const user of list(users)) result.accounts.push({source:file.name,owner,kind,platform:'slack',workspace,user});
-          }
-        }
-      } else if (file.kind === 'routes') {
-        const v = routes.parse(raw);
-        result.routes.push({source:file.name,...(v.guild ? {guild:v.guild} : {}),bots:v.bots ?? {},
-          botRoles:Object.fromEntries(Object.entries(v.bot_roles ?? {}).map(([agent,roles])=>[agent,list(roles)])),
-          channels:([['channels',false],['threads',true]] as const).flatMap(([section,thread])=>Object.entries(v[section] ?? {}).map(([channel,c])=>({
-            channel,thread,...(c.primary ? {primary:c.primary} : {}),...(c.parent ? {parent:c.parent} : {}),
-            peer:!!c.peer,...(c.pair ? {pair:c.pair} : {}),guest:!!c.guest_venue,readers:c.readers ?? [],
-          }))),only:keys(v.only),ignore:keys(v.ignore),webhookPeers:v.webhook_peers ?? {},notify:v.notify ?? {},
-          ...(v.peer_turns_each == null ? {} : {peerTurnsEach:v.peer_turns_each})});
-      } else {
-        const platform = file.kind === 'discord-settings' ? 'discord' : 'slack';
-        const document = z.record(z.string(),z.unknown()).parse(raw);
-        const value = document[platform === 'discord' ? 'DISCORD_BOTS' : 'SLACK_BOTS'];
-        // The old piece accepts settings as text and parses the JSON map itself.
-        const bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : typeof value === 'string' ? JSON.parse(value) : value);
-        result.settings.push({source:file.name,platform,bots});
-      }
+      projectBridgeDocument(result,file.name,file.kind,bytes.toString('utf8'));
     }
     result.checksum = hash(JSON.stringify(result.sources));
     return result;
@@ -118,4 +80,47 @@ export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyB
     // JSON, schema and filesystem exceptions can contain source words or paths.
     throw Error('Invalid offline Bridges configuration inventory');
   }
+}
+
+/** Pure projection shared by completed-store and explicit-file migration readers. */
+export function projectBridgeDocument(result: LegacyBridgeInventory, name: string, kind: BridgeSourceKind, source: string): void {
+      // The reviver's source is essential: JSON.parse can round a fractional or
+      // unsafe numeric lexeme into a safe integer before schema validation.
+      // Unknown metadata remains ignored; selected numeric fields reject NaN.
+      const raw: unknown = JSON.parse(source,
+        (_key: string, value: unknown, context?: { source?: string }) =>
+          typeof value !== 'number' ? value : context?.source !== undefined
+            && /^(0|[1-9]\d*)$/.test(context.source) && Number.isSafeInteger(value) ? value : NaN);
+      if (kind === 'shuttle') {
+        const v = shuttle.parse(raw);
+        result.instances.push({source:name,agent:v.agent.slug,
+          ...(v.discord?.token_file === undefined ? {} : {discordSecret:v.discord.token_file}),
+          ...(v.slack?.secrets_env === undefined ? {} : {slackBundle:v.slack.secrets_env}),channelNotes:v.channel_notes ?? {}});
+      } else if (kind === 'people') {
+        const v = people.parse(raw);
+        for (const [section,kind] of [['people','person'],['agents','agent']] as const) {
+          for (const [owner,a] of Object.entries(v[section] ?? {})) {
+            if (owner.startsWith('_')) continue;
+            slug.parse(owner);
+            for (const user of a.discord === undefined ? [] : list(a.discord)) result.accounts.push({source:name,owner,kind,platform:'discord',user});
+            for (const [workspace,users] of Object.entries(a.slack ?? {})) for (const user of list(users)) result.accounts.push({source:name,owner,kind,platform:'slack',workspace,user});
+          }
+        }
+      } else if (kind === 'routes') {
+        const v = routes.parse(raw);
+        result.routes.push({source:name,...(v.guild ? {guild:v.guild} : {}),bots:v.bots ?? {},
+          botRoles:Object.fromEntries(Object.entries(v.bot_roles ?? {}).map(([agent,roles])=>[agent,list(roles)])),
+          channels:([['channels',false],['threads',true]] as const).flatMap(([section,thread])=>Object.entries(v[section] ?? {}).map(([channel,c])=>({
+            channel,thread,...(c.primary ? {primary:c.primary} : {}),...(c.parent ? {parent:c.parent} : {}),
+            peer:!!c.peer,...(c.pair ? {pair:c.pair} : {}),guest:!!c.guest_venue,readers:c.readers ?? [],
+          }))),only:keys(v.only),ignore:keys(v.ignore),webhookPeers:v.webhook_peers ?? {},notify:v.notify ?? {},
+          ...(v.peer_turns_each == null ? {} : {peerTurnsEach:v.peer_turns_each})});
+      } else {
+        const platform = kind === 'discord-settings' ? 'discord' : 'slack';
+        const document = z.record(z.string(),z.unknown()).parse(raw);
+        const value = document[platform === 'discord' ? 'DISCORD_BOTS' : 'SLACK_BOTS'];
+        // The old piece accepts settings as text and parses the JSON map itself.
+        const bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : typeof value === 'string' ? JSON.parse(value) : value);
+        result.settings.push({source:name,platform,bots});
+      }
 }

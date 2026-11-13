@@ -1,3 +1,7 @@
+import { readBridgeImport } from '../pieces/bridges/import-plan.js';
+import { bridgeImportTables } from '../pieces/bridges/import-projection.js';
+import { bridgeMigrationSources } from './migration-bridges.js';
+import { relative } from 'node:path';
 /** Source-only projections. No destination opens or importer execution. */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -70,6 +74,11 @@ export function readRuntimeProjection(paths:string[],options:unknown,householdHo
 }
 export async function expectedTables(piece: string, paths: string[], options: unknown, now: number, householdHome?: string): Promise<Tables> {
   switch (piece) {
+    case 'bridges': {
+      if(!householdHome)throw Error('Source household required');
+      const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
+      return bridgeImportTables(readBridgeImport(bridgeMigrationSources(paths.map(path=>({path,name:relative(join(householdHome,'..'),path)}))),options,{agents:h.agents,members:h.members.map(m=>m.person)},openSnapshotSqlite));
+    }
     case 'runtime': return runtimeImportTables(readRuntimeProjection(paths,options,householdHome));
     case 'household': return householdTables(paths[0],now);
     case 'secrets': {
