@@ -24,6 +24,8 @@ export interface DeliveryTrace {
 export interface Comms {
  /** Retry durable end jobs at startup or after staging release; no private words. */
  reconcileEnds(): Promise<void>;
+ /** Resume staging-held sends; settle ineligible sends without replaying uncertain runtime calls. */
+ reconcileDeliveries(): Promise<void>;
  /** Bounded routing/delivery facts only; never decrypts private work details. */
  trace(agent: string, thread: string): DeliveryTrace;
  /** Only the trusted runtime constructs this binding; never derive it from tool arguments. */

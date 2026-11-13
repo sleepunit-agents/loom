@@ -35,7 +35,7 @@ Records are window-only. Runtime delivery rechecks thread ownership after
 crypto and inside the effect hold before handing words to runtime.
 
 The in-process `Comms` role currently exposes `post`, `deliver`, `title`, metadata-only `trace` and
-stop-consuming `status`. `reconcileEnds` retries durable archive/delete end jobs at startup and can be called by the frame after staging release. It is not yet the complete old runtime adapter.
+stop-consuming `status`. `reconcileEnds` retries durable archive/delete end jobs at startup and can be called by the frame after staging release. `reconcileDeliveries` resumes staging-held sends at startup or on an explicit frame call, and settles archived, expired or revoked pending sends without decrypting them. Eligible `sending`/`failed` sends are left for runtime receipt reconciliation because acceptance may be uncertain. It is not yet the complete old runtime adapter.
 
 Words and new runtime work payloads are age encrypted in `comms_messages`.
 The key file is read per crypto operation; no age executable is required.
@@ -61,7 +61,7 @@ data does not remove the behavior it delivered.
 | `/comms/new`, `openThread`, `placeFor` | `comms.open` | Partial: first-id/hash dedupe and project gate work; app now retains 16-character base32 ids with drafts through retry/reload; backend rejects ids outside that format before encryption or writes. |
 | `/comms/agents`, `agentsComms` | `comms.agents` | Backend present: owned ids plus latest open thread, count of unread open threads and first unread line (160 graphemes). Desk UI binding remains. Summaries recheck ownership, exact thread/message snapshots and retention after crypto; read results are never persisted in retry storage. |
 | Thread page, `/since`, `/before`, `/events`, revision/bump helpers | `thread`/`message` subscriptions and `comms.messages` | Partial: live updates and older pages work; full thread state/digest fallback missing. No old SSE/poll path is needed. |
-| `/send`, `addMemberMessage`, `resendMessage`, delivery receipts | `comms.send`, `comms.resend`, runtime role | Partial: encrypted row and dedupe work; retries of held sends that are now archived or expired settle as failed, preserving completed receipts. Durable delivery/restart reconciliation, automatic stale-send settlement, busy and precise runtime errors remain missing. |
+| `/send`, `addMemberMessage`, `resendMessage`, delivery receipts | `comms.send`, `comms.resend`, runtime role | Partial: encrypted row and dedupe work; retries of held sends that are now archived or expired settle as failed, preserving completed receipts. Startup and explicit recovery now resume staging-held sends and settle ineligible held/sending/failed sends without crypto. Eligible sending/failed sends still need runtime receipt reconciliation; automatic staging-release binding, busy and precise runtime errors remain missing. |
 | `/title`, `setTitle`, `comms_title` | `comms.change` and `Comms.title` | Partial: title bounds and member-title precedence work; agent command binding missing. |
 | `/project`, `setProject`, filed threads | `comms.change` | Partial: project gate works; project integration and lookup missing. |
 | Pin/unpin | `comms.change` | Present: eight-pin cap, idempotent pin, unpin releases capacity. |
@@ -111,7 +111,7 @@ host import has been attempted by this work.
 The app is registered at `/p/comms-preview`. The browser evidence fixture
 installs it explicitly with a fake runtime. Production next-mode composition
 must await the key, install Comms, bind attention and runtime roles, provide the
-real page-session capability, and drive effect release/recovery (`reconcileEnds` exists for durable end jobs; the release binding and delivery recovery remain missing). The normal
+real page-session capability, and drive effect release/recovery (`reconcileEnds` exists for durable end jobs; `reconcileDeliveries` exists for held-send recovery and stale-send settlement; the release binding and uncertain runtime receipt reconciliation remain missing). The normal
 fixture must install the same pieces with explicit fakes. Existing old mode
 must remain usable until the later move.
 
@@ -123,3 +123,5 @@ two of three rounds; importer review one of three. Finish these obligations
 before consuming final review or marking the draft ready.
 
 Archive/delete recovery tests restart the foundation against the same database after a staged end, then restart again to prove completed ends do not repeat. They also cover held/failed retries, concurrent recovery coalescence, reopened/rearchived lifecycle cancellation and an old in-flight completion preserving a newer delete job. This journal starts with newly committed archive/delete operations; it does not infer historical end requests.
+
+Delivery recovery tests restart with staging-held sends, restart again after completion, coalesce concurrent retries, preserve eligible uncertain sending/failed states, and settle archived/expired/revoked sends without decrypting. With recovery disabled, four new cases fail (zero recovered deliveries, or held instead of failed); with recovery restored all 104 focused tests pass, as does TypeScript checking. No local browser run or web change in this unit.

@@ -149,6 +149,24 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   } catch(error) { settle(place,seq,error instanceof HeldEffect?'held':'failed'); }
 
  }
+ async function reconcileDeliveries() {
+  if(closed)return;
+  const rows=db.prepare("SELECT * FROM comms_messages WHERE kind='message' AND json_extract(record,'$.delivery') IN ('sending','held','failed') ORDER BY thread,seq").all() as MessageRow[];
+  for(const row of rows) {
+   if(closed)return;
+   const t=thread(db,row.thread);
+   if(!t)continue;
+   // No words or crypto are needed to settle sends that can no longer run.
+   if(!row.words||row.at+days*day<=clock.now()||t.archived!==null||!see({kind:'member',id:t.member},t)) {
+    // An active delivery owns its receipt until it completes.
+    if(!pending.has(messageId(row.thread,row.seq)))settle(row.thread,row.seq,'failed');
+   } else if(JSON.parse(row.record).delivery==='held') {
+    // HeldEffect means the gate refused before invoking runtime. Other states
+    // may have crossed the boundary: they need runtime receipt reconciliation.
+    await deliver(t.agent,t.id,row.seq);
+   }
+  }
+ }
  function settle(place:string,seq:number,delivery:string) {
   if(closed)return;
   const t=thread(db,place); if(!t)return;
@@ -279,7 +297,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }
  sweep();
  void reconcileEnds();
- return {post,deliver,reconcileEnds,
+ void reconcileDeliveries();
+ return {post,deliver,reconcileEnds,reconcileDeliveries,
   trace(agent,place) {
    const t=requireAgent(agent,place);
    const messages=messageRows(db,place,undefined,100).map(r=>{

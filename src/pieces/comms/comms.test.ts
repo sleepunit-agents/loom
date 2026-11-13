@@ -446,3 +446,39 @@ it('traces fixed delivery states without returning arbitrary record payloads',as
  s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'private injected status'}),place);
  expect(s.comms.trace('art',place).messages[0]).not.toHaveProperty('delivery');
 });
+
+it('recovers staging-held deliveries after restart and never repeats completed receipts',async()=>{
+ let released=false;
+ const s=await setup({hold:stagingHold({beforeOutside:()=>released,finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([]);
+ released=true;await s.restart();await s.comms.reconcileDeliveries();
+ expect(s.deliveries).toHaveLength(1);
+ await s.restart();await s.comms.reconcileDeliveries();expect(s.deliveries).toHaveLength(1);
+});
+it('coalesces held delivery recovery and leaves uncertain sending and failed receipts for runtime reconciliation',async()=>{
+ let released=false;
+ const s=await setup({hold:stagingHold({beforeOutside:()=>released,finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ for(const state of ['sending','failed']) {
+  s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:state}),place);
+  released=true;await s.restart();await s.comms.reconcileDeliveries();expect(s.deliveries).toEqual([]);
+ }
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'held'}),place);
+ await Promise.all([s.comms.reconcileDeliveries(),s.comms.reconcileDeliveries()]);
+ expect(s.deliveries).toHaveLength(1);
+});
+for(const reason of ['archive','expiry','ownership'] as const)it(`settles stale sends during recovery without crypto (${reason})`,async()=>{
+ let decrypts=0;
+ const s=await setup({days:1,key:key=>({...key,open:async words=>{decrypts++;return key.open(words);}}),hold:stagingHold({beforeOutside:()=>false,finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ if(reason==='archive')await s.call('change',{thread:place,action:'archive'});
+ if(reason==='expiry')s.clock.advance(86400_000);
+ if(reason==='ownership'){const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);}
+ for(const delivery of ['held','sending','failed']) {
+  s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery}),place);
+  const before=decrypts;await s.restart();await s.comms.reconcileDeliveries();
+  expect(decrypts).toBe(before);expect(s.deliveries).toEqual([]);
+  expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record).delivery).toBe('failed');
+ }
+});
