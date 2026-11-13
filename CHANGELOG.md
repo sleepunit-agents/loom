@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.
-
+- Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
+- Reconcile authoritative runner-fenced start failures into generation-matched private Comms notices, enabling member retry without automatically repeating an uncertain execution.
 
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
+
+- Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.
 
 - Keep a neighboring next-mode app's narrow reader from taking focus away from the chosen tile.
 
@@ -1067,6 +1069,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
+
+- Record token and session last use on the new side, including activity in open windows.
 
 ## [0.16.1] - 2026-10-25
 

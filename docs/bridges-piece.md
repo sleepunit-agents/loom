@@ -502,3 +502,51 @@ seam and can use a fake while runtime delivery is absent.
 | Retry waiting input on startup | Startup `slackDrain.flush`, receipt/release flush and bounded lifecycle timer |
 | Config/credential replacement | Synchronous invalidation, socket retirement, awaited drain close, fresh app authentication |
 | Adapter shutdown | Next root awaits authentication and drain before database close |
+
+## Discord Gateway transport
+
+`discordGateway` is an unregistered JSON v10 transport following the
+[Discord Gateway protocol](https://discord.com/developers/docs/events/gateway).
+It identifies with guild, guild-message, DM-message and message-content intents
+(37377); message-content access must already be enabled for the bot. It validates
+READY against the configured bot and confines Identify/Resume tokens to one
+service `SecretUse.withValue` socket write, with a lifetime/staging recheck after
+holder acquisition. The initial endpoint is Discord's documented
+`wss://gateway.discord.gg`; resume endpoints must be Discord gateway WSS hosts.
+No redirects, compression, arbitrary gateway hosts or credential diagnostics.
+
+The mandatory private store callbacks are a composition contract, not an installed
+store: `load` returns an identity/credential-generation-bound checkpoint;
+`commit` atomically retains needed raw dispatches and their session/URL/sequence;
+`reset` durably removes an invalid cursor. A raw receiver must commit before
+resolving and deduplicate platform message identities. It must not perform
+metadata reads, admission or runtime delivery in this transaction. Unsupported
+metadata dispatches can advance the cursor without retaining their contents.
+The transport serializes writes and resumes only from their committed sequence;
+heartbeats use the last received sequence. Reconnect waits for an in-flight commit,
+then skips queued obsolete frames so Discord can replay them. Replay is accepted
+before RESUMED. A failed transaction preserves the preceding cursor.
+
+Heartbeat jitter, ACK timeout, server-requested beats, reconnect/invalid-session
+opcodes, nonresumable close codes and terminal authentication/intent/sharding
+errors are handled explicitly. Failed connections back off from 1 to 60 seconds;
+invalid-session replies wait at least five seconds. Identify calls in this
+transport are at least five seconds apart; app-wide Identify quota/shard
+coordination is not implemented. Frames are limited to 1 MiB, queued dispatches
+to 64 and silent connection/READY waits to 15 seconds. Close cancels all timers,
+terminates the socket and awaits credential/receipt work. Upstream errors and
+session IDs are never returned as records or diagnostics.
+
+The fake sockets/clock and disposable `startLoom` SQLite fixture prove protocol,
+commit ordering, rollback and daemon-restart resume. This fixture is not the
+production store: private Discord raw/session storage, metadata normalization,
+service authentication, credential-generation invalidation and root registration
+remain required. No history poller fills gaps when Discord invalidates or expires
+a session; resume is bounded by Discord's retained events, not lossless recovery.
+Opening the preview or starting the current next root starts no Discord socket.
+
+| Legacy intake behavior | New transport / remaining work |
+| --- | --- |
+| Poll latest message, then cursor/lookback scans | Identify receives new events; session/sequence Resume replays retained missed events |
+| In-memory delivery queue | Serialized durable-commit contract; production raw/session store still required |
+| Adapter process reconnect | Gateway heartbeat, Resume/Identify and bounded backoff; daemon registration still required |
