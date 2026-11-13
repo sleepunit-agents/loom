@@ -8,6 +8,7 @@ import { FakeClock, type Viewer } from '../../core/index.js';
 import { fixture } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
+import { configuredBuild } from './builds.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 async function setup(staging = false) {
@@ -17,6 +18,7 @@ async function setup(staging = false) {
   const store = runtimeStore(app.db), auth = signin(app);
   app.db.transaction(() => {
     auth.tokens.replace({ v: 1, tokens: [] }, {});
+    store.put('settings', { id: 'art', agent: 'art', boxes: [], house: { repo: '/fixture/art', houseFile: 'house/house.json' } }, 1);
     for (const id of ['a', 'b']) store.put('box', { id, name: id, owner: 'jonathan', local: false, mayHost: '*', lentTo: [], facts: [], labels: [], alwaysOn: false, reportOnly: false, createdAt: 1 }, 1);
     for (const id of ['j', 'other', 'private', 'terminal']) store.put('job', {
       id, agent: 'art', box: id === 'other' ? 'b' : 'a', runner: id === 'other' ? 'b' : 'a', title: id,
@@ -34,7 +36,7 @@ async function setup(staging = false) {
   };
   const post = async (token: string, op: string, input: unknown, id = `http-${++seq}`) => (await fetch(`${app.url}/api/runtime/${op}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ input, id }) })).json();
   const box = (set: object) => app.db.transaction(() => { const { changedAt: _, ...before } = store.read('box', 'a')!; store.put('box', { ...before, ...set }, clock.now()); })();
-  return { app, clock, store, call, bearer, post, box };
+  return { app, home, clock, store, call, bearer, post, box };
 }
 it('fake runner claims only its queued job and reports progress over real bearer HTTP', async () => {
   const f = await setup(), token = f.bearer('a');
@@ -136,4 +138,99 @@ it('performs metadata handshake in staging without releasing an outside effect',
   expect(await f.post(token, 'reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true });
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
   expect(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE ?').all('runtime.%')).not.toEqual([]);
+});
+
+it('requires configuration at claim time and snapshots the effective identity and server claim time', async () => {
+  const f = await setup(), token = f.bearer('a');
+  f.app.db.prepare("DELETE FROM runtime_settings WHERE id='art'").run();
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: { repo: '/new', branch: 'next' } }, 'setup-house').ok).toBe(true);
+  f.clock.advance(42);
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: true });
+  expect(f.store.read('job', 'j')).toMatchObject({ made: { repo: '/new', houseFile: 'house/house.json', branch: 'next' }, claimedAt: f.clock.now() });
+  f.clock.advance(42);
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: { repo: '/later' } }, 'later-house').ok).toBe(true);
+  expect(await f.post(token, 'claimJob', { job: 'j' }, 'claim-house')).toMatchObject({ ok: true });
+  expect(f.store.read('job', 'j')?.made?.repo).toBe('/new');
+  expect(f.store.read('job', 'j')?.claimedAt).toBe(f.clock.now() - 42);
+});
+it('records only a matching immutable image for a claimed job through real runner authentication', async () => {
+  const f = await setup(), token = f.bearer('a'), build = 'loom-house-art:0123456789abcdef0123';
+  expect(await f.post(token, 'claimJob', { job: 'j' })).toMatchObject({ ok: true });
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  for (const image of ['loom-house-other:0123456789abcdef0123', build + 'a', build.toUpperCase(), 'docker.io/' + build, 'x'.repeat(121), '', 'image;cmd']) {
+    expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: image })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(f.store.read('job', 'j')).toEqual(before);
+  }
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'waiting', build })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(runtimeChanges()).toEqual([]);
+  expect(await f.post(token, 'reportJob', { job: 'other', state: 'running', build })).toMatchObject({ ok: false, code: 'denied' });
+  for (const extra of [{ made: before!.made }, { claimedAt: 5 }])
+    expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build, ...extra })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: 'localhost/' + build }, 'image')).toEqual({ ok: true, value: { job: 'j', state: 'running' } });
+  expect(f.store.read('job', 'j')).toMatchObject({ ...before, state: 'running', build });
+  expect(runtimeChanges()).toEqual([{ type: 'runtime.job', id: 'j' }]); changed.mockClear();
+  f.clock.advance(1);
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build })).toMatchObject({ ok: true });
+  expect(runtimeChanges()).toEqual([]);
+  expect(await f.post(token, 'reportJob', { job: 'j', state: 'running', build: 'loom-house-art:aaaaaaaaaaaaaaaaaaaa' })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.store.read('job', 'j')?.build).toBe(build);
+});
+it('keeps historical builds but excludes each changed repo, file or branch from configured reuse', async () => {
+  const f = await setup(), build = 'loom-house-art:0123456789abcdef0123';
+  expect(f.call('claimJob', { job: 'j' }).ok).toBe(true);
+  const house = f.store.read('job', 'j')!.made!;
+  // Changing configuration between claim and report cannot attribute the old build to the new house.
+  for (const replacement of [{ ...house, repo: '/other' }, { ...house, houseFile: 'other.json' }, { ...house, branch: 'next' }]) {
+    expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: replacement }, `configure-${JSON.stringify(replacement)}`).ok).toBe(true);
+    expect(f.call('reportJob', { job: 'j', state: 'running', build }).ok).toBe(true);
+    expect(configuredBuild(f.store.read('job', 'j')!, f.store.read('settings', 'art')?.house)).toBeUndefined();
+    expect(f.store.read('job', 'j')?.made).toEqual(house);
+  }
+  expect(configuredBuild(f.store.read('job', 'j')!, house)).toBe(build);
+  expect(configuredBuild(f.store.read('job', 'j')!, undefined)).toBeUndefined();
+  await f.app.close();
+  const restarted = await startLoom({ home: f.home, clock: f.clock, next: true }); cleanups.push(restarted.close);
+  expect(runtimeStore(restarted.db).read('job', 'j')).toMatchObject({ made: house, build });
+});
+it('refuses image attribution without claim provenance but preserves ordinary progress for older jobs', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => { const { changedAt: _, ...job } = f.store.read('job', 'j')!; f.store.put('job', { ...job, state: 'starting' }, 1); })();
+  expect(f.call('reportJob', { job: 'j', state: 'running', build: 'loom-house-art:0123456789abcdef0123' })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.call('reportJob', { job: 'j', state: 'running' }).ok).toBe(true);
+  expect(configuredBuild(f.store.read('job', 'j')!, f.store.read('settings', 'art')?.house)).toBeUndefined();
+});
+it('rolls image metadata back on receipt failure and makes durable retries preserve later progress', async () => {
+  const f = await setup(true), build = 'loom-house-art:0123456789abcdef0123';
+  f.call('claimJob', { job: 'j' });
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  f.app.db.exec("CREATE TRIGGER abort_image BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
+  expect(f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image')).toMatchObject({ ok: false });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  f.app.db.exec('DROP TRIGGER abort_image');
+  const result = f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image'); expect(result.ok).toBe(true);
+  expect(f.call('reportJob', { job: 'j', state: 'waiting' }).ok).toBe(true);
+  changed.mockClear();
+  expect(f.call('reportJob', { job: 'j', state: 'running', build }, undefined, 'image')).toEqual(result);
+  expect(f.store.read('job', 'j')?.state).toBe('waiting'); expect(runtimeChanges()).toEqual([]);
+  expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+});
+
+it('clears a queued historical image and rolls the entire claim snapshot back on receipt failure', async () => {
+  const f = await setup();
+  f.app.db.transaction(() => { const { changedAt: _, ...job } = f.store.read('job', 'j')!; f.store.put('job', { ...job, made: { repo: '/old', houseFile: 'old.json' }, claimedAt: 1, build: 'loom-house-art:aaaaaaaaaaaaaaaaaaaa' }, 1); })();
+  const before = f.store.read('job', 'j'), changed = vi.spyOn(f.app.live, 'changed');
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
+  f.app.db.exec("CREATE TRIGGER abort_claim BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
+  expect(f.call('claimJob', { job: 'j' }, undefined, 'bind')).toMatchObject({ ok: false });
+  expect(f.store.read('job', 'j')).toEqual(before); expect(runtimeChanges()).toEqual([]);
+  f.app.db.exec('DROP TRIGGER abort_claim');
+  expect(f.call('claimJob', { job: 'j' }, undefined, 'bind').ok).toBe(true);
+  expect(f.store.read('job', 'j')).toMatchObject({ made: f.store.read('settings', 'art')!.house, claimedAt: f.clock.now() });
+  expect(f.store.read('job', 'j')?.build).toBeUndefined();
 });

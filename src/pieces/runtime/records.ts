@@ -24,6 +24,8 @@ export const jobRecord = z.object({
   id, ...scope, runner: id, box: id, title: z.string().max(200),
   state: z.enum(['queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost', 'uncertain']),
   conversation: id.optional(), model: id.optional(), account: id.optional(),
+  made: houseConfig.optional(), claimedAt: z.number().int().optional(),
+  build: z.string().regex(/^loom-house-[a-z][a-z0-9-]{0,39}:[0-9a-f]{20}$/).optional(),
   createdAt: z.number().int(), endedAt: z.number().int().optional(),
 }).strict();
 export const settingsRecord = z.object({
