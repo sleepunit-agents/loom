@@ -15,8 +15,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
-  return <div className="h-full w-full min-w-0 max-w-full overflow-auto p-4 [overflow-wrap:anywhere]" data-attention-home="">
-    <AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
+  return <div className="h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
+    <div className="p-4"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
         <section aria-label="Needs you" className="grid min-w-0 gap-2">
           {asks.status !== 'live' ? <Unavailable status={asks.status} label="asks" /> : <>
@@ -41,6 +41,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
           })}
         </div>}
       </div>
-    </AppFrame>
+    </AppFrame></div>
   </div>;
 }
