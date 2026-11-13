@@ -326,9 +326,14 @@ it('evicts an already visible agent record when scoped ownership is removed', as
   await once(ws, 'open');
   ws.send(JSON.stringify({ kind: 'subscribe', type: 'example.record' }));
   expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'private-bot-task' }] });
+  const refreshes: boolean[] = [];
+  const refreshAccess = app.live.refreshAccess.bind(app.live);
+  app.live.refreshAccess = () => { refreshes.push(app.db.inTransaction); refreshAccess(); };
   expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'remove')).toMatchObject({ ok: true });
+  expect(refreshes).toEqual([false]);
   expect(await next()).toMatchObject({ kind: 'set', records: [] });
   expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: ['pond-bot'] }, 'restore')).toMatchObject({ ok: true });
+  expect(refreshes).toEqual([false, false]);
   expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'private-bot-task' }] });
 });
 
