@@ -9,6 +9,11 @@ import {startLoom} from '../../foundation.js';
 import {fixture} from '../../fixture.js';
 import {FakeClock} from '../../core/index.js';
 import {openHolderStore,type HolderStore,type RetainedHolderKeys} from './holder-store.js';
+import {privateBytes} from './local-holder.js';
+vi.mock('./local-holder.js',async original=>{
+ const actual=await original<typeof import('./local-holder.js')>();
+ return {...actual,privateBytes:vi.fn(actual.privateBytes)};
+});
 const roots:string[]=[],closes:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});vi.restoreAllMocks();});
 const sentinel='SYNTHETIC-HOLDER-ROTATION-VALUE';
@@ -92,4 +97,31 @@ it('refuses malformed or inconsistent history and rolls back a failed rotation',
   await expect(f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]})).rejects.toThrow(/^Secret holder storage unavailable$/);expect(snapshot(f.directory)).toEqual(before);
   db.exec('DROP TRIGGER fail_rotation');const restored=await f.open();expect(restored.generation()).toBeDefined();
  }finally{db.close();}
+});
+
+it('refuses a missing history row instead of adopting original material and losing a later rotation',async()=>{
+ const f=await setup();let s=await f.open();s.close();s=await f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]});
+ await s.set(who(),'API',Buffer.from(sentinel),'add');s.close();
+ const db=new Database(join(f.directory,'holder.db'));try{db.exec('DELETE FROM holder_key_history');}finally{db.close();}
+ const before=snapshot(f.directory);await expect(f.open()).rejects.toThrow(/^Secret holder storage unavailable$/);expect(snapshot(f.directory)).toEqual(before);
+ await expect(f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]})).rejects.toThrow();expect(snapshot(f.directory)).toEqual(before);
+});
+it('erases actual owned identity and key file buffers on close and partial startup failures',async()=>{
+ const f=await setup();let s=await f.open();s.close();
+ const loader=vi.mocked(privateBytes),buffers=()=>loader.mock.results.flatMap(r=>r.type==='return'?[r.value]:[]);
+ loader.mockClear();s=await f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]});
+ expect(buffers()).toHaveLength(4);
+ expect(buffers().filter(b=>b.length>32).every(b=>b.every(n=>n===0))).toBe(true);
+ expect(buffers().filter(b=>b.length===32).every(b=>b.some(n=>n!==0))).toBe(true);
+ s.close();expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
+ // Late key-file failure must erase the already read active key.
+ loader.mockClear();chmodSync(f.keys[0],0o644);
+ await expect(f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]})).rejects.toThrow();chmodSync(f.keys[0],0o600);
+ expect(buffers()).toHaveLength(1);expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
+ // Late identity failure occurs after both keys and the active identity load.
+ loader.mockClear();chmodSync(f.identities[0],0o644);
+ await expect(f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]})).rejects.toThrow();chmodSync(f.identities[0],0o600);
+ expect(buffers()).toHaveLength(3);expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
+ // A binding refusal also erases every loaded key and identity.
+ loader.mockClear();await expect(f.open(2)).rejects.toThrow();expect(buffers()).toHaveLength(2);expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
 });

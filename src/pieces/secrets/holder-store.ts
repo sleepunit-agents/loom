@@ -89,6 +89,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
     const historySchema = z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1);
 
     db.transaction(() => {
+      const hadHistory = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='holder_key_history'").get();
       db!.exec(`CREATE TABLE IF NOT EXISTS holder_config (id INTEGER PRIMARY KEY CHECK(id=1), verifier TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_key_history (id INTEGER PRIMARY KEY CHECK(id=1), bindings TEXT NOT NULL);
@@ -97,6 +98,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
           fingerprint TEXT NOT NULL, PRIMARY KEY(member, write_id));`);
       const old = db!.prepare('SELECT verifier FROM holder_config WHERE id=1').get() as {verifier:string} | undefined;
       const saved = db!.prepare('SELECT bindings FROM holder_key_history WHERE id=1').get() as {bindings:string} | undefined;
+      if (hadHistory && !saved) throw unavailable();
       const history = saved ? historySchema.parse(JSON.parse(saved.bindings)) : old ? [old.verifier] : [];
       if ((saved && (!old || !history.includes(old.verifier))) || new Set(history).size !== history.length
         || history.some(hash => !supplied.has(hash))) throw unavailable();

@@ -921,7 +921,8 @@ binding in holder-only `holder_key_history`. Every historical pair (including th
 original v1 binding) must be derivable from the supplied files, even if no values
 or receipts remain. Malformed history, duplicate material, unsafe files or omitted
 historical material refuse startup with a fixed error and leave stored data
-unchanged. V1-only stores upgrade in the same transaction; no ciphertext or receipt
+unchanged. An absent legacy history table is distinct from a missing row in an existing
+history table, which is refused. V1-only stores upgrade in the same transaction; no ciphertext or receipt
 rewrite occurs. Explicit reactivation of an old pair is allowed with the complete
 ring. Keep every used identity and key separately from the ciphertext backup.
 This is retention-based rotation: existing ciphertext is not reencrypted, and old
