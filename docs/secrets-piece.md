@@ -216,3 +216,23 @@ non-authorizing moved-original records needed for paired revocation. It must use
 the household registry for `registered`, reconcile the same mappings with policy
 membership, and preserve the original metadata for history. No real import is
 performed by this increment.
+
+## Combined offline policy/request plan
+
+`planLegacySecretMetadata(policyBytes, requestBytes, principals, snapshotAt)`
+resolves the union of request identities and every policy `agents`/`houses`
+entry with the same explicit registered bindings. Distinct legacy identities
+cannot map to one agent across inputs, separate rules or membership fields,
+even for inactive rules or denied history. Repeated identical identities are
+preserved; unused bindings do not create membership. Startup and request lists
+remain independent, and levels, omissions, empty lists and clamped durations
+retain the strict policy parser's meaning. Unsupported legacy policy IDs still
+refuse rather than normalize. The strict policy decoder now lives in pure
+`policy-source.ts`; `policy-importer.ts` keeps its existing parser export and
+persistence behavior.
+
+The result contains validated original policy membership, mapped policy and the
+existing request plan. It performs no IO or registration. Names, actual member
+attribution mapping, pending attention, moved-original revocation storage, audit,
+atomic persistence/receipts and independent content verification remain the final
+importer's work. This plan does not activate a runtime permission or import data.
