@@ -141,7 +141,8 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   visit(source);
   const clockFiles = legacyClockAgentFiles;
   for (const [name, supplied] of Object.entries(roots)) {
-    if (!supplied) continue;
+    if (supplied === undefined) continue;
+    if (!supplied) refusal(`<${name}>`, 'source root must not be empty');
     rootId++;
     source = guarded(`<${name}>`, 'source root must exist', () => realpathSync(supplied));
     if (within(target, source) || within(source, target)) refusal(`<${name}>`, 'source and destination must be separate');

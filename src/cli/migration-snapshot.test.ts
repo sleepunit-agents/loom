@@ -429,9 +429,9 @@ test('explicit Secrets root copies only importer files privately, with inventory
 
 test('explicit Secrets input refuses missing, wrong-type and overlapping sources without destination writes',async()=>{
   const {root,home,to}=fixture(),file=join(root,'file');writeFileSync(file,'PRIVATE_ROOT_CANARY');
-  for(const secrets of [join(root,'missing'),file,to]) {
+  for(const secrets of ['',join(root,'missing'),file,to]) {
     const out:string[]=[],io={stdout:(s:string)=>out.push(s),stderr:(s:string)=>out.push(s),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
-    expect(await migrateSnapshot(['--from',home,'--to',to,'--secrets',secrets],io)).toBe(1);
+    for(const mode of [[],['--dry-run']]) expect(await migrateSnapshot(['--from',home,'--to',to,'--secrets',secrets,...mode],io)).toBe(1);
     expect(existsSync(to)).toBe(false);expect(out.join('')).not.toContain(root);expect(out.join('')).not.toContain('PRIVATE_ROOT_CANARY');
   }
   const secrets=join(root,'secrets');mkdirSync(secrets);
