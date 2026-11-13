@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,12 +66,14 @@ it('rolls a failed move back and permits the same operation to retry', async () 
   expect(answer(request('h-1')).ok).toBe(true);
   const snapshot = () => ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
   const before = snapshot();
+  const changed = vi.spyOn(app.live, 'changed');
   app.db.exec("CREATE TRIGGER fail_carry BEFORE INSERT ON secrets_grants WHEN NEW.id LIKE '%h-2%' BEGIN SELECT RAISE(ABORT,'fixture'); END;");
   expect(request('h-2', undefined, agent, 'retry-move').ok).toBe(false);
-  expect(snapshot()).toEqual(before); expect(may('h-1')).toBe(true); expect(may('h-2')).toBe(false);
+  expect(snapshot()).toEqual(before); expect(changed).not.toHaveBeenCalled(); expect(may('h-1')).toBe(true); expect(may('h-2')).toBe(false);
   app.db.exec('DROP TRIGGER fail_carry');
   expect(request('h-2', undefined, agent, 'retry-move')).toMatchObject({ ok: true, value: { state: 'allowed' } });
   expect(may('h-1')).toBe(false); expect(may('h-2')).toBe(true);
+  expectPairNotifications(app, changed.mock.calls);
   expect(call(owner, 'list', {}).ok).toBe(true);
 });
 it('policy auto grants independently instead of consuming an owner Allow', async () => {
@@ -96,13 +98,48 @@ it('paired revoke rolls both grants and request states back on failure', async (
   expect(answer(request('h-1')).ok).toBe(true); expect(request('h-2').ok).toBe(true);
   const snapshot = () => ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
   const before = snapshot();
+  const changed = vi.spyOn(app.live, 'changed');
   app.db.exec("CREATE TRIGGER fail_revoke BEFORE DELETE ON secrets_grants WHEN OLD.id LIKE '%h-1%' BEGIN SELECT RAISE(ABORT,'fixture'); END;");
   const input = { agent: agent.id, ...resource, scope: { house: 'h-1' } };
   expect(call(owner, 'revoke', input, 'retry-revoke').ok).toBe(false);
-  expect(snapshot()).toEqual(before); expect(may('h-1')).toBe(false); expect(may('h-2')).toBe(true);
+  expect(snapshot()).toEqual(before); expect(changed).not.toHaveBeenCalled(); expect(may('h-1')).toBe(false); expect(may('h-2')).toBe(true);
   app.db.exec('DROP TRIGGER fail_revoke');
   expect(call(owner, 'revoke', input, 'retry-revoke').ok).toBe(true);
   expect(may('h-2')).toBe(false);
+  expectPairNotifications(app, changed.mock.calls);
   const result = call(owner, 'list', {});
   expect(result).toMatchObject({ ok: true, value: { requests: [expect.objectContaining({ state: 'revoked' }), expect.objectContaining({ state: 'revoked' })] } });
+});
+
+function expectPairNotifications(app: Awaited<ReturnType<typeof setup>>['app'], calls: unknown[][]) {
+  const ids = app.db.prepare('SELECT id FROM secrets_requests').all() as { id: string }[];
+  expect(calls).toHaveLength(1);
+  expect(calls[0][0]).toEqual(expect.arrayContaining([
+    ...ids.map(({ id }) => ({ type: 'secret.request', id })),
+    ...['h-1', 'h-2'].map(house => ({ type: 'secret.grant', id: JSON.stringify(['art', 'secret', 'key', house, null]) })),
+  ]));
+  expect(calls[0][0]).toHaveLength(4);
+}
+it('checks Never before reusing a moved or pending request with a fresh operation', async () => {
+  const { call, request, may, answer } = await setup();
+  expect(answer(request('h-1')).ok).toBe(true); expect(request('h-2')).toMatchObject({ ok: true, value: { state: 'allowed' } });
+  expect(request('h-3')).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(call(owner, 'policy', { default: 'never' }).ok).toBe(true);
+  expect(request('h-2')).toMatchObject({ ok: true, value: { state: 'denied', decision: 'policy' } });
+  expect(request('h-3')).toMatchObject({ ok: true, value: { state: 'denied', decision: 'policy' } });
+  expect(may('h-1')).toBe(false); expect(may('h-2')).toBe(false);
+});
+it('cannot carry an isolated policy grant after switching back to ask', async () => {
+  const { call, request } = await setup();
+  expect(call(owner, 'policy', { default: 'auto' }).ok).toBe(true);
+  expect(request('h-1')).toMatchObject({ ok: true, value: { state: 'allowed', decision: 'policy' } });
+  expect(call(owner, 'policy', {}).ok).toBe(true);
+  expect(request('h-2')).toMatchObject({ ok: true, value: { state: 'pending' } });
+});
+it('does not carry an eligible owner Allow for a different secret name', async () => {
+  const { call, request, answer, may } = await setup();
+  expect(answer(request('h-1')).ok).toBe(true);
+  expect(call(owner, 'describe', { name: 'other-key', description: '' }).ok).toBe(true);
+  expect(call(agent, 'requestHouse', { agent: agent.id, target: 'other-key', scope: { house: 'h-2' }, why: 'work' })).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(may('h-1')).toBe(true);
 });
