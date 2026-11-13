@@ -1293,3 +1293,23 @@ it('preserves imported card timing when its sealed metadata and step words use s
  await s.comms.activityCards('art',place,{run:'new-body',cards:[{id:'imported',tool:'Edit',summary:'Updated',state:'done',body:'New diff'}]});
  expect(await s.call('messages',{thread:place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({text:'Updated',tool:'Edit',state:'done',step:{body:'New diff',t0:start,t1:end}})])});
 });
+
+it('keeps switched harness labels encrypted and drops malformed labels without refusing replies',async()=>{
+ const s=await setup({days:1});const place=await s.open();await s.comms.deliver('art',place,1);
+ const posted={id:'switched',kind:'reply' as const,text:'Private switched reply',on:'Codex'};
+ const first=await s.comms.post('art',place,posted);
+ expect(await s.comms.post('art',place,posted)).toEqual(first);
+ const read=await s.call('messages',{thread:place});expect(read.ok).toBe(true);
+ expect((read as {ok:true;value:unknown[]}).value).toContainEqual(expect.objectContaining({card:{on:'Codex'}}));
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).not.toContain('Codex');
+ await expect(s.comms.post('art',place,{...posted,on:'Gemini'})).rejects.toThrow('Reply id');
+ for(const [n,on] of ['<Codex>','two words','a'.repeat(25),'9codex','Codex\n',17,null,{on:'Codex'}].entries()){
+  await s.comms.post('art',place,{id:`invalid-harness-${n}`,kind:'reply',text:'Still accepted',on} as unknown as import('./role.js').AgentPost);
+ }
+ const page=await s.call('messages',{thread:place});expect(page.ok).toBe(true);
+ for(const m of (page as {ok:true;value:{card?:unknown;seq:number}[]}).value.filter(m=>m.seq>first.seq))expect(m.card).toBeUndefined();
+ await s.comms.post('art',place,{id:'plain-harness',kind:'reply',text:'Ordinary reply'});
+ const denied=await s.call('messages',{thread:place},{kind:'member',id:'other'});expect(denied.ok).toBe(false);
+ s.clock.advance(86400000);
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).not.toContain('Codex');
+});

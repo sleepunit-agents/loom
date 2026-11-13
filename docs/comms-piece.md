@@ -77,7 +77,7 @@ data does not remove the behavior it delivered.
 | `/read`, `markRead`, in-front suppression | `comms.change` | Partial: read sequence is monotonic; foreground presence and notification suppression missing. |
 | `/stop`, `/resume`, `/model` | Runtime control seam | Partial: one-shot stop flag only; actual interrupt/resume/model selection and state missing. |
 | Adapter `describe` | `Comms.describe` | Partial: original-member readers, private/tool-use/source guidance, inline-ask guidance and conditional project/title guidance. Denies wrong agents, revoked ownership, archived/deleted threads and closed instances; refuses nonprintable or over-300-character brief lines without truncating routing identities. Trusted in-process capability only; actual runtime binding and private inline-ask synchronization remain missing. |
-| Adapter `post` | `Comms.post` | Partial: encrypted replies, cards, ask refs, agent isolation and id dedupe; harness labels, spawn report refs and continuation receipt semantics need parity. |
+| Adapter `post` | `Comms.post` | Partial: encrypted replies, cards, ask refs, agent isolation and id dedupe; bounded switched-harness labels are encrypted as reply cards and shown from the latest retained reply, with the next unmarked reply clearing the label. Production harness binding, spawn report refs and continuation receipt semantics still need parity. |
 | Adapter `reconcile` | Runtime role | Partial: message recovery supports accepted/not-accepted/unknown runtime receipts with snapshot/ownership/retention checks; production binding and full continuation/deleted/deadline semantics remain missing. |
 | Adapter `trace`, `traceOf` | `Comms.trace` | Partial: newest 100 routing/delivery facts in sequence order, agent-isolated, archived allowed and deleted denied, without decryption. Fixed delivery statuses only; private tool/run/error details remain encrypted and omitted. Runtime trace command binding and richer working/queued state remain missing. |
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
@@ -565,3 +565,20 @@ review budgets remain backend/security 2/3 and importer 1/3.
 A final imported-envelope regression reproduced lost original timing when card
 metadata and step details were sealed separately. Batch updates now combine
 those authorized envelopes before preserving timing; the added regression passes.
+
+
+Switched-harness replies now preserve the old `post.on` contract: a letter
+followed by at most 23 letters, digits, dots or hyphens. Invalid values are
+dropped without refusing the reply. The card contains only `{on}` and is sealed
+with the reply words; it is absent from plaintext rows and removed at retention.
+The thread header reads the newest reply in its authorized snapshot, including
+imported cards, as `ON CODEX`. A later ordinary reply clears it; tool cards and
+member messages do not change it. Disconnect and expiry remove the label.
+Production runtime capture/binding and the broader channel-state UI remain open.
+
+The backend regression first failed because the read omitted `{card:{on:'Codex'}}`;
+the UI helper regression first failed because the selector did not exist. Added
+cases cover malformed labels, encrypted storage, exact replay/conflict, denied
+readers, expiry, imported cards and latest-reply clearing. The existing single
+browser test now checks the label and its removal; CI must prove this extension
+on the current head. No local browser ran. Review budgets remain unchanged.

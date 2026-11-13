@@ -18,3 +18,11 @@ export function messageView(message:Message){
   ask:message.kind==='ask'?{question:question??'Your answer is needed',why:words(ask.why),yes:words(ask.if_yes),no:words(ask.if_no),
    answer:verdict,answered:Object.keys(answer).length>0,canAnswer:Object.keys(answer).length===0&&ask.answers!=='words'&&typeof message.ref==='string'}:undefined};
 }
+
+/** A newer unmarked reply clears an earlier switch; cards and member sends do not. */
+export function latestHarness(messages:readonly Message[]):string|undefined {
+ const latest=messages.reduce<Message|undefined>((last,m)=>m.kind==='reply'&&(!last||m.seq>last.seq)?m:last,undefined);
+ if(!latest||latest.text===null)return;
+ const on=object(latest.card).on;
+ return typeof on==='string'&&/^[A-Za-z][A-Za-z0-9.-]{0,23}$/.test(on)?on:undefined;
+}

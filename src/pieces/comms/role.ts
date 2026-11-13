@@ -18,7 +18,7 @@ export interface Attention {
 }
 export interface AgentPost {
  id: string; kind: 'reply' | 'card' | 'ask' | 'error'; text: string;
- run?: string; tool?: string; state?: 'running' | 'done' | 'failed';
+ on?: string; run?: string; tool?: string; state?: 'running' | 'done' | 'failed';
  ref?: string; step?: Record<string, unknown>;
 }
 /** Body record movement, distinct from the working heartbeat. Times are epoch milliseconds. */

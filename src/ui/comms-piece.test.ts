@@ -39,7 +39,7 @@ it('keeps the in-memory retry id when device storage is unavailable',()=>{
  expect(editDraft(draft,draft.text).id).toBe(draft.id);expect(()=>clearDraft('jonathan','th:one',draft)).not.toThrow();
 });
 
-import { messageView, type Message } from '../../web/src/pieces/comms/message.js';
+import { latestHarness, messageView, type Message } from '../../web/src/pieces/comms/message.js';
 import { workingView } from '../../web/src/pieces/comms/working.js';
 it('ages a connected working spell into quiet and stuck, refreshing only for body movement',()=>{
  const since=Date.parse('2026-11-13T05:00:00Z'),t={agent:'art',working:true,workingSince:since};
@@ -162,4 +162,14 @@ it('bounds only the focused composer at visual keyboard resize/pan, ignores zoom
  viewport.height=900;viewport.offsetTop=0;win.dispatchEvent(new Event('resize'));expect(styles.size).toBe(0);
  viewport.height=450;viewport.dispatchEvent(new Event('resize'));stop();expect(styles.size).toBe(0);expect(attributes.size).toBe(0);
  viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));form.dispatchEvent(new Event('focusin'));win.dispatchEvent(new Event('resize'));expect(styles.size).toBe(0);
+});
+
+it('shows only the latest retained reply harness, including imports, and clears on an ordinary reply',()=>{
+ const base:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'reply',from:'art',text:'Reply',card:{on:'Codex'}};
+ expect(latestHarness([base])).toBe('Codex');
+ expect(latestHarness([{...base,seq:2,card:undefined},base])).toBeUndefined();
+ expect(latestHarness([base,{...base,seq:2,kind:'card',card:{on:'Other'}}])).toBe('Codex');
+ for(const on of ['<Codex>','two words','a'.repeat(25),'Codex\n',17])expect(latestHarness([{...base,card:{on}}])).toBeUndefined();
+ expect(latestHarness([{...base,text:null}])).toBeUndefined();
+ expect(latestHarness([])).toBeUndefined();
 });

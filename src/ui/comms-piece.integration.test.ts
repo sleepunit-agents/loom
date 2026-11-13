@@ -18,7 +18,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
  const loom=await startLoom({home,clock,authenticate:()=>({viewer:{kind:'member',id:'jonathan'},window:true,valid:()=>true}),install:app=>{
   installFixture(app);
   comms=installComms({...app,clock,key,sharing:fixtureSharing,conversation:id=>conversations.get(id),hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
-   deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
+   deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',on:'Codex',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
  const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturefirstaaaa',text:'Comms fixture message'},'fixture-first',true);
@@ -43,6 +43,9 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(loom.db.prepare('SELECT id FROM comms_messages WHERE thread=? AND id=?').get(place,sent.id)).toBeTruthy();
   await expect.poll(()=>a.evaluate(k=>localStorage.getItem(k),storageKey)).toBe(null);
   expect(await b.locator('[aria-label="Thread messages"] img').count()).toBe(0);expect(await b.locator('a[href^="javascript:"]').count()).toBe(0);expect(await b.locator('[aria-label="Thread messages"] script').count()).toBe(0);
+  await expect.poll(()=>b.getByLabel('Reply harness').textContent()).toBe(' · ON CODEX');
+  await comms.post('art',place,{id:'ordinary-harness',kind:'reply',text:'Back on the ordinary harness.'});
+  await expect.poll(()=>b.getByLabel('Reply harness').count()).toBe(0);
   // Body activity comes from the thread subscription; it must disappear when the turn ends.
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('41,900 tokens');

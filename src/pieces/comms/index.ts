@@ -368,7 +368,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },
  }));
  async function post(agent:string,place:string,raw:AgentPost,terminal=false) {
-  const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
+  const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,on:z.unknown().optional().transform(value=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9.-]{0,23}$/.test(value)?value:undefined),run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
   const available=()=>{
    const t=requireAgent(agent,place);
    if(closed||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
@@ -376,7 +376,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return t;
   };
   const before=available();
-  const words=await key.seal(JSON.stringify({text:m.text,run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
+  const words=await key.seal(JSON.stringify({text:m.text,...(m.on?{card:{on:m.on}}:{}),run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
   const result=db.transaction(()=> {
    const t=available();
    if(t.member!==before.member||t.conversation!==before.conversation||t.project!==before.project)return fail('denied','Thread unavailable');
