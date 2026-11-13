@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as migrationRegistry from './migration-registry.js';
 import { randomUUID } from 'node:crypto';
 import { SharingDatabase } from '../core/household/sharing.js';
 import { change } from '../pieces/changes/fixture.js';
@@ -286,4 +287,21 @@ it('does not mark an asynchronously rejected importer complete and releases its 
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual(['household']);
   const unlock=acquireHttpLock(f.home); unlock();
   expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');
+});
+
+
+it('returns the generic CLI refusal for an asynchronous importer rejection without leaking its private error', async () => {
+  const f=await fixture(), registry=new MigrationRegistry();
+  const secret='PRIVATE_ASYNC_IMPORT_CANARY';
+  registry.register({name:'household',dependencies:[],reads:[],run:async()=>{
+    await Promise.resolve(); throw Error(secret);
+  }});
+  vi.spyOn(migrationRegistry,'createMigrationRegistry').mockReturnValue(registry);
+  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await run(['all','--snapshot',f.root,'--home',f.home],io)).toBe(1);
+  expect(io.stdout).not.toHaveBeenCalled();
+  expect(io.stderr).toHaveBeenCalledExactlyOnceWith('Migration refused; verify snapshot, plan and destination ownership, and stop the destination daemon.\n');
+  expect(io.stderr.mock.calls.flat().join('')).not.toContain(secret);
+  expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual([]);
+  const unlock=acquireHttpLock(f.home); unlock();
 });
