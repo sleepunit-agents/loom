@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
+- Keep bounded runtime job diagnostics outside live metadata, with scoped result reads and atomic completion.
 
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 

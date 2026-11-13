@@ -6,10 +6,11 @@ import { jobRecord, type RuntimeRecords } from './records.js';
 import { runtimeStore } from './store.js';
 import type { RuntimeCredentials } from './credentials.js';
 import { buildTag, configuredHouse } from './builds.js';
+import { jobResults, resultFields } from './results.js';
 const input = z.object({ job: z.string().min(1).max(200) }).strict();
 const output = z.object({ job: z.string(), state: jobRecord.shape.state });
 export function installRunnerJobs(db: Db, operations: Operations, sharing: () => Sharing, credentials?: RuntimeCredentials) {
-  const store = runtimeStore(db);
+  const store = runtimeStore(db), results = jobResults(db);
   function assigned(viewer: Viewer, id: string): boolean {
     const job = store.read('job', id), box = job && store.read('box', job.box);
     return viewer.kind === 'runner' && !!job && !!box && box.id === viewer.id && box.revokedAt === undefined
@@ -36,9 +37,9 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.finishJob', write: true,
-    input: input.extend({ state: z.enum(['done', 'failed']) }).strict(), output,
+    input: input.extend({ state: z.enum(['done', 'failed']), ...resultFields }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state }) {
+    run(ctx, { job: id, state, exit, log }) {
       const { changedAt: _, ...job } = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
       if (!credentials) throw new OperationError('unavailable', 'Central credential revocation is not installed');
@@ -48,6 +49,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
         (result as unknown as Promise<unknown>).catch(() => {});
         throw new Error('Credential revocation must be synchronous');
       }
+      results.put(id, { exit, log });
       ctx.changed('core.access', 'credentials');
       if (store.put('job', { ...job, state, endedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
       return { job: id, state };
@@ -55,11 +57,14 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.reportJob', write: true,
-    input: input.extend({ state: z.enum(['running', 'waiting']), build: z.string().max(120).optional() }).strict(), output,
+    input: input.extend({ state: z.enum(['running', 'waiting']), build: z.string().max(120).optional(), ...resultFields }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state, build }) {
+    run(ctx, { job: id, state, build, exit, log }) {
       const before = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      // Result and metadata writes share the operation's transaction/receipt.
+      // Notify only the job id; log words are never in the live payload.
+      if (results.put(id, { exit, log })) ctx.changed('runtime.job', id);
       if (build !== undefined) {
         const tag = buildTag(build, before.agent);
         if (state !== 'running' || !tag) throw new OperationError('invalid', 'Build must name this agent image in a running report');

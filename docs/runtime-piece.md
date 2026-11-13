@@ -228,7 +228,7 @@ job or set timestamps through this API. Reports use server `changedAt` and only
 publish when metadata changes. Registry receipts make lost-response retries
 safe without making a fresh claim of a starting job succeed.
 
-This is a metadata handshake, not permission to start a container. It returns
+This is a metadata handshake, not permission to start a container. Its acknowledgement returns
 no credentials, input words or results, calls no runner and performs no outside
 effect, including in staging. Input fetch, credential issuance and terminal
 reports with credential revocation remain required on this task before a real
@@ -258,7 +258,7 @@ transaction; a failure or asynchronous credential role rolls everything back.
 An after-commit `core.access` change invalidates existing authentication handles.
 An installer without central credentials fails unavailable before changing data.
 
-This is completion metadata only. Exit codes, log/result words, builds, native
+Completion now also accepts the bounded exit/log fields described below. Native
 history collection, cooperative stop, written-off jobs and service restarts
 remain to be implemented with their owning lifecycle operations. `stopped` and
 `lost` are not accepted here: there is no stop-intent or write-off protocol yet.
@@ -482,3 +482,52 @@ hosts, warm-host upgrades, repository credential release and daemon execution
 remain outstanding. This metadata is neither execution authorization nor proof
 that an image exists on a box; an eventual execution consumer must revalidate
 current central authority/configuration/grants after commit before release.
+
+
+## Bounded job output
+
+The exit/log portion of old `report` maps to optional `exit` and `log` fields
+on `runtime.reportJob` and `runtime.finishJob`. The assigned authenticated runner,
+box and state checks remain the same; completion still revokes the exact job's
+central credentials in the same transaction. Output, metadata and retry receipt
+commit together. A failed build report or later write rolls output back too.
+Retries return the original metadata acknowledgement without restoring old output.
+Omitted fields preserve earlier values; an explicit empty log clears the log.
+Exit codes must be safe integers, including negative runner failure codes.
+Malformed structured fields are refused rather than silently ignored as before.
+
+Logs retain the last 4,000 JavaScript characters, preserving the first line when
+it starts `the box couldn't start it: ` and is shorter than 300 characters, then
+filling the remainder with the tail (the old refusal diagnostic rule). Input
+logs are bounded to 1,000,000 characters before storage, within the API's existing
+transport cap. Reports replace the stored tail, rather than append to it.
+
+The additive third runtime migration stores output separately in
+`runtime_results`, keyed by job. It is not a collection or live type. Logs and
+exit codes never enter `runtime.job` or acknowledgement/receipt results. A changed
+output notifies the job id after commit; consumers refetch explicitly. Identical
+output and progress preserve job timestamps and produce no runtime notification.
+No output record is created when both fields are omitted.
+
+`runtime.jobResult {job}` returns `{job,result:{exit?,log?}|null}`. Each call
+uses the job's **current** central `mayAct` scope. Private/member, project and
+agent visibility follow the central rule. Services require both the
+`runtime.job` type grant and the exact `runtime.jobResult` operation grant.
+Runners cannot use this read operation under the central `act` rule; they already
+supply their own diagnostics. Unknown and hidden jobs both deny. The read writes
+no receipt or notification. Output persists across restart and is not a source
+of conversation words or body membership proof.
+
+| Old report behavior | New operation / remaining obligation |
+| --- | --- |
+| Progress exit/log | `runtime.reportJob {job,state,exit?,log?}` |
+| Completion exit/log + credential revoke | `runtime.finishJob {job,state,exit?,log?}` |
+| `houseView` diagnostics | Explicit scoped `runtime.jobResult`; list/live stays metadata only |
+| Short box refusal headline survives long logs | Same 4,000-character tail rule |
+| Native history, service crash/restart decisions, cooperative stop | Still required with their owning lifecycle operations |
+
+This does not release executable inputs, issue credentials, run repositories or
+containers, dispatch bodies or resolve `startBody`. Account results, native
+history collection, output retention/deletion and the screens/client/importer
+remain required before the final move. No old endpoint is retired here and no
+outside effect occurs, including in staging.
