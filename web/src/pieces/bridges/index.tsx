@@ -3,6 +3,7 @@ import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import { bridgeEffects, sendStatus, type VenueRecord, type RouteRecord, type SendRecord, type EffectRecord } from './model';
 
+import { DismissSend, type DismissInput } from './dismiss-send';
 import { RouteEditor, type RouteWrite } from './route-editor';
 import { useSetupState } from './setup-state';
 import { LinkEditor } from './link-editor';
@@ -31,6 +32,8 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
   const match = /\/item\/([^/]+)\/([^/]+)$/.exec(path);
   let selected: { folder: string; id: string } | undefined;
   try { if (match) selected = { folder: match[1], id: decodeURIComponent(match[2]) }; } catch { /* Unknown address stays empty. */ }
+  const dismissals = useRef(new Map<string, Call<{ id: string }>>());
+  const [dismissRequests, setDismissRequests] = useState(new Map<string, Call<{ id: string }>>());
   const writes = useRef(new Map<string, RouteWrite>());
   const [requests, setRequests] = useState(new Map<string, RouteWrite>());
   const [latestWrite, setLatestWrite] = useState<RouteWrite & { key: string }>();
@@ -82,6 +85,13 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
     const request = call<{ id: string }>(`bridges.${kind === 'save' ? 'put' : 'remove'}${table}`, input);
     writes.current.set(`${table}:${input.id}`, { kind, call: request }); setRequests(new Map(writes.current)); setLatestWrite({ kind, call: request, key: `${table}:${input.id}` });
   };
+  const dismissSend = (input: DismissInput) => {
+    const current = ready ? sends.records.find(s => s.id === input.id) : undefined;
+    const prior = dismissals.current.get(input.id)?.getSnapshot();
+    if (!current || current.state !== input.state || prior?.pending || prior?.result?.ok) return;
+    const request = call<{ id: string }>('bridges.dismissSend', input);
+    dismissals.current.set(input.id, request); setDismissRequests(new Map(dismissals.current));
+  };
   const open = (id: string) => navigate(view, id);
   const rows = !ready ? [] : view === 'venues' ? venues.records.map(v => ({ id: v.id, title: `${v.agent} · ${v.platform}`, meta: `${v.workspace} · ${v.received} received · ${v.delivered ?? 0} delivered · ${v.held ?? 0} held in 24 hours`, status: v.enabled ? v.connection : 'Disabled' }))
     : view === 'routes' ? routes.records.map(r => ({ id: r.id, title: r.channel, meta: `${r.platform} · ${r.workspace}`, status: r.primary ? `Primary: ${r.primary}` : 'No primary' }))
@@ -117,6 +127,7 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
     {(send?.state === 'uncertain' || effect?.state === 'uncertain') ? <p>Delivery may have partially succeeded. Review it on the venue before deciding what to do. This page cannot resend it.</p>
       : effect && send?.state === 'pending' ? <Release key={effect.id} effect={effect} enabled={ready} />
       : <p>This send is waiting for processing or review.</p>}
+    {send && <DismissSend key={JSON.stringify([send.id, send.state, send.venue, send.incoming, send.remoteId, send.created])} send={send} request={dismissRequests.get(send.id)} dismiss={dismissSend} />}
   </article> : selected ? <Empty title="This item is no longer in view" text="It may have completed or become unavailable." /> : null;
   return <Split className="h-full" label="Bridges" folder={view} onFolder={id => { setFolder(id); navigate(id); }}
     folders={[

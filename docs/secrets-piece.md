@@ -284,7 +284,7 @@ are explicit absolute paths; no old home, file or program is searched. The
 socket parent and ciphertext directory must be owned by the current OS user and
 private (0700). The socket is 0600; key, certificate, CA, identity, ciphertext
 and config files must be private regular files owned by that user, with no final
-symlink or hardlink. Use a dedicated CA for this holder/daemon pair with serverAuth
+symlink or hardlink. Use one dedicated PEM CA certificate for this holder/daemon pair with serverAuth
 and clientAuth certificates. Server DNS identity is verified even over the socket.
 The holder refuses an occupied socket path rather than unlinking it. Normal close
 removes the socket; after a crash an operator must verify the old holder is gone
@@ -295,7 +295,8 @@ performed here.
 composes the real source into `NextChangesOptions`. Config fields are `socket`,
 `ca`, `cert`, `key` (daemon TLS identity), `servername` (holder certificate DNS
 name) and `github` (public forge owner to secret-name map). No configuration means
-no value source. Invalid configuration refuses startup with a fixed error.
+no value source. Invalid configuration refuses startup with a fixed error; CA material is parsed
+independently because Node TLS can silently ignore a malformed CA.
 Connections authenticate both peers; reads have an absolute five-second deadline,
 64 KiB response bound and generic failure. The existing bound service role checks
 current owner-written grants both before and after acquisition. Configuration

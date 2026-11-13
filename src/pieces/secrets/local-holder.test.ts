@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync, linkSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync, linkSync, unlinkSync, existsSync } from 'node:fs';
 import https from 'node:https';
+import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -137,9 +138,9 @@ it('serve composes an explicit authenticated source and public GitHub bindings',
   } finally {process.emit('SIGTERM');expect(await running).toBe(0);started.mockRestore();}
 });
 
-async function rawPeer(handler:(req:IncomingMessage,res:ServerResponse)=>void) {
+async function rawPeer(handler:(req:IncomingMessage,res:ServerResponse)=>void, tls: https.ServerOptions = {}) {
   const {home,client,server:config}=setup();
-  const peer=https.createServer({key:privateBytes(config.key),cert:privateBytes(config.cert),ca:privateBytes(config.ca),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},handler);
+  const peer=https.createServer({key:privateBytes(config.key),cert:privateBytes(config.cert),ca:privateBytes(config.ca),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',...tls},handler);
   await new Promise<void>((resolve,reject)=>{peer.once('error',reject);peer.listen(config.socket,resolve);});chmodSync(config.socket,0o600);
   closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
   const received:Buffer[]=[];const actual=https.request;
@@ -172,4 +173,66 @@ it('rejects foreign ownership, hardlinks and malformed private TLS configuration
   const link=join(home,'hardlink');linkSync(client.key,link);
   expect(()=>privateBytes(client.key)).toThrow();expect(()=>privateBytes(link)).toThrow();unlinkSync(link);
   writeFileSync(client.cert,'NOT-A-CERTIFICATE');expect(()=>localSecretSource(client)).toThrow(/^Local secret holder unavailable$/);
+});
+
+it('rejects malformed and non-CA trust material during explicit configuration',()=>{
+  const {home,client}=setup();const file=join(home,'config.json');
+  writeFileSync(file,JSON.stringify({...client,servername:'not a dns name',github:{acme:'github'}}),{mode:0o600});
+  expect(()=>configuredSecretHolder(file)).toThrow(/^Invalid local secret holder configuration$/);
+  writeFileSync(file,JSON.stringify({...client,github:{acme:'github'}}));
+  for(const ca of ['NOT A CA',readFileSync(client.cert,'utf8')]) {
+    writeFileSync(client.ca,ca);
+    expect(()=>configuredSecretHolder(file)).toThrow(/^Invalid local secret holder configuration$/);
+  }
+});
+it('client refuses an authenticated holder limited to TLS 1.2',async()=>{
+  const request=vi.fn((_req:IncomingMessage,res:ServerResponse)=>res.end('SHOULD-NOT-READ'));
+  const {client}=await rawPeer(request,{minVersion:'TLSv1.2',maxVersion:'TLSv1.2'});
+  await expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(request).not.toHaveBeenCalled();
+});
+it('holder refuses a trusted client limited to TLS 1.2',async()=>{
+  const {client,server}=setup();const read=vi.fn(async()=>Buffer.from('SHOULD-NOT-READ'));
+  const holder=await listenLocalHolder(server,{read});closes.push(holder.close);
+  await expect(new Promise<void>((resolve,reject)=>{
+    const request=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),minVersion:'TLSv1.2',maxVersion:'TLSv1.2',agent:false},response=>{response.resume();resolve();});
+    request.on('error',reject);request.end();
+  })).rejects.toThrow();expect(read).not.toHaveBeenCalled();
+});
+it('enforces socket parent and ciphertext directory privacy and ownership',async()=>{
+  const {home,client,server}=setup();const holder=await listenLocalHolder(server,{read:async()=>Buffer.from('TEST')});closes.push(holder.close);
+  const source=localSecretSource(client);
+  const second={...server,socket:join(home,'second.sock')};
+  const rejectedListener=async()=>{
+    const result=await listenLocalHolder(second,{read:async()=>Buffer.from('TEST')}).then(handle=>{closes.push(handle.close);return handle;},error=>error as unknown);
+    expect(result).toBeInstanceOf(Error);
+  };
+  chmodSync(home,0o755);await expect(source.read('github')).rejects.toThrow();await rejectedListener();chmodSync(home,0o700);
+  const foreignDirectory=()=>vi.spyOn(fs,'lstatSync').mockReturnValueOnce(Object.assign(fs.lstatSync(home),{uid:process.getuid!()+1}));
+  let stat=foreignDirectory();await expect(source.read('github')).rejects.toThrow();stat.mockRestore();
+  stat=foreignDirectory();await rejectedListener();stat.mockRestore();
+  const directory=join(home,'values');mkdirSync(directory,{mode:0o700});const identity=join(home,'identity');writeFileSync(identity,await generateIdentity(),{mode:0o600});
+  chmodSync(directory,0o755);expect(()=>ageSecretSource(directory,identity)).toThrow();chmodSync(directory,0o700);
+  stat=foreignDirectory();expect(()=>ageSecretSource(directory,identity)).toThrow();stat.mockRestore();
+  const age=ageSecretSource(directory,identity);chmodSync(directory,0o755);await expect(age.read('github')).rejects.toThrow();chmodSync(directory,0o700);
+});
+it('holder executable composes age and TLS, shuts down cleanly, and redacts startup failures',async()=>{
+  const {home,client,server}=setup();const {run}=await import('../../secret-holder.js');
+  const directory=join(home,'values');mkdirSync(directory,{mode:0o700});
+  const identity=await generateIdentity(),file=join(home,'identity');writeFileSync(file,identity,{mode:0o600});
+  const encrypt=new Encrypter();encrypt.addRecipient(await identityToRecipient(identity));writeFileSync(join(directory,'github.age'),await encrypt.encrypt('EXECUTABLE-FIXTURE'),{mode:0o600});
+  const errors:string[]=[];
+  const running=run(['--socket',server.socket,'--ca',server.ca,'--cert',server.cert,'--key',server.key,'--identity',file,'--values',directory],s=>errors.push(s));
+  try {
+    await vi.waitFor(()=>expect(existsSync(client.socket)).toBe(true));
+    const bytes=await vi.waitFor(()=>localSecretSource(client).read('github'));expect(Buffer.from(bytes).toString()).toBe('EXECUTABLE-FIXTURE');bytes.fill(0);
+  } finally {process.emit('SIGTERM');expect(await running).toBe(0);}
+  expect(existsSync(client.socket)).toBe(false);expect(errors).toEqual([]);
+  const early=run(['--socket',server.socket,'--ca',server.ca,'--cert',server.cert,'--key',server.key,'--identity',file,'--values',directory],s=>errors.push(s));
+  process.emit('SIGINT');expect(await early).toBe(0);expect(existsSync(client.socket)).toBe(false);
+  expect(await run(['--unknown','VALUE-MUST-NOT-LOG'],s=>errors.push(s))).toBe(2);
+  expect(await run([],s=>errors.push(s))).toBe(2);
+  writeFileSync(file,'VALUE-MUST-NOT-LOG');
+  expect(await run(['--socket',server.socket,'--ca',server.ca,'--cert',server.cert,'--key',server.key,'--identity',file,'--values',directory],s=>errors.push(s))).toBe(2);
+  expect(errors).toEqual(Array(3).fill('Local secret holder could not start\n'));
 });

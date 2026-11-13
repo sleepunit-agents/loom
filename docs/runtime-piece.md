@@ -390,3 +390,61 @@ metadata handshake even in staging: it performs no repository/image IO, issues
 no credential and releases no executable input. The daemon must revalidate the
 claimed configuration and grants immediately before outside-effect release;
 these records are not an execution grant or authenticated body proof.
+
+## Owner house grants
+
+`runtime.configureGrants {agent, grants}` stores owner-controlled house grants
+separately from the build locator. Central `agent-setup` authorizes the exact
+agent; agent, runner and service callers cannot change them. This is the grant
+configuration part of old `set-agent`, alongside `runtime.configureHouse`.
+It preserves boxes, model and house settings, and those operations preserve the
+grants. Only references are stored: this operation reads no repository, socket,
+login or secret value and releases no work or credential.
+
+The structured fields are `nested`/`gpu` booleans, optional `repoSecret` store
+name, `secrets` mapping house alias to store name (32), `ports` as `{ip,port}`
+(8, IPv4, 1024–65535, unique port), `tailnets` as `{name,socket}` (4, unique
+name, absolute path ending in `tailscaled.sock` without dot/parent segments,
+including `/tailscaled.sock`),
+`logins` (`claude` and/or `codex`), `scopes`, and `steers`. Missing capabilities
+reset to false/empty; missing `repoSecret` removes that reference. No secret
+value, token, inferred principal or caller-provided scope history is accepted.
+
+Omitted or empty-object `scopes`/`steers` preserve existing restrictions, as an
+untouched old form does; the explicit string `none` clears them. A supplied
+nonempty map replaces the corresponding map. Scopes name house-visible secret
+aliases or `tailnet:<name>`, with up to ten `owner`, project slug or
+`service:<name>` words joined by `+`. New scope names must name an existing
+grant; old scopes survive removal so re-adding a secret does not drop its
+restriction. Internal `scopeStores` remembers those secrets' store names across
+multiple saves. Aliases of one store must have identical scope strings,
+including removed aliases still held by scope history. Aliases of one currently
+granted socket must also have identical scopes. As in the old path, tailnet
+history is by name; removing/renaming a socket needs explicit owner scope
+configuration. Scope strings compare exactly, as before (order matters).
+Map keys are stored in a canonical order; reordering a map on save does not
+change `changedAt` or publish a settings notification.
+
+Steers map a person slug to one through ten project slugs; `owner` is excluded
+from both. These are future release configuration, not proof that a given job
+acts for that person. Login omission preserves the prior list, `[]` grants
+none, and `default` removes the explicit choice; the eventual release path must
+apply the old household-owner/box-ownership defaults and eligibility, never
+interpret omission as a universal grant. CLI text parsing belongs to the
+future generated command client; this endpoint accepts structured lists/maps.
+
+A claim snapshots `repoSecret` with repo/file/branch in `job.made`.
+`configuredHouse(settings)` assembles the effective current build identity;
+`configuredBuild` now compares the repository-secret reference too. A historical
+job without that reference cannot provide a build for a currently credentialed
+repository. Rotating the value behind the same reference is not a different
+build identity, matching the old reference-based comparison. Historical records
+are unchanged; optional JSON fields need no SQL migration.
+
+These grants have no executable consumer yet. Before any input/secret/login or
+host capability is released, the aftercommit daemon must revalidate current
+central policy, house configuration, grants and authenticated job/principal
+provenance, apply scopes/steers, and pass `beforeOutside`. Unknown provenance
+must fail closed. Claim metadata is not a grant to execute; queue acknowledgements
+are not `started`. Actual secret-role lookup, repository access/build discovery,
+body-host lifecycle, dispatch and default-login resolution remain required.

@@ -113,3 +113,42 @@ snapshot/plan in a populated destination, and hold the stopped-home lock for eve
 import. Same-source importer receipts alone do not validate Changes attribution
 on repeat. Independent verify must compare expected and actual content every time,
 not call checksum-only importer repeat paths.
+
+## Independent verification
+
+After `all` closes the new home, run:
+
+```sh
+loom migrate verify --snapshot /copy --home /new-home --plan /edited-plan.json
+```
+
+Omit `--plan` only when `all` used the derived default plan. Verification requires
+that home's full matching migration receipt, including the original stable import
+time. It checks every requested supported piece on every invocation. It never calls
+a write importer, its repeat path, a foundation opener or a schema migration.
+Source-only parsing and normalization are shared with the importers; destination
+comparison is separate and reads physical rows, including IDs, ordering columns,
+timestamps, metadata and complete content. Household envelope membership, duplicate
+token records, credentials, settings and the cookie key are checked too. Checksums
+are compared as metadata, never used instead of content comparison.
+
+Verification holds the existing stopped-daemon gate through a read-only SQLite
+connection and uses a private, read-only buffer for `loom.db`. Stop the new daemon
+first and close other database writers so their WAL is checkpointed: a nonempty
+WAL or rollback journal is refused rather than silently omitted. No file is created,
+repaired, checkpointed or chmodded by verification. Snapshots and destination bytes
+remain unchanged. An interrupted migration is reported as different until `all`
+resumes it, including a committed importer whose coordinator marker was not saved.
+
+The single JSON report has `verified`, `different` or `incomplete` status. Differences
+name the piece and table and give expected/actual row counts (`null` for missing
+schema); record values and credential contents are never printed. Equal counts can
+still mean different content. Exit codes are 0 for verified, 3 for differences or
+unsupported requested pieces, 1 for a safe generic refusal, and 2 for usage errors.
+A future registration needs an independent source projection and physical-row
+comparison here as well as its discovery/schema/runner registration; until then it
+is reported missing. Verification describes the freshly imported state: subsequent
+app writes, minted credentials or project creation are differences. The household
+importer currently creates no sharing projects, so Changes' expected attribution
+uses that empty project set; a later project-import registration must supply its
+source-derived expected projects when added.

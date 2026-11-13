@@ -5,6 +5,7 @@ import { records, type RecordKind } from './records.js';
 import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
 import { installHouseConfiguration } from './houses.js';
+import { installHouseGrants } from './grants.js';
 import { installQueueBody } from './queue.js';
 import { installBoxOperations } from './boxes.js';
 import { installRevokeBox } from './revoke.js';
@@ -20,6 +21,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   installBoxOperations(db, operations, sharing);
   installQueueBody(db, operations, sharing);
   installHouseConfiguration(db, operations, sharing);
+  installHouseGrants(db, operations, sharing);
 
   installRunnerReports(db, operations, sharing);
   installRunnerJobs(db, operations, sharing, options.credentials);

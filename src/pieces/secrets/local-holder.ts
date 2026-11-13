@@ -2,8 +2,10 @@
  * mutual TLS authenticates both peers before a name or value is sent. No TCP.
  */
 import https from 'node:https';
+import fs from 'node:fs';
+import { X509Certificate } from 'node:crypto';
 import { createSecureContext } from 'node:tls';
-import { constants, openSync, fstatSync, readFileSync, closeSync, lstatSync, chmodSync } from 'node:fs';
+import { constants, openSync, fstatSync, readFileSync, closeSync, chmodSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import type { SecretValueSource } from './service.js';
 import { secretName } from './input.js';
@@ -26,13 +28,13 @@ export function privateBytes(path: string, limit = 64 * 1024): Buffer {
 }
 export function assertPrivateDirectory(path: string) {
   if (!isAbsolute(path)) throw failed();
-  const s = lstatSync(path);
+  const s = fs.lstatSync(path);
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
 }
 function privateSocket(socket: string) {
   if (!isAbsolute(socket)) throw failed();
   assertPrivateDirectory(dirname(socket));
-  const s = lstatSync(socket);
+  const s = fs.lstatSync(socket);
   if (!s.isSocket() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
 }
 export interface LocalHolderConfig {
@@ -42,10 +44,21 @@ export interface LocalHolderConfig {
   /** Holder certificate DNS identity, verified by Node TLS. */
   servername: string;
 }
+function tlsMaterial(config: Omit<LocalHolderConfig, 'servername'>) {
+  try {
+    const ca = privateBytes(config.ca), cert = privateBytes(config.cert), key = privateBytes(config.key);
+    // Node's TLS context silently ignores malformed CA input. Require exactly
+    // one dedicated PEM CA, parsed independently before starting either peer.
+    const pem = ca.toString('ascii').trim();
+    if (!/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+\r?\n-----END CERTIFICATE-----$/.test(pem)
+      || !new X509Certificate(pem).ca) throw failed();
+    createSecureContext({ca, cert, key, minVersion:'TLSv1.3'});
+    return {ca, cert, key};
+  } catch { throw failed(); }
+}
 export function localSecretSource(config: LocalHolderConfig): SecretValueSource {
-  const ca = privateBytes(config.ca), cert = privateBytes(config.cert), key = privateBytes(config.key);
+  const {ca, cert, key} = tlsMaterial(config);
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
-  try { createSecureContext({ca, cert, key, minVersion:'TLSv1.3'}); } catch { throw failed(); }
   return { async read(name) {
     if (!secretName.safeParse(name).success) throw failed();
     try { privateSocket(config.socket); } catch { throw failed(); }
@@ -84,7 +97,7 @@ export function localSecretSource(config: LocalHolderConfig): SecretValueSource 
 export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource) {
   if (!isAbsolute(config.socket)) throw failed();
   assertPrivateDirectory(dirname(config.socket));
-  const key = privateBytes(config.key), cert = privateBytes(config.cert), ca = privateBytes(config.ca);
+  const {key, cert, ca} = tlsMaterial(config);
   const server = https.createServer({key, cert, ca, requestCert: true, rejectUnauthorized: true,
     maxHeaderSize: 8192, minVersion: 'TLSv1.3'}, async (req, res) => {
     let bytes: Uint8Array | undefined;
