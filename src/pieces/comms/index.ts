@@ -503,7 +503,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
-  spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:t=>{touched(t);progressChanged(t);}}),
+  spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:(t,seqs)=>{touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));progressChanged(t);}}),
   announcements(member) {
    if(closed)return [];
    // Read routing facts only: no ciphertext is selected or decrypted for push.

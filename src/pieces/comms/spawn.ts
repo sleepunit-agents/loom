@@ -9,7 +9,7 @@ import { thread, saveThread, append, type Thread } from './store.js';
 interface Options {
  db: Db; clock: Clock; key: WordsKey; sharing(): Sharing; closed(): boolean;
  conversation?(id: string): StepConversation | undefined;
- hashText(text: string): string; changed(t: Thread): void;
+ hashText(text: string): string; changed(t: Thread, seqs: number[]): void;
 }
 const input=z.object({conversation:z.string().min(1).max(200),text:z.string().min(1).max(40_000).refine(s=>!!s.trim()),
  parent:z.string().min(1).max(200).optional(),run:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional()}).strict();
@@ -72,12 +72,12 @@ export function spawnCreator(o:Options) {
    saveThread(db,t);
    let n=0;
    const add=(target:Thread,id:string,kind:string)=>append(db,target,{id,kind,sender:agent,at:now,...sealed[n++],record:JSON.stringify(kind==='message'?{delivery:'delivered'}:{})});
-   add(t,firstId,'message');
-   if(parent)add(currentParent[0],`spawn-${i.conversation}`,'reply');
-   if(linked)add(t,`parent-${i.parent}`,'reply');
-   return {thread:place,repeat:false};
+   const childSeqs=[add(t,firstId,'message').seq];
+   const parentSeq=parent?add(currentParent[0],`spawn-${i.conversation}`,'reply').seq:undefined;
+   if(linked)childSeqs.push(add(t,`parent-${i.parent}`,'reply').seq);
+   return {thread:place,repeat:false,childSeqs,parentSeq};
   })();
-  if(!result.repeat){o.changed(thread(db,place)!);if(parent)o.changed(thread(db,parent.id)!);}
+  if(result.childSeqs){o.changed(thread(db,place)!,result.childSeqs);if(parent&&result.parentSeq!==undefined)o.changed(thread(db,parent.id)!,[result.parentSeq]);}
   return {thread:result.thread};
  };
 }

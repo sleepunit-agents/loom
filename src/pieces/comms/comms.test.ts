@@ -18,8 +18,10 @@ it('creates a private background spawn with its supplied conversation, brief and
  const s=await setup({conversation:id=>metadata.get(id)});const parent=await s.open();await s.comms.deliver('art',parent,1);
  const before=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(parent) as {record:string}).record);
  metadata.set(before.conversation,{agent:'art',venue:'loom',version:'one',label:'Parent discussion'});
+ const events=vi.spyOn(s.app.live,'changed');
  const deliveries=s.deliveries.length;
  const created=await s.comms.spawn('art',{conversation:'cv-job',text:'Secret assigned brief',parent:before.conversation,run:'run-job'});
+ expect(events.mock.calls.flatMap(call=>call[0])).toContainEqual({type:'message',id:`${parent}/2`});
  const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(created.thread) as {record:string}).record);
  expect(t).toMatchObject({member:'jonathan',conversation:'cv-job',title:'Private job',titledBy:'agent',working:false,readSeq:0,nextSeq:3});expect(t.firstId).toMatch(/^[a-z2-7]{16}$/);
  const rows=s.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? ORDER BY seq').all(created.thread) as {sender:string;record:string;words:Buffer}[];
