@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
 import { startLoom } from '../../foundation.js';
-import { FakeClock } from '../../core/clock.js';
-import { HouseholdDatabase } from '../../core/household/document.js';
-import { HouseholdRows } from '../../core/household/rows.js';
-import { SharingDatabase } from '../../core/household/sharing.js';
+import { FakeClock } from '../clock.js';
+import { HouseholdDatabase } from './document.js';
+import { HouseholdRows } from './rows.js';
+import { SharingDatabase } from './sharing.js';
 import { fixture, installFixture } from '../../fixture.js';
 import type { Viewer } from '../../policy.js';
 
@@ -29,7 +29,8 @@ it('replaces a member project list through owner policy on every door, preservin
   const { app, h, store } = await setup();
   const household = new HouseholdDatabase(app.db).document();
   const rows = new HouseholdRows<Record<string, unknown>>(app.db, 'projects');
-  rows.put('other', { ...store.project('other'), extra: { retain: true }, members: ['jonathan'] });
+  rows.put('other', { ...store.project('other'), name: 'Other retained name', repositories: ['sleepunit-agents/other'], extra: { retain: true }, members: ['jonathan'] });
+  rows.put('pond', { ...store.project('pond'), name: 'Pond retained name', repositories: ['sleepunit-agents/pond'], extra: { retain: 'pond' } });
   const before = rows.entries();
   const input = { person: 'pollock', projects: ['other', 'other'] };
   for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
@@ -44,8 +45,7 @@ it('replaces a member project list through owner policy on every door, preservin
   expect(rows.entries()).toEqual(before);
   expect(() => store.setMemberProjects('pollock', [])).toThrow('transaction');
   expect(app.operations.call('http', owner, 'household.setMemberProjects', input, 'assign')).toEqual({ ok: true, value: ['other'] });
-  expect(store.project('pond')?.members).toEqual([]);
-  expect(store.project('other')).toMatchObject({ members: ['jonathan', 'pollock'], agents: ['art'], extra: { retain: true } });
+  expect(rows.entries()).toEqual(before.map(([id, row]) => [id, { ...row, members: id === 'pond' ? [] : ['jonathan', 'pollock'] }]));
   expect(new HouseholdDatabase(app.db).document()).toEqual(household);
   expect(store.sharing().members.pollock).toEqual({ owner: false, agents: ['pond-bot'] });
   expect(app.operations.call('mcp', owner, 'household.setMemberProjects', { person: 'pollock', projects: [] }, 'clear')).toEqual({ ok: true, value: [] });
