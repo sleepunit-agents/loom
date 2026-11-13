@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { setupLocal, owner, caller, prompt, value } from '../../__fixtures__/clock-local.js';
 import { exportDatabase, type Result, type Viewer } from '../../core/index.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
@@ -12,10 +12,11 @@ import { filedLocal } from './local-filing.js';
 import { wakes } from './store.js';
 const privateCaller = {...caller, member:'jonathan',people:['jonathan'],project:'pond'};
 const operation = 'clock.scheduleLocalFromWindow';
+const privateNote = 'PRIVATE_WINDOW_NOTE ' + 'complete-note '.repeat(30);
 const timing = {mode:'in',when:'1h'};
 async function allowed(mode:'once'|'standing'='once') {
  const s=await setupLocal(mode);
- const id=value<{id:string}>(s.request(prompt,'PRIVATE_WINDOW_NOTE',privateCaller)).id;
+ const id=value<{id:string}>(s.request(prompt,privateNote,privateCaller)).id;
  value(await s.app.operations.callAsync('socket',owner,mode==='once'?'approvals.answer':'approvals.every-time',{id,action:'allow'},randomUUID(),true));
  const input={approval:id,...timing,...(mode==='standing'?{standing:true}:{})};
  const call=(inputOverride:unknown=input,receipt=randomUUID(),viewer:Viewer=owner,window=true)=>s.app.operations.callAsync('socket',viewer,operation,inputOverride,receipt,window);
@@ -23,10 +24,13 @@ async function allowed(mode:'once'|'standing'='once') {
 }
 it.each(['once','standing'] as const)('recovers %s from the owning window without constructing Caller or changing saved scope',async mode=>{
  const s=await allowed(mode),original=filedLocal(s.app.db,s.id),receipt=randomUUID();
+ const downstream=vi.spyOn(s.app.operations,'call');
  const result=await s.call(s.input,receipt),ack=value<{id:string;due:number}>(result);
+ expect(downstream).toHaveBeenCalledWith('direct',{kind:'service',id:'clock'},mode==='once'?'clock.localSchedule':'clock.localStandingSchedule',{caller:privateCaller,approval:s.id,...timing},expect.any(String));
+ downstream.mockRestore();
  expect(Object.keys(ack).sort()).toEqual(['due','id']);expect(ack.due).toBe(s.clock.now()+3600_000);
  expect(wakes(s.app.db)).toHaveLength(1);
- expect(wakes(s.app.db)[0]).toMatchObject({id:ack.id,prompt,note:'PRIVATE_WINDOW_NOTE',member:'jonathan',project:'pond',by:{kind:'agent',id:'art'},approval:s.id});
+ expect(wakes(s.app.db)[0]).toMatchObject({id:ack.id,prompt,note:privateNote,member:'jonathan',project:'pond',by:{kind:'agent',id:'art'},approval:s.id});
  expect(filedLocal(s.app.db,s.id)).toEqual(original);
  expect(await s.call(s.input,receipt)).toEqual(result);
  await s.restart();
@@ -77,7 +81,7 @@ it('rolls back approval use and wake when the durable window receipt cannot comm
  expect(wakes(s.app.db)).toEqual([]);expect(load(s.app.db)).toEqual(before);
  s.app.db.exec('DROP TRIGGER fail_window_receipt');value(await s.call());expect(wakes(s.app.db)).toHaveLength(1);
 });
-it('keeps time validation, capacity and standing target exclusion ahead of spending',async()=>{
+it('keeps time validation and standing target exclusion ahead of spending',async()=>{
  const s=await allowed('standing');
  expect(await s.call({...s.input,when:'nonsense'})).toMatchObject({ok:false,code:'invalid'});
  expect(load(s.app.db).standing[0].uses).toBe(0);
@@ -127,4 +131,11 @@ it('does not reuse a spent one-shot or consume a turned-off standing job',async(
  const standing=await allowed('standing'),j=load(standing.app.db).standing[0];
  value(await standing.app.operations.callAsync('socket',owner,'approvals.standing-off',{id:j.id},randomUUID(),true));
  expect((await standing.call()).ok).toBe(false);expect(wakes(standing.app.db)).toEqual([]);expect(load(standing.app.db).standing[0].uses).toBe(0);
+});
+
+it('keeps the shared fifty-wake capacity limit ahead of window standing use',async()=>{
+ const s=await allowed('standing');
+ for(let n=0;n<50;n++)value(s.app.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Ordinary work',note:String(n),when:'2h'},randomUUID()));
+ expect(await s.call()).toMatchObject({ok:false,code:'invalid'});
+ expect(wakes(s.app.db)).toHaveLength(50);expect(load(s.app.db).standing[0].uses).toBe(0);
 });
