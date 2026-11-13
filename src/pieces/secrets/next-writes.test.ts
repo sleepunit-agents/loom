@@ -56,13 +56,19 @@ it('normal root uses real authenticated holder, stable keys, metadata and remova
     expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}"`).all())).not.toContain(input.value);
 });
 it('staging makes no holder call before release, retains admission and retries exact input after release',async()=>{
-  const s=await setup(),clock=new FakeClock(),config=configuredSecretWrites(s.writes);
-  const read=vi.spyOn(config.holder,'hasReceipt'),set=vi.spyOn(config.holder,'set');
-  const app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,secretWrites:config,stdout:()=>{}});stops.push(app.close);
+  const s=await setup(),clock=new FakeClock();let config=configuredSecretWrites(s.writes);
+  let read=vi.spyOn(config.holder,'hasReceipt'),set=vi.spyOn(config.holder,'set');
+  let app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,secretWrites:config,stdout:()=>{}});stops.push(async()=>{await app.close();});
   const holder=await startPersistentHolder(s.file);stops.push(holder.close);
   const input={name:'API',writeId:randomUUID(),mode:'add',value:'HELD-SENTINEL'};
   expect(await app.operations.callAsync('http',owner,'secrets.set',input,'held')).toMatchObject({ok:false,code:'unavailable'});
   clock.advance(60_000);await Promise.resolve();
+  expect(read).not.toHaveBeenCalled();expect(set).not.toHaveBeenCalled();
+  await app.close();config=configuredSecretWrites(s.writes);
+  read=vi.spyOn(config.holder,'hasReceipt');set=vi.spyOn(config.holder,'set');
+  app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,secretWrites:config,stdout:()=>{}});
+  clock.advance(60_000);
+  expect(await app.operations.callAsync('http',owner,'secrets.set',input,'held')).toMatchObject({ok:false,code:'unavailable'});
   expect(read).not.toHaveBeenCalled();expect(set).not.toHaveBeenCalled();
   const effect=app.db.prepare("SELECT * FROM core_effects WHERE kind='secret-write'").get() as {id:string;state:string};expect(effect.state).toBe('due');
   expect(app.operations.call('http',owner,'core.releaseEffect',{id:effect.id},'release').ok).toBe(true);
