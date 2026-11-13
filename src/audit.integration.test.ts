@@ -773,9 +773,10 @@ describe('criterion 9: one decrypt path', () => {
     // Comms and the separate secrets holder use their own keys in process. Neither
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(library).toEqual(['comms.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts']);
+    expect(library).toEqual(['comms.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
     expect(code(join(srcDir, 'pieces/comms/crypto.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'pieces/secrets/age-source.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
+    expect(code(join(srcDir, 'pieces/secrets/holder-store.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|AUDIT_FILES\s*\[/);
     expect(code(join(srcDir, 'comms.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     const audit = code(join(srcDir, 'audit.ts'));
