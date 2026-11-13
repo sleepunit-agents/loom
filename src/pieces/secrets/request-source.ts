@@ -47,6 +47,34 @@ const request = z.object({
 const source = z.object({ v: z.literal(1), requests: z.record(requestId, request) }).strict();
 export type LegacySecretRequest = z.infer<typeof request>;
 
+// JSON.parse accepts duplicate keys with last-key-wins semantics. After syntax
+// validation, walk the token stream and reject duplicates at every object depth,
+// comparing decoded keys so escaped aliases cannot hide records or unknown fields.
+function rejectDuplicateKeys(text: string): void {
+  const tokens = text.match(/"(?:\\[\s\S]|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+/g)!;
+  let cursor = 0;
+  const value = (): void => {
+    const token = tokens[cursor++];
+    if (token === '{') {
+      const keys = new Set<string>();
+      if (tokens[cursor] === '}') { cursor++; return; }
+      for (;;) {
+        const key = JSON.parse(tokens[cursor++]) as string;
+        if (keys.has(key)) throw new Error();
+        keys.add(key);
+        cursor++; // colon (the complete text already passed JSON syntax validation)
+        value();
+        if (tokens[cursor++] === '}') return;
+      }
+    }
+    if (token === '[') {
+      if (tokens[cursor] === ']') { cursor++; return; }
+      for (;;) { value(); if (tokens[cursor++] === ']') return; }
+    }
+  };
+  value();
+}
+
 /** Strict stored requests.json parser. Preserves original timestamps, state,
  * service absence and attribution; expired grants remain stored as granted.
  * No filesystem, legacy program, DB, clock or policy calls. Errors reveal no input.
@@ -55,7 +83,10 @@ export type LegacySecretRequest = z.infer<typeof request>;
  */
 export function parseLegacySecretRequests(bytes: Buffer): LegacySecretRequest[] {
   try {
-    const parsed = source.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    const json: unknown = JSON.parse(text);
+    rejectDuplicateKeys(text);
+    const parsed = source.parse(json);
     for (const [key, r] of Object.entries(parsed.requests)) {
       if (key !== r.id || r.carriedFrom === r.id || r.claimedBy === r.id) throw new Error();
     }

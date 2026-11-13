@@ -101,3 +101,18 @@ it('requires original decision time for policy decisions and granted carry, but 
   ]) expect(() => one({ ...base, ...edit })).toThrow(/^Invalid legacy secret requests$/);
   expect(one({ ...base, state: 'revoked', by: 'policy', decided: later, expires })).toHaveLength(1);
 });
+
+it('rejects duplicate keys at every object level including escaped aliases before fields can be discarded', () => {
+  const r = JSON.stringify(base);
+  for (const text of [
+    '{"v":1,"requests":{"q-01234567":{"value":"PRIVATE"}},"requests":{}}',
+    '{"v":2,"v":1,"requests":{}}',
+    `{"v":1,"requests":{"${base.id}":${r},"${base.id}":${r}}}`,
+    `{"v":1,"requests":{"${base.id}":${r.slice(0, -1)},"state":"pending"}}}`,
+    String.raw`{"v":1,"requests":{},"reque\u0073ts":{}}`,
+  ]) expect(() => parseLegacySecretRequests(Buffer.from(text))).toThrow(/^Invalid legacy secret requests$/);
+  // Same keys in distinct rows and token-looking characters in strings are valid.
+  const a = { ...base, why: 'quote " slash \\ braces {} array [] comma , colon : escaped key requests' };
+  const b = { ...a, id: 'q-89abcdef' };
+  expect(parse({ [a.id]: a, [b.id]: b })).toEqual([a, b]);
+});
