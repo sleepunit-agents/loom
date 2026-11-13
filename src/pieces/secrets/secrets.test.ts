@@ -272,7 +272,9 @@ it('Always answers grant eight hours, auto only the named agent, and Stop preser
   expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-21' })).toBe(true);
   expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-20' })).toBe(false);
   expect(call(agent, 'requestHouse', { ...input, scope: { house: 'h-23' } })).toMatchObject({ ok: true, value: { state: 'pending' } });
-  clock.advance(480 * 60_000);
+  clock.advance(480 * 60_000 - 1);
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(true);
+  clock.advance(1);
   expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(false);
   expect(call(agent, 'requestHouse', { ...input, why: '<>[]{}\u0000' })).toMatchObject({ ok: false, code: 'invalid' });
 });
