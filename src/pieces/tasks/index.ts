@@ -12,14 +12,20 @@ const verbOf = (registered: string, input: Record<string, unknown>): string => r
 const scope = (task: ScopedTask): RecordScope => ({ type: 'task', ...(task.project !== undefined ? { project: task.project } : {}), ...(task.agent !== undefined ? { agent: task.agent } : {}) });
 const get = (state: StoreState, id: unknown) => state.tasks.find(t => t.id === id) as ScopedTask | undefined;
 const scopeFields = (raw: object) => { const value = raw as Record<string, unknown>; return Object.fromEntries(['project', 'agent'].filter(k => value[k] !== undefined).map(k => [k, value[k]])); };
+/** Resolve create scope identically before policy and persistence. */
+function createScope(state: StoreState, viewer: Viewer, input: Record<string, unknown>) {
+  const parent = get(state, input.parent);
+  const fields: Record<string, unknown> = { ...(parent?.project !== undefined ? { project: parent.project } : {}), ...scopeFields(input) };
+  if (viewer.kind === 'agent' && fields.project === undefined && fields.agent === undefined) fields.agent = viewer.id;
+  return fields;
+}
 /** Preserve domain errors for malformed references; hidden references are denied. */
 function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, unknown>, sharing: Sharing): boolean {
   const state = load(db), name = `tasks.${verb}`;
   if (viewer.kind === 'service' && !mayAct(viewer, { type: 'task' }, sharing, 'act', name)) return false;
   const access = (id: unknown, write: boolean) => { const t = get(state, id); return !t || (write ? mayAct(viewer, scope(t), sharing, 'act', name) : maySee(viewer, scope(t), sharing)); };
   if (verb === 'create') {
-    const parent = get(state, input.parent);
-    const target = { type: 'task', ...(parent?.project !== undefined ? { project: parent.project } : {}), ...scopeFields(input) };
+    const target = { type: 'task', ...createScope(state, viewer, input) };
     if (!access(input.parent, true) || !mayCreate(viewer, target, sharing, name)) return false;
     // A linkage idempotency hit must not reveal a hidden existing id.
     const hit = state.tasks.find(t => input.specItemRef !== undefined && t.specItemRef === input.specItemRef && t.criterionId === input.criterionId);
@@ -80,7 +86,7 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
       if ([...Object.values(scopeFields(input)), ...Object.values(scopeSet)].some(v => typeof v !== 'string')) return { result: { ok: false, errors: ['E_BAD_FIELD'] } };
       const { result, state } = apply(held, command);
       if (result.ok === true && !reads.has(verb)) {
-        if (verb === 'create' && result.created) Object.assign(get(state, result.id)!, get(before, command.parent)?.project !== undefined ? { project: get(before, command.parent)!.project } : {}, scopeFields(input));
+        if (verb === 'create' && result.created) Object.assign(get(state, result.id)!, createScope(before, ctx.viewer, input));
         if (verb === 'update') {
           const task = get(state, command.id)!;
           for (const [key, value] of Object.entries(scopeSet)) { if (value === '') delete task[key as 'project' | 'agent']; else task[key as 'project' | 'agent'] = value as string; }
