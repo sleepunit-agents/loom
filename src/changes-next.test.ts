@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +10,12 @@ import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { change } from './pieces/changes/fixture.js';
 import { replaceChanges } from './pieces/changes/store.js';
+
+function socketMessages(socket:WebSocket) {
+ const messages:unknown[]=[],waiters:((value:unknown)=>void)[]=[];
+ socket.on('message',data=>{const value=JSON.parse(String(data));const waiter=waiters.shift();if(waiter)waiter(value);else messages.push(value);});
+ return ()=>messages.length?Promise.resolve(messages.shift()):new Promise(resolve=>waiters.push(resolve));
+}
 
 it('next installs Changes without a fixture and reads current household project scope over HTTP', async () => {
  const home=mkdtempSync(join(tmpdir(),'changes-next-'));
@@ -36,4 +44,56 @@ it('next installs Changes without a fixture and reads current household project 
   expect(await call('stranger','list')).toMatchObject({ok:true,value:[]});
   expect(loom.operations.has('changes.commit-sync')).toBe(false);
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('next reprojects account assignment and clearing over HTTP and live without granting project access', async () => {
+ const home=mkdtempSync(join(tmpdir(),'changes-accounts-next-'));
+ const loom=await startLoom({home,next:true,clock:new FakeClock(0),authenticate:req=>({viewer:{kind:'member',id:String(req.headers.authorization)},valid:()=>true})});
+ const owner={kind:'member' as const,id:'jonathan'};
+ let socket:WebSocket|undefined,ownerSocket:WebSocket|undefined;
+ try {
+  loom.db.transaction(()=>{
+   new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art','mark'],members:[{person:'jonathan',role:'owner',agents:'*'},{person:'pollock',role:'member',agents:['art']}]});
+   new SharingDatabase(loom.db,home).create({slug:'private',name:'Private',repositories:['secret/app'],members:[],agents:[]});
+   replaceChanges(loom.db,[change({project:'stale',agent:'mark',mine:true,author:{login:'Art-Bot'}}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,agent:'art'})]);
+  })();
+  let serial=0;
+  const assign=(agent:string,github:string[])=>loom.operations.call('direct',owner,'household.setAgentAccounts',{agent,accounts:{github}},`accounts-${++serial}`);
+  const list=async()=>{
+   const response=await fetch(`${loom.url}/api/changes/list`,{method:'POST',headers:{authorization:'pollock','content-type':'application/json'},body:JSON.stringify({input:{}})});
+   return response.json();
+  };
+  const show=()=>loom.operations.call('direct',owner,'changes.show',{id:change().id});
+  expect(show()).toMatchObject({ok:true,value:{mine:false}});
+  expect((show() as {value:{agent?:string}}).value.agent).toBeUndefined();
+  expect(await list()).toMatchObject({ok:true,value:[]});
+  socket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'pollock'}});
+  const next=socketMessages(socket);
+  await once(socket,'open');socket.send(JSON.stringify({kind:'subscribe',type:'change'}));
+  expect(await next()).toMatchObject({kind:'set',records:[]});
+  expect(assign('art',['ART-BOT'])).toMatchObject({ok:true});
+  expect(await list()).toMatchObject({ok:true,value:[{id:change().id,agent:'art'}]});
+  expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
+  expect((await list()).value).toHaveLength(1); // Agent metadata cannot grant private project access.
+  expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:false}});
+  const answer=await fetch(`${loom.url}/api/changes/answer`,{method:'POST',headers:{authorization:'jonathan','content-type':'application/json'},body:JSON.stringify({id:'uncomposed-answer',input:{id:change().id,head:change().head.id,action:'yes'}})});
+  expect(await answer.json()).toMatchObject({ok:false,code:'unavailable',message:'Approvals is unavailable'});
+  expect(assign('art',[])).toMatchObject({ok:true});
+  expect(await next()).toMatchObject({kind:'del',id:change().id});
+  expect(await list()).toMatchObject({ok:true,value:[]});
+  ownerSocket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'jonathan'}});
+  const ownerNext=socketMessages(ownerSocket);
+  await once(ownerSocket,'open');ownerSocket.send(JSON.stringify({kind:'subscribe',type:'change'}));
+  expect(await ownerNext()).toMatchObject({kind:'set',records:[{id:change().id},{id:'github:secret/app#4'}]});
+  expect(assign('mark',['art-bot'])).toMatchObject({ok:true});
+  expect(await ownerNext()).toMatchObject({kind:'put',record:{id:change().id,agent:'mark'}});
+  await ownerNext(); // The second stored row is invalidated by the same account edit.
+  expect(show()).toMatchObject({ok:true,value:{agent:'mark'}});
+  expect(await list()).toMatchObject({ok:true,value:[]});
+  loom.db.transaction(()=>new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art'],members:[{person:'jonathan',role:'owner',agents:'*'}]}))();
+  expect((show() as {value:{agent?:string}}).value.agent).toBeUndefined();
+ } finally {
+  for(const ws of [socket,ownerSocket])if(ws&&ws.readyState!==WebSocket.CLOSED){const closed=once(ws,'close');ws.terminate();await closed;}
+  await loom.close();rmSync(home,{recursive:true,force:true});
+ }
 });
