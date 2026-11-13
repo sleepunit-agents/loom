@@ -26,7 +26,7 @@ async function setup(preinstalled = false, noFiling = false) {
     at:'2026-11-13 07:00:00', created:'2026-11-13 05:00:00', prompt:'Review my queue', note:'unknown work', origin:'agent:art', fails:3 })).join('\n'));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const access = fixtureSharing();
-  access.services.approvals = {types:['approval'],operations:['approvals.piece-request']};
+  access.services.approvals = {types:['approval'],operations:['approvals.piece-request','approvals.piece-group-vouch']};
   access.services.clock = {types:['approval'],operations:['approvals.piece-request']};
   let first = true;
   const options = {home, clock, next:true, authenticate: (req: import('node:http').IncomingMessage) => ({viewer:req.headers['x-fixture-agent'] ? {kind:'agent' as const,id:'art'} : owner, valid:()=>true}), sharing:()=>access, stdout:()=>{}, install(app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
@@ -51,6 +51,11 @@ async function setup(preinstalled = false, noFiling = false) {
   return { get app(){return app;}, call,value,change,request,clock,access,
     async restart(){await app.close();app=await startLoom(options);} };
 }
+const automatic = (s: Awaited<ReturnType<typeof setup>>, id: string) => {
+  const w = wake(s.app.db,id)!;
+  s.change(id,{legacy:{...w.legacy,for_why:'none'}});
+};
+const cards = (s: Awaited<ReturnType<typeof setup>>) => load(s.app.db).approvals;
 const settle = async () => {for(let n=0;n<6;n++)await Promise.resolve();};
 it('adopts unknown imports with the actual owner and retains words, deadline, archival data and retry receipt across restart', async () => {
   const s = await setup(), before = wake(s.app.db,ids[0])!;
@@ -381,4 +386,125 @@ it('uses the card space for the executable excerpt when no note was saved', asyn
   expect(details.endsWith('...')).toBe(true);
   expect(details).not.toContain('\n');
   expect(details.length).toBeLessThanOrEqual(1000);
+});
+
+it('automatically groups only unsteered own-agent candidates, refreshes for a new candidate, and keeps held rows unchanged', async () => {
+  const s = await setup(); automatic(s,ids[0]);
+  const before = wakes(s.app.db);
+  s.clock.advance(0); await settle();
+  const first = cards(s)[0];
+  expect(first).toMatchObject({state:'pending',target:`art:${ids[0]}`,who:{where:"loom's clock"},for:'owner'});
+  expect(first.details).toContain('runs: Review my queue');
+  expect(wakes(s.app.db)).toEqual(before);
+  s.clock.advance(60_000); await settle();
+  expect(cards(s)).toHaveLength(1);
+  automatic(s,ids[1]);
+  const updated = wakes(s.app.db);
+  s.clock.advance(60_000); await settle();
+  expect(cards(s).find(a=>a.id===first.id)).toMatchObject({state:'withdrawn'});
+  const second = cards(s).find(a=>a.state==='pending')!;
+  expect(second.target).toBe(`art:${ids.slice(0,2).join(',')}`);
+  expect(wakes(s.app.db)).toEqual(updated);
+  expect(s.call('approvals.answer',{id:second.id,action:'allow'}).ok).toBe(true);
+  for (const id of ids.slice(0,2)) expect(wake(s.app.db,id)).toMatchObject({by:owner,state:'pending'});
+});
+it('never asks denied ids again after restart and lets later candidates through', async () => {
+  const s = await setup(); automatic(s,ids[0]);
+  s.clock.advance(0); await settle();
+  expect(s.call('approvals.answer',{id:cards(s)[0].id,action:'deny'}).ok).toBe(true);
+  automatic(s,ids[1]);
+  await s.restart(); s.clock.advance(0); await settle();
+  expect(cards(s).filter(a=>a.state==='pending').map(a=>a.target)).toEqual([`art:${ids[1]}`]);
+  expect(wake(s.app.db,ids[0])).toMatchObject({state:'held',hold:'provenance'});
+});
+it('automatic selection excludes unverified, steered, other-origin, people, private and invalid executable imports', async () => {
+  const s = await setup(), original = wake(s.app.db,ids[0])!;
+  for (const patch of [
+    {legacy:{...original.legacy,for_why:'unverified'}},
+    {legacy:{...original.legacy,for_why:'steered'}},
+    {legacy:{...original.legacy,for_why:'none',origin:'agent:mark'}},
+    {legacy:{...original.legacy,for_why:'none',for_people:['someone']}},
+    {legacy:{...original.legacy,for_why:'none',member:'someone'}},
+    {legacy:{...original.legacy,for_why:'none',project:'private'}},
+    {legacy:{...original.legacy,for_why:'none'},member:'jonathan'},
+    {legacy:{...original.legacy,for_why:'none'},project:'pond'},
+    {legacy:{...original.legacy,for_why:'none'},prompt:undefined,file:'../escape'},
+  ]) {
+    s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(original),ids[0]);
+    s.change(ids[0],patch);
+    s.clock.advance(60_000); await settle();
+    expect(cards(s)).toEqual([]);
+  }
+});
+it('retains explicitly asked nonautomatic ids while adding automatic candidates, and drops an empty unanswered group', async () => {
+  const s = await setup();
+  const explicit = s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`},{kind:'agent',id:'art'});
+  automatic(s,ids[1]); s.clock.advance(0); await settle();
+  expect(cards(s).find(a=>a.id===explicit.id)).toMatchObject({state:'withdrawn'});
+  const group = cards(s).find(a=>a.state==='pending')!;
+  expect(group.target).toBe(`art:${ids.slice(0,2).join(',')}`);
+  for (const id of ids.slice(0,2)) s.change(id,{state:'cancelled'});
+  s.clock.advance(60_000); await settle();
+  expect(cards(s).find(a=>a.id===group.id)).toMatchObject({state:'withdrawn'});
+});
+it('rolls back replacement and audit if grouped filing cannot commit', async () => {
+  const s = await setup(); automatic(s,ids[0]); s.clock.advance(0); await settle();
+  const before = load(s.app.db); automatic(s,ids[1]);
+  const receipts = () => s.app.db.prepare("SELECT * FROM core_operations WHERE name='approvals.piece-group-vouch' ORDER BY id").all();
+  const beforeReceipts = receipts(), witnessed: string[] = [];
+  s.app.db.function('group_rollback_witness',(state: string)=>{witnessed.push(state);return 1;});
+  const first = before.approvals[0].id;
+  s.app.db.exec(`CREATE TRIGGER fail_group BEFORE INSERT ON approvals_approvals WHEN NEW.id <> '${first}' BEGIN
+    SELECT group_rollback_witness(json_extract((SELECT record FROM approvals_approvals WHERE id='${first}'),'$.state'));
+    SELECT RAISE(ABORT,'fixture after withdrawal'); END`);
+  s.clock.advance(60_000); await settle();
+  expect(witnessed).toEqual(['withdrawn']);
+  expect(load(s.app.db)).toEqual(before); expect(receipts()).toEqual(beforeReceipts);
+  s.app.db.exec('DROP TRIGGER fail_group');
+  s.clock.advance(60_000); await settle();
+  expect(cards(s).find(a=>a.state==='pending')?.target).toBe(`art:${ids.slice(0,2).join(',')}`);
+});
+it('caps automatic groups at twelve, leaves overflow held, and asks it after the first card is answered', async () => {
+  const s = await setup();
+  const base = wake(s.app.db,ids[0])!;
+  s.change(ids[0],{state:'cancelled'});
+  const extra = Array.from({length:14},(_,n)=>`w-${n.toString(16).padStart(6,'0')}`);
+  for (const id of extra) s.app.db.prepare('INSERT INTO clock_wakes(id,record,changed_at) VALUES (?,?,?)').run(id,JSON.stringify({...base,id,legacy:{...base.legacy,for_why:'none'}}),s.clock.now());
+  s.clock.advance(0); await settle();
+  const first = cards(s)[0];
+  expect(first.target).toBe(`art:${extra.slice(0,12).join(',')}`);
+  expect(first.details!.length).toBeLessThanOrEqual(1000);
+  for (const id of extra.slice(0,12)) expect(first.details).toContain(`${id} fires`);
+  expect(wake(s.app.db,extra[12])).toMatchObject({state:'held',hold:'provenance'});
+  expect(s.call('approvals.answer',{id:first.id,action:'deny'}).ok).toBe(true);
+  s.clock.advance(60_000); await settle();
+  expect(cards(s).find(a=>a.state==='pending')?.target).toBe(`art:${extra.slice(12).join(',')}`);
+});
+it('fails closed when the automatic filing operation lacks service access and refuses body calls', async () => {
+  const s = await setup(); automatic(s,ids[0]);
+  const before = wakes(s.app.db);
+  s.access.services.approvals.operations = ['approvals.piece-request'];
+  s.clock.advance(0); await settle();
+  expect(cards(s)).toEqual([]); expect(wakes(s.app.db)).toEqual(before);
+  s.access.services.approvals.operations.push('approvals.piece-group-vouch');
+  expect(s.call('approvals.piece-group-vouch',{caller:{who:{agent:'art',where:"loom's clock"},for:'owner'},candidates:[]},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'denied'});
+  expect(cards(s)).toEqual([]); expect(wakes(s.app.db)).toEqual(before);
+});
+
+it('skips unsupported imported ids without blocking valid automatic candidates', async () => {
+  const s = await setup(); automatic(s,ids[0]);
+  const base = wake(s.app.db,ids[0])!;
+  const bad={...base,id:'w-legacy'};
+  s.app.db.prepare('INSERT INTO clock_wakes(id,record,changed_at) VALUES (?,?,?)').run(bad.id,JSON.stringify(bad),s.clock.now());
+  s.clock.advance(0); await settle();
+  expect(cards(s).map(a=>a.target)).toEqual([`art:${ids[0]}`]);
+  expect(wake(s.app.db,bad.id)).toEqual(bad);
+});
+it('keeps grouping direct-only even for an otherwise authorized service', async () => {
+  const s=await setup(), input={caller:{who:{agent:'art',where:"loom's clock"},for:'owner'},candidates:[]};
+  const viewer: Viewer={kind:'service',id:'approvals'};
+  expect(s.app.operations.call('direct',viewer,'approvals.piece-group-vouch',input,randomUUID())).toMatchObject({ok:true,value:null});
+  for(const door of ['http','socket','mcp'] as const)
+    expect(s.app.operations.call(door,viewer,'approvals.piece-group-vouch',input,randomUUID())).toMatchObject({ok:false});
+  expect(cards(s)).toEqual([]);
 });

@@ -10,7 +10,7 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
-import { vouchable, askable, vouchDetails } from './vouch.js';
+import { vouchable, askable, automaticVouch, vouchDetails, vouchWords } from './vouch.js';
 import type { VouchFiling } from './dependencies/filing.js';
 import { vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
@@ -356,6 +356,21 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   function pump() {
     if (closed) return;
     disarm();
+    // Selection restricts archived imports; it never creates an authenticated Viewer.
+    // Filing runs in Approvals' transaction, and cannot adopt or dispatch any row.
+    if (options.vouchFiling?.group) {
+      const rows = wakes(db).filter(w => {
+        const viewer: Viewer = {kind:'agent',id:w.agent};
+        if (!vouchOf(`${w.agent}:${w.id}`) || !askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
+        try { newWork(w); return true; }
+        catch (e) { if (e instanceof OperationError && e.code === 'invalid') return false; throw e; }
+      });
+      for (const agent of new Set(wakes(db).map(w=>w.agent))) {
+        options.vouchFiling.group(agent,rows.filter(w=>w.agent===agent).map(w=>({
+          ...vouchWords(w), automatic:automaticVouch(w),
+        })));
+      }
+    }
     const checkAnswers = parksChanged; parksChanged = false;
     for (const agent of deadmanAgents) if (!nonempty(agent))
       operations.call('direct', { kind: 'agent', id: agent }, 'clock.deadman', { agent }, randomUUID());
@@ -370,6 +385,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       });
     }
     const due = wakes(db).filter(w => w.state === 'pending' || w.state === 'parked').map(w => w.due);
+    if (options.vouchFiling?.group && wakes(db).some(w=>vouchable(w))) due.push(clock.now() + 60_000);
     if (due.length) { disarm(); cancelTimer = clock.at(Math.min(...due), pump); }
   }
   function holdDenied(w: Wake, uncertain = false) {
