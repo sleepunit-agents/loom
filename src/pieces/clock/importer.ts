@@ -11,6 +11,7 @@ type Row = Record<string, unknown>;
 function object(v: unknown): Row { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Invalid legacy object'); return v as Row; }
 function string(v: unknown, name: string): string { if (typeof v !== 'string' || !v.trim()) throw new Error(`Invalid legacy ${name}`); return v; }
 function stamp(v: unknown): number { return parseAt(string(v, 'timestamp'), 0); }
+export const legacyClockAgentFiles = ['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json'] as const;
 const importedBy: Viewer = { kind: 'runner', id: 'clock-import:unverified' };
 function work(r: Row, agent: string): Work {
   const prompt = r.prompt === undefined ? undefined : string(r.prompt, 'prompt');
@@ -62,7 +63,7 @@ export function readClockImport(from: string, now: number, options: { afterSnaps
       if (stat.isSymbolicLink()) throw new Error('Clock source contains a symbolic link');
       if (!stat.isDirectory()) continue;
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(agent)) throw new Error(`Invalid source agent: ${agent}`);
-      for (const name of ['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json']) read(`${agent}/${name}`);
+      for (const name of legacyClockAgentFiles) read(`${agent}/${name}`);
     }
     return files;
   };

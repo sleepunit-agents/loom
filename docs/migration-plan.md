@@ -75,8 +75,10 @@ named `changes.json`. Memories databases without conversation tables are not
 Attention sources; missing required tables or importer-read columns, and duplicate
 conversation ids, are errors. Optional legacy columns and absent optional tables
 remain allowed; each importer still validates complete source row content. These are data-layout conventions, not a search through legacy
-programs or settings for live paths. A nonstandard Changes export can be placed
-in the old home under one of these names before snapshotting by its coordinator.
+programs or settings for live paths. External clock, flat Art wake, approvals and Changes sources can be captured with
+the explicit roots in `docs/migration-snapshot.md`. A nonstandard Changes export
+uses `snapshot --changes FILE`; no source-home writes are needed. The copied
+`changes/changes.json` must be valid v1 data or preparation refuses it.
 Multiple clock, approvals or Changes candidates require an explicit plan choosing
 one; preparation never silently chooses a candidate. `migrationSnapshotChecksum`
 can supply the snapshot field when constructing such an explicit plan.

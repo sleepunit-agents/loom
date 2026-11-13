@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
 import { createMigrationRegistry } from './migration-registry.js';
+import { legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import type { IOStreams } from './io.js';
 
 export interface SnapshotManifest {
@@ -69,17 +70,27 @@ export interface SnapshotInventory {
   followed: NonNullable<SnapshotManifest['followed']>;
 }
 /** Inventory only: no SQLite connection, destination creation or source writes. */
-export function inventorySnapshot(from: string, to: string, tasks?: string): SnapshotInventory {
-  const source = guarded('.', 'source home must exist', () => realpathSync(from));
+export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string }
+export function inventorySnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): SnapshotInventory {
+  let source = guarded('.', 'source home must exist', () => realpathSync(from));
+  let prefix = 'home';
   const target = destinationPath(to);
   if (within(target, source) || within(source, target)) refusal('<destination>', 'source and destination must be separate');
   if (existsSync(target)) refusal('<destination>', 'destination already exists');
   const importerPatterns = createMigrationRegistry().order().importers.flatMap(entry => [...(entry.sourceReads ?? [])]);
-  const patterns = [...importerPatterns];
+  let patterns: readonly string[] = [...importerPatterns, '**/*.key', '**/review.pub', '**/keys/**'];
   // Key material stays in files even when no current importer consumes it.
-  patterns.push('**/*.key', '**/review.pub', '**/keys/**');
   const inventory: SnapshotInventory = { consistency: 'per-database', copies: [], skipped: [], followed: [] };
   const seen = new Set<string>();
+  let rootId = 0;
+  const claims = new Map<string, number>();
+  const addCopy = (path: string, input: string, bytes: number) => {
+    if (claims.has(path) && claims.get(path) !== rootId) refusal('<roots>', 'source roots collide in the snapshot');
+    claims.set(path, rootId);
+    const previous = inventory.copies.find(file => file.path === path);
+    if (previous && previous.source !== input) refusal('<roots>', 'source roots collide in the snapshot');
+    if (!previous) inventory.copies.push({path, bytes, source: input});
+  };
   const skipRule = (path: string, directory: boolean, input: string): string | undefined => {
     const parts = path.split('/');
     if (parts.slice(0, directory ? undefined : -1).some(p => excluded.has(p)) || (path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')) return 'installed program or runtime directory';
@@ -88,47 +99,71 @@ export function inventorySnapshot(from: string, to: string, tasks?: string): Sna
     if (/(?:^|[/.])(?:[^/]*\.)?lock$/.test(path)) return 'lock file';
     return undefined;
   };
+  const label = (path: string) => prefix === 'home' ? path : `${prefix}/${path}`;
   const visit = (input: string, logical = relative(source, input).split(sep).join('/') || '.', ancestors = new Set<string>()): void => {
     let path = relative(source, input).split(sep).join('/') || '.';
     const declaredAlias = patterns.some(pattern => matches(logical, pattern));
     let stat = guarded(path, 'cannot inspect source entry', () => lstatSync(input));
     const fileAlias = stat.isSymbolicLink();
     const excludedRule = !stat.isSymbolicLink() && (skipRule(logical, stat.isDirectory(), input) ?? skipRule(path, stat.isDirectory(), input));
-    if (excludedRule) { inventory.skipped.push({ path, rule: excludedRule, bytes: stat.isFile() ? stat.size : null }); return; }
+    if (excludedRule) { inventory.skipped.push({ path: label(path), rule: excludedRule, bytes: stat.isFile() ? stat.size : null }); return; }
     if (stat.isSymbolicLink()) {
       let real: string;
-      try { real = realpathSync(input); } catch { inventory.skipped.push({ path, rule: 'dangling or unresolved symlink', bytes: null }); return; }
-      if (!within(real, source)) { inventory.skipped.push({ path, rule: 'symlink outside source home', bytes: null }); return; }
+      try { real = realpathSync(input); } catch { inventory.skipped.push({ path: label(path), rule: 'dangling or unresolved symlink', bytes: null }); return; }
+      if (!within(real, source)) { inventory.skipped.push({ path: label(path), rule: 'symlink outside source home', bytes: null }); return; }
       const realPath = relative(source, real).split(sep).join('/');
       stat = guarded(path, 'cannot inspect resolved data', () => lstatSync(real));
-      if (skipRule(realPath, stat.isDirectory(), real) || skipRule(logical, stat.isDirectory(), real)) { inventory.skipped.push({ path, rule: 'symlink to excluded program, runtime or coordination entry', bytes: null }); return; }
-      inventory.followed.push({ path, realPath });
+      if (skipRule(realPath, stat.isDirectory(), real) || skipRule(logical, stat.isDirectory(), real)) { inventory.skipped.push({ path: label(path), rule: 'symlink to excluded program, runtime or coordination entry', bytes: null }); return; }
+      inventory.followed.push({ path: label(path), realPath: label(realPath) });
       input = real; path = realPath;
     }
     if (stat.isDirectory()) {
-      if (ancestors.has(input)) { inventory.skipped.push({path: logical, rule: 'cyclic directory alias', bytes: null}); return; }
-      const visitKey = `${input}\0${logical}`;
+      if (ancestors.has(input)) { inventory.skipped.push({path: label(logical), rule: 'cyclic directory alias', bytes: null}); return; }
+      const visitKey = `${rootId}\0${input}\0${logical}`;
       if (seen.has(visitKey)) return;
       seen.add(visitKey);
       const parents = new Set(ancestors).add(input);
       for (const name of guarded(path, 'cannot list data directory', () => readdirSync(input).sort())) visit(join(input, name), logical === '.' ? name : `${logical}/${name}`, parents);
-    } else if (!stat.isFile()) inventory.skipped.push({ path, rule: 'special file (socket, pipe or device)', bytes: null });
+    } else if (!stat.isFile()) inventory.skipped.push({ path: label(path), rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
-      if (!inventory.copies.some(file => file.path === `home/${path}`)) inventory.copies.push({ path: `home/${path}`, bytes: stat.size, source: input });
+      addCopy(`${prefix}/${path}`, input, stat.size);
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
-      if (fileAlias && logical !== path && importerPatterns.some(pattern => matches(logical, pattern)) && !inventory.copies.some(file => file.path === `home/${logical}`)) inventory.copies.push({path:`home/${logical}`,bytes:stat.size,source:input});
-      inventory.skipped = inventory.skipped.filter(entry => entry.path !== path);
+      const preserveAlias = prefix === 'home' ? fileAlias && importerPatterns.some(pattern => matches(logical, pattern)) : declaredAlias;
+      if (logical !== path && preserveAlias) {
+        addCopy(`${prefix}/${logical}`, input, stat.size);
+        if (!inventory.followed.some(alias => alias.path === label(logical) && alias.realPath === label(path))) inventory.followed.push({path: label(logical), realPath: label(path)});
+      }
+      inventory.skipped = inventory.skipped.filter(entry => entry.path !== label(path));
     }
-    else if (!inventory.copies.some(file => file.source === input)) inventory.skipped.push({ path, rule: 'not declared by a registered importer or key rule', bytes: stat.size });
+    else if (!inventory.copies.some(file => file.source === input)) inventory.skipped.push({ path: label(path), rule: 'not declared by a registered importer or key rule', bytes: stat.size });
   };
   visit(source);
+  const clockFiles = legacyClockAgentFiles;
+  for (const [name, supplied] of Object.entries(roots)) {
+    if (!supplied) continue;
+    rootId++;
+    source = guarded(`<${name}>`, 'source root must exist', () => realpathSync(supplied));
+    if (within(target, source) || within(source, target)) refusal(`<${name}>`, 'source and destination must be separate');
+    const stat = guarded(`<${name}>`, 'cannot inspect source root', () => lstatSync(source));
+    if (name === 'changes') {
+      if (!stat.isFile()) refusal('<changes>', 'Changes snapshot must be a regular file');
+      addCopy('changes/changes.json', source, stat.size);
+      continue;
+    }
+    if (!stat.isDirectory()) refusal(`<${name}>`, 'source root must be a directory');
+    prefix = name === 'wake' ? 'clock/art' : name;
+    patterns = name === 'clock' ? ['lanes.json', 'fire', ...clockFiles.map(file => `*/${file}`)]
+      : name === 'wake' ? clockFiles : ['approvals.json', 'rules.json', 'audit.jsonl'];
+    // Each root has its own alias confinement boundary; never follow a link to another root.
+    visit(source);
+  }
   if (tasks) {
     const input = guarded('<tasks>', 'taskstore must exist', () => realpathSync(tasks));
     const stat = guarded('<tasks>', 'cannot inspect taskstore', () => lstatSync(input));
     if (!stat.isFile()) refusal('<tasks>', 'taskstore must be a regular file');
     if (within(input, target)) refusal('<tasks>', 'taskstore and destination must be separate');
-    inventory.copies.push({ path: 'tasks/store.db', bytes: stat.size, source: input });
+    rootId++; addCopy('tasks/store.db', input, stat.size);
   }
   inventory.copies.sort((a,b) => a.path.localeCompare(b.path));
   return inventory;
@@ -136,8 +171,8 @@ export function inventorySnapshot(from: string, to: string, tasks?: string): Sna
 /** SQLite backup gives each database a committed view while writers run.
  * JSON files are copied individually: a rehearsal can be seconds stale across stores.
  * Cross-store consistency requires stopping old services for the final move. */
-export async function createSnapshot(from: string, to: string, tasks?: string): Promise<SnapshotManifest> {
-  const inventory = inventorySnapshot(from, to, tasks), target = destinationPath(to);
+export async function createSnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): Promise<SnapshotManifest> {
+  const inventory = inventorySnapshot(from, to, tasks, roots), target = destinationPath(to);
   guarded('<destination>', 'cannot create destination parent', () => mkdirSync(dirname(target), { recursive: true }));
   guarded('<destination>', 'cannot reserve fresh private destination', () => mkdirSync(target, { mode: 0o700 }));
   const reserved = lstatSync(target);
@@ -154,7 +189,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     destinationPath(join(target, 'home'));
     guarded('.', 'cannot create copied home', () => mkdirSync(join(target, 'home'), { mode: 0o700 }));
     for (const file of inventory.copies) {
-      const path = file.path.startsWith('home/') ? file.path.slice(5) : '<tasks>';
+      const path = file.path.startsWith('home/') ? file.path.slice(5) : file.path;
       // Recheck confinement/type immediately before reading; never copy symlink bytes.
       guarded(path, 'source data moved or changed type during snapshot', () => {
         if (realpathSync(file.source) !== file.source || !lstatSync(file.source).isFile()) refusal(path, 'source data moved or changed type during snapshot');
@@ -217,19 +252,20 @@ export function readSnapshot(dir: string): SnapshotManifest {
   }
   return manifest;
 }
-const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] --to <new-directory> [--dry-run]\n';
+const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] --to <new-directory> [--dry-run]\n';
 export async function migrateSnapshot(argv: string[], io: IOStreams): Promise<number> {
   let values;
-  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
+  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
   catch { io.stderr(usage); return 2; }
   if (!values.from || !values.to) { io.stderr(usage); return 2; }
   try {
+    const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes };
     if (values['dry-run']) {
-      const inventory = inventorySnapshot(values.from, values.to, values.tasks);
+      const inventory = inventorySnapshot(values.from, values.to, values.tasks, roots);
       io.stdout(JSON.stringify({ status: 'dry-run', consistency: inventory.consistency, sizes: 'source main-file bytes; SQLite backup size may differ', copies: inventory.copies.map(({ path, bytes }) => ({ path, bytes })), skipped: inventory.skipped, followed: inventory.followed }, null, 2) + '\n');
       return 0;
     }
-    const manifest = await createSnapshot(values.from, values.to, values.tasks);
+    const manifest = await createSnapshot(values.from, values.to, values.tasks, roots);
     io.stdout(JSON.stringify({ status: 'ok', files: manifest.files.length, consistency: manifest.consistency }) + '\n');
     return 0;
   } catch (error) { io.stderr((error instanceof SnapshotFailure ? error.message : 'Snapshot refused: \".\": unexpected snapshot failure') + '\n'); return 1; }
