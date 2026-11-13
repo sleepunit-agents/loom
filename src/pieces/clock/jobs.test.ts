@@ -123,6 +123,46 @@ describe('durable daemon clock', () => {
     clock.advance(31*60_000); await settled(); clock.advance(15*60_000); await settled();
     expect(wakes(app.db).filter(w => w.state === 'pending')).toHaveLength(2);
   });
+  it.each(['replace', 'remove'] as const)('does not retry an in-flight ordinary schedule after %s', async action => {
+    const result = deferred<StartResult>(), invoked = deferred<void>();
+    const clock = new FakeClock(Date.parse('2026-03-07T09:00:00Z'));
+    const startBody = vi.fn(() => { invoked.resolve(); return result.promise; });
+    const app = await loom({ runtime: { startBody } }, home(), clock);
+    const input = { id: 'daily', agent: 'art', at: '03:31', prompt: 'Old work', note: 'daily' };
+    app.value('scheduleSet', input);
+    clock.advance(31*60_000); await invoked.promise;
+    const firing = wakes(app.db).find(w => w.state === 'firing')!;
+    if (action === 'replace') app.value('scheduleSet', { ...input, prompt: 'New work' });
+    else app.value('scheduleRemove', { id: input.id });
+    expect(wake(app.db, firing.id)).toEqual(firing);
+    result.resolve({ state: 'not-started', reason: 'runner offline' }); await settled();
+    expect(wake(app.db, firing.id)).toMatchObject({ state: 'cancelled', outcome: 'Superseded schedule did not start: runner offline' });
+    clock.advance(15*60_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject(action === 'replace' ? [{ prompt: 'New work', schedule: input.id }] : []);
+  });
+  it.each(['replace', 'remove'] as const)('preserves an uncertain ordinary schedule through %s', async action => {
+    const clock = new FakeClock(Date.parse('2026-03-07T09:00:00Z'));
+    const app = await loom({ runtime: { async startBody() { return { state: 'uncertain', reason: 'response lost' }; } } }, home(), clock);
+    const input = { id: 'daily', agent: 'art', at: '03:31', prompt: 'Old work', note: 'daily' };
+    app.value('scheduleSet', input); clock.advance(31*60_000); await settled();
+    const uncertain = wakes(app.db).find(w => w.hold === 'uncertain')!;
+    expect(uncertain).toBeDefined();
+    if (action === 'replace') app.value('scheduleSet', { ...input, prompt: 'New work' });
+    else app.value('scheduleRemove', { id: input.id });
+    expect(wake(app.db, uncertain.id)).toEqual(uncertain);
+    expect(app.call('now', { id: uncertain.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject(action === 'replace' ? [{ prompt: 'New work', schedule: input.id }] : []);
+  });
+  it('keeps an ordinary run-now independent of later schedule removal', async () => {
+    const startBody = vi.fn(async () => ({ state: 'not-started', reason: 'offline' } as const));
+    const app = await loom({ runtime: { startBody } });
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Run once', note: 'daily' });
+    const immediate = app.value('scheduleRun', { id: s.id });
+    app.value('scheduleRemove', { id: s.id }); app.clock.advance(0); await settled();
+    expect(wake(app.db, immediate.id)).toMatchObject({ state: 'pending', failures: 1, due: app.clock.now()+15*60_000 });
+    app.clock.advance(15*60_000); await settled(); expect(startBody).toHaveBeenCalledTimes(2);
+  });
   it('parks on an accessible answer and preserves its exact instructions, or times out', async () => {
     let answer: 'pending' | 'allowed' = 'pending'; const listeners = new Set<() => void>();
     const app = await loom({ approvals: { check: () => ({ state: answer, kind: 'merge', target: 'exact-head', instruction: answer === 'allowed' ? 'Spend exact-head once' : undefined }), subscribe(f) { listeners.add(f); return () => { listeners.delete(f); }; } } });

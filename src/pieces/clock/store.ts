@@ -5,6 +5,8 @@ export interface Work extends Scope {
   continuation?: string; slot?: string; approval?: string; place?: string;
   /** Identifies lane work superseded while a runtime start was in flight. */
   laneVersion?: string;
+  /** Ordinary recurring work must not retry a revision that was replaced or removed. */
+  scheduleRevision?: string;
 }
 export interface Wake extends Work {
   id: string; due: number; state: WakeState; createdAt: number; changedAt: number;
