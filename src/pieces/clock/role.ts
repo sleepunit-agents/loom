@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /** Clock owns the desk's schedule readings; consumers retain the original viewer. */
 import type { Operations, Result, Viewer } from '../../core/index.js';
 export type { AgentNext, ClockJob } from './desk.js';
@@ -26,3 +27,11 @@ export function clockVouchApplication(operations: Pick<Operations, 'call'>): imp
 }
 
 export { clockLocalFiling } from './local-filing.js';
+
+/** Runtime supplies its authenticated Caller; never forward caller from a body. */
+export function clockLocalRecovery(operations: Pick<Operations,'call'>) {
+  return {schedule(caller: import('../approvals/role.js').Caller,
+    input: {approval:string;when:string;mode:'in'|'at';prompt?:string;note?:string}, receipt=randomUUID()) {
+    return operations.call('direct',{kind:'service',id:'clock'},'clock.localSchedule',{...input,caller},receipt);
+  }};
+}
