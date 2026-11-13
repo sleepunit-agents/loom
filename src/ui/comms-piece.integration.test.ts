@@ -42,6 +42,16 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(loom.db.prepare('SELECT id FROM comms_messages WHERE thread=? AND id=?').get(place,sent.id)).toBeTruthy();
   await expect.poll(()=>a.evaluate(k=>localStorage.getItem(k),storageKey)).toBe(null);
   expect(await b.locator('[aria-label="Thread messages"] img').count()).toBe(0);expect(await b.locator('a[href^="javascript:"]').count()).toBe(0);expect(await b.locator('[aria-label="Thread messages"] script').count()).toBe(0);
+  // Body activity comes from the thread subscription; it must disappear when the turn ends.
+  comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
+  await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('41,900 tokens');
+  expect(await b.getByLabel('Body activity').locator('time').getAttribute('datetime')).toBe(new Date(clock.now()).toISOString());
+  comms.activity('art',place,{at:clock.now()+1});
+  await expect.poll(()=>b.getByLabel('Body activity').textContent()).not.toContain('tokens');
+  comms.status('art',place,'done');
+  await expect.poll(()=>b.getByLabel('Body activity').count()).toBe(0);
+  comms.status('art',place,'working');comms.activity('art',place,{at:clock.now()+2,tokens:0});
+  await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('0 tokens');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`comms-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
   await a.getByRole('button',{name:'Delete',exact:true}).click();await a.getByRole('button',{name:'Keep thread',exact:true}).click();expect(await a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
