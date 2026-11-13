@@ -114,7 +114,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await b.setViewportSize({width:390,height:900});
   await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
   await b.locator('.loom-split__back').click();
-  await capture('comms-list');
+  await capture('comms-list',true);
   await row(b).click();
   const conversation=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
   const created=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Work made in this thread',agent:'art',source:`conversation:${conversation}`,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work');
