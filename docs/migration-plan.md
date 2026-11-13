@@ -160,7 +160,10 @@ Discovery includes one co-located Comms store: `comms.db`, `household.db`,
 `comms.key`, and optional `comms.salt`. Root and nested data layouts are supported.
 The plan's `comms.paths` lists those files in that order; `options` is strictly
 `{}`. Edited plans cannot omit, replace or reorder any discovered input. Missing
-required files or required columns refuse preparation. Optional legacy tables may
+required files or required columns refuse preparation. Retained Comms tables in
+`household.db` or a salt also trigger discovery when the words database is missing;
+a key alone, without any stored data, is preserved by snapshot collection but does
+not assert that a Comms store exists. Optional legacy tables may
 be absent; when present their importer-read columns must exist. Multiple Comms
 stores refuse even an explicit plan: selecting one would discard another identity.
 Consolidating such stores needs separate work before the coordinator can proceed.

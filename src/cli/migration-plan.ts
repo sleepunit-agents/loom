@@ -131,7 +131,14 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     const value = json(p);
     return value?.v === 1 && Array.isArray(value.changes);
   }).sort();
-  const comms = [...files].filter(p => basename(p) === 'comms.db').sort();
+  const commsDirectories = new Set([...files].filter(p => basename(p) === 'comms.db' || basename(p) === 'comms.salt').map(p => posix.dirname(p)));
+  // Missing words DB must not hide retained threads/tombstones in household.db.
+  // A key alone is not evidence of stored data (snapshots also retain unused keys).
+  for (const source of [...files].filter(p => basename(p) === 'household.db')) {
+    const containsComms = sqlite(path(source), db => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('comms_threads','comms_deleted') LIMIT 1").get());
+    if (containsComms) commsDirectories.add(posix.dirname(source));
+  }
+  const comms = [...commsDirectories].map(directory => `${directory}/comms.db`).sort();
   // A destination has one Comms identity; selecting one of several stores would discard data.
   if (comms.length > 1) throw Error('Multiple Comms sources are not supported');
   const commsPaths = comms.flatMap(source => {

@@ -65,7 +65,7 @@ it('refuses edited plans that omit any input, add hooks, omit Comms or substitut
   await expect(runMigrationAll(f.root,f.home,plan)).rejects.toThrow();expect(existsSync(f.home)).toBe(false);
  }
 });
-for(const missing of ['household.db','comms.key'])it(`refuses a Comms store missing ${missing}`,async()=>{
+for(const missing of ['household.db','comms.key','comms.db'])it(`refuses a Comms store missing ${missing}`,async()=>{
  const f=await fixture('',false);rmSync(join(f.source,missing));await createSnapshot(f.old,f.root);
  expect(()=>prepareMigrationPlan(f.root)).toThrow('Incomplete Comms');
 });
@@ -122,4 +122,32 @@ it('does not reveal corrupt private data through the public CLI',async()=>{
  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
  expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(3);
  expect(io.stdout.mock.calls.flat().join('')+io.stderr.mock.calls.flat().join('')).not.toContain('PRIVATE_');
+});
+
+it('accepts absent optional salt/tables and refuses malformed required schemas before opening a destination',async()=>{
+ const f=await fixture('',false);rmSync(join(f.source,'comms.salt'));
+ const db=new Database(join(f.source,'comms.db'));db.exec('DROP TABLE comms_asks; DROP TABLE conversation_steps');db.close();
+ await createSnapshot(f.old,f.root);expect(prepareMigrationPlan(f.root).plan.importers.comms.paths).toHaveLength(3);
+ expect((await runMigrationAll(f.root,f.home)).status).toBe('complete');expect((await verifyMigration(f.root,f.home)).status).toBe('verified');
+ const broken=await fixture('',false);const b=new Database(join(broken.source,'comms.db'));b.exec('ALTER TABLE comms_messages RENAME COLUMN text TO missing');b.close();
+ await createSnapshot(broken.old,broken.root);await expect(runMigrationAll(broken.root,broken.home)).rejects.toThrow('Incomplete Comms');expect(existsSync(broken.home)).toBe(false);
+});
+
+for(const reject of [false,true])it(`holds the same read-only destination and daemon gate across actual Comms crypto ${reject?'rejection':'success'}`,async()=>{
+ const f=await fixture();await runMigrationAll(f.root,f.home);
+ const crypto=await import('../pieces/comms/crypto.js'),sqlite=await import('./migration-sqlite.js'),{acquireHttpLock}=await import('../transport/http-lock.js');
+ const actual=crypto.wordsKey,openSnapshot=sqlite.openSnapshotSqlite;
+ let resume!:()=>void,entered!:()=>void;
+ const wait=new Promise<void>(resolve=>{resume=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+ let first=true;
+ vi.spyOn(crypto,'wordsKey').mockImplementation(identity=>{
+  const key=actual(identity);return {...key,open:async blob=>{if(first){first=false;entered();await wait;if(reject)throw Error('PRIVATE_CRYPTO_FAILURE');}return key.open(blob);}};
+ });
+ const opened:Database.Database[]=[];
+ vi.spyOn(sqlite,'openSnapshotSqlite').mockImplementation(path=>{const db=openSnapshot(path);if(path===join(f.home,'loom.db'))opened.push(db);return db;});
+ const before=bytes(f.home);let settled=false;const pending=verifyMigration(f.root,f.home).then(report=>({report,error:undefined}),error=>({report:undefined,error})).finally(()=>{settled=true;});
+ await started;
+ try{expect(settled).toBe(false);expect(opened).toHaveLength(1);expect(opened[0].open).toBe(true);expect(opened[0].readonly).toBe(true);expect(()=>acquireHttpLock(f.home)).toThrow('already running');}
+ finally{resume();await pending;}
+ if(reject)expect((await pending).error).toBeInstanceOf(Error);else expect((await pending).report?.status).toBe('verified');expect(opened[0].open).toBe(false);expect(bytes(f.home)).toEqual(before);
 });
