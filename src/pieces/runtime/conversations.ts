@@ -1,3 +1,4 @@
+import type { BridgeBodies } from './bridges.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
 import type { Caller } from '../approvals/role.js';
@@ -24,6 +25,7 @@ interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(viewer:Viewer)=>Proof|undefined) {
  const {db,operations,live}=app,store=runtimeStore(db);
  let comms:Comms|undefined,closed=false,accepting=false;
+ let bridges:BridgeBodies|undefined;
  const available=(m:Routing)=>{
   if(closed||!comms||!mayUseThread({kind:'member',id:m.member},m,sharing()))return false;
   try {
@@ -109,18 +111,20 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   may:v=>v.kind==='runner',run(ctx){return {jobs:store.ids('job').filter(id=>{const job=store.read('job',id)!,box=store.read('box',job.box);return box?.revokedAt===undefined&&!!box&&job.state==='queued'&&mayAct(ctx.viewer,controlScope(store,job,sharing()),sharing(),'report-job');})};},
  }));
  operations.register(operation({name:'runtime.readConversation',doors:['http','direct'],input:z.object({before:z.number().int().positive().optional()}).strict(),output:z.unknown(),
-  may:v=>!!bound(v),async prepare(i,{viewer}){
+  may:v=>!!bound(v)||!!bridges?.bound(v),async prepare(i,{viewer}){
+   if(bridges?.bound(viewer))return bridges.read(viewer,i.before);
    const b=bound(viewer)!;
    return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
-  },run(ctx,_i,prepared){const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+  },run(ctx,_i,prepared){const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
- // Comms owns encrypted retry deduplication. This read-style async operation
+ // Each transcript owns durable reply deduplication. This read-style async operation
  // returns only a sequence acknowledgement, never stores words or credentials.
  operations.register(operation({name:'runtime.reply',doors:['http','direct'],input:z.object({id,conversation:id.optional(),job:id.optional(),text:z.string().min(1).max(40_000)}).strict(),output:z.object({seq:z.number()}),
-  may:(v,i)=>{const b=bound(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
+  may:(v,i)=>{const job=bridges?.bound(v);if(job)return (!i.job||i.job===job.id)&&(!i.conversation||i.conversation===job.conversation);const b=bound(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
+   if(bridges?.bound(viewer))return undefined;
    const b=bound(viewer)!;
    return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
-  },run(ctx,_i,prepared){const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+  },run(ctx,i,prepared){const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
   may:v=>!!bound(v),run(ctx,i){const b=bound(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
@@ -195,7 +199,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   if(!access)return {who,for:'?'};
   return {who,for:access.owner?'owner':member,people:[member],member,conversation:b.binding.id,...(b.binding.project?{project:b.binding.project}:{})};
  };
- return {delivery,privateStart,refile,approvalCaller,connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
+ return {delivery,privateStart,refile,approvalCaller,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   async close(){closed=true;unobserve();await notices;},
  };

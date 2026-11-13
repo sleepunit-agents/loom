@@ -36,4 +36,9 @@ CREATE TABLE runtime_start_attempts (root TEXT PRIMARY KEY REFERENCES runtime_jo
 ` }, { number: 8, sql: `
 -- Bounded opaque byte archive; never live records or executable authority.
 CREATE TABLE runtime_import_chunks (path TEXT NOT NULL REFERENCES runtime_import_sources(path), part INTEGER NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(path,part));
+` }, { number: 9, sql: `
+-- Private venue words and permanent receipt identities, never live records.
+CREATE TABLE runtime_bridge_turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, direction TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)));
+CREATE INDEX runtime_bridge_conversation ON runtime_bridge_turns(conversation,seq);
+CREATE TABLE runtime_bridge_stops (id TEXT PRIMARY KEY);
 ` }];

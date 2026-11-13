@@ -165,7 +165,8 @@ it('recovers journal identity without input, validating authority, output, confl
     return new RecoveredWrite(malformed ? {saved:false} : {saved:true},ctx.receipt!.expires);
   }});
   const receipt={viewer:'{"id":"owner","kind":"member"}',id:'journal',name:'example.save',inputHash:'keyed-identity',expires:clock.now()+1000};
-  const publish=vi.spyOn(app.live,'changed');
+  const publicationTransactions:boolean[]=[],changed=app.live.changed.bind(app.live);
+  const publish=vi.spyOn(app.live,'changed').mockImplementation(changes=>{publicationTransactions.push(app.db.inTransaction);changed(changes);});
   expect(app.operations.recoverWrite({kind:'member',id:'other'},receipt)).toMatchObject({code:'unavailable'});
   app.db.transaction(()=>{expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'unavailable'});})();
   permitted=false;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'denied'});
@@ -177,6 +178,7 @@ it('recovers journal identity without input, validating authority, output, confl
   app.db.exec('DROP TRIGGER fail_recovered');
   expect(app.operations.recoverWrite(owner,receipt)).toEqual({ok:true,value:{saved:true}});
   expect(app.db.prepare('SELECT * FROM recovered_without_input').all()).toEqual([{id:'journal'}]);expect(publish).toHaveBeenCalledTimes(1);
+  expect(publicationTransactions).toEqual([false]);
   expect(app.operations.recoverWrite(owner,{...receipt,inputHash:'other'})).toMatchObject({code:'conflict'});
   permitted=false;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'denied'});
   expect(spies.prepare).not.toHaveBeenCalled();expect(spies.run).not.toHaveBeenCalled();expect(admit).not.toHaveBeenCalled();
