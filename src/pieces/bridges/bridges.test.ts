@@ -85,6 +85,23 @@ describe('send disposition',()=>{
     expect(restarted.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'dismissed'});
     expect(restarted.adapter.posts).toEqual([]);
   });
+  it('never sends a dismissed row retained in a drain snapshot behind an in-flight send',async()=>{
+    const f=await reply();
+    f.engine.reply({id:'second-reply',incomingId:f.incomingId,text:'must never send'});
+    const started=Promise.withResolvers<void>(), finish=Promise.withResolvers<void>();
+    const send=f.adapter.send.bind(f.adapter);
+    f.adapter.send=async(...args)=>{started.resolve();await finish.promise;return send(...args);};
+    const draining=f.engine.flush();await started.promise;
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.op('dismissSend',{id:'second-reply',state:'held'})).toEqual({ok:true,value:{id:'second-reply'}});
+    expect(f.op('putVenues',f.venue).ok).toBe(true);
+    finish.resolve();await draining;
+    expect(f.adapter.posts).toHaveLength(1);
+    expect(f.app.db.prepare('SELECT id,state FROM bridges_outbox ORDER BY id').all()).toEqual([
+      {id:'reply',state:'sent'},{id:'second-reply',state:'dismissed'},
+    ]);
+    await f.engine.flush();expect(f.adapter.posts).toHaveLength(1);
+  });
   it('dismisses a held reply while a stale released staging effect cannot send it',async()=>{
     const f=await reply(true); await f.engine.flush();
     expect(f.app.db.prepare('SELECT state FROM core_effects').get()).toEqual({state:'due'});

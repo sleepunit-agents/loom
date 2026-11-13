@@ -194,8 +194,11 @@ export class Bridges implements BridgesRole {
     }
     for (const row of db.prepare("SELECT * FROM bridges_outbox WHERE state='pending' ORDER BY created,id").all() as Outbox[]) {
       if (this.closed) return;
+      // Earlier posts can await while an owner holds and dismisses a later snapshot row.
+      const pending = () => (db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get(row.id) as {state:string} | undefined)?.state === 'pending';
+      if (!pending()) continue;
       const v = venueById(db,row.venue);
-      if (!v?.enabled || identity(v)!==row.identity) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id); this.changed('bridges.send',row.id); continue; }
+      if (!v?.enabled || identity(v)!==row.identity) { db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=? AND state='pending'").run(row.id); this.changed('bridges.send',row.id); continue; }
       const adapter = this.adapters.find(a => a.platform === v.platform);
       if (!adapter) { this.retry(); continue; }
       const revision = setupRevision(db);
@@ -211,14 +214,15 @@ export class Bridges implements BridgesRole {
         if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
         if (admitted === 'wait') { this.retry(); continue; }
         if (admitted !== 'allow') {
-          db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=?").run(row.id);
+          db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=? AND state='pending'").run(row.id);
           this.changed('bridges.send',row.id); continue;
         }
       }
       if (!this.setupUnchanged(v,message,route,revision)) { this.retry(); continue; }
       // The effect id is permanent; releasing a staging item allows exactly one attempt.
+      if (!pending()) continue;
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
-      db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=?").run(row.id);
+      if (!db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=? AND state='pending'").run(row.id).changes) continue;
       try {
         const address = JSON.parse(row.address) as Address;
         const result = await adapter.send(v,token,{...address,...conversationKind(v,address)},row.text,row.id);
