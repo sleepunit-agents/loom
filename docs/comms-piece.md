@@ -1008,3 +1008,17 @@ pin/unpin and archive/unarchive across folders, and captures the closed list
 and open menu in both looks at all three widths. Swipe, long press and archive
 Undo remain unfinished, alongside the broader inventory above. This is a
 presentation unit with no backend, session, policy or runtime changes.
+
+
+## Touch row pinning
+
+A stationary touch or pen hold on a row's open target pins that thread after
+550 ms, through the existing pin operation and eight-pin cap. It never toggles
+a pinned thread or opens the reader. Moving more than ten CSS pixels, lifting
+early, cancellation, a second contact, focus/visibility loss or leaving the
+list cancels the pending hold. The row's menu trigger stays independent.
+Mouse and keyboard retain the existing menu controls, including Unpin.
+Pending actions and unavailable connections prevent pinning; operation errors
+remain above the list. The single browser proof covers hold timing, no
+navigation, cancellation and the resulting Unpin menu in all six views.
+Swipe and archive Undo remain unfinished.
