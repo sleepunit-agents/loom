@@ -1,9 +1,9 @@
 /** Generated JSON argument binding only; schemas, policy and transitions stay in the daemon. */
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { attentionCommands } from './commands.js';
-import type { IOStreams } from '../../cli/io.js';
-import type { ClientRuntime } from '../../cli/api-client.js';
+import { attentionCommands } from '../pieces/attention/commands.js';
+import type { IOStreams } from './io.js';
+import type { ClientRuntime } from './api-client.js';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
 export async function runAttentionClient(argv: string[], io: IOStreams, runtime: ClientRuntime = defaults): Promise<number> {
   const help = `usage: loom-attention <${attentionCommands.map(c => c.name).join('|')}> [json-object]\n`;

@@ -7,7 +7,7 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
 import { installAttention } from './index.js';
 import { attentionCommands } from './commands.js';
-import { runAttentionClient } from './client.js';
+import { runAttentionClient } from '../../cli/attention-client.js';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 async function setup() {
