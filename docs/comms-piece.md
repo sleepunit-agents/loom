@@ -582,3 +582,19 @@ cases cover malformed labels, encrypted storage, exact replay/conflict, denied
 readers, expiry, imported cards and latest-reply clearing. The existing single
 browser test now checks the label and its removal; CI must prove this extension
 on the current head. No local browser ran. Review budgets remain unchanged.
+
+Visible-thread read marks now recheck on page visibility and focus, as well as
+new message sequence numbers. A reply received while hidden is marked read when
+the person returns even if no further Live record arrives. Concurrent events
+share one pending mark; failed/rejected marks retry on the next visible event
+or 30-second tick. Successful marks stop retrying. Disconnect, navigation and
+unmount remove listeners/timers and fence callbacks that have not started.
+The helper retains a sequence number only. The deterministic regression covers
+hidden/unfocused arrival, returning focus, coalescing, failure/retry, success and
+cleanup. This fixes read marks; persisted foreground presence, notification
+suppression and production push binding remain unfinished.
+
+The switched-harness browser extension passed on `24e1a806ea9a89abe9df5e4ccef587e6bc9a55f5`:
+[Comms evidence](https://github.com/sleepunit-agents/loom/actions/runs/43390267757),
+[12 screenshots](https://github.com/sleepunit-agents/loom/actions/runs/43390267757/artifacts/14020287715).
+This is evidence for that head; subsequent changes require their own CI results.

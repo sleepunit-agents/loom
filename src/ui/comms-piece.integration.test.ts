@@ -46,6 +46,15 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Reply harness').textContent()).toBe(' · ON CODEX');
   await comms.post('art',place,{id:'ordinary-harness',kind:'reply',text:'Back on the ordinary harness.'});
   await expect.poll(()=>b.getByLabel('Reply harness').count()).toBe(0);
+  // A hidden arrival must become read on focus without needing another Live message.
+  for(const page of [a,b])await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});Object.defineProperty(document,'hasFocus',{configurable:true,value:()=>false});document.dispatchEvent(new Event('visibilitychange'));});
+  const hiddenReply=await comms.post('art',place,{id:'hidden-read-reply',kind:'reply',text:'A reply while both pages are hidden.'});
+  await expect.poll(()=>b.getByText('A reply while both pages are hidden.',{exact:true}).count()).toBe(1);
+  const readSeq=()=>JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).readSeq as number;
+  expect(readSeq()).toBeLessThan(hiddenReply.seq);
+  await b.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});Object.defineProperty(document,'hasFocus',{configurable:true,value:()=>true});window.dispatchEvent(new Event('focus'));});
+  await expect.poll(readSeq).toBeGreaterThanOrEqual(hiddenReply.seq);
+  for(const page of [a,b])await page.evaluate(()=>{Reflect.deleteProperty(document,'visibilityState');Reflect.deleteProperty(document,'hasFocus');document.dispatchEvent(new Event('visibilitychange'));});
   // Body activity comes from the thread subscription; it must disappear when the turn ends.
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('41,900 tokens');

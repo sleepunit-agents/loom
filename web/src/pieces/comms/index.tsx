@@ -9,6 +9,7 @@ import { EarlierPages, retainedMessage } from './pages';
 import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
 import { bindComposerViewport } from './viewport';
+import { bindThreadRead } from './read';
 import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
@@ -36,8 +37,9 @@ function Composer({member,place,agent,onOpened,enabled}:{member:string;place?:st
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  const {records,status}=useRecords<Message>('message',thread.id);const [request,setRequest]=useState<Call>();const state=useRequest(request);
  const [pages]=useState(()=>new EarlierPages());const [older,setOlder]=useState<Message[]>([]);const current=useRef<readonly Message[]|undefined>(undefined);current.current=status==='live'?records:undefined;const pageOwner=useRef(current.current);const [title,setTitle]=useState(thread.title??'');const [project,setProject]=useState(thread.project??'');const [deleting,setDeleting]=useState(false);
- const [pagePending,setPagePending]=useState(false),[pageError,setPageError]=useState<string>();const lastRead=useRef(0);
- useEffect(()=>{if(status!=='live')return;const seq=records.at(-1)?.seq??0;if(seq>lastRead.current&&document.visibilityState==='visible'&&document.hasFocus()){lastRead.current=seq;setRequest(call('comms.change',{thread:thread.id,action:'read',seq}));}},[records,status,thread.id,pages]);
+ const [pagePending,setPagePending]=useState(false),[pageError,setPageError]=useState<string>();
+ const latestSeq=records.at(-1)?.seq??0;
+ useEffect(()=>{if(status!=='live'||latestSeq<=thread.readSeq)return;return bindThreadRead(latestSeq,async seq=>{const r=call('comms.change',{thread:thread.id,action:'read',seq});return (await r.result).ok;});},[latestSeq,status,thread.id,thread.readSeq]);
  // Fence cached words immediately at render, then clear them and pending reads.
  useEffect(()=>{pageOwner.current=current.current;pages.clear();setOlder([]);setPagePending(false);setPageError(undefined);},[records,status,pages]);
  useEffect(()=>()=>{current.current=undefined;pages.clear();},[pages]);

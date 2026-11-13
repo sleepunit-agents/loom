@@ -173,3 +173,20 @@ it('shows only the latest retained reply harness, including imports, and clears 
  expect(latestHarness([{...base,text:null}])).toBeUndefined();
  expect(latestHarness([])).toBeUndefined();
 });
+
+import { bindThreadRead } from '../../web/src/pieces/comms/read.js';
+it('marks replies read when a hidden thread returns, coalesces events, retries failure and cleans up',async()=>{
+ vi.useFakeTimers();
+ const doc=Object.assign(new EventTarget(),{visibilityState:'hidden',hasFocus:()=>focused});let focused=false;
+ const win=new EventTarget();vi.stubGlobal('document',doc);vi.stubGlobal('window',win);
+ const calls:number[]=[];let finish!:(ok:boolean)=>void;
+ const stop=bindThreadRead(8,seq=>{calls.push(seq);return new Promise(resolve=>{finish=resolve;});});
+ await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([]);
+ doc.visibilityState='visible';doc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();expect(calls).toEqual([]);
+ focused=true;win.dispatchEvent(new Event('focus'));doc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();expect(calls).toEqual([8]);
+ finish(false);await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8]);
+ finish(true);await vi.advanceTimersByTimeAsync(60000);win.dispatchEvent(new Event('focus'));expect(calls).toEqual([8,8]);
+ stop();win.dispatchEvent(new Event('focus'));doc.dispatchEvent(new Event('visibilitychange'));await vi.advanceTimersByTimeAsync(30000);expect(calls).toEqual([8,8]);
+ const stale=bindThreadRead(9,async seq=>{calls.push(seq);return true;});stale();await Promise.resolve();expect(calls).toEqual([8,8]);
+ vi.useRealTimers();
+});
