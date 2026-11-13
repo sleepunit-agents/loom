@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, failure, mayAct, maySee, type Context, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
@@ -33,6 +34,7 @@ export function grantsRole(db: Db): Grants {
   } };
 }
 export function installSecrets(db: Db, operations: Operations, live: Live, sharing: () => Sharing, attention?: GrantAttention) {
+  registerBuiltinService(operations, 'secrets', ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change']);
   migrate(db, 'secrets', schema);
   installSecretHistory(db, operations, live, sharing);
   const owner = (v: Viewer, op: string) => mayAct(v, { type: 'secret.grant' }, sharing(), 'household', op);

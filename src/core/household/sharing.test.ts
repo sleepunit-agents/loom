@@ -90,7 +90,8 @@ it('reads persisted sharing, preserves raw fields, and applies the owner example
 it('keeps absent metadata empty and fails closed on corrupt project content or a mismatched key', async () => {
   const h = home(), app = await startLoom({ home: h, clock: new FakeClock(), install: app => migrateHouseholdTables(app.db) }); closes.push(app.close);
   const store = new SharingDatabase(app.db, h);
-  expect(store.sharing()).toEqual({ members: {}, projects: {}, services: {} });
+  expect(store.sharing()).toMatchObject({ members: {}, projects: {} });
+  expect(Object.keys(store.sharing().services).sort()).toEqual(['approvals', 'sharing', 'tasks']);
   expect(() => store.create(pond)).toThrow('transaction');
   expect(() => app.db.transaction(() => store.create(pond))()).toThrow('not been imported');
   app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, raw()))();

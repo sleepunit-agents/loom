@@ -140,3 +140,16 @@ prompts and transcripts are retained in loom note
 client and architecture tests pass, along with TypeScript and diff checks. No
 additional importer or credential review was run. Runtime root/Approvals composition
 remains a follow-up; no live home or service was changed.
+
+## Built-in service registration
+
+Each in-repo installer registers its service in `src/core/services.ts` for that
+foundation's database connection. `SharingDatabase.sharing()` includes frozen
+snapshots of installed services' own record types and exact registered operations
+in their own namespace. Internal job operations added later are included too.
+The registry is rebuilt on installation after restart; household metadata cannot
+create a service, and another home cannot inherit one. Private member records,
+household setup and person answers retain their central policy restrictions.
+No cross-piece permission is implied: Changes still needs an explicit grant when
+calling another piece. This supplies the authority source; daemon composition and
+the job's action check are separate follow-ups.

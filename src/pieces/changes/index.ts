@@ -1,3 +1,4 @@
+import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { changesCommands } from './commands.js';
 import { projectFeed, threadFeed } from './feeds.js';
@@ -11,6 +12,7 @@ import { projectChange } from './projection.js';
 import type { Approvals, Projects } from './roles.js';
 const emptyAttribution:Attribution={agents:{},ownerLogins:[]};
 export function installChanges(db:Db, operations:Operations, live:Live, sharing:()=>Sharing, options:{onRefresh?:()=>void; approvals?:Approvals; attribution?:()=>Attribution;knownAgents?:()=>string[];projects?:Projects}={}) {
+  registerBuiltinService(operations, 'changes', ['change', 'change-sync']);
  migrate(db,'changes',schema);
  const scope=(c:Change)=>({type:'change',...(c.project?{project:c.project}:{}),...(c.agent?{agent:c.agent}:{})});
 
