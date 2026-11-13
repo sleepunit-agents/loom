@@ -567,3 +567,8 @@ interval, using daemon jobs and durable records. Deliberate authority difference
 the old clock stamped its own default as owner work; the new clock acts as an
 explicitly configured agent. It never reads old configuration or discovers an
 owner to impersonate. No live configuration or installed command changes here.
+
+Safety-wake fixtures inject a replacement-insert abort and compare the original
+row and events, run quota deferral plus all six definite failures across restart,
+and guard legacy file access and subprocesses during creation/restart/dispatch.
+The required prompt and note are asserted as literals independently of constants.

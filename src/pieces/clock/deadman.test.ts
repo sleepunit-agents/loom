@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
+import * as childProcess from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -7,13 +9,16 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { installClock, type ClockOptions } from './index.js';
 import { wakes, wake, active, type Wake } from './store.js';
-import { deadmanPrompt, deadmanNote } from './deadman.js';
+import { deadmanPrompt } from './deadman.js';
 import type { StartResult } from './dependencies/runtime.js';
+vi.mock('node:fs', { spy: true });
+vi.mock('node:child_process', { spy: true });
+const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
 const day = 86_400_000;
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const sharing: Sharing = { members: { jonathan: { owner: true, agents: ['art', 'pollock'] } }, projects: {}, services: {} };
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 async function loom(options: ClockOptions = {}, dir = mkdtempSync(join(tmpdir(), 'loom-deadman-')), clock = new FakeClock()) {
   if (!dirs.includes(dir)) dirs.push(dir);
   const app = await startLoom({ home: dir, clock, install(app) {
@@ -37,7 +42,8 @@ it('opts in only configured agents, fixes the words and elapsed 24h deadline, an
   const [safety] = wakes(app.db);
   expect(wakes(app.db)).toHaveLength(1);
   expect(safety).toMatchObject({ agent: 'art', by: { kind: 'agent', id: 'art' }, deadman: true,
-    prompt: deadmanPrompt, note: deadmanNote, due: start + day, state: 'pending', failures: 0 });
+    prompt: 'Dead-man wake: the spool was empty, so this default alarm fired. Nothing was scheduled: decide what deserves attention. Review your work queue, recent loom memory, and the state of the machine. Do something useful or file what you find, and do not end without setting at least one real wake.',
+    note: 'dead-man default: spool emptied', due: start + day, state: 'pending', failures: 0 });
   for (const key of ['member', 'project', 'approval', 'continuation', 'slot', 'place', 'file', 'schedule']) expect(safety).not.toHaveProperty(key);
   clock.advance(3_600_000); await app.close();
   const restarted = await loom({ deadmanAgents: ['art'] }, app.dir, clock); clock.advance(0);
@@ -130,4 +136,70 @@ it('composes explicit next-mode opt-in without changing the default hold runtime
   expect(wakes(app.db)).toMatchObject([{ deadman: true, agent: 'art', by: { kind: 'agent', id: 'art' }, due: clock.now() + day }]);
   clock.advance(day); await settle();
   expect(wakes(app.db)).toMatchObject([{ state: 'held', hold: 'staging' }]);
+});
+it('rolls back default cancellation and its event when the replacement insert fails', async () => {
+  const app = await loom({ deadmanAgents: ['art'] }); app.clock.advance(0);
+  const before = { wakes: wakes(app.db), events: app.db.prepare('SELECT * FROM clock_events').all() };
+  app.db.exec(`CREATE TEMP TRIGGER fail_real_work BEFORE INSERT ON clock_wakes
+    WHEN json_extract(NEW.record, '$.prompt') = 'Real replacement'
+    BEGIN SELECT RAISE(ABORT, 'injected replacement interruption'); END`);
+  expect(app.call('in', { agent: 'art', prompt: 'Real replacement', note: '', when: '1h' })).toMatchObject({ ok: false, code: 'unavailable' });
+  expect({ wakes: wakes(app.db), events: app.db.prepare('SELECT * FROM clock_events').all() }).toEqual(before);
+  app.db.exec('DROP TRIGGER fail_real_work');
+  app.value('in', { agent: 'art', prompt: 'Real replacement', note: '', when: '1h' });
+  expect(wake(app.db, before.wakes[0].id)?.state).toBe('cancelled');
+  expect(wakes(app.db).filter(active)).toMatchObject([{ prompt: 'Real replacement' }]);
+});
+it('retains the same safety wake through quota and all six failures, then starts a fresh 24h default', async () => {
+  const startBody = vi.fn(async (): Promise<StartResult> => ({ state: 'not-started', reason: 'definite failure' }))
+    .mockResolvedValueOnce({ state: 'not-started', code: 'quota', reason: 'No capacity', retryAfter: '2026-11-13T00:27:00Z' });
+  const options = { deadmanAgents: ['art'], runtime: { startBody } };
+  const app = await loom(options); app.clock.advance(0); const first = wakes(app.db)[0];
+  app.clock.advance(day); await settle();
+  expect(wake(app.db, first.id)).toMatchObject({ state: 'pending', failures: 0, due: Date.parse('2026-11-13T00:27:00Z') + 60_000 });
+  expect(wakes(app.db).filter(active)).toHaveLength(1);
+  await app.close(); const restarted = await loom(options, app.dir, app.clock);
+  for (let failures = 1; failures <= 6; failures++) {
+    const current = wake(restarted.db, first.id)!;
+    app.clock.advance(current.due - app.clock.now()); await settle();
+    expect(startBody).toHaveBeenCalledTimes(failures + 1);
+    expect(wake(restarted.db, first.id)).toMatchObject({ failures, state: failures < 6 ? 'pending' : 'failed' });
+    if (failures < 6) {
+      expect(wake(restarted.db, first.id)?.due).toBe(app.clock.now() + 15 * 60_000 * 2 ** (failures - 1));
+      expect(wakes(restarted.db).filter(active).map(w => w.id)).toEqual([first.id]);
+    }
+  }
+  const next = wakes(restarted.db).find(active)!;
+  expect(next).toMatchObject({ deadman: true, failures: 0, due: app.clock.now() + day });
+  expect(next.id).not.toBe(first.id);
+});
+it('guards legacy stores and installed commands during configured creation, restart and dispatch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loom-deadman-isolation-')); dirs.push(dir);
+  for (const file of ['household.json', 'spool.jsonl', 'schedules.json', 'filed.json', 'vouch.json', 'paused'])
+    writeFileSync(join(dir, file), 'poison legacy data');
+  const forbidden = /(?:household\.json|spool\.jsonl|schedules\.json|filed\.json|vouch\.json|(?:^|\/)paused$|\.config\/loom\/pieces|\/pieces\/bin\/|\/wake\/)/;
+  const reads: string[] = [];
+  const guard = <T extends object>(fn: T): T => new Proxy(fn, { apply(target, receiver, args) {
+    const path = String(args[0]); reads.push(path); expect(path).not.toMatch(forbidden);
+    return Reflect.apply(target as (...values: unknown[]) => unknown, receiver, args);
+  } });
+  vi.spyOn(fs, 'readFileSync').mockImplementation(guard(realFs.readFileSync));
+  vi.spyOn(fs, 'openSync').mockImplementation(guard(realFs.openSync));
+  vi.spyOn(fs, 'existsSync').mockImplementation(guard(realFs.existsSync));
+  vi.spyOn(fs, 'statSync').mockImplementation(guard(realFs.statSync));
+  vi.spyOn(fs, 'realpathSync').mockImplementation(guard(realFs.realpathSync));
+  vi.spyOn(fs, 'readdirSync').mockImplementation(guard(realFs.readdirSync));
+  const noProcess = () => { throw new Error('Clock must not run an installed command'); };
+  const processes = [vi.spyOn(childProcess, 'spawn').mockImplementation(noProcess), vi.spyOn(childProcess, 'spawnSync').mockImplementation(noProcess),
+    vi.spyOn(childProcess, 'execFile').mockImplementation(noProcess), vi.spyOn(childProcess, 'execFileSync').mockImplementation(noProcess),
+    vi.spyOn(childProcess, 'exec').mockImplementation(noProcess), vi.spyOn(childProcess, 'execSync').mockImplementation(noProcess)];
+  const options = { deadmanAgents: ['art'] };
+  const app = await loom(options, dir); app.clock.advance(0);
+  const first = wakes(app.db)[0]; expect(first).toMatchObject({ deadman: true });
+  await app.close(); const restarted = await loom(options, dir, app.clock); app.clock.advance(0);
+  expect(wakes(restarted.db)).toEqual([first]);
+  app.clock.advance(day); await settle();
+  expect(wake(restarted.db, first.id)).toMatchObject({ state: 'held', hold: 'staging' });
+  for (const process of processes) expect(process).not.toHaveBeenCalled();
+  expect(reads.every(path => !forbidden.test(path))).toBe(true);
 });
