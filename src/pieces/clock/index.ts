@@ -1,4 +1,4 @@
-import { installLocalFiling } from './local-filing.js';
+import { filedLocal, localWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
 import { command } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
@@ -13,7 +13,7 @@ import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
 import { vouchable, askable, automaticVouch, vouchDetails, vouchWords } from './vouch.js';
 import type { VouchFiling } from './dependencies/filing.js';
-import { vouchOf } from '../approvals/role.js';
+import { approvalsRole, callerSchema, vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
@@ -107,6 +107,39 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
+  // Only authenticated runtime composition may recover an approval's words.
+  // No public input can claim Caller. Public client wiring waits for that seam.
+  const localInput = z.object({caller:callerSchema.strict(),approval:z.string().regex(/^a-[0-9a-f]{8}$/),
+    when:text,mode:z.enum(['in','at']),prompt:text.optional(),note:z.string().max(100_000).optional()}).strict();
+  operations.register(operation({name:'clock.localSchedule',input:localInput,output,write:true,doors:['direct'],
+    may(v,i) {
+      return v.kind==='service' && v.id==='clock' && mayAct(v,{type:'clock'},sharing(),'act','clock.localSchedule')
+        && create({kind:'agent',id:i.caller.who.agent},{agent:i.caller.who.agent,project:i.caller.project,note:''});
+    },
+    run(ctx,i) {
+      if(closed) throw new OperationError('unavailable','Clock stopped');
+      const filing=filedLocal(db,i.approval);
+      if(!filing) throw new OperationError('not-found','No trusted local filing');
+      const service=(where:string)=>/\(([^()]*)\)$/.exec(where)?.[1];
+      if(i.caller.for!=='owner' || i.caller.people?.length || filing.caller.for!=='owner' || filing.caller.people?.length
+        || i.caller.project!==filing.caller.project || i.caller.who.agent!==filing.caller.who.agent
+        || service(i.caller.who.where)!==service(filing.caller.who.where)
+        || i.prompt!==undefined && i.prompt!==filing.prompt || i.note!==undefined && i.note!==filing.note)
+        throw new OperationError('denied','Local recovery requires the original words, scope and caller');
+      const words=localWords(filing.prompt,filing.note);
+      if(words.digest!==filing.digest || filing.target!==`${i.caller.who.agent}:${words.digest.slice(0,16)}`)
+        throw new OperationError('denied','Local filing digest differs');
+      const due=calendar(()=>i.mode==='at'?parseAt(i.when,ctx.now):parseIn(i.when,ctx.now));
+      if(due<=ctx.now) invalid('Wake must be in the future');
+      oneOffRoom(i.caller.who.agent);
+      const result=approvalsRole(operations,'clock').call('use-local',i.caller,{id:i.approval,
+        expected:{target:filing.target,digest:words.digest,details:words.details,caller:filing.caller}},randomUUID());
+      if(!result.ok) throw new OperationError(result.code,result.message);
+      const row=make({...ctx,viewer:{kind:'agent',id:i.caller.who.agent}},
+        {agent:i.caller.who.agent,project:i.caller.project,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
+      queue(); return row;
+    },
+  }));
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
     newWork(i);

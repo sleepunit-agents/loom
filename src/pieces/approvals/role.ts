@@ -13,7 +13,7 @@ export function ownerApprovalsRole(operations: Operations) {
 export function approvalsRole(operations: Operations, service: string) {
   const viewer: Viewer = {kind:'service',id:service};
   return {
-    call(verb: 'request'|'use'|'withdraw'|'rule'|'tell', caller: Caller, input: Record<string,unknown>, id?: string) {
+    call(verb: 'request'|'use'|'use-local'|'withdraw'|'rule'|'tell', caller: Caller, input: Record<string,unknown>, id?: string) {
       return operations.call('direct',viewer,`approvals.piece-${verb}`,{...input,caller},id);
     },
     groupVouch(caller: Caller, candidates: unknown, id: string) {
