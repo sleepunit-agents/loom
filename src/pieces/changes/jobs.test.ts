@@ -18,8 +18,8 @@ function setup(read:(repo:string,now:number)=>Promise<Change[]>) {
  const home=mkdtempSync(join(tmpdir(),'changes-job-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock(),app=createFoundation({home,clock});cleanup.push(app.close);
  let job:ReturnType<typeof startChangesJob>;
- const config:{projects:Project[];attribution:Attribution;agents:string[];service:boolean}={service:true,agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
- const sharing=()=>{const value=fixtureSharing();value.services=config.service?builtinServices(app.db):{};return value;};
+ const config:{projects:Project[];attribution:Attribution;agents:string[];service:boolean;omit?:'type'|'operation'}={service:true,agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
+ const sharing=()=>{const value=fixtureSharing();value.services=config.service?builtinServices(app.db):{};if(config.omit)value.services={changes:{types:config.omit==='type'?[]:['change'],operations:config.omit==='operation'?['changes.list']:['changes.commit-sync']}};return value;};
  installChanges(app.db,app.operations,app.live,sharing,{onRefresh:()=>job.wake()});
  job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
  return {app,clock,job,config};
@@ -89,4 +89,14 @@ it('allows the installed service and refuses commits after close',()=>{
  const before=app.db.prepare('SELECT * FROM changes_jobs').all();
  expect(app.operations.call('direct',{kind:'service',id:'changes'},'changes.commit-sync',input,'closed')).toMatchObject({ok:false,code:'denied'});
  expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(before);
+});
+
+for(const omit of ['type','operation'] as const) it(`refuses snapshots when the installed service lacks the required ${omit}`,async()=>{
+ const {app,job,config}=setup(async()=>[change({title:'Replacement'})]);
+ const before=change({title:'Prior snapshot'});replaceChanges(app.db,[before]);
+ const state=app.db.prepare('SELECT * FROM changes_jobs').all();config.omit=omit;
+ await job.run();
+ expect(loadChanges(app.db)).toEqual([before]);
+ expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(state);
+ expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeUndefined();
 });
