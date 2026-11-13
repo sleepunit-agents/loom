@@ -1,3 +1,4 @@
+import { settingsApp } from './pieces/settings/registration';
 import { activityApp } from './pieces/activity/registration';
 import { homeApp, HomeSurface, RailSurface } from './pieces/attention/home-registration';
 import { projectsApp } from './pieces/projects/registration';
@@ -25,3 +26,5 @@ apps.push(peopleApp);
 apps.push(projectsApp);
 
 apps.push(activityApp);
+
+apps.push(settingsApp);

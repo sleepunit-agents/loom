@@ -59,6 +59,23 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       if ('managed' in acknowledgement && acknowledgement.managed === true) { record.attentionManaged = true; saveRequest(record); }
       ctx.changed('secret.request', record.id); return record;
   }
+  // The Settings page needs explicit capability/availability rather than inferring
+  // ownership from an empty list. No household document or credential is exposed.
+  live.register({ name: 'secret.settings', ids: () => ['settings'], inScope: () => true,
+    refreshOn: change => ['secret.grant','secret.change','secret.name','secret.policy'].includes(change.type),
+    expires: record => typeof record.refreshAt === 'number' ? record.refreshAt : undefined,
+    read(id, viewer) {
+      if (id !== 'settings' || !owner(viewer, 'secrets.list')) return;
+      const held = sharing(), now = operations.clock.now();
+      const deadlines = [
+        ...all<Grant>(db, 'secrets_grants').flatMap(g => g.expiresAt === undefined ? [] : [g.expiresAt]),
+        ...(db.prepare('SELECT record FROM secrets_changes').all() as {record:string}[]).map(r => (JSON.parse(r.record) as {at:number}).at + 365 * 86400_000),
+      ].filter(at => at > now);
+      return { id, ...(deadlines.length ? {refreshAt: deadlines.reduce((a,b) => Math.min(a,b), Infinity)} : {}), agents: [...new Set([...Object.values(held.members).flatMap(m => m.agents),
+        ...Object.values(held.projects).flatMap(p => p.agents)])].sort(),
+        valuesAvailable: operations.has('secrets.set') && operations.has('secrets.remove'), now: operations.clock.now() };
+    },
+  });
   operations.register(operation({ name: 'secrets.list', input: z.object({}).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.list'), run: () => ({ names: all<SecretName>(db, 'secrets_names'), grants: all<Grant>(db, 'secrets_grants'), requests: all<GrantRequest>(db, 'secrets_requests') }),
   }));

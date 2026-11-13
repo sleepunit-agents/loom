@@ -118,8 +118,8 @@ Legacy attachment associations are translated from `about_key` (`ref:` or
 The raw source column is omitted from destination metadata. Matching works for
 both same-key and rekeyed imports without decrypting message words. It remains
 restricted to the opener and selected agent. Existing imported destinations
-are not repaired by a checksum-only repeat; migration verification and any
-repair procedure remain separate unfinished obligations.
+are not repaired by a checksum-only repeat; independent migration verification
+now detects that mismatch. A repair procedure remains a separate obligation.
 
 The importer accepts an internal `openSource(path)` dependency for both
 `comms.db` and `household.db`. Its default remains a read-only, WAL-aware SQLite
@@ -127,9 +127,13 @@ connection for the individual CLI. A snapshot coordinator must first verify a
 completed backup's manifest and then supply `openSnapshotSqlite`; its private
 buffer normalization never changes snapshot bytes or creates sidecars. Both
 handles close on success and read/open failures; a supplied reader never falls
-back to a file connection. This seam alone does not register Comms in `all`:
-source collection/discovery, strict plan options and independent verification
-remain required before that integration can claim coverage.
+back to a file connection. The offline coordinator now registers Comms after household, collects every
+co-located database/key/optional salt input, validates strict empty options and
+compares all five physical tables independently. Root and nested single-store
+layouts are supported; multiple identities refuse rather than omit data. Original
+ciphertext is preserved exactly, randomized metadata compares decrypted semantics
+in memory, and reports contain only table names and counts. See
+[migration-plan.md](migration-plan.md#comms-inputs).
 
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.

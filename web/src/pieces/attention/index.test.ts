@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
 import { createElement as h, useSyncExternalStore } from 'react';
 // @ts-expect-error The existing react-test-renderer dependency ships without declarations.
 import { act, create } from 'react-test-renderer';

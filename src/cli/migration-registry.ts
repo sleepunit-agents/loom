@@ -1,6 +1,6 @@
 /** Offline migration extension point. Never imported by the daemon. */
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Db } from '../core/index.js';
 import type { SnapshotManifest } from './migration-snapshot.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
@@ -9,6 +9,8 @@ import { importTasks } from '../pieces/tasks/importer.js';
 import { importAttention, type ImportScopes } from '../pieces/attention/importer.js';
 import { importClock } from '../pieces/clock/importer.js';
 import { importApprovals } from '../pieces/approvals/importer.js';
+import { importComms } from '../pieces/comms/importer.js';
+import { publishMigrationCommsKey } from './migration-comms-key.js';
 import { importChanges } from '../pieces/changes/importer.js';
 
 export interface MigrationContext {
@@ -110,5 +112,14 @@ export function createMigrationRegistry(): MigrationRegistry {
     run: (context, input) => importApprovals(context.db, single(context, input), context.now, input.options) });
   registry.register<Parameters<typeof importChanges>[2]>({ name: 'changes', dependencies: ['household'], reads: ['home/<Changes snapshot JSON>'], sourceReads: ['**/changes.json', '**/changes/*.json'],
     run: (context, input) => importChanges(context.db, single(context, input), input.options) });
+  registry.register({ name: 'comms', dependencies: ['household'], reads: ['home/**/{comms.db,household.db,comms.key,comms.salt}'],
+    sourceReads: ['**/comms.db', '**/household.db', '**/comms.key', '**/comms.salt'],
+    run: async (context, input) => {
+      // Plan preparation requires the complete co-located input set; resolve every file.
+      const paths = input.paths.map(path => snapshotPath(context, path));
+      const source = dirname(paths.find(path => path.endsWith('/comms.db'))!);
+      publishMigrationCommsKey(paths.find(path => path === join(source, 'comms.key'))!, context.home);
+      return importComms(context.db, source, context.home, {}, openSnapshotSqlite);
+    } });
   return registry;
 }

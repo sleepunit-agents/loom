@@ -3,6 +3,8 @@ import Database from 'better-sqlite3';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { compareComms } from './migration-comms-projection.js';
+import { snapshotPath } from './migration-registry.js';
 import { expectedTables, type Row } from './migration-projection.js';
 import { readReceipt, separateDestination } from './migration-all.js';
 import { canonicalPlanValue, migrationPlanChecksum, prepareMigrationPlan } from './migration-plan.js';
@@ -12,7 +14,7 @@ import type { IOStreams } from './io.js';
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
 const optional = (path: string): Buffer | undefined => existsSync(path) ? readFileSync(path) : undefined;
-const verifiers = ['household','tasks','attention','clock','approvals','changes'];
+const verifiers = ['household','tasks','attention','clock','approvals','changes','comms'];
 /** Compare JSON semantically; ordering is retained inside records, table row order is immaterial. */
 function normalize(records: Row[]): string {
   return canonicalPlanValue(records.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key, (key==='body'||key==='record') && typeof value==='string' ? JSON.parse(value) : value]))).map(row=>canonicalPlanValue(row)).sort());
@@ -37,11 +39,19 @@ export async function verifyMigration(snapshot: string, destination: string, sup
       for (const suffix of ['-wal','-journal']) if (existsSync(path+suffix) && statSync(path+suffix).size) throw Error('Destination must be stopped and checkpointed');
     };
     assertCheckpointed();
+    const commsKeyBefore = plan.importers.comms ? optional(join(home,'comms.key')) : undefined;
     const before = readFileSync(path), db = openSnapshotSqlite(path);
     const report: VerificationReport = {status:'verified',snapshot:plan.snapshot,plan:migrationPlanChecksum(plan),pieces:[],missing:[],differences:[]};
     try {
       for (const [piece,input] of Object.entries(plan.importers)) {
         if (!verifiers.includes(piece)) { report.missing.push(piece); continue; }
+        if (piece === 'comms') {
+          report.pieces.push(piece);
+          const differences = await compareComms(db,input.paths.map(p => snapshotPath({snapshot:{root:checked.root,manifest:checked.manifest}},p)),home);
+          report.differences.push(...differences.map(d => ({piece,...d})));
+          if (!receipt.completed.includes(piece)) report.differences.push({piece,table:'coordinator-receipt',expected:1,actual:0});
+          continue;
+        }
         const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now);
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
@@ -67,6 +77,7 @@ export async function verifyMigration(snapshot: string, destination: string, sup
       if ((expectedKey || finalKey) && !expectedKey?.equals(finalKey??Buffer.alloc(0))) {
         if (!report.differences.some(d=>d.table==='cookie-key')) report.differences.push({piece:'household',table:'cookie-key',expected:expectedKey?1:0,actual:finalKey?1:0});
       }
+      if (plan.importers.comms && !commsKeyBefore?.equals(optional(join(home,'comms.key')) ?? Buffer.alloc(0))) throw Error('Comms key changed');
       report.missing.sort();
       report.status = report.differences.length ? 'different' : report.missing.length ? 'incomplete' : 'verified';
       return report;

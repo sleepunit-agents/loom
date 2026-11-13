@@ -60,7 +60,11 @@ export function separateDestination(root: string, home: string, plan: MigrationP
     if (!remaining.has(key)) continue;
     const prefix = `.${name}-import-`, uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     const temps = [...remaining].filter(path => dirname(path) === target && basename(path).startsWith(prefix) && uuid.test(basename(path).slice(prefix.length)));
-    if (temps.length !== 1 || inode(temps[0]) !== inode(key) || lstatSync(key).nlink !== 2 || !readFileSync(key).equals(readFileSync(join(source, 'home', name)))) throw Error('Hard-linked destination');
+    const sourceKey = name === 'comms.key' && plan.importers.comms
+      ? plan.importers.comms.paths.find(path => basename(path) === name)
+      : `home/${name}`;
+    if (!sourceKey) throw Error('Hard-linked destination');
+    if (temps.length !== 1 || inode(temps[0]) !== inode(key) || lstatSync(key).nlink !== 2 || !readFileSync(key).equals(readFileSync(join(source, sourceKey)))) throw Error('Hard-linked destination');
     remaining.delete(key); remaining.delete(temps[0]); leftovers.push(temps[0]);
   }
   if (remaining.size) throw Error('Hard-linked destination');
