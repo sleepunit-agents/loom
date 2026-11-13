@@ -25,9 +25,14 @@ export interface SlackSocketOptions {
  * are retried by Slack. Receiver deduplication must use platform event identity,
  * not envelope_id, which is only the ACK address. No history replay or polling.
  */
-export function slackSocket(options: SlackSocketOptions): { close(): void } {
+export function slackSocket(options: SlackSocketOptions): { close(): Promise<void> } {
   const { clock } = options;
   let closed = false, generation = 0, failures = 0;
+  const active = new Set<Promise<unknown>>();
+  function track<T>(promise: Promise<T>): Promise<T> {
+    active.add(promise); void promise.finally(() => active.delete(promise)).catch(() => {}); return promise;
+  }
+  function start() { void track(connect()); }
   let current: Socket | undefined;
   let cancelRetry: (() => void) | undefined, cancelHeartbeat: (() => void) | undefined;
   let cancelDeadline: (() => void) | undefined;
@@ -39,7 +44,7 @@ export function slackSocket(options: SlackSocketOptions): { close(): void } {
     cancelHeartbeat?.(); cancelDeadline?.(); abort?.abort();
     const old = current; current = undefined; old?.terminate();
     const delay = Math.min(60_000, 1000 * 2 ** Math.min(failures++, 6));
-    cancelRetry = clock.at(clock.now() + delay, () => { cancelRetry = undefined; void connect(); });
+    cancelRetry = clock.at(clock.now() + delay, () => { cancelRetry = undefined; start(); });
   }
   function heartbeat(socket: Socket, epoch: number) {
     cancelHeartbeat = clock.at(clock.now() + 30_000, () => {
@@ -110,7 +115,7 @@ export function slackSocket(options: SlackSocketOptions): { close(): void } {
           if (!hello) throw Error();
           if (typeof frame.envelope_id !== 'string' || !frame.envelope_id || frame.envelope_id.length > 200) throw Error();
           if (++pending > 64) throw Error();
-          queue = queue.then(async () => {
+          queue = track(queue.then(async () => {
             if (closed || epoch !== generation) return;
             if (frame.type === 'events_api') {
               if (!object(frame.payload)) throw Error();
@@ -122,15 +127,17 @@ export function slackSocket(options: SlackSocketOptions): { close(): void } {
               await new Promise<void>((resolve, reject) => {
                 socket.send(JSON.stringify({ envelope_id: frame.envelope_id }), error => error ? reject(error) : resolve());
               });
-          }).catch(() => disconnect(epoch)).finally(() => { pending--; });
+          }).catch(() => disconnect(epoch)).finally(() => { pending--; }));
         } catch { disconnect(epoch); }
       });
     } catch { disconnect(epoch); } // upstream errors can contain tokens or tickets
   }
-  void connect();
+  start();
+  let closing: Promise<void> | undefined;
   return { close() {
-    if (closed) return;
+    if (closing) return closing;
     closed = true; generation++; cancelRetry?.(); cancelHeartbeat?.(); cancelDeadline?.(); abort?.abort();
     const old = current; current = undefined; old?.terminate();
+    return closing = Promise.allSettled([...active]).then(() => {});
   } };
 }
