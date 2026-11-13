@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -59,4 +60,26 @@ it('rejects child symlinks inside a directory input', () => {
   symlinkSync(join(root, 'outside'), join(root, 'home', 'household.json'));
   const context = { snapshot: { root } } as MigrationContext;
   expect(() => snapshotPath(context, 'home')).toThrow('symlink');
+});
+
+it('rejects a socket inside a directory input', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'migration-socket-')); roots.push(root);
+  mkdirSync(join(root, 'home'));
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(join(root, 'home', 'socket'), resolve); });
+  try {
+    expect(() => snapshotPath({ snapshot: { root } } as MigrationContext, 'home')).toThrow('special file');
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+it('includes household for each individual piece request', () => {
+  for (const name of ['tasks', 'attention', 'clock', 'approvals', 'changes']) {
+    expect(createMigrationRegistry().order([name]).importers.map(i => i.name)).toEqual(['household', name]);
+  }
+});
+it('chooses the earliest registered ready importer after each dependency is emitted', () => {
+  const registry = new MigrationRegistry();
+  for (const [name, dependencies] of [['dependent', ['late']], ['independent', []], ['late', []]] as const) {
+    registry.register({ name, dependencies, reads: [], run: () => undefined });
+  }
+  expect(registry.order(['dependent', 'independent']).importers.map(i => i.name)).toEqual(['independent', 'late', 'dependent']);
 });
