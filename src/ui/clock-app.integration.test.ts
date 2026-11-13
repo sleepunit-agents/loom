@@ -58,6 +58,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
+    context.setDefaultTimeout(10_000);
     await context.grantPermissions(['local-network-access'],{origin:loom.url});
     const staticFiles=async(route:import('playwright-core').Route)=>{
       const url=new URL(route.request().url());if(url.pathname==='/live'||url.pathname.startsWith('/api/'))return route.continue();
@@ -93,6 +94,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     });
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
     const row=(p:typeof a,text:string)=>p.locator('[data-split-row]').filter({hasText:text});
+    console.info('Clock browser: initial windows');
     await expect.poll(()=>row(b,'Morning review').count()).toBe(1);
     await expect.poll(()=>row(b,'Private clock work').count()).toBe(1);
     await a.getByRole('button',{name:'Create wake',exact:true}).click();
@@ -125,6 +127,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await b.getByRole('button',{name:'Confirm reassignment',exact:true}).click();
     await expect.poll(()=>a.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
+    console.info('Clock browser: ordinary controls complete');
     // Only eligible owner adoption is offered; preserve saved words and time.
     await b.getByRole('button',{name:/^Wakes/}).click(); await row(b,'Unknown imported review').click();
     await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(1);
@@ -157,6 +160,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText('Saved',{exact:true}).count()).toBe(1);
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
+    console.info('Clock browser: vouch and lane complete');
     // Keep the pending live record constant while varying only the owning open
     // response. This discriminates the reader's independent preflight checks.
     let openMode: 'pass' | 'hold' | 'denied' | 'closed' = 'hold';
@@ -211,6 +215,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
     const exactDetails=load(loom.db).approvals.find(card=>card.id===localCards[0])!.details;
     await expect.poll(()=>b.getByRole('heading',{name:'Details',exact:true}).locator('..').locator('p').textContent()).toBe(exactDetails);
+    console.info('Clock browser: decision reader guards complete');
     // Delay one feed's snapshots without changing authentication, records or the
     // other feeds. Each page still connects to the real signed-in Live socket.
     let maskedFeed: 'approval' | 'clock' | undefined;
@@ -240,6 +245,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     expect(await a.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(true);
     holdClock=false;releaseClock!({ok:false,code:'unavailable',message:'Fixture released held ordinary write'});
 
+    console.info('Clock browser: independent readiness complete');
     const beforeLocal=wakes(loom.db).length;
     await b.getByRole('group',{name:'Answer approval'}).getByRole('button',{name:'Allow',exact:true}).click();
     await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('allowed');
@@ -249,6 +255,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     // sends words or a reconstructed Caller to the recovery backend.
     expect(wakes(loom.db)).toHaveLength(beforeLocal);
     await expect.poll(()=>b.getByRole('form',{name:'Local work timing'}).count()).toBe(1);
+    console.info('Clock browser: allowed timing opened');
     const timing=b.getByRole('form',{name:'Local work timing'});
     await timing.getByRole('textbox',{name:'When',exact:true}).fill('not a date');
     await timing.getByLabel('Use approval',{exact:true}).selectOption('once');
@@ -262,6 +269,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     expect(wakes(loom.db)).toHaveLength(beforeLocal);
     await timing.getByRole('textbox',{name:'When',exact:true}).fill('2026-11-13 09:31');
     await timing.getByRole('button',{name:'Review timing',exact:true}).click();
+    console.info('Clock browser: timing reviewed');
     const confirmation=b.getByRole('region',{name:'Confirm local timing'});
     expect(await confirmation.getByText(exactDetails!,{exact:true}).count()).toBe(1);
     expect(await confirmation.getByText('At (CT): 2026-11-13 09:31',{exact:true}).count()).toBe(1);
@@ -272,14 +280,17 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       await confirmation.scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    console.info('Clock browser: screenshots complete');
     dropLocalAck=true;
     await b.getByRole('button',{name:'Schedule these saved words',exact:true}).click();
+    console.info('Clock browser: lost ack waiting replay');
     await expect.poll(()=>!!releaseLocalReplay).toBe(true);
     expect(wakes(loom.db).filter(w=>w.approval===localCards[0])).toHaveLength(1);
     await b.getByRole('button',{name:/^Wakes/}).click();
     await b.getByRole('button',{name:/Local requests/}).click();await row(b,'Allow once').click();
     await expect.poll(()=>b.getByRole('button',{name:'Review timing',exact:true}).isEnabled()).toBe(false);
     expect(localWires).toHaveLength(2);expect(localWires[1]).toBe(localWires[0]);
+    console.info('Clock browser: reader reopened releasing replay');
     releaseLocalReplay!();
     await expect.poll(()=>wakes(loom.db).filter(w=>w.approval===localCards[0]).length).toBe(1);
     const localOnce=wakes(loom.db).find(w=>w.approval===localCards[0])!;

@@ -13,8 +13,8 @@ const approval={id:'a-12345678',state:'allowed',details:'Complete saved words',k
 let tree:ReturnType<typeof create>;
 const button=(text:string)=>tree.root.findAllByType('Button').find((b:{props:{children?:unknown}})=>b.props.children===text);
 const render=async(snapshot:Snapshot<Approval>={records:[approval],status:'live'},a=approval)=>{await act(async()=>{tree ? tree.update(h(LocalScheduling,{approval:a,snapshot})) : tree=create(h(LocalScheduling,{approval:a,snapshot}));});};
-const review=async(standing=false, mode='at', authority=standing?'standing':'once')=>{
- const form=new FormData();form.set('mode',mode);form.set('when','2026-11-14 08:31');form.set('authority',authority);
+const review=async(standing=false, mode='at', authority=standing?'standing':'once', when='2026-11-14 08:31')=>{
+ const form=new FormData();form.set('mode',mode);form.set('when',when);form.set('authority',authority);
  const original=globalThis.FormData;globalThis.FormData=class {constructor(){return form;}} as typeof FormData;
  try{await act(async()=>tree.root.findByType('form').props.onSubmit({preventDefault(){},currentTarget:{}}));}finally{globalThis.FormData=original;}
 };
@@ -54,5 +54,10 @@ it('honors the shared pending lock and scopes result to this exact operation/car
 
 it.each([['','once'],['at','']])('requires explicit timing mode %j and authority %j',async(mode,authority)=>{
  await render();await review(false,mode,authority);
+ expect(button('Schedule these saved words')).toBeUndefined();expect(f.send).not.toHaveBeenCalled();
+});
+
+it.each(['','   '])('requires nonblank time %j before confirmation',async when=>{
+ await render();await review(false,'in','once',when);
  expect(button('Schedule these saved words')).toBeUndefined();expect(f.send).not.toHaveBeenCalled();
 });
