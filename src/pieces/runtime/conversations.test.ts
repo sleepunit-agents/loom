@@ -736,3 +736,31 @@ it('retains Clock private project scope and re-evaluates former owners without c
  })();
  expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'jonathan',people:['jonathan']}});
 });
+
+it.each(['credential','box','hosting','house','member','stopped'] as const)('revokes Clock provenance for a retained Viewer after %s changes',async drift=>{
+ let role:ReturnType<typeof realConversationRuntime>;
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const f=await setup();await f.open();const job=await f.queued();
+ value(await f.post(f.runner,'runtime.claimJob',{job}));
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ expect(role!.clockProvenance(viewer)).toMatchObject({agent:'art',member:'jonathan',principal:{for:'owner'}});
+ const store=runtimeStore(f.app.db);
+ f.app.db.transaction(()=>{
+  if(drift==='credential')signin(f.app).tokens.change(rows=>{rows.splice(rows.findIndex(t=>t.sha256===hash(body)),1);});
+  else if(drift==='house') {const {changedAt:_,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
+  else if(drift==='stopped') {const {changedAt:_,...before}=store.read('job',job)!;store.put('job',{...before,state:'stopped'},f.clock.now());}
+  else {
+   const {changedAt:_,...box}=store.read('box','a')!;
+   if(drift==='box')store.put('box',{...box,revokedAt:f.clock.now()},f.clock.now());
+   else if(drift==='hosting')store.put('box',{...box,mayHost:[]},f.clock.now());
+   else {
+    // Retain hosting, independently remove only the member's right to Art.
+    store.put('box',{...box,lentTo:['art']},f.clock.now());
+    new HouseholdDatabase(f.app.db).change(f.home,raw=>{raw.owner='pollock';raw.members=[{person:'pollock',role:'owner',agents:'*'},{person:'jonathan',role:'member',agents:[]}];});
+   }
+  }
+ })();
+ expect(role!.clockProvenance(viewer)).toBeUndefined();
+});

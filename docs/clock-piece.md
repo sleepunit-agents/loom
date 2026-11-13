@@ -73,8 +73,8 @@ call. Restart holds any remaining firing intent; stopping the installer prevents
 late completion from writing. Cancellation before invocation suppresses the call;
 cancellation after invocation records that a body may have started. Uncertain
 work cannot be released with fire-now. Known-not-started work alone backs off.
-The default runtime is a staging hold. The Clock runtime dependency remains an
-uncomposed start-result contract.
+The installer default is a staging hold. Next mode composes the runner-confirming
+Runtime bridge described above; unsupported work stays held.
 The read-only approval dependency is composed with the owning Approvals and
 Secrets roles in next mode; it is not a receipt-spending interface.
 
@@ -82,8 +82,8 @@ The current tests exercise these transitions on `startLoom`/`FakeClock`, includi
 pause release order, a parked answer and timeout, changed dispatch permission,
 live-record aging, and the next occurrence across Chicago daylight saving.
 The opt-in client, Clock app, Home composition, parked answers, owner-vouch
-backend/client and explicit safety wake are merged. Ask-vouch, local-approval
-recovery and runtime-dependent parity remain incomplete. The foundation and
+backend/client, ask-vouch, local filing/recovery/standing and explicit safety wake
+are merged. Runtime-dependent parity remains incomplete. The foundation and
 importer migration reviews are complete.
 
 ## Old surface inventory and replacements
@@ -578,7 +578,7 @@ Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
 request again; it never carries a house grant forward. Other resource questions
 report that their piece applied the access and ask the body to check it; they
 never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
-approval or grants access, and dispatch uses the runtime bridge described under Remaining work and evidence. Local-wake filing/recovery/standing remains unfinished. Owner-vouch application
+approval or grants access, and dispatch uses the runtime bridge described under Remaining work and evidence. Local-wake filing/recovery/standing is merged; actual local delivery remains held. Owner-vouch application
 and explicit/automatic ask-vouch filing are composed separately as described below. This composition replaces the
 previously missing next-mode approval parking seam.
 
@@ -989,7 +989,7 @@ at capacity, matching the legacy new-creation check; an owner replacement has no
 API origin. Disabled origin-bearing schedules count until removed. Historical
 rows lacking this new metadata do not acquire origin from `by` or archive text.
 The shared fifty-one-off cap is unchanged. API forty / verified-conversation twenty
-one-off quotas and the conversation mutation boundary remain unfinished.
+one-off quotas are merged in #1116; the conversation mutation boundary remains unfinished.
 
 The in-process schedule-capacity fixtures cover the twenty-first refusal without
 partial rows/events, owner exemption, replacement/removal, disabled and historical
