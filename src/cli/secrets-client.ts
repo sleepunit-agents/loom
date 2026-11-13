@@ -41,6 +41,10 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
     token = (await readFile(io.env.LOOM_TOKEN_FILE, 'utf8')).trim();
     if (!token) return fail('Token file is empty');
   } catch { return fail('Cannot configure loom connection'); }
+  const emit = (stdout: string, stderr: string, code: number) => {
+    if (stdout.includes(token) || stderr.includes(token)) return fail('Invalid daemon response');
+    io.stdout(stdout); io.stderr(stderr); return code;
+  };
   if (spec.operation === 'command') input.command = spec.name;
   if (spec.write) input.writeId = randomUUID();
   if (spec.name === 'policy') delete input.writeId;
@@ -73,19 +77,21 @@ export async function runSecretsClient(argv: string[], io: IOStreams, runtime: C
       if (text.includes(token)) return fail('Invalid daemon response');
       const envelope = z.object({ ok: z.boolean(), value: z.unknown().optional(), code: z.string().optional() }).safeParse(JSON.parse(text));
       if (!envelope.success) return fail('Invalid daemon response');
-      if (!response.ok || !envelope.data.ok) return fail('Request refused', envelope.data.code === 'denied' ? 4 : envelope.data.code === 'invalid' ? 2 : envelope.data.code === 'not-found' ? 3 : 1);
+      if (!response.ok || !envelope.data.ok) {
+        if (spec.name === 'state' && envelope.data.code === 'not-found') return emit('', 'loom secrets: there is no such request\n', 3);
+        return fail('Request refused', envelope.data.code === 'denied' ? 4 : envelope.data.code === 'invalid' ? 2 : envelope.data.code === 'not-found' ? 3 : 1);
+      }
       if (spec.operation === 'command') {
         const result = metadata.safeParse(envelope.data.value);
         if (!result.success) return fail('Invalid daemon response');
-        io.stdout(result.data.stdout); io.stderr(result.data.stderr); return result.data.code;
+        return emit(result.data.stdout, result.data.stderr, result.data.code);
       }
       const result = spec.operation === 'set' ? z.object({ saved: z.literal(true) }).strict().safeParse(envelope.data.value)
         : spec.operation === 'remove' ? z.object({ removed: z.literal(true) }).strict().safeParse(envelope.data.value)
         : z.object({ default: z.enum(['ask', 'auto', 'never']), secrets: z.record(z.string(), z.unknown()) }).strict().safeParse(envelope.data.value);
       if (!result.success) return fail('Invalid daemon response');
-      io.stderr(spec.name === 'rm' ? `removed ${input.name}\n` : spec.name === 'policy'
-        ? `${input.agent}'s houses ${input.on ? 'get' : 'no longer get'} ${input.name} when they start\n` : `stored ${input.name}\n`);
-      return 0;
+      return emit('', spec.name === 'rm' ? `removed ${input.name}\n` : spec.name === 'policy'
+        ? `${input.agent}'s houses ${input.on ? 'get' : 'no longer get'} ${input.name} when they start\n` : `stored ${input.name}\n`, 0);
     } catch { if (attempt === 3) return fail('loom daemon is unavailable'); }
     await runtime.retry(100 * (attempt + 1));
   }

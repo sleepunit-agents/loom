@@ -5,6 +5,8 @@ import { secretName } from './input.js';
 import { secretStartPermission } from './policy.js';
 import type { GrantRequest } from './role.js';
 export function installSecretCommands(db: Db, operations: Operations, sharing: () => Sharing) {
+  // Legacy `may` accepts 40-character agent names starting with a letter;
+  // secretAgent intentionally allows a broader new-side principal namespace.
   const agent = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const input = z.discriminatedUnion('command', [
     z.object({ command: z.literal('list'), json: z.boolean().optional() }).strict(),

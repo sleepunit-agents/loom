@@ -73,9 +73,14 @@ it('reports pending, granted, expired, denied and revoked requests using the dae
   save('pending'); expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: 'pending\n' });
   save('allowed'); app.db.prepare('INSERT INTO secrets_grants VALUES (?,?,?,?,?)').run('grant', 'art', 'secret', 'API', JSON.stringify({ requestId: record.id, expiresAt: app.clock.now() + 1000 }));
   expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: 'granted\n' });
+  app.db.prepare('UPDATE secrets_grants SET record=? WHERE id=?').run(JSON.stringify({ requestId: record.id, expiresAt: app.clock.now() + 1000, movedTo: 'q-ffffffff' }), 'grant');
+  expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: 'expired\n' });
+  app.db.prepare('UPDATE secrets_grants SET record=? WHERE id=?').run(JSON.stringify({ requestId: 'q-ffffffff', expiresAt: app.clock.now() + 1000 }), 'grant');
+  expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: 'expired\n' });
+  app.db.prepare('UPDATE secrets_grants SET record=? WHERE id=?').run(JSON.stringify({ requestId: record.id, expiresAt: app.clock.now() + 1000 }), 'grant');
   await app.clock.advance(1000); expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: 'expired\n' });
   for (const state of ['denied', 'revoked', 'cancelled']) { save(state); expect(await app.run(['state', record.id])).toMatchObject({ code: 0, stdout: state + '\n' }); }
-  expect(await app.run(['state', 'q-ffffffff'])).toMatchObject({ code: 3, stdout: '' });
+  expect(await app.run(['state', 'q-ffffffff'])).toMatchObject({ code: 3, stdout: '', stderr: 'loom secrets: there is no such request\n' });
 });
 it('accepts values only on bounded stdin and never stores or prints values or provider output', async () => {
   const app = await setup(); const sentinel = 'PRIVATE-value-sentinel-731';
@@ -112,5 +117,11 @@ it('rejects retired commands, malformed bindings, unsafe origins, redirects and 
   for (const argv of [['get', 'API', '--reveal'], ['issue', 'API'], ['bundle', 'export'], ['podman', 'API', 'x'], ['policy', 'houses-import'], ['list', '--json', '--json'], ['list', 'extra'], ['add', '../API']]) expect(await app.run(argv)).toMatchObject({ code: 2, stdout: '', bodies: [] });
   expect(await app.run(['list'], { env: { LOOM_URL: 'https://user:password@example.com' } })).toMatchObject({ code: 1, stdout: '', bodies: [] });
   expect(await app.run(['list'], { request: async (_url, init) => { expect(init?.redirect).toBe('error'); return new Response('{"ok":true,"value":{"stdout":"fixture-token","stderr":"","code":0}}'); } })).toMatchObject({ code: 1, stdout: '', stderr: 'loom-secrets: Invalid daemon response\n' });
+  for (const field of ['stdout', 'stderr']) {
+    const output = JSON.stringify({ ok: true, value: { stdout: '', stderr: '', code: 0, [field]: 'fixture-token' } }).replace('fixture-token', '\\u0066ixture-token');
+    expect(await app.run(['list'], { request: async () => new Response(output) })).toMatchObject({ code: 1, stdout: '', stderr: 'loom-secrets: Invalid daemon response\n' });
+  }
+  expect(await app.run(['may', '123', 'API'])).toMatchObject({ code: 2, stdout: '' });
+  expect(await app.run(['may', 'a'.repeat(41), 'API'])).toMatchObject({ code: 2, stdout: '' });
   expect(await app.run(['rm', 'API'], { request: async () => new Response('{"ok":true,"value":{"removed":true,"value":"PRIVATE"}}') })).toMatchObject({ code: 1, stdout: '', stderr: 'loom-secrets: Invalid daemon response\n' });
 });
