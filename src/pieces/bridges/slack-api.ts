@@ -51,14 +51,16 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
      * Unknown flags and incomplete pagination fail closed as wait.
      */
     async inspect(venue: Venue, message: Message): Promise<Inspection> {
-      if (venue.platform !== 'slack' || !id(venue.workspace) || !id(venue.bot) || !id(message.channel) || !id(message.user)) return 'drop';
+      if (message.user === venue.bot || venue.platform !== 'slack' || !id(venue.workspace) || !id(venue.bot) || !id(message.channel) || !id(message.user)) return 'drop';
       try {
         const info = await call(venue, 'conversations.info', { channel: message.channel });
         const channel = info.channel;
         if (!object(channel) || channel.id !== message.channel) return 'wait';
+        if (typeof channel.is_im !== 'boolean' || typeof channel.is_mpim !== 'boolean' || (channel.is_im && channel.is_mpim)) return 'wait';
         const group = !!message.group || !message.channel.startsWith('D');
         if (group ? channel.is_mpim !== true : channel.is_im !== true) return 'drop';
         // Slack IM info identifies the other participant. Never trust the event alone.
+        if (!group && !id(channel.user)) return 'wait';
         if (!group && channel.user !== message.user) return 'drop';
         const members: string[] = [];
         if (group) {
@@ -79,9 +81,11 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
           const result = await call(venue, 'users.info', { user: member });
           const user = result.user;
           if (!object(user) || user.id !== member) return 'wait';
+          if (!id(user.team_id) || ['deleted', 'is_bot', 'is_restricted', 'is_ultra_restricted'].some(flag => typeof user[flag] !== 'boolean')
+            || (user.is_stranger !== undefined && typeof user.is_stranger !== 'boolean')) return 'wait';
           if (user.team_id !== venue.workspace || user.deleted !== false || user.is_bot !== false || user.is_restricted !== false || user.is_ultra_restricted !== false || user.is_stranger === true || user.id === 'USLACKBOT') return 'drop';
         }
-        return group ? { kind: 'allow', members } : 'allow';
+        return { kind: 'allow', members };
       } catch (error) { return error instanceof Refused ? 'drop' : 'wait'; }
     },
   };

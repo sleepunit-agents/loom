@@ -16,7 +16,7 @@ function fixture(options: {gate?: boolean; fail?: string} = {}) {
     const fields = init?.body as URLSearchParams;
     let data: unknown;
     if (options.fail === method) data = {ok:false,error:'ratelimited'};
-    else if (method === 'conversations.info') data = {ok:true, channel:{id:fields.get('channel'),is_mpim:true,is_im:true,user:'U111'}};
+    else if (method === 'conversations.info') data = {ok:true, channel:{id:fields.get('channel'),is_mpim:!fields.get('channel')!.startsWith('D'),is_im:fields.get('channel')!.startsWith('D'),user:'U111'}};
     else if (method === 'conversations.members') data = {ok:true, members:++pages === 1 ? ['U999','U111'] : ['U222'],response_metadata:{next_cursor:pages === 1 ? 'next' : ''}};
     else data = {ok:true,user:human(fields.get('user')!)};
     return Response.json(data);
@@ -31,14 +31,14 @@ describe('Slack service API inspection', () => {
     expect(f.request).toHaveBeenCalledTimes(5); expect(f.read).toHaveBeenCalledTimes(5);
     expect((f.request.mock.calls[2][1]?.body as URLSearchParams).get('cursor')).toBe('next');
     // New inspection must not reuse the preceding allowed membership/user evidence.
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:false}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:false,is_im:false}}));
     expect(await f.api.inspect(venue,message)).toBe('drop');
   });
   it('validates the authenticated IM participant and checks its user', async () => {
     const f = fixture();
-    expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe('allow');
+    expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toEqual({kind:'allow',members:['U999','U111']});
     expect(f.request).toHaveBeenCalledTimes(2);
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'D123',is_im:true,user:'U222'}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'D123',is_im:true,is_mpim:false,user:'U222'}}));
     expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe('drop');
   });
   it('staging blocks even credential acquisition', async () => {
@@ -54,9 +54,9 @@ describe('Slack service API inspection', () => {
   ])('refuses unsafe/malformed human %j', async patch => {
     const f = fixture();
     // Use a DM so the second call is users.info.
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'D123',is_im:true,user:'U111'}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'D123',is_im:true,is_mpim:false,user:'U111'}}));
     f.request.mockResolvedValueOnce(Response.json({ok:true,user:{...human('U111'),...patch}}));
-    expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe(patch.id ? 'wait' : 'drop');
+    expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe(patch.id || Object.values(patch).includes(undefined) ? 'wait' : 'drop');
   });
   it.each([
     {members:['U999','U111'],response_metadata:{next_cursor:''}},
@@ -64,7 +64,7 @@ describe('Slack service API inspection', () => {
     {members:['U111','U222','U333'],response_metadata:{next_cursor:''}},
   ])('refuses incomplete group membership %j', async page => {
     const f = fixture();
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}}));
     f.request.mockResolvedValueOnce(Response.json({ok:true,...page}));
     expect(await f.api.inspect(venue,message)).toBe('drop');
   });
@@ -74,13 +74,13 @@ describe('Slack service API inspection', () => {
     {members:['U999',42],response_metadata:{next_cursor:''}},
   ])('waits on malformed/incomplete pagination %j', async page => {
     const f = fixture();
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}}));
     f.request.mockResolvedValueOnce(Response.json({ok:true,...page}));
     expect(await f.api.inspect(venue,message)).toBe('wait');
   });
   it('ends repeated cursors without granting partial membership', async () => {
     const f = fixture();
-    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true}}));
+    f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}}));
     f.request.mockResolvedValueOnce(Response.json({ok:true,members:['U999','U111'],response_metadata:{next_cursor:'x'}}));
     f.request.mockResolvedValueOnce(Response.json({ok:true,members:['U222'],response_metadata:{next_cursor:'x'}}));
     expect(await f.api.inspect(venue,message)).toBe('wait'); expect(f.request).toHaveBeenCalledTimes(3);
@@ -132,7 +132,7 @@ it('uses the real bridges service grant, erases holder bytes and rechecks revoca
     const request = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({Authorization:'Bearer CREDENTIAL-SENTINEL'});
       expect(call('revokeService',{service:'bridges',name:venue.tokenSecret}).ok).toBe(true);
-      return Response.json({ok:true,channel:{id:'G123',is_mpim:true}});
+      return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});
     });
     const api = slackApi(use,()=>true,request as typeof fetch);
     expect(await api.inspect(venue,message)).toBe('wait');
@@ -145,4 +145,42 @@ it('uses the real bridges service grant, erases holder bytes and rechecks revoca
     const dump = tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
     expect(JSON.stringify(dump)).not.toContain('CREDENTIAL-SENTINEL');
   } finally {await app.close(); rmSync(home,{recursive:true,force:true});}
+});
+
+it.each([
+  {id:'D123',is_im:true,is_mpim:true,user:'U111'},
+  {id:'D123',is_im:true,is_mpim:false},
+  {id:'D123',is_im:true,user:'U111'},
+  {id:'D123',is_mpim:false,user:'U111'},
+])('waits on incomplete/contradictory channel evidence %j', async channel => {
+  const f=fixture(); f.request.mockResolvedValueOnce(Response.json({ok:true,channel}));
+  expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe('wait');
+});
+it('waits on malformed stranger evidence', async () => {
+  const f=fixture();
+  f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'D123',is_im:true,is_mpim:false,user:'U111'}}));
+  f.request.mockResolvedValueOnce(Response.json({ok:true,user:{...human('U111'),is_stranger:'true'}}));
+  expect(await f.api.inspect(venue,{...message,channel:'D123',dm:true,group:false})).toBe('wait');
+});
+it('enforces the fifteen-second timeout for an abort-aware hung request', async () => {
+  vi.useFakeTimers();
+  const timeout = vi.spyOn(AbortSignal,'timeout').mockImplementation(ms => {
+    const controller = new AbortController(); setTimeout(()=>controller.abort(),ms); return controller.signal;
+  });
+  try {
+    const f=fixture(); let settled = false;
+    const request = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve,reject) => {
+      init?.signal?.addEventListener('abort',()=>reject(Error('SECRET')), {once:true});
+    }));
+    const result=slackApi({withValue:f.read as any},()=>true,request as typeof fetch).inspect(venue,message).then(value=>{settled=true;return value;});
+    await vi.advanceTimersByTimeAsync(14_999); expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(await result).toBe('wait');
+    expect(timeout).toHaveBeenCalledWith(15_000);
+  } finally {timeout.mockRestore(); vi.useRealTimers();}
+});
+it('rechecks staging between calls before obtaining another credential', async () => {
+  const f=fixture(); let open=true;
+  f.request.mockImplementationOnce(async()=>{open=false;return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});});
+  expect(await slackApi({withValue:f.read as any},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
+  expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).toHaveBeenCalledTimes(1);
 });
