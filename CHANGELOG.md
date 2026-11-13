@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
+
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.

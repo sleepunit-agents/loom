@@ -26,6 +26,12 @@ const startResult = z.discriminatedUnion('state', [
 ]);
 const invalid = (message: string): never => { throw new OperationError('invalid', message); };
 function work(input: Work): Work {
+  if (input.continuation) {
+    if (input.approval || input.prompt?.includes('<!-- house: local -->'))
+      invalid("A continuation can't ride a standing job, an approval or a local wake");
+    if (input.file || input.slot || input.place)
+      invalid('A continuation needs its own delivered conversation, without a lane file, slot or place');
+  }
   if (!!input.prompt === !!input.file) invalid('Give exactly one prompt or lane file');
   if (input.prompt && /^(?:\/|\.\.?\/|routines\/)/.test(input.prompt)) invalid('Use --file for a lane path');
   if (input.file && (/^(?:\/|[A-Za-z]:)/.test(input.file) || input.file.split('/').includes('..'))) invalid('Lane files must be relative repository paths');
