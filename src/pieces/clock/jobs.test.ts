@@ -135,6 +135,21 @@ describe('durable daemon clock', () => {
     expect(restarted.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
     expect(restarted.call('now', { agent: 'art' }).ok).toBe(true);
   });
+  it.each(['ordinary', 'lane'] as const)('does not count an accelerated %s recurring occurrence as a new one-off', async kind => {
+    const app = await loom();
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const s = kind === 'lane'
+      ? app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' })
+      : app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Daily', note: 'daily' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    app.value('now', { id: occurrence.id });
+    expect(app.call('in', { agent: 'art', prompt: 'Last', note: 'last', when: '2h' }).ok).toBe(true);
+    expect(app.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
+    app.clock.advance(0); await settled(); // held recurring rows still do not consume one-off capacity
+    const last = wakes(app.db).find(w => w.note === 'last')!;
+    app.value('cancel', { id: last.id });
+    expect(app.call('in', { agent: 'art', prompt: 'Last', note: 'last', when: '2h' }).ok).toBe(true);
+  });
   it('waits for quota reset plus a minute without using the job failure budget, including after restart', async () => {
     const dir = home(), clock = new FakeClock(Date.parse('2026-11-13T10:00:00Z'));
     const retryAfter = '2026-11-13T22:01:00Z';
