@@ -11,6 +11,8 @@ import { importClock, legacyClockAgentFiles } from '../pieces/clock/importer.js'
 import { importApprovals } from '../pieces/approvals/importer.js';
 import { importComms } from '../pieces/comms/importer.js';
 import { publishMigrationCommsKey } from './migration-comms-key.js';
+import { importSecrets } from '../pieces/secrets/importer.js';
+import type { SecretImportOptions } from '../pieces/secrets/import-source.js';
 import { importChanges } from '../pieces/changes/importer.js';
 
 export interface MigrationContext {
@@ -121,5 +123,8 @@ export function createMigrationRegistry(): MigrationRegistry {
       publishMigrationCommsKey(paths.find(path => path === join(source, 'comms.key'))!, context.home);
       return importComms(context.db, source, context.home, {}, openSnapshotSqlite);
     } });
+  registry.register<SecretImportOptions>({ name: 'secrets', dependencies: ['household'], reads: ['home/<secrets directory>/{store.sops.json,policy.json,requests.json,audit.jsonl}'],
+    sourceReads: ['**/store.sops.json','**/policy.json','**/requests.json','**/audit.jsonl'],
+    run: (context,input) => importSecrets(context.db,context.home,single(context,input),context.now,input.options) });
   return registry;
 }

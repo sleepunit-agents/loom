@@ -7,6 +7,7 @@ import { openSnapshotSqlite } from './migration-sqlite.js';
 import { readChangesImport } from '../pieces/changes/importer.js';
 import { legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import { z } from 'zod';
+import { secretImportOptions } from '../pieces/secrets/import-source.js';
 import { parseHouseholdDocument } from '../household.js';
 import { readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
 import { createMigrationRegistry, snapshotPath } from './migration-registry.js';
@@ -26,6 +27,7 @@ const options = {
   approvals: z.object({ projects: z.record(z.string(), slug) }).strict(),
   changes: z.object({ attribution }).strict(),
   comms: z.object({}).strict(),
+  secrets: secretImportOptions,
 };
 export const supportedMigrationImporters: readonly string[] = Object.keys(options);
 const inputSchema = z.object({ paths: z.array(z.string().min(1)).min(1), options: z.json() }).strict();
@@ -178,6 +180,12 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     });
     return [...required, ...[`${directory}/comms.salt`].filter(p => physical.has(p))];
   });
+  const secrets = [...new Set([...files].filter(p=>{
+    if(basename(p)==='store.sops.json')return true;
+    if(basename(p)==='requests.json')return Object.hasOwn(json(p),'requests');
+    if(basename(p)==='policy.json')return Object.hasOwn(json(p),'secrets');
+    return false;
+  }).map(p=>posix.dirname(p)))].sort();
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
   if (commsPaths.length) discovered.comms = { paths: commsPaths, options: {} };
   if (files.has('tasks/store.db')) discovered.tasks = { paths: ['tasks/store.db'], options: {
@@ -190,6 +198,7 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     if (candidates.length > 1 && explicit === undefined) throw Error(`Multiple ${name} inputs; supply an explicit plan`);
     discovered[name] = { paths: [candidates[0]], options: value };
   };
+  pick('secrets', secrets, {agents:Object.fromEntries(household.agents.map(id=>[id,id])),members:Object.fromEntries(household.members.map(m=>[m.person,m.person]))});
   pick('clock', clock, {});
   pick('approvals', approvals, { projects: {} });
   pick('changes', changes, { attribution: { agents: Object.fromEntries(household.agents.map(id => [id, { logins: [], branches: [] }])), ownerLogins: [] } });
@@ -225,6 +234,7 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     if (canonicalPlanValue(Object.keys(selected).sort()) !== canonicalPlanValue(Object.keys(scopes).sort())) throw Error('Attention requires an audience for every conversation');
     if (Object.values(selected).some(a => a.member && !household.members.some(m => m.person === a.member))) throw Error('Unknown audience member');
   }
+  if (plan.importers.secrets && !secrets.includes(plan.importers.secrets.paths[0])) throw Error('Unknown Secrets source layout');
   if (plan.importers.clock && !clock.includes(plan.importers.clock.paths[0])) throw Error('Unknown clock source layout');
   if (plan.importers.approvals && !approvals.includes(plan.importers.approvals.paths[0])) throw Error('Unknown approvals source layout');
   if (plan.importers.changes) {
