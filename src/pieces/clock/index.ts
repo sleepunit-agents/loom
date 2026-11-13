@@ -1,3 +1,4 @@
+import { installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
 import { command } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
@@ -60,6 +61,7 @@ export interface ClockOptions {
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
   registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
   migrate(db, 'clock', schema);
+  installLocalFiling(db, operations, sharing);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
   const deadmanAgents = new Set(z.array(text).parse(options.deadmanAgents ?? []));
   let parksChanged = false;

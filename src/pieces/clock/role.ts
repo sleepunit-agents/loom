@@ -24,3 +24,5 @@ export function clockVouchApplication(operations: Pick<Operations, 'call'>): imp
     return operations.call('direct', { kind: 'member', id: by }, 'clock.vouch', { target: approval.target, expectedScope: {project:approval.project, member:approval.member} }, `clock-vouch:${approval.id}`);
   } };
 }
+
+export { clockLocalFiling } from './local-filing.js';
