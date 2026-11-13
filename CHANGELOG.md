@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
+- Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
+- Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
 
 - Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
 
@@ -28,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
 - Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
+- Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
 - Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
 - Add opt-in fixed 24-hour Clock safety wakes under explicitly configured agent authority, retaining restart deadlines and staging holds.

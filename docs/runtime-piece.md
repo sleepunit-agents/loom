@@ -608,3 +608,25 @@ for materialized build paths, current central authorization and grants, staging
 and outside-effect gating, and build/launch implementation. No repository fetch,
 process, container, credential issuance, permission rule or live installation
 changes in this slice.
+
+## Git snapshot reader
+
+`gitSnapshot` supplies `BuildSnapshot` from an already fetched Git repository
+through the runner's asynchronous, repository-bound `SnapshotGit` argv executor.
+It resolves HEAD, a full ref or an object id to one commit once; revision
+expressions and short ambiguous branch names are refused. Every later lookup
+uses that commit, literal paths and replacement objects disabled. Exact NUL
+terminated tree entries retain their kind; symlinks, missing or multiple entries
+and inconsistent modes reject. Text reads require a regular blob, check its
+size before reading, enforce the 4 MiB byte limit and verify the returned byte
+count. SHA-1 and SHA-256 repositories are supported.
+
+This ports the Git-reading portion of old `buildNow`/`buildTagAt`; composing it
+with `inspectHouseBuild` validates the complete manifest and computes the old
+image tag. Git failures propagate. Tests use an in-process argv fixture, with
+no child processes. No registry operation or daemon calls this reader yet.
+The executor must enforce the supplied output bound during reads, reject failed
+commands and own cancellation/timeouts and its environment. Repository fetch,
+credentials, filesystem materialization checks, current authority and staging
+checks, process adapter and build/launch remain runner integration work. This
+reader neither fetches nor checks whether an image exists on a machine.
