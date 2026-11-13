@@ -246,8 +246,12 @@ the outbox so a later runtime retry of that same reply cannot create another sen
 A stale staging release cannot send a dismissed row. The core effect remains an
 independent staging record; dismissal does not mark it delivered or release it.
 The generated `loom-bridges dismissSend '{"id":"reply-id","state":"uncertain"}'`
-command returns the usual id acknowledgement and exit codes. The preview dismissal
-control and held-intake repair remain separate completion requirements.
+command returns the usual id acknowledgement and exit codes. The preview offers
+confirmed dismissal for held or uncertain sends, with the observed state sent to
+the same operation. Pending requests and inline errors survive app navigation;
+changed or evicted records and lost subscriptions remove confirmation controls.
+The two-window CI proof covers cancellation, dismissal propagation and reload,
+with six additional confirmation screenshots. Held-intake repair remains required.
 
 ## Opt-in setup commands
 

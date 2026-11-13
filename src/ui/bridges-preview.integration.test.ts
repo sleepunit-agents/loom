@@ -155,6 +155,31 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html
       await expect.poll(() => p.getByText('Uncertain · review required', { exact: true }).count()).toBeGreaterThan(0);
       await expect.poll(() => p.getByRole('button', { name: 'Release this send', exact: true }).count()).toBe(0);
     }
+    for (const p of [a, b]) await expect.poll(() => p.getByRole('button', { name: 'Dismiss this send', exact: true }).isEnabled()).toBe(true);
+    await b.getByRole('button', { name: 'Dismiss this send', exact: true }).click();
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await b.setViewportSize({ width, height: 900 });
+      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
+      await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      await b.locator('.loom-split__reader').evaluate(el => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        for (let pane: HTMLElement | null = el as HTMLElement; pane; pane = pane.parentElement) pane.scrollTop = 0;
+      });
+      await b.screenshot({ path: join(shots, `bridges-dismiss-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+      const geometry = await b.locator('.loom-split').evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth }));
+      expect(geometry.scroll <= geometry.client + 1, JSON.stringify({ width, ...geometry })).toBe(true);
+    }
+    await b.getByRole('button', { name: 'Keep for review', exact: true }).click();
+    expect(loom.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({ state: 'uncertain' });
+    await a.getByRole('button', { name: 'Dismiss this send', exact: true }).click();
+    await a.getByRole('button', { name: 'Confirm dismissal', exact: true }).click();
+    await expect.poll(() => loom.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({ state: 'dismissed' });
+    for (const p of [a, b]) {
+      await expect.poll(() => row(p, 'reply-with-a-stable-operation-id').count()).toBe(0);
+      await expect.poll(() => p.getByRole('button', { name: 'Dismiss this send', exact: true }).count()).toBe(0);
+    }
+    await b.reload();
+    await expect.poll(() => b.getByText('This item is no longer in view', { exact: true }).count()).toBe(1);
     clock.advance(60_000); await engine.flush(); expect(posts).toBe(1);
   } finally { await browser.close(); await engine.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
 }, 60_000);

@@ -360,3 +360,61 @@ it.each([
   await click('Try again'); expect(button(save).props.disabled).toBe(false); await submit();
   expect(f.call.mock.calls[0][1]).toMatchObject({ id: 'same-id', [field]: incoming[field] });
 });
+
+it.each(['held', 'uncertain'])('confirms %s dismissal with observed state and metadata only', async state => {
+  pendingWrite();
+  await publish('bridges.send', [{ ...f.snapshots['bridges.send'].records[0], state, remoteId: 'partial-receipt' }]);
+  await draw('/p/bridges-preview/item/sends/reply');
+  await click('Dismiss this send'); expect(f.call).not.toHaveBeenCalled();
+  expect(text()).toContain('does not confirm delivery');
+  await click('Keep for review'); expect(button('Confirm dismissal')).toBeUndefined();
+  await click('Dismiss this send'); await click('Confirm dismissal');
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.dismissSend', { id: 'reply', state });
+  expect(button('Dismiss this send').props.disabled).toBe(true);
+  await click('Dismiss this send'); expect(f.call).toHaveBeenCalledTimes(1);
+  expect(button('Release this send')).toBeUndefined();
+});
+it('retains pending dismissal, errors and accepted acknowledgement across navigation', async () => {
+  const answer = pendingWrite();
+  await publish('bridges.send', [{ ...f.snapshots['bridges.send'].records[0], state: 'uncertain' }]);
+  await draw('/p/bridges-preview/item/sends/reply'); await click('Dismiss this send'); await click('Confirm dismissal');
+  const navigate = (path: string) => act(async () => { tree!.update(h(BridgesApp, { path })); });
+  await navigate('/p/bridges-preview/item/routes/route'); await navigate('/p/bridges-preview/item/sends/reply');
+  expect(button('Dismiss this send').props.disabled).toBe(true); expect(text()).toContain('Dismissing send');
+  await answer({ ok: false, code: 'conflict', message: 'Send state changed' });
+  expect(text()).toContain('conflict: Send state changed');
+  await navigate('/p/bridges-preview'); await navigate('/p/bridges-preview/item/sends/reply');
+  expect(text()).toContain('conflict: Send state changed');
+  await click('Dismiss this send'); await click('Confirm dismissal');
+  expect(f.call).toHaveBeenCalledTimes(2);
+  await answer({ ok: true, value: { id: 'reply' } });
+  expect(text()).toContain('Dismissal accepted'); expect(button('Dismiss this send').props.disabled).toBe(true);
+  await publish('bridges.send', []);
+  expect(text()).toContain('no longer in view'); expect(button('Dismiss this send')).toBeUndefined();
+});
+it.each(['pending', 'sending', 'sent', 'dismissed'])('offers no dismissal for %s sends', async state => {
+  await publish('bridges.send', [{ ...f.snapshots['bridges.send'].records[0], state }]);
+  await draw('/p/bridges-preview/item/sends/reply'); expect(button('Dismiss this send')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
+});
+it.each(['offline', 'denied'] as const)('drops dismissal confirmation on %s and requires fresh confirmation on reconnect', async status => {
+  const records = [{ ...f.snapshots['bridges.send'].records[0], state: 'held' }];
+  await publish('bridges.send', records); await draw('/p/bridges-preview/item/sends/reply'); await click('Dismiss this send');
+  await publish('bridges.send', records, status);
+  expect(button('Confirm dismissal')).toBeUndefined(); expect(button('Dismiss this send')).toBeUndefined();
+  await publish('bridges.send', records);
+  expect(button('Confirm dismissal')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
+});
+it('invalidates confirmation when observed send state changes, including edit and restore', async () => {
+  pendingWrite(); const original = { ...f.snapshots['bridges.send'].records[0], state: 'held' };
+  await publish('bridges.send', [original]); await draw('/p/bridges-preview/item/effects/bridges%3Areply'); await click('Dismiss this send');
+  await publish('bridges.send', [{ ...original, state: 'uncertain' }]); expect(button('Confirm dismissal')).toBeUndefined();
+  await publish('bridges.send', [original]); expect(button('Confirm dismissal')).toBeUndefined();
+  await click('Dismiss this send'); await click('Confirm dismissal');
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.dismissSend', { id: 'reply', state: 'held' });
+});
+it('does not offer dismissal for an orphan staging effect or an evicted send', async () => {
+  await publish('bridges.send', [{ ...f.snapshots['bridges.send'].records[0], state: 'held' }]);
+  await draw('/p/bridges-preview/item/effects/bridges%3Areply'); await click('Dismiss this send');
+  await publish('bridges.send', []); expect(button('Confirm dismissal')).toBeUndefined(); expect(button('Dismiss this send')).toBeUndefined();
+  expect(button('Release this send')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
+});
