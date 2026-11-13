@@ -135,15 +135,17 @@ it('rolls back the start and receipt together, deduplicates beyond registry expi
  const admission={agent:'art',person:'jonathan',venue:incoming.key.venue,channel:'200',dm:true,readers:[],peer:false};
  expect(await bodies.runtime.admit(admission)).toBe('allow');
  expect(await bodies.runtime.admit({...admission,person:'stranger'})).toBe('drop');
- for(const patch of [{group:true},{peer:true},{dm:false},{readers:['stranger']}])expect(await bodies.runtime.admit({...admission,...patch})).toBe('wait');
+ for(const patch of [{group:true},{peer:true},{dm:false},{readers:['stranger']},{guest:true},{pair:'paired'}])expect(await bodies.runtime.admit({...admission,...patch})).toBe('wait');
  expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.acceptBridge',incoming,'forgery')).toMatchObject({ok:false,code:'denied'});
  expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.startBody',{agent:'art',member:'jonathan',conversation:'forged',title:'Forged',brief:BRIDGE_BRIEF},'forged-start')).toMatchObject({ok:false,code:'unavailable'});
  app.db.exec("CREATE TRIGGER fail_bridge_turn BEFORE INSERT ON runtime_bridge_turns BEGIN SELECT RAISE(ABORT,'fixture failure'); END");
  expect(await bodies.runtime.deliver(incoming)).toBe('retry');expect(runtimeStore(app.db).ids('job')).toEqual([]);expect(runtimeStore(app.db).ids('binding')).toEqual([]);
  app.db.exec('DROP TRIGGER fail_bridge_turn');expect(await bodies.runtime.deliver(incoming)).toBe('delivered');
- expect(await bodies.runtime.deliver(incoming)).toBe('delivered');clock.advance(31*86400_000);expect(await bodies.runtime.deliver(incoming)).toBe('delivered');
+ expect(await bodies.runtime.deliver({...incoming,route:{notes:['fresh route']}})).toBe('delivered');clock.advance(31*86400_000);expect(await bodies.runtime.deliver(incoming)).toBe('delivered');
  expect(runtimeStore(app.db).ids('job')).toHaveLength(1);expect(app.db.prepare('SELECT * FROM runtime_bridge_turns').all()).toHaveLength(1);
  expect(await bodies.runtime.deliver({...incoming,text:'CHANGED'})).toBe('retry');expect(app.db.prepare('SELECT * FROM runtime_bridge_turns').all()).toHaveLength(1);
+ expect(await bodies.runtime.deliver({...incoming,id:'pair',route:{pair:'other'}})).toBe('held');
+ expect(await bodies.runtime.deliver({...incoming,id:'guest',route:{guest:true}})).toBe('held');
  expect(await bodies.runtime.deliver({...incoming,id:'other',address:{channel:'200',dm:false}})).toBe('held');
  bodies.close();expect(await bodies.runtime.deliver(incoming)).toBe('retry');
 });
@@ -212,4 +214,19 @@ it('deduplicates the trusted runtime stop callback against a replacement body ac
   await f.restart();expect(roles).toHaveLength(2);await roles[1].runtime.stop(stopped);
   expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
  }finally{capture.mockRestore();}
+});
+it('accepts a committed receipt retry after a route edit without another turn or body',async()=>{
+ const module=await import('./bridges.js'),original=module.bridgeRuntime;let edited=false;
+ const capture=vi.spyOn(module,'bridgeRuntime').mockImplementation((...args)=>{const role=original(...args),deliver=role.runtime.deliver;
+  role.runtime.deliver=async input=>{const result=await deliver(input);if(result==='delivered'&&!edited){edited=true;value(args[0].operations.call('direct',{kind:'member',id:'jonathan'},'bridges.putRoutes',{id:'dm-route',platform:'slack',workspace:'T123',channel:'D123',notes:['new route']},'edit-after-commit'));}return result;};return role;});
+ try{const f=await setup();await f.receive();await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_inbox WHERE state='pending' AND retry_since IS NOT NULL").get());expect(edited).toBe(true);
+  expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);f.clock.advance(5000);await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_inbox WHERE state='delivered'").get());
+  expect(f.app.db.prepare("SELECT * FROM runtime_bridge_turns WHERE direction='in'").all()).toHaveLength(1);const {body}=await f.running();expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ }finally{capture.mockRestore();}
+});
+it.each([{guest:true},{pair:'paired'},{peer:true},{readers:['jonathan']}] as const)('waits before DM stop on an unsupported route %j',async flags=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const {job}=await f.running();
+ value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'bridges.putRoutes',{id:'blocked-route',platform:'slack',workspace:'T123',channel:'D123',...flags},'unsupported-route'));
+ await f.receive('stop','1794503534.000000');await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_inbox WHERE state='pending' AND retry_since IS NOT NULL").get());
+ expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');expect(f.app.db.prepare('SELECT * FROM runtime_bridge_stops').all()).toEqual([]);expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);expect(f.posts).toEqual([]);
 });

@@ -145,7 +145,7 @@ export class Bridges implements BridgesRole {
     for (const member of people) {
       const admitted = await this.runtime.admit({agent:v.agent,person:member,venue:key.venue,
         channel:message.parent ?? message.channel,dm:message.dm,group:message.group,
-        readers:route?.readers ?? [],peer:!!message.bot});
+        readers:route?.readers ?? [],peer:!!message.bot||!!route?.peer,...(route?.guest?{guest:true}:{}),...(route?.pair!==undefined?{pair:route.pair}:{})});
       if(!current()) return 'wait';
       if (admitted !== 'allow') return admitted === 'wait' ? 'wait' : 'drop';
     }

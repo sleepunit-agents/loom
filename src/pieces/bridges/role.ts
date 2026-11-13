@@ -11,7 +11,7 @@ export interface Incoming {
 export type DeliveryOutcome = 'delivered' | 'refused' | 'retry' | 'held';
 export interface BridgeRuntime {
   /** Gate by the current owner-written runtime policy, never by a People card. */
-  admit(input: { agent: string; person: string; venue: string; channel: string; dm: boolean; group?: boolean; readers: string[]; peer: boolean }): Promise<'allow' | 'drop' | 'wait'>;
+  admit(input: { agent: string; person: string; venue: string; channel: string; dm: boolean; group?: boolean; readers: string[]; peer: boolean; guest?: boolean; pair?: string }): Promise<'allow' | 'drop' | 'wait'>;
   /** Atomically deduplicate id, append ONE turn and arrange body delivery. */
   deliver(input: Incoming): Promise<DeliveryOutcome>; // Refusal consumes; malformed input holds; transient failure retries.
   stop(input: { agent: string; venue: string; person: string; id: string }): Promise<void>;

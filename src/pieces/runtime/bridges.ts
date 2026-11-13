@@ -12,7 +12,9 @@ import { provenanceStore } from './provenance-store.js';
 export const BRIDGE_BRIEF='Read the bound venue conversation through runtime.readConversation. Reply through runtime.reply.';
 const hash=(parts:unknown[])=>createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 const id=z.string().min(1).max(200);
-const input=z.object({id,key:z.object({agent:id,who:id,venue:z.string().min(1).max(1000)}).strict(),person:id,text:z.string().max(100_000),at:z.iso.datetime(),label:z.string().max(200).optional(),address:z.object({channel:id,thread:id.optional(),dm:z.boolean(),group:z.boolean().optional()}).strict(),route:z.unknown().optional()}).strict();
+const input=z.object({id,key:z.object({agent:id,who:id,venue:z.string().min(1).max(1000)}).strict(),person:id,text:z.string().max(100_000),at:z.iso.datetime(),label:z.string().max(200).optional(),address:z.object({channel:id,thread:id.optional(),dm:z.boolean(),group:z.boolean().optional()}).strict(),route:z.object({guest:z.boolean().optional(),pair:id.optional(),peer:z.boolean().optional(),readers:z.array(id).optional()}).passthrough().optional()}).strict();
+const receiptContent=(m:z.infer<typeof input>)=>{const {route:_,...receipt}=m;return JSON.stringify(receipt);};
+const supportedRoute=(route?:{guest?:boolean;pair?:string;peer?:boolean;readers?:string[]})=>!route?.guest&&route?.pair===undefined&&!route?.peer&&!route?.readers?.length;
 const active=new Set(['queued','starting','running','waiting','uncertain','lost']);
 interface JobProof {agent:string;job?:string;valid():boolean}
 interface Turn {id:string;conversation:string;record:string;seq:number;direction:string}
@@ -34,11 +36,14 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
   const job=store.read('job',p.job)!;if(job.agent!==v.id||!['running','waiting'].includes(job.state))return;
   return job;
  };
- operations.register(operation({name:'runtime.acceptBridge',doors:['direct'],write:true,recheckPolicy:true,input,output:z.object({job:id}),
-  may:(v,m)=>accepting&&v.kind==='member'&&v.id===m.person&&dm(m)&&permitted(m.key.agent,m.person),
+ // This internal handoff owns its permanent receipt below, like runtime.reply.
+ // Registry still owns the outer transaction; no registry receipt cache hashes
+ // mutable route metadata or retains a fingerprint of private words.
+ operations.register(operation({name:'runtime.acceptBridge',doors:['direct'],input,output:z.object({job:id}),
+  may:(v,m)=>accepting&&v.kind==='member'&&v.id===m.person&&dm(m)&&supportedRoute(m.route)&&permitted(m.key.agent,m.person),
   run(ctx,m){
    const cv=conversation(m),old=db.prepare('SELECT * FROM runtime_bridge_turns WHERE id=?').get(m.id) as Turn|undefined;
-   if(old){if(old.conversation!==cv||old.record!==JSON.stringify(m))throw new OperationError('conflict','Bridge receipt already has different work');return {job:store.read('binding',cv)!.job!};}
+   if(old){if(old.conversation!==cv||receiptContent(JSON.parse(old.record) as z.infer<typeof input>)!==receiptContent(m))throw new OperationError('conflict','Bridge receipt already has different work');return {job:store.read('binding',cv)!.job!};}
    const before=store.read('binding',cv);
    if(before&&(before.agent!==m.key.agent||before.member!==m.person||before.venue!==`bridge:${m.key.venue}`))throw new OperationError('conflict','Bridge binding changed');
    const previous=before?.job?store.read('job',before.job):undefined;
@@ -61,13 +66,13 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
    if(closed||!sink)return 'wait';
    // Other venue forms require their own runtime admission contract; no fallback
    // from an unresolved peer/group/guest to a private household conversation.
-   if(!m.dm||m.group||m.peer||m.readers.length)return 'wait';
+   if(!m.dm||m.group||m.peer||m.guest||m.pair!==undefined||m.readers.length)return 'wait';
    return permitted(m.agent,m.person)?'allow':'drop';
   },
   async deliver(raw){
    if(closed||!sink)return 'retry';
    const parsed=input.safeParse(raw);if(!parsed.success)return 'held';const m=parsed.data;
-   if(!dm(m))return 'held';if(!permitted(m.key.agent,m.person))return 'refused';
+   if(!dm(m)||!supportedRoute(m.route))return 'held';if(!permitted(m.key.agent,m.person))return 'refused';
    accepting=true;
    try{const result=operations.call('direct',{kind:'member',id:m.person},'runtime.acceptBridge',m,`bridge-accept:${m.id}`);
     return result.ok?'delivered':result.code==='denied'?'refused':'retry';

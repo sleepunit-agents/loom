@@ -781,3 +781,10 @@ The runtime also rechecks the current delivered source's account link before a
 body read or reply. New outbox addresses retain the intended linked person;
 relinking an account to another admitted member holds those pending replies.
 This metadata never supplies a platform recipient or grants admission.
+
+Runtime receipt dedup compares immutable source content while repeating current
+admission; a route edit after a committed delivery cannot create another turn or
+strand its acknowledgement. The internal accept operation owns its permanent
+private receipt in the registry transaction, with no second core retry cache over
+fresh routing metadata. Guest, pair and peer-route flags reach admission before
+delivery or stop and are checked again by the trusted runtime delivery seam.
