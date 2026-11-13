@@ -17,7 +17,7 @@ const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const object=z.record(z.string(),z.unknown());
 // Assembly must not round a stored platform ID before the shared projection sees it.
 const parse=(raw:string):Record<string,unknown>=>object.parse(JSON.parse(raw,(_k:string,v:unknown,c?:{source?:string})=>{
-  if(typeof v==='number'&&(!c?.source||!/^(0|[1-9]\d*)$/.test(c.source)||!Number.isSafeInteger(v)))throw Error();return v;
+  if(typeof v==='number'&&(!c?.source||!/^(0|[1-9]\d*)$/.test(c.source)||!Number.isSafeInteger(v)))return NaN;return v;
 }));
 const empty=():LegacyBridgeInventory=>({checksum:'',sources:[],instances:[],settings:[],accounts:[],routes:[]});
 /** Resolve the pinned shuttle routes_for/assemble contract, refusing lossy conflicts. */
@@ -64,7 +64,7 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   Object.assign(out,{bots,bot_roles:roles,channels,threads});
   // Extras never override the assembled accepted map. Unknown fields remain in private store evidence.
   for(const [k,v]of Object.entries(object.parse(own.extra??{})))if(!Object.hasOwn(out,k))out[k]=v;
-  return JSON.stringify(out);
+  return JSON.stringify(out,(_key,value)=>{if(typeof value==='number'&&!Number.isSafeInteger(value))throw Error();return value;});
 }
 export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,household:{agents:string[];members:string[]},open:(path:string)=>Database.Database){
   try{

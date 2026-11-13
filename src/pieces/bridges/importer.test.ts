@@ -49,7 +49,7 @@ it('refuses moved-without-Runtime rather than falling back to stale people',()=>
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline');
 });
 it('assembles all accepted agent parts and flags, never proposal flags',()=>{
- const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',channel_names:{'300':'work'}}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{guest_venue:true,readers:['jonathan']}}}],['channels','mark',{bot:'200',flags:{'300':{guest_venue:true,readers:['jonathan']}},answers:{'400':'mark'},threads:{'500':{primary:'mark',parent:'400',peer:true}}}],['route-offers','art',{doc:{bots:{art:'100',mark:'200'},channels:{'300':{peer:true}}}}]]);
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',channel_names:{'300':'work'}}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{guest_venue:true,readers:['jonathan']}}}],['channels','mark',{bot:'200',flags:{'300':{guest_venue:true,readers:['jonathan']}},answers:{'400':'mark'},threads:{'500':{primary:'mark',parent:'400',peer:true}}}],['route-offers','art',{at:123.25,doc:{bots:{art:'100',mark:'200'},channels:{'300':{peer:true}}}}]]);
  f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
  const s=readBridgeImport(f.sources,f.options,h,f.open);expect(s.expected.routes).toEqual(expect.arrayContaining([expect.objectContaining({channel:'300',guest:true,peer:false,readers:['jonathan']}),expect.objectContaining({channel:'400',primary:'mark'}),expect.objectContaining({channel:'500',parent:'400',peer:false})]));
 });
@@ -127,5 +127,10 @@ it('refuses contradictory agent account claims against routes and other selected
  expect(readBridgeImport(f.sources,f.options,h,f.open).expected.venues[0].bot).toBe('100');
  const changed=new Database(f.sources.stores[0].path);changed.prepare('UPDATE docs SET doc=?').run(JSON.stringify({agents:{mark:{slack:{T1:['B1']}}}}));
  changed.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('people','mark',JSON.stringify({agents:{mark:{slack:{T1:['B2']}}}}),'now','owner');changed.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+});
+
+it('refuses noncanonical selected store numbers without treating envelope timestamps as IDs',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',peer_turns_each:1.5}],['channels','art',{bot:'100'}]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });
