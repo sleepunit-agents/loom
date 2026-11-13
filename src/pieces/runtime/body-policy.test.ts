@@ -153,3 +153,17 @@ it('requires every guest card, including the last reader',async()=>{
  const r=await compileBodyRules(m,card);expect(text(r)).toContain('CARD kim');expect(text(r)).toContain('CARD another');
  await expect(compileBodyRules(m,async s=>s==='another'?null:card(s))).rejects.toThrow('Guest reader card');
 });
+
+it('rejects people without tiers rather than missing a channel guest',async()=>{
+ await expect(compileBodyRules(input({gates:{people:{kim:{venues:['555']}}},about:{kind:'channel',venue:'555'}}),card)).rejects.toThrow('malformed');
+});
+it('carries only sender tiers and the lowest room tier, without intermediate member notes',async()=>{
+ const m=input({messages:[{from:{kind:'person',slug:'jonathan'}}],about:{kind:'group',venue:'G1',members:['jonathan','phil','kim']},
+  policy:{...policy,briefs:{...policy.briefs,tiers:{'1':'guest-tier.md','2':'private-tier.md','3':'owner-tier.md'}}}});
+ const r=await compileBodyRules(m,card);expect(text(r)).toContain('guest-tier.md');expect(text(r)).toContain('owner-tier.md');expect(text(r)).not.toContain('private-tier.md');
+});
+it('carries a sender restriction on a channel with no member roster',async()=>{
+ const r=await compileBodyRules(input({about:{kind:'channel',venue:'C1'}}),card);
+ expect(r.members).toEqual([]);expect(text(r)).toContain('Standing restriction from your owner for phil');expect(text(r)).toContain('No onterris pushes');
+ expect(r.grantFor).toBeNull();
+});

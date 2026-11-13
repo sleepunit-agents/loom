@@ -14,7 +14,7 @@ const words = z.union([z.string(), z.array(z.string()), z.record(z.string(), z.u
 const entry = z.object({name:z.string().optional(),tier:z.number().int().min(1).max(3).optional(),
   grant:words.optional(),restrict:words.optional(),venues:z.array(z.string()).optional(),kind:z.string().optional()}).passthrough();
 const metadataOnly = (keys: string[]) => (doc: Record<string, unknown>) => Object.keys(doc).every(k => keys.includes(k) || k.startsWith('_'));
-export const bodyGates = z.object({people:z.record(slug,entry).default({}),agents:z.record(slug,entry).default({})})
+export const bodyGates = z.object({people:z.record(slug,entry.extend({tier:z.number().int().min(1).max(3)})).default({}),agents:z.record(slug,entry).default({})})
   .passthrough().refine(metadataOnly(['people','agents']));
 export const bodyPolicy = z.object({deny:tools.optional(),guest_deny:tools.optional(),
   briefs:z.object({guest:file.optional(),peer:file.optional(),venues:z.record(venue,file).optional(),
@@ -142,12 +142,12 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   if(core)for(const line of list(about.brief,z.string().min(1).max(300).regex(/^[^\x00-\x1f\x7f]+$/),3))text(`${line}\n`);
   const conduct=own(briefs.venues,c.venue);if(conduct)addFile(conduct,`your conduct on ${c.venue}`);
   for(const n of notes){const f=own(briefs.notes,n);if(f)addFile(f,`${n}'s notes`);}
-  for(const t of unique([...senders.map(m=>m.tier),...members.map(tier)].filter((t):t is number=>t!==undefined)).sort()){
+  for(const t of unique([...senders.map(m=>m.tier),...(members.length?[Math.min(...members.map(s=>tier(s)!))]:[])].filter((t):t is number=>t!==undefined)).sort()){
     const f=own(briefs.tiers,String(t));if(f)addFile(f,`tier ${t}'s notes`);
   }
-  const told=members.length||grantFor||persons.some(s=>wordsOf(person(s)?.restrict))?persons:[];
-  const words=told.length?hash([told.slice().sort().map(s=>[s,tier(s),wordsOf(person(s)?.grant),wordsOf(person(s)?.restrict)]),notes.slice().sort()]):'';
+  const keyedPeople=members.length||grantFor||persons.some(s=>wordsOf(person(s)?.restrict))?persons:[];
+  const words=keyedPeople.length?hash([keyedPeople.slice().sort().map(s=>[s,tier(s),wordsOf(person(s)?.grant),wordsOf(person(s)?.restrict)]),notes.slice().sort()]):'';
   // A changed floor/conduct/deny list is as significant as changed gates words.
   const key=hash([c,guest,deny.slice().sort(),readers.slice().sort(),members.slice().sort(),grantFor,words,sections]);
-  return {guest,deny,readers,members,grantFor,words,persons:told,notes,key,sections};
+  return {guest,deny,readers,members,grantFor,words,persons:keyedPeople,notes,key,sections};
 }
