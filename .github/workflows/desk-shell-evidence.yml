@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'web/src/shell/**'
+      - 'web/src/pieces/attention/rail*'
+      - 'web/src/apps.ts'
       - 'src/next*'
       - 'src/ui/desk-shell.integration.test.ts'
       - '.github/workflows/desk-shell-evidence.yml'

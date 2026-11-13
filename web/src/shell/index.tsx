@@ -5,6 +5,10 @@ import { layout, railWidth, type Rect } from '../tiling/layout';
 import { Loading, Error, Button, Empty } from '../kit';
 import './shell.css';
 import Preferences from './preferences';
+import { Dock } from '../components/ui/dock';
+import { AppIcon } from '../app-icon';
+import { tintOf } from '../tint';
+import Launcher from './launcher';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -39,7 +43,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail } = surfaces;
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railWidth(width)||64)+10 : 0)) };
-  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[area.w,area.h,width,phone,router,!!Rail]);
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
   const open = (id: string) => {
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width);
@@ -77,17 +81,18 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
-      {!phone && Rail && visible.length>0 && <aside className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}
+      {!phone && Rail && visible.length>0 && <aside aria-label="Your agents" className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}
       {route.tiles.map(tile => {
         const shown=!tile.minimized&&(!phone||tile.id===focused?.id);
         const app = apps.find(a => a.id === tile.id)!;
         const box = boxes[tile.id];
-        return <section key={tile.id} className="next-tile" data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
+        return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
           style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={() => { if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
           <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button,summary'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+            <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon label={app.title} name={app.icon} size="sm" /></button>
             <Button variant="ghost" size="sm" aria-label={`Back in ${app.title}`} disabled={!tile.at} onClick={() => router.travel(tile.id,-1)}>←</Button>
             <Button variant="ghost" size="sm" aria-label={`Forward in ${app.title}`} disabled={tile.at===tile.trail.length-1} onClick={() => router.travel(tile.id,1)}>→</Button>
-            <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
+            <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
             <details><summary aria-label={`${app.title} history`}>Trail</summary><ol>{tile.trail.map((path,i) => <li key={i}><Button variant="ghost" size="sm" aria-current={i===tile.at?'page':undefined} onClick={() => router.travel(tile.id,i-tile.at)}>{path.slice(app.path.length)||app.title}</Button></li>)}</ol></details>
             <span className="next-spacer" />
             {!phone && <Button variant="ghost" size="sm" aria-label={`Make ${app.title} big`} onClick={() => router.big(tile.id)}>↗</Button>}
@@ -98,8 +103,12 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         </section>;
       })}
     </div>
-    {launcher && <nav className="next-launcher" aria-label="App launcher">{apps.map(app => <Button variant="outline" key={app.id} onClick={() => open(app.id)}>{app.title}</Button>)}</nav>}
-    <nav className="next-dock" aria-label="Dock"><Button variant="ghost" onClick={() => router.home()}>Home</Button>{apps.map(app => <Button variant="outline" key={app.id} aria-label={`Open ${app.title}`} aria-current={route.focused===app.id?'page':undefined} data-open={visible.some(t => t.id===app.id)||undefined} onClick={() => route.focused===app.id?router.remove(app.id,true):open(app.id)}>{app.title}{route.tiles.find(t => t.id===app.id)?.minimized ? ' ·' : ''}</Button>)}</nav>
+    <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
+    <div className="next-dock-bar loom-dock-bar"><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
+      {value:'home',label:'Home',tint:'pink',icon:<AppIcon label="Home" name="home" />,onSelect:()=>router.home()},
+      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<AppIcon label={app.title} name={app.icon} />,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>route.focused===app.id?router.remove(app.id,true):open(app.id)})),
+      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<AppIcon label="Places" name="grid-2x2" />,onSelect:()=>setLauncher(true)},
+    ]} /></div>
     {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
     <p className="next-notice" role="status" aria-live="polite">{notice}</p>
   </div>;
