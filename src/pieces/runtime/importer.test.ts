@@ -1,3 +1,4 @@
+import { compareRuntimeArchive } from './import-archive.js';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,4 +108,15 @@ it('refuses unknown host/loan agents and duplicate preferences',()=>{
   const f=fixture();f.state.boxes.r1.mayHost=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
   f.state.boxes.r1.mayHost=['art'];f.state.boxes.r1.lentTo=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
   f.state.boxes.r1.lentTo=['art'];f.state.primaries.art=['r1','r1'];f.save();expect(f.read).toThrow('Duplicate runtime preference');
+});
+
+it.each(['missing','extra','changed','wrong-part','empty-file'])('independently detects %s private archive corruption',kind=>{
+  const f=fixture();writeFileSync(join(f.sources.data,'empty.bin'),'');const source=f.read();f.run();
+  expect(compareRuntimeArchive(f.app.db,source)).toBe(true);
+  if(kind==='missing')f.app.db.prepare("DELETE FROM runtime_import_chunks WHERE path='data/future.bin'").run();
+  if(kind==='extra')f.app.db.prepare("INSERT INTO runtime_import_chunks VALUES ('data/future.bin',1,?)").run(Buffer.from([1]));
+  if(kind==='changed')f.app.db.prepare("UPDATE runtime_import_chunks SET bytes=? WHERE path='data/future.bin'").run(Buffer.from([3,0,254]));
+  if(kind==='wrong-part')f.app.db.prepare("UPDATE runtime_import_chunks SET part=1 WHERE path='data/future.bin'").run();
+  if(kind==='empty-file')f.app.db.prepare("INSERT INTO runtime_import_chunks VALUES ('data/empty.bin',0,?)").run(Buffer.alloc(0));
+  expect(compareRuntimeArchive(f.app.db,source)).toBe(false);
 });

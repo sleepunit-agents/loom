@@ -7,8 +7,16 @@ export function* fileChunks(path: string): Generator<Buffer> {
   try {
     if (!fstatSync(fd).isFile()) throw Error('Migration input must be a regular file');
     const buffer = Buffer.allocUnsafe(migrationChunkBytes);
-    let count: number;
-    while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) yield buffer.subarray(0,count);
+    while (true) {
+      let count=0;
+      while(count<buffer.length) {
+        const next=readSync(fd,buffer,count,buffer.length-count,null);
+        if(!next)break;
+        count+=next;
+      }
+      if(!count)break;
+      yield buffer.subarray(0,count);
+    }
   } finally { closeSync(fd); }
 }
 export function fileDigest(path: string): {bytes:number;sha256:string} {

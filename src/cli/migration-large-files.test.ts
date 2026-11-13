@@ -1,4 +1,4 @@
-import { closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
