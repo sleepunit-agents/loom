@@ -128,3 +128,15 @@ it('fences delayed conversation pages on Live replacement, access loss or unmoun
  pages.clear();expect(pages.accept(generation,[step],1)).toBe(false);expect(pages.rows).toEqual([]);
  pages.accept(pages.begin(),[step],100);expect(pages.rows[0].text).toBeNull();
 });
+
+import { ReplyCursor } from '../../web/src/pieces/comms/follow.js';
+it('counts appended replies by sequence across the live cap without counting earlier pages or card updates',()=>{
+ const cursor=new ReplyCursor();
+ expect(cursor.advance([{seq:100,kind:'reply'}])).toEqual({initial:true,added:0,sent:false});
+ expect(cursor.advance([{seq:101,kind:'reply'}])).toEqual({initial:false,added:1,sent:false});
+ expect(cursor.advance([{seq:1,kind:'reply'},{seq:101,kind:'reply'}]).added).toBe(0);
+ expect(cursor.advance([{seq:101,kind:'reply'},{seq:102,kind:'card'}]).added).toBe(0);
+ expect(cursor.advance([{seq:102,kind:'card'}]).added).toBe(0);
+ expect(cursor.advance([{seq:103,kind:'message'}])).toEqual({initial:false,added:1,sent:true});
+ cursor.reset();expect(cursor.advance([{seq:105,kind:'reply'}])).toEqual({initial:true,added:0,sent:false});
+});

@@ -103,8 +103,25 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   for(let n=0;n<101;n++)await comms.post('art',place,{id:`page-filler-${n}`,kind:'card',text:`Retained recent card ${n}`});
   await expect.poll(()=>b.getByText('Retained recent card 100',{exact:true}).count()).toBe(1);
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(0);
+  // Scroll following uses new sequence identities, including when Live stays capped at 100.
+  const messages=b.getByLabel('Thread messages');
+  const gap=()=>messages.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight);
+  await expect.poll(gap).toBeLessThanOrEqual(80);
+  await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
+  await comms.post('art',place,{id:'follow-reply-one',kind:'reply',text:'Reply while reading earlier words'});
+  await expect.poll(()=>b.getByRole('button',{name:'New messages ↓ (1)',exact:true}).count()).toBe(1);
+  expect(await gap()).toBeGreaterThan(80);
+  await b.getByRole('button',{name:'New messages ↓ (1)',exact:true}).click();
+  await expect.poll(gap).toBeLessThanOrEqual(80);
+  await comms.post('art',place,{id:'follow-reply-two',kind:'reply',text:'Reply while following the end'});
+  await expect.poll(()=>b.getByText('Reply while following the end',{exact:true}).count()).toBe(1);
+  await expect.poll(gap).toBeLessThanOrEqual(80);
+  expect(await b.getByRole('button',{name:/New messages ↓/}).count()).toBe(0);
+  // Loading an earlier page does not count as an appended reply or pull the reader down.
   await b.getByRole('button',{name:'Load earlier messages',exact:true}).click();
   await expect.poll(()=>b.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
+  expect(await b.getByRole('button',{name:/New messages ↓/}).count()).toBe(0);
+
   // Any authoritative Live replacement fences older pages, even before cleanup.
   await comms.post('art',place,{id:'page-filler-100',kind:'card',text:'Updated recent card 100'});
   await expect.poll(()=>b.getByText('Updated recent card 100',{exact:true}).count()).toBe(1);

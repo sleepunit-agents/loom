@@ -7,6 +7,7 @@ import { messageView, type Message } from './message';
 import { workingView } from './working';
 import { EarlierPages, retainedMessage } from './pages';
 import { ConversationActivity } from './conversation';
+import { useReplyFollow } from './use-follow';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
 const idle:CallState={pending:false,status:'done'};const noop=()=>()=>{};
@@ -56,6 +57,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
   return()=>clearTimeout(timer);
  },[older,records,status,pages,now]);
  const working=workingView(thread,all,now,status==='live');
+ const scroller=useRef<HTMLDivElement>(null);const follow=useReplyFollow(scroller,records,status==='live');
  return <article className="flex h-full min-h-0 flex-col">
   <header className="grid gap-2 border-b p-4"><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}</p>
    {working&&<p role="status" aria-label="Working status" data-alive={working.face}>{working.text}</p>}
@@ -65,9 +67,10 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
    {deleting&&<section aria-label="Delete thread"><p>Delete this thread and all its words?</p><Button disabled={state.pending} onClick={()=>act('delete')}>Delete thread</Button><Button variant="outline" onClick={()=>setDeleting(false)}>Keep thread</Button></section>}
    <Answer request={request}/>
   </header>
-  <div className="min-h-0 flex-1 overflow-auto p-4" aria-label="Thread messages">
+  <div ref={scroller} onScroll={follow.onScroll} className="min-h-0 flex-1 overflow-auto p-4" aria-label="Thread messages">
    {status!=='live'?<Loading label="Waiting for thread connection…"/>:<><Button variant="outline" onClick={load} disabled={pagePending}>Load earlier messages</Button>{pageError&&<Error text={pageError}/>}<ol className="grid gap-4">{all.map(m=>{const view=messageView(m);return <li key={m.id} className="rounded border p-3"><p>{m.from} · {new Date(m.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT{view.tool&&` · ${view.tool}`}{view.state&&` · ${view.state}`}</p>{view.text===null?(view.ask?null:<p>Words no longer kept</p>):<div className="prose break-words" dangerouslySetInnerHTML={{__html:replyHtml(view.text!)}}/>}{view.nextRetry&&<p aria-label="Start retry">Next try at <time dateTime={view.nextRetry}>{new Date(view.nextRetry).toLocaleTimeString('en-US',{timeZone:'America/Chicago',hour:'2-digit',minute:'2-digit'})} CT</time>.</p>}{view.retryStart&&thread.archived===null&&<Button variant="outline" disabled={state.pending} onClick={()=>setRequest(call('comms.retryStart',{thread:thread.id,...view.retryStart}))}>Send again</Button>}{view.step!=null&&<details><summary>Work details</summary><pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(view.step,null,2)}</pre></details>}{view.ask&&<section><p>{view.ask.question}</p>{view.ask.why&&<p>{view.ask.why}</p>}{view.ask.yes&&<p>Yes: {view.ask.yes}</p>}{view.ask.no&&<p>No: {view.ask.no}</p>}{view.ask.answered?<p>{view.ask.answer??'Answered'}</p>:view.ask.canAnswer?<><Button onClick={()=>setRequest(call('comms.answer',{thread:thread.id,ref:m.ref,verdict:'yes'}))}>Allow</Button><Button variant="outline" onClick={()=>setRequest(call('comms.answer',{thread:thread.id,ref:m.ref,verdict:'no'}))}>Deny</Button></>:<p>Answer in Inbox</p>}</section>}{m.kind==='message'&&(m.delivery==='failed'||m.delivery==='held')&&<Button variant="outline" onClick={()=>setRequest(call('comms.resend',{thread:thread.id,seq:m.seq}))}>{m.delivery==='held'?'Try released send':'Send again'}</Button>}</li>;})}</ol></>}
   </div>
+  {follow.unread>0&&<div className="px-4 py-2"><Button variant="outline" onClick={follow.down}>New messages ↓ ({follow.unread})</Button></div>}
   {thread.archived===null?<Composer member={thread.member} place={thread.id} agent={thread.agent} onOpened={()=>{}} enabled={status==='live'}/>:<p className="p-4">Unarchive this thread to send a message.</p>}
  </article>;
 }

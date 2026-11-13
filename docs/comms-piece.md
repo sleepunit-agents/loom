@@ -92,7 +92,7 @@ data does not remove the behavior it delivered.
 | `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Missing: recipient rule, quoted attachment, validation, about-key matching and five recent owned threads. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
 | Push and desktop unread integration | Attention/frame notification seam | Missing: opener-only destinations, foreground/background suppression, no private words on shared events. |
-| Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following/scroll behavior, attachment/ref rendering and disconnected/reconnect parity need completion. |
+| Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following now keeps the reader at the end only while near it, counts appended non-card records while scrolled back and follows their own sends; attachment/ref rendering and broader disconnected/reconnect parity need completion. |
 
 ## Offline import
 
@@ -466,3 +466,14 @@ The 13 app helper tests, TypeScript and web production build pass locally;
 the browser proof is CI-only and must pass on the current head before claiming
 this behavior proven. Aggregate review budgets and remaining integration/parity
 obligations are unchanged.
+
+Reply following now uses Live sequence identities rather than list length, so the
+hundred-row window can roll over without losing new-message counts. First open
+and reconnect start at the end; incoming records follow only within 80 pixels
+of the end, and an own send returns there. Scrolled-back readers get a New
+messages control. Earlier pages and card updates never add to that count.
+Resize observers follow growing work details only while already at the end and
+are disconnected on cleanup. Scroll bookkeeping retains sequence numbers only.
+A new unit case covers window rollover, older rows, card updates, sends and reset.
+The existing browser proof now covers scrolled-back arrival, jump, following and
+earlier-page loading; CI must validate this extension on the new head.
