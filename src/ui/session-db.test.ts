@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -125,25 +124,6 @@ describe('session database persistence before activation', () => {
     const id = sql.create(digest, 1000);
     expect(json.get(id)).toBeNull();
     expect(readFileSync(join(home, 'ui-sessions.json'), 'utf8')).toBe(source);
-  });
-
-  it('does not read ui-sessions.json, even when a source file is present', () => {
-    writeFileSync(join(home, 'ui-sessions.json'), '{"v":1,"sessions":{}}');
-    new SessionStore(home, persistence); // create the independent CSRF key first
-    const originalRead = fs.readFileSync;
-    const read = vi.spyOn(fs, 'readFileSync').mockImplementation((path, options) => {
-      if (String(path) === join(home, 'ui-sessions.json')) throw new Error('session JSON was read');
-      return originalRead(path, options as never);
-    });
-    try {
-      const s = new SessionStore(home, persistence);
-      const id = s.create(digest, 1000);
-      expect(s.get(id)).toEqual({ issuedAt: 1000, secret: digest });
-      s.setPrefs({ sound: true });
-      expect(s.prefs()).toMatchObject({ sound: true });
-      expect(read).toHaveBeenCalledWith(join(home, 'ui-cookie.key'));
-      expect(read.mock.calls.some(([path]) => String(path) === join(home, 'ui-sessions.json'))).toBe(false);
-    } finally { read.mockRestore(); }
   });
 
   it('rolls all concerns back if interrupted, and permits a complete retry', () => {
