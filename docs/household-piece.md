@@ -574,3 +574,41 @@ standalone directory, create a compatibility symlink, or split old knowledge and
 People into commons. Those explicit offline migration deliveries remain in the
 replacement inventory; this is no claim of a complete old `household init` or
 `commons` replacement.
+
+### Your account
+
+`/p/account-preview` provides member-private passkey and browser management.
+`account.read` and the `account.self` Live record contain only the caller's safe
+passkey/session metadata. The central member scope excludes other members even
+for a household owner; there is no member selector. Opaque action references
+never expose credential ids, public keys, token digests, cookie ids or push
+endpoints. Duplicate token digests with conflicting membership fail closed.
+
+The screen registers named passkeys through the existing fresh-session,
+same-origin/CSRF WebAuthn routes. Removal confirms an exact key reference;
+`account.removePasskey({ref, withMade?})` removes its credential and revokes its
+dedicated token, ending the browsers it opened. Descendants are retained unless
+selected; selected cascades follow digest ancestry within the same member only.
+Legacy keys without a dedicated token lose just their credential, matching the
+old removal path; their shared sign-in token is never revoked accidentally.
+A reference binds both credential id and token, so a stale confirmation cannot
+remove a newly registered replacement. `account.revokeSession({ref})` ends one
+own browser and removes its notification devices atomically. Both writes use
+normal stable-id retries; failed writes roll back credentials and receipts.
+
+All windows refresh through Live, including expiry and access changes. The screen
+hides private data on access loss, disables disconnected/inactive edits, confirms
+removals and retains uncertain write retries across navigation. The existing own
+logout route signs out this device. The generated `loom-account read '{}'`,
+`removePasskey '{"ref":"…","withMade":true}'` and `revokeSession '{"ref":"…"}'`
+use the same command/response declarations and bounded API-only retry binding
+as the token/session clients. There was no legacy Account CLI; these are explicit
+new-side commands, with JSON output and the same 0/1/2 exit convention.
+
+This replaces Account's credential list/removal controls, not its notification
+subscription/test controls or device-to-device sign-in links. Those remain in
+the inventory, as do profile, backup and artwork work. Registration, sign-in and
+logout keep their existing cryptographic/CSRF policy. No schema, job, legacy
+route adaptation or host installation is added. Account's single browser test
+uses two windows and actual virtual-authenticator WebAuthn registration; CI
+captures 390/1280/1920 Neon Noir and Daylight in `artifacts/household-account/`.
