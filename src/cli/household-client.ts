@@ -6,7 +6,7 @@ import { householdCommands, householdResponses } from '../core/household/command
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
-export async function runHouseholdClient(argv: string[], io: IOStreams, runtime: ClientRuntime = defaults): Promise<number> {
+export async function runHouseholdClient(argv: string[], io: IOStreams, runtime: ClientRuntime & { now?: () => number } = defaults): Promise<number> {
   const help = `usage: loom-household <${householdCommands.map(c => c.name).join('|')}> [json-object]\n`;
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') { io.stdout(help); return 0; }
   const command = householdCommands.find(c => c.name === argv[0]);
@@ -29,12 +29,18 @@ export async function runHouseholdClient(argv: string[], io: IOStreams, runtime:
   } catch { return fail('Cannot configure loom connection'); }
   // Preserve raw validated JSON: reserialization would turn overflow numbers into null.
   const body = `{"input":${inputText}${command.write ? `,"id":${JSON.stringify(randomUUID())}` : ''}}`;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  const now = runtime.now ?? (() => performance.now());
+  const deadline = now() + 4000;
+  for (;;) {
     try {
       const response = await runtime.request(new URL(`/api/household/${command.name}`, base), {
-        method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(1500),
+        method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(Math.max(1, Math.min(1500, Math.ceil(deadline - now())))),
       });
-      if (response.status >= 500 && attempt < 3) { await response.body?.cancel().catch(() => {}); await runtime.retry(100 * (attempt + 1)); continue; }
+      if (response.status >= 500 && now() < deadline) {
+        await response.body?.cancel().catch(() => {});
+        await runtime.retry(Math.min(500, Math.max(0, deadline - now())));
+        continue;
+      }
       if (!response.ok) return fail('Request refused');
       const answer: unknown = await response.json();
       // Validate against the same response schema installed in the operation registry.
@@ -43,8 +49,7 @@ export async function runHouseholdClient(argv: string[], io: IOStreams, runtime:
       if (!result.success) return fail('Invalid daemon response');
       io.stdout(JSON.stringify(result.data.value, null, 2) + '\n');
       return 0;
-    } catch { if (attempt === 3) return fail('loom daemon is unavailable'); }
-    await runtime.retry(100 * (attempt + 1));
+    } catch { if (now() >= deadline) return fail('loom daemon is unavailable'); }
+    await runtime.retry(Math.min(500, Math.max(0, deadline - now())));
   }
-  return fail('loom daemon is unavailable');
 }

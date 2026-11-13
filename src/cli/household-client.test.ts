@@ -23,9 +23,9 @@ async function setup() {
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const tokenFile = join(home, 'token'); writeFileSync(tokenFile, 'owner-token');
   const run = async (args: string[], request: typeof fetch = fetch, env = { LOOM_URL: app.url, LOOM_TOKEN_FILE: tokenFile }) => {
-    let stdout = '', stderr = ''; const bodies: string[] = [];
+    let stdout = '', stderr = ''; const bodies: string[] = []; let elapsed = 0;
     const code = await runHouseholdClient(args, { stdout: s => stdout += s, stderr: s => stderr += s, stdin: Readable.from([]), stdinIsTTY: false, env }, {
-      request: (url, init) => { bodies.push(String(init?.body)); return request(url, init); }, retry: async () => {},
+      request: (url, init) => { bodies.push(String(init?.body)); return request(url, init); }, retry: async ms => { elapsed += ms; }, now: () => elapsed,
     });
     return { code, stdout, stderr, bodies };
   };
@@ -85,7 +85,7 @@ it('refuses invalid usage before transport and preserves raw JSON for server val
   const result = await run(['addAgent', '{"agent":1e400}']);
   expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.bodies[0]).toContain('1e400');
   expect(await run(['addAgent', '{}'], request)).toMatchObject({ code: 1, stdout: '', stderr: 'loom-household: loom daemon is unavailable\n' });
-  expect(calls).toBe(4);
+  expect(calls).toBe(9);
 });
 it('requires an explicit safe origin, refuses redirects and never echoes transport diagnostics', async () => {
   const { run, app, tokenFile } = await setup(); let calls = 0;
@@ -97,4 +97,31 @@ it('requires an explicit safe origin, refuses redirects and never echoes transpo
     const result = await run(['addAgent', '{}'], async () => Response.json(answer)); expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.stderr).not.toContain('owner-token');
   }
   expect(await run(['addAgent', '{}'], request, { LOOM_URL: app.url, LOOM_TOKEN_FILE: '' })).toMatchObject({ code: 1, stdout: '' });
+});
+
+it('offers help with no environment, token file or available transport', async () => {
+  for (const args of [[], ['--help'], ['-h']]) {
+    let stdout = '';
+    const mustNotCall = async () => { throw Error('offline help touched transport'); };
+    expect(await runHouseholdClient(args, { stdout: s => stdout += s, stderr: () => {}, stdin: Readable.from([]), stdinIsTTY: false, env: {} }, { request: mustNotCall, retry: mustNotCall })).toBe(0);
+    expect(stdout).toContain('usage: loom-household');
+  }
+});
+it('survives a one-second restart and bounds immediate refusal retries to four seconds', async () => {
+  const { app, tokenFile } = await setup(); let elapsed = 0; const attempts: number[] = [], bodies: string[] = [];
+  let stdout = '', stderr = '';
+  const io = { stdout: (s: string) => stdout += s, stderr: (s: string) => stderr += s, stdin: Readable.from([]), stdinIsTTY: false, env: { LOOM_URL: app.url, LOOM_TOKEN_FILE: tokenFile } };
+  const runtime = { now: () => elapsed, retry: async (ms: number) => { elapsed += ms; }, request: (async (url, init) => {
+    attempts.push(elapsed); bodies.push(String(init?.body));
+    if (elapsed < 1000) throw Error('connection refused');
+    return fetch(url, init);
+  }) as typeof fetch };
+  expect(await runHouseholdClient(['addAgent', '{"agent":"new-agent"}'], io, runtime)).toBe(0);
+  expect(attempts).toEqual([0, 500, 1000]); expect(new Set(bodies).size).toBe(1); expect(stderr).toBe(''); expect(JSON.parse(stdout)).toContain('new-agent');
+  for (const serverError of [false, true]) {
+    elapsed = 0; attempts.length = 0; stdout = ''; stderr = '';
+    runtime.request = async () => { attempts.push(elapsed); if (serverError) return new Response(null, { status: 503 }); throw Error('connection refused'); };
+    expect(await runHouseholdClient(['addAgent', '{}'], io, runtime)).toBe(1);
+    expect(elapsed).toBe(4000); expect(attempts).toHaveLength(9); expect(stdout).toBe('');
+  }
 });

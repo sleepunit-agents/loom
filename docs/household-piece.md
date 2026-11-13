@@ -333,7 +333,8 @@ The commands are `setMember`, `removeMember`, `addAgent`, `setMemberProjects`,
 `setProjectAgents`. Each calls the operation of the same name in `household`.
 Success prints the operation's JSON value and exits 0; daemon refusal or transport
 failure prints a fixed diagnostic and exits 1; malformed invocation exits 2.
-Help works offline. Retries reuse the exact request body and operation id, so a
+Help works offline. An elapsed four-second retry budget spans brief daemon
+restarts; individual requests are capped at 1.5 seconds. Retries reuse the exact request body and operation id, so a
 lost response cannot repeat the write. Redirects are refused.
 
 | Existing action | Client replacement |
