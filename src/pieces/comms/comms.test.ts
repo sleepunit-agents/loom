@@ -13,6 +13,64 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('routes attachment recipients from current configured agents and explicit ownership',async()=>{
+ let recipients={agents:['second','art','gone'],default:'art'};
+ const s=await setup({recipients:()=>recipients});
+ s.getSharing().members.jonathan.agents=['art','second','removed'];
+ expect(await s.call('route',{})).toEqual({ok:true,value:{agents:['second','art'],pick:'art',why:'default'}});
+ expect(await s.call('route',{agent:'second'})).toMatchObject({ok:true,value:{pick:'second',why:'item'}});
+ for(const agent of ['gone','removed','unknown'])expect(await s.call('route',{agent})).toEqual({ok:true,value:{agents:['second','art'],pick:null,why:'choose',passed:agent}});
+ recipients={agents:['second'],default:'art'};
+ expect(await s.call('route',{})).toEqual({ok:true,value:{agents:['second'],pick:'second',why:'only'}});
+ recipients={agents:['second','art'],default:'missing'};
+ expect(await s.call('route',{})).toMatchObject({ok:true,value:{pick:null,why:'choose'}});
+ s.getSharing().members.jonathan.agents=[];
+ expect(await s.call('route',{})).toEqual({ok:true,value:{agents:[],pick:null,why:'choose'}});
+});
+it('offers no attachment recipients without authoritative registry and keeps routing window-only',async()=>{
+ const s=await setup();expect(await s.call('route',{})).toEqual({ok:true,value:{agents:[],pick:null,why:'choose'}});
+ for(const viewer of [{kind:'agent',id:'art'},{kind:'service',id:'runtime'}] as Viewer[])expect(await s.call('route',{},viewer)).toMatchObject({ok:false,code:'denied'});
+ expect(await s.call('route',{},member,false)).toMatchObject({ok:false,code:'denied'});
+ expect(await s.call('route',{agent:'bad agent'})).toMatchObject({ok:false,code:'invalid'});
+ expect(s.deliveries).toEqual([]);expect(s.app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual({n:0});
+});
+it('matches five recent owned attachment threads by ref before page without decrypting or sending',async()=>{
+ let reads=0;const s=await setup({key:k=>({...k,open:async blob=>{reads++;return k.open(blob);}})});
+ const places:string[]=[];
+ for(let n=0;n<7;n++){
+  const result=await s.call('open',{agent:'art',id:String.fromCharCode(97+n).repeat(16),text:'Question',about:{ref:'t-987654',page:`p/item-${n}`,label:`Private label ${n}`}});
+  expect(result.ok).toBe(true);const place=(result as {ok:true;value:{thread:string}}).value.thread;places.push(place);await s.comms.deliver('art',place,1);s.clock.advance(1);
+ }
+ await s.call('change',{thread:places[6],action:'archive'});await s.call('change',{thread:places[5],action:'title',title:'Chosen title'});
+ const before=reads,delivered=s.deliveries.length;
+ expect(await s.call('about',{agent:'art',ref:'t-987654',page:'p/different'})).toEqual({ok:true,value:{threads:places.slice(0,6).reverse().slice(0,5).map(thread=>({id:thread,title:thread===places[5]?'Chosen title':null}))}});
+ expect(await s.call('about',{agent:'art',page:'p/item-5'})).toEqual({ok:true,value:{threads:[]}});
+ expect(reads).toBe(before);expect(s.deliveries).toHaveLength(delivered);
+ const stored=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());expect(stored).not.toContain('t-987654');expect(stored).not.toContain('p/item-');expect(stored).not.toContain('Private label');
+ await s.restart();s.clock.advance(14*86400_000);
+ expect(await s.call('about',{agent:'art',ref:'t-987654'})).toMatchObject({ok:true,value:{threads:places.slice(1,6).reverse().map(id=>({id}))}});
+ expect(await s.call('about',{agent:'art',ref:'t-987654'},{kind:'member',id:'other'})).toEqual({ok:true,value:{threads:[]}});
+ s.getSharing().members.jonathan.agents=[];
+ expect(await s.call('about',{agent:'art',ref:'t-987654'})).toMatchObject({ok:false,code:'denied'});
+});
+it('matches page-only attachments, isolates agents and omits private matching hashes from live records',async()=>{
+ const s=await setup();s.getSharing().members.jonathan.agents.push('second');
+ const make=async(agent:string,id:string,about?:unknown)=>{
+  const result=await s.call('open',{agent,id,text:'Question',about});expect(result.ok).toBe(true);
+  const place=(result as {ok:true;value:{thread:string}}).value.thread;await s.comms.deliver(agent,place,1);return place;
+ };
+ const place=await make('art','hhhhhhhhhhhhhhhh',{page:'p/tasks',label:'One'});
+ await make('second','iiiiiiiiiiiiiiii',{page:'p/tasks',label:'Two'});await make('art','jjjjjjjjjjjjjjjj');
+ expect(await s.call('about',{agent:'art',page:'p/tasks'})).toEqual({ok:true,value:{threads:[{id:place,title:null}]}});
+ expect(await s.call('about',{agent:'art',page:'p/tasks'},member,false)).toMatchObject({ok:false,code:'denied'});
+ for(const input of [{agent:'art'},{agent:'art',page:'a/../b'},{agent:'art',ref:'bad ref'},{agent:'art',ref:'t-1',label:'ignored'}])expect(await s.call('about',input)).toMatchObject({ok:false,code:'invalid'});
+ // The public thread projection must not expose a cross-thread correlation token.
+ const ws=new WebSocket(s.app.url.replace('http','ws')+'/live',{headers:{'x-window':'yes'}});await once(ws,'open');
+ const response=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope:'all'}));
+ const snapshot=JSON.parse(String((await response)[0]));expect(snapshot).toMatchObject({kind:'set',type:'thread'});expect(snapshot.records.some((r:{id:string})=>r.id===place)).toBe(true);expect(JSON.stringify(snapshot)).not.toContain('aboutHash');ws.close();
+ await s.call('change',{thread:place,action:'delete'});
+ expect(await s.call('about',{agent:'art',page:'p/tasks'})).toEqual({ok:true,value:{threads:[]}});
+});
 it('encrypts an attached item in the first message and binds retry identity to its full quoted context',async()=>{
  const s=await setup();const input={agent:'art',id:'cccccccccccccccc',text:'Is this safe?  \n',about:{ref:'github:sleepunit-agents/loom#855',label:'Private” item\n label',page:'p/changes',seen:new Date(s.clock.now()).toISOString()}};
  const result=await s.call('open',input);expect(result.ok).toBe(true);const place=(result as {ok:true;value:{thread:string}}).value.thread;
@@ -323,12 +381,12 @@ it('refreshes foreground presence on unchanged reads without moving activity or 
  expect((await s.call('change',{thread:place,action:'read',seq:1},member,false)).ok).toBe(false);
  expect(saved()).toEqual(before);
 });
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
+async function setup(overrides: {recipients?:()=>{agents:readonly string[];default?:string};key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
  const start=()=>startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,conversation:overrides.conversation,runtime:{receipt:overrides.receipt,deliver:async d=>{await overrides.deliver?.(d);deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,conversation:overrides.conversation,recipients:overrides.recipients,runtime:{receipt:overrides.receipt,deliver:async d=>{await overrides.deliver?.(d);deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
  });let app=await start();cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);

@@ -21,6 +21,8 @@ project or the household never grants access to another member's thread.
 | --- | --- |
 | `comms.agents` | Empty input; member identity, owned agent ids and private summaries (unread open-thread count, latest thread, first unread reply line). |
 | `comms.open` | Agent, client id, words, optional project and attached item pointer; thread/sequence acknowledgement. |
+| `comms.route` | Optional item agent; current configured owned recipients, pick and reason. Missing registry yields no recipients. |
+| `comms.about` | Agent and ref or page; up to five recent open owned threads about that item. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
@@ -89,7 +91,7 @@ data does not remove the behavior it delivered.
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
-| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule, about-key matching/five recent owned threads, importer association and attachment UI remain missing. |
+| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule and five recent owned-thread matching now exist as window-only operations. Production registry binding, importer association and attachment UI remain missing. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
 | Push and desktop unread integration | `Comms.announcements(member)`, Attention/frame notification seam | Partial: trusted metadata-only candidates select opener-owned open unread threads, stable latest-reply keys and exact two-minute per-thread foreground suppression. Production member-subscription matching, dispatch dedupe/rate limiting/staging and desktop binding remain missing. |
 | Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following now keeps the reader at the end only while near it, counts appended non-card records while scrolled back and follows their own sends; attachment/ref rendering and broader disconnected/reconnect parity need completion. |
@@ -788,3 +790,30 @@ and root TypeScript checking pass. No web code changed or local browser ran.
 Recipient routing, matching existing threads, imported about associations and
 the shell's attachment sheet are still required; this is the first-message
 backend unit only. Review budgets remain backend/security 2/3 and importer 1/3.
+
+
+Attachment recipient routing now uses a supplied current new-side agent registry
+and household default, intersected with explicit member ownership through policy.
+The item agent wins when owned and present; an unavailable item agent leaves the
+choice empty and is named as passed. Without an item agent, the owned household
+default wins, then the only owned agent, otherwise the member chooses. A missing
+registry returns no recipients; it never reads the old household. The production
+frame must supply that registry and default.
+
+New attached threads persist a domain-separated keyed hash of the ref, or the
+page when there is no ref. Labels and seen times do not affect matching. The
+raw pointer remains only in the encrypted first message; the correlation hash
+is omitted from window thread records and operation acknowledgements. Matching
+returns at most five open threads for the same member and selected agent,
+ordered by activity, with their current titles. It performs no decryption,
+send, read-mark change or runtime start. Matching remains useful after word
+expiry. Existing pre-association threads are not inferred from message text;
+the offline importer's association preservation is still required.
+
+Four regressions first failed with unknown operations. They now cover routing
+precedence, changed registry/ownership, household-owner isolation, page-only and
+ref-first matching, five-thread cap/order, archive/delete, restart/expiry, denied
+non-window/non-member calls, private storage and hidden Live hashes. All 359
+affected tests and root TypeScript checks pass. No web code or browser fixture
+changed in this unit. The shell attachment sheet remains required; this adds
+its backend routing and matching operations only. Review budgets are unchanged.

@@ -8,6 +8,8 @@ export interface Thread {
  startedThrough?: number;
  /** Server time of the member's latest visible-thread read, including unchanged reads. */
  inFront?: number;
+ /** Keyed attachment identity only; never expose it in window records. */
+ aboutHash?: string;
  [key: string]: unknown;
 }
 export interface MessageRow {

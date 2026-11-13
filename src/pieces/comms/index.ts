@@ -7,7 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
-import { about, attachedText } from './about.js';
+import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
@@ -23,6 +23,8 @@ export interface Options {
  runtime: RuntimeDelivery; hold: Hold; attention: Attention; days?: number;
  /** Authoritative new-side conversation metadata; absent means step reads are denied. */
  conversation?(id: string): StepConversation | undefined;
+ /** Current authoritative registry order and household default; no legacy lookup. */
+ recipients?(): {agents: readonly string[]; default?: string};
 }
 export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const {db,operations,live,clock,key} = o;
@@ -78,7 +80,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  };
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
-  const {firstHash, firstId, aliveAt, aliveTokens, inFront, ...record} = t;
+  const {firstHash, firstId, aliveAt, aliveTokens, inFront, aboutHash, ...record} = t;
   return {...record,...jobState(t),...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),unread:(reply.seq ?? 0)>t.readSeq};
  };
  live.register({name:'thread',windowOnly:true,
@@ -125,6 +127,28 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     ...(d.last?{last:{thread:d.last.id,title:d.last.title,at:d.last.last}}:{}),
     ...(d.first?.row?{first:{thread:d.first.t.id,text:d.first.row.at+days*day>clock.now()&&typeof records[n]?.text==='string'?firstLine(records[n]!.text as string):null}}:{}),
    }))};
+  },
+ }));
+ operations.register(operation({name:'comms.route',doors:['socket'],windowOnly:true,
+  input:z.object({agent:z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional()}).strict(),output,
+  may:v=>v.kind==='member',
+  run(ctx,i) {
+   const registry=o.recipients?.();
+   const agents=[...new Set(registry?.agents??[])].filter(agent=>mayUseThread(ctx.viewer,{member:ctx.viewer.id,agent},o.sharing()));
+   if(i.agent)return {agents,pick:agents.includes(i.agent)?i.agent:null,why:agents.includes(i.agent)?'item':'choose',...(!agents.includes(i.agent)?{passed:i.agent}:{})};
+   if(registry?.default&&agents.includes(registry.default))return {agents,pick:registry.default,why:'default'};
+   return {agents,pick:agents.length===1?agents[0]:null,why:agents.length===1?'only':'choose'};
+  },
+ }));
+ operations.register(operation({name:'comms.about',doors:['socket'],windowOnly:true,
+  input:z.object({agent:id,...aboutPointer.shape}).strict().refine(i=>!!(i.ref||i.page)),output,
+  may:(v,i)=>v.kind==='member'&&mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()),
+  run(ctx,i) {
+   const hash=key.hash(aboutIdentity(i));
+   const threads=(db.prepare('SELECT record FROM comms_threads WHERE member=? AND agent=?').all(ctx.viewer.id,i.agent) as {record:string}[])
+    .map(row=>JSON.parse(row.record) as Thread).filter(t=>t.archived===null&&t.aboutHash===hash&&see(ctx.viewer,t))
+    .sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)).slice(0,5).map(t=>({id:t.id,title:t.title}));
+   return {threads};
   },
  }));
  let closed=false;
@@ -253,16 +277,16 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
-  prepare:async i=>{const text=attachedText(i.text,i.about,clock.now());return {words:await key.seal(JSON.stringify({text})),hash:hashText(text)};},
+  prepare:async i=>{const text=attachedText(i.text,i.about,clock.now());return {words:await key.seal(JSON.stringify({text})),hash:hashText(text),...(i.about?{aboutHash:key.hash(aboutIdentity(i.about))}:{})};},
   run(ctx,i,raw) {
-   const p=raw as {words:Buffer;hash:string};
+   const p=raw as {words:Buffer;hash:string;aboutHash?:string};
    const existing=(db.prepare('SELECT record FROM comms_threads WHERE member=?').all(ctx.viewer.id) as {record:string}[]).map(r=>JSON.parse(r.record) as Thread).find(t=>t.firstId===i.id);
    if(existing) { if(existing.agent!==i.agent || existing.firstHash!==p.hash) return fail('conflict','Message id already used'); return {thread:existing.id,seq:1}; }
    const bytes=Buffer.from(hashText(`${ctx.viewer.id}\0${i.agent}\0${i.id}`),'hex');
    let bits=0,value=0,encoded='';for(const b of bytes){value=(value<<8)|b;bits+=8;while(bits>=5){encoded+='abcdefghijklmnopqrstuvwxyz234567'[(value>>>(bits-5))&31];bits-=5;}}
    const place=`th:${encoded.slice(0,10)}`;
    if(db.prepare('SELECT 1 FROM comms_deleted WHERE id=?').get(place))return fail('conflict','This thread was deleted');
-   const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${createHash('sha256').update(`${i.agent}\0loom\0${place}`).digest('hex').slice(0,12)}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false};
+   const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${createHash('sha256').update(`${i.agent}\0loom\0${place}`).digest('hex').slice(0,12)}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false,...(p.aboutHash?{aboutHash:p.aboutHash}:{})};
    saveThread(db,t);
    const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})});
    ctx.changed('thread',place);ctx.changed('message',messageId(place,seq));return {thread:place,seq};
