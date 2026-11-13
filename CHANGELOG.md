@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
+
+
 - Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
 
 ### Added
