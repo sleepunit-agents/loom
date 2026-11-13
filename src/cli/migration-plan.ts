@@ -1,6 +1,6 @@
 /** Offline preparation only: no destination, daemon, legacy programs or writable source opens. */
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
@@ -47,7 +47,21 @@ function sqlite<T>(path: string, read: (db: Database.Database) => T): T {
   const db = new Database(bytes, { readonly: true });
   try { return read(db); } finally { db.close(); }
 }
-function assertInventory(root: string, manifest: SnapshotManifest): void {
+/** Check types before readSnapshot can hash a FIFO or other live handle. */
+function regularFiles(root: string): string[] {
+  const files: string[] = [];
+  const walk = (relative: string): void => {
+    const path = join(root, relative), stat = lstatSync(path);
+    if (stat.isSymbolicLink()) throw Error('Snapshot contains a symlink');
+    if (stat.isDirectory()) for (const name of readdirSync(path)) walk(relative ? `${relative}/${name}` : name);
+    else if (!stat.isFile()) throw Error('Snapshot contains a special file');
+    else files.push(relative);
+  };
+  if (!lstatSync(root).isDirectory()) throw Error('Snapshot must be a directory');
+  walk('');
+  return files;
+}
+function assertInventory(root: string, manifest: SnapshotManifest, regular: string[]): void {
   const schema = z.object({ version: z.literal(1), consistency: z.literal('per-database'), files: z.array(z.object({
     path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative(), kind: z.enum(['sqlite','file']),
   }).strict()) }).strict();
@@ -55,20 +69,23 @@ function assertInventory(root: string, manifest: SnapshotManifest): void {
   const paths = new Set(manifest.files.map(f => f.path));
   if (paths.has('manifest.json')) throw Error('Manifest cannot inventory itself');
   for (const path of paths) if (path !== posix.normalize(path) || path.startsWith('/') || path.startsWith('../') || path.includes('\\')) throw Error('Noncanonical snapshot path');
-  const walk = (relative: string): void => {
-    const path = join(root, relative), stat = lstatSync(path);
-    if (stat.isSymbolicLink()) throw Error('Snapshot contains a symlink');
-    if (stat.isDirectory()) for (const name of readdirSync(path)) walk(relative ? `${relative}/${name}` : name);
-    else if (!stat.isFile() || (!paths.has(relative) && relative !== 'manifest.json')) throw Error('Snapshot contains an unlisted or special file');
-  };
-  walk('');
+  if (regular.some(p => p !== 'manifest.json' && !paths.has(p))) throw Error('Snapshot contains an unlisted file');
+  for (const file of manifest.files) {
+    const fd = openSync(join(root, file.path), 'r');
+    const header = Buffer.alloc(16);
+    try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
+    const kind = header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
+    if (kind !== file.kind) throw Error('Snapshot kind disagrees with file contents');
+  }
 }
 
 export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   root: string; manifest: SnapshotManifest; plan: MigrationPlan; missing: string[]; blocked: string[];
 } {
-  const root = realpathSync(snapshot), manifest = readSnapshot(root);
-  assertInventory(root, manifest);
+  const root = realpathSync(snapshot);
+  const regular = regularFiles(root);
+  const manifest = readSnapshot(root);
+  assertInventory(root, manifest, regular);
   const context = { snapshot: { root, manifest } };
   const path = (relative: string) => snapshotPath(context, relative);
   const json = (relative: string) => JSON.parse(readFileSync(path(relative), 'utf8'));
@@ -81,10 +98,11 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   for (const source of memories) sqlite(path(source), db => {
     const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));
     const required = ['conversations','conversation_turns','conversation_days','conversation_digests'];
-    if (!tables.has('conversations')) return;
+    if (!required.some(t => tables.has(t))) return;
     if (!required.every(t => tables.has(t))) throw Error('Incomplete attention source');
     attentionPaths.push(source);
     for (const row of db.prepare('SELECT id, agent FROM conversations').all() as { id: string; agent: string }[]) {
+      z.string().regex(/^cv-[0-9a-f]{12}$/).parse(row.id);
       if (Object.hasOwn(scopes, row.id)) throw Error('Duplicate conversation across snapshot sources');
       if (!household.agents.includes(row.agent)) throw Error('Conversation names an unknown household agent');
       scopes[row.id] = {}; // Private to its agent and owners; never infer an audience from venue/title.

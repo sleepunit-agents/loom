@@ -3,6 +3,8 @@ import Database from 'better-sqlite3';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { createSnapshot } from './migration-snapshot.js';
 import { migrationPlanChecksum, migrationSnapshotChecksum, prepareMigrationPlan } from './migration-plan.js';
@@ -82,7 +84,7 @@ it('binds a plan to full snapshot contents and hashes every plan option with obj
   f.plan.snapshot = '0'.repeat(64);
   expect(() => prepareMigrationPlan(f.root, f.plan)).toThrow('different snapshot');
 });
-it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknown-member','partial-attention','duplicate-path','escape','absolute','unknown-epic','conflicting-project','bad-attribution','injected-projects'])('refuses malformed or incomplete plans before execution: %s', async kind => {
+it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknown-member','partial-attention','duplicate-path','escape','absolute','unknown-epic','conflicting-project','bad-attribution','injected-projects','approval-extra','approval-value'])('refuses malformed or incomplete plans before execution: %s', async kind => {
   const f = await fixture(), p = f.plan;
   if (kind === 'omit') delete p.importers.household;
   if (kind === 'extra-option') p.importers.household.options = { ignored: true };
@@ -98,14 +100,21 @@ it.each(['omit','extra-option','callback','bad-agent','missing-audience','unknow
   if (kind === 'conflicting-project') p.importers.tasks.options = { projects: { 't-1': 'other' } };
   if (kind === 'bad-attribution') p.importers.changes.options = { attribution: { agents: {}, ownerLogins: [], taskOwner: 'stranger' } };
   if (kind === 'injected-projects') p.importers.changes.options = { attribution: { agents: {}, ownerLogins: [] }, projects: [] };
+  if (kind === 'approval-extra') p.importers.approvals.options = { projects: {}, interrupt: 'forbidden' };
+  if (kind === 'approval-value') p.importers.approvals.options = { projects: { 'a-12345678': 'INVALID' } };
   expect(() => prepareMigrationPlan(f.root, p)).toThrow();
 });
-it.each(['extra-file','sidecar','symlink','tamper','bad-manifest'])('refuses snapshot material outside the verified inventory: %s', async kind => {
+it.each(['extra-file','sidecar','symlink','tamper','bad-manifest','kind'])('refuses snapshot material outside the verified inventory: %s', async kind => {
   const f = await fixture();
   if (kind === 'extra-file') writeFileSync(join(f.root,'home/unlisted'), 'extra');
   if (kind === 'sidecar') writeFileSync(join(f.root,'home/agents/art/memories.db-wal'), 'unlisted WAL');
   if (kind === 'symlink') symlinkSync(f.old, join(f.root,'home/alias'));
   if (kind === 'tamper') writeFileSync(join(f.root,'home/household.json'), '{}');
+  if (kind === 'kind') {
+    const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+    manifest.files.find((r: {path:string}) => r.path === 'home/agents/art/memories.db').kind = 'file';
+    writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  }
   if (kind === 'bad-manifest') {
     const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8')); manifest.consistency = 'unknown';
     writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
@@ -124,5 +133,41 @@ it('refuses duplicate conversations and partial attention schemas rather than dr
   update(db => db.prepare('UPDATE conversations SET id=?').run(f.ids[0]));
   expect(() => prepareMigrationPlan(f.root)).toThrow('Duplicate conversation');
   update(db => db.exec('DROP TABLE conversation_days'));
+  expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention');
+});
+it.each(['approvals','clock','changes'])('refuses ambiguous %s sources and permits an explicit non-first choice', async name => {
+  const f = await fixture();
+  const relative = name === 'clock' ? 'home/zzz/art/schedules.json' : name === 'changes' ? 'home/zzz/changes/snapshot.json' : 'home/zzz/approvals.json';
+  mkdirSync(join(f.root, relative, '..'), { recursive: true });
+  const bytes = Buffer.from(name === 'clock' ? '{}' : name === 'changes' ? '{"v":1,"changes":[]}' : '{"v":1,"approvals":{}}');
+  writeFileSync(join(f.root, relative), bytes);
+  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+  manifest.files.push({ path: relative, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), kind: 'file' });
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+  expect(() => prepareMigrationPlan(f.root)).toThrow(`Multiple ${name} inputs`);
+  f.plan.snapshot = migrationSnapshotChecksum(manifest);
+  const choice = name === 'changes' ? relative : 'home/zzz';
+  f.plan.importers[name].paths = [choice];
+  expect(prepareMigrationPlan(f.root, f.plan).plan.importers[name].paths).toEqual([choice]);
+});
+
+it('rejects a manifest-listed live socket before the hash reader tries to consume it', async () => {
+  const f = await fixture(false), path = join(f.root, 'home/live');
+  const server = createServer();
+  server.listen(path); await once(server, 'listening');
+  try {
+    const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+    manifest.files.push({ path: 'home/live', bytes: 0, sha256: createHash('sha256').update('').digest('hex'), kind: 'file' });
+    writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
+    expect(() => prepareMigrationPlan(f.root)).toThrow('Snapshot contains a special file');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+it.each(['conversations','conversation_turns','conversation_days','conversation_digests'])('refuses an attention database missing %s', async table => {
+  const f = await fixture();
+  const db = new Database(join(f.root,'home/agents/art/memories.db')); db.exec(`DROP TABLE ${table}`); db.close();
+  const manifest = JSON.parse(readFileSync(join(f.root,'manifest.json'), 'utf8'));
+  const file = manifest.files.find((r: {path:string}) => r.path === 'home/agents/art/memories.db');
+  const bytes = readFileSync(join(f.root, file.path)); file.bytes = bytes.length; file.sha256 = createHash('sha256').update(bytes).digest('hex');
+  writeFileSync(join(f.root,'manifest.json'), JSON.stringify(manifest));
   expect(() => prepareMigrationPlan(f.root)).toThrow('Incomplete attention');
 });
