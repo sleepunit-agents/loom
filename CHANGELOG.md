@@ -12,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 - Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.
 
 - Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
@@ -1029,6 +1028,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
 
 - Add owner-only next-mode `household.show` and generated `loom-household show` JSON summary.
+
+### Settings
+
+- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 
 ## [0.16.1] - 2026-10-25
 
