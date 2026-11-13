@@ -1,13 +1,41 @@
 # Clock in the new foundation
 
-Work in progress for t-2201. The clock is being built beside the installed clock;
-this branch switches no page, command, timer or live data. The new side must never
-read the installed piece or its stores. Only the offline importer reads old files.
+Clock is installed on the new side in next mode, beside the installed legacy
+clock. The rebuild remains incomplete under t-2201; the remaining work is listed
+below. These changes switch no existing command, timer or live data.
+The new side must never read the installed piece or its stores. Only the offline importer reads old files.
 
 The upstream contract is `sleepunit-agents/loom-clock` at
 `5e362d05389015cf48b5d69bf5f4f00a0b8f1631`: `bin/wake`, `README.md`,
 `test/test_wake.py` and `test/smoke.sh`. Its CLI already redirects relays to the
 runtime. `loom wake` loads identity and is unrelated to scheduling.
+
+## Remaining work and evidence
+
+At the documentation audit base `6c5f566`, runtime exposes `queueBody` and role
+bindings for `startBody`/`deliver`, but does not install executable operations for
+the latter. Queue acceptance is not a confirmed body start. Next mode therefore
+keeps Clock's default held runtime. Task t-2201 explicitly depends on t-2209 for
+executable dispatch and authenticated conversation/continuation resolution.
+
+Independent work remains: ask-vouch filing/grouping/denial suppression and its
+app/client flow; owner-vouch app actions; exact local-approval filing/recovery,
+standing-job rechecks and app/client flow; and other imported provenance recovery
+or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
+mutation/join, original schedule principal narrowing, API 40/conversation 20 and
+origin-bearing schedule 20 quotas, agent-authored self-rearm eligibility, and
+continuation issuer/handle/deadline/place validation. These are gaps, not deliberate
+drops. Archived strings and caller-supplied handles cannot fill them.
+
+Merged evidence: foundation/importer #864; capacity/quota #878; exact unpark #887;
+owner-authored self-rearm #901; continuation failure #910; desk reads #917;
+Clock app #931; generated client #949; migrate-all #951; notices #956;
+Home composition #963; parked answers #973; continuation exclusions #980;
+configured safety wake #986; owner-vouch backend #993 and client #1003.
+Clock screenshots: #931's `artifacts/clock-app/` CI artifact. Home composition's
+six screenshots: #963 artifact `14028440535`. Behavioral fixtures live in
+`src/pieces/clock/*.test.ts`, `src/next.test.ts`, and the Clock/Home browser proofs.
+These references do not certify the remaining workflows or authorize a live move.
 
 ## Calendar choices
 
@@ -34,18 +62,24 @@ call. Restart holds any remaining firing intent; stopping the installer prevents
 late completion from writing. Cancellation before invocation suppresses the call;
 cancellation after invocation records that a body may have started. Uncertain
 work cannot be released with fire-now. Known-not-started work alone backs off.
-The default runtime is a staging hold. The small runtime and approvals dependency
-files are temporary role contracts pending the other pieces' implementations.
+The default runtime is a staging hold. The Clock runtime dependency remains an
+uncomposed start-result contract.
+The read-only approval dependency is composed with the owning Approvals and
+Secrets roles in next mode; it is not a receipt-spending interface.
 
 The current tests exercise these transitions on `startLoom`/`FakeClock`, including
 pause release order, a parked answer and timeout, changed dispatch permission,
 live-record aging, and the next occurrence across Chicago daylight saving.
-CLI parity, vouch/approval workflows and final runtime/approvals composition remain unfinished. The foundation and importer migration reviews are complete; the lane operations and Clock preview app are merged in separate slices.
+The opt-in client, Clock app, Home composition, parked answers, owner-vouch
+backend/client and explicit safety wake are merged. Ask-vouch, local-approval
+recovery and runtime-dependent parity remain incomplete. The foundation and
+importer migration reviews are complete.
 
-## Old surface inventory and intended replacements
+## Old surface inventory and replacements
 
-The operations below are the implementation checklist, not a claim that all are
-already available. The final PR must replace this sentence with its parity evidence.
+The table distinguishes implemented operations from remaining workflows.
+The source-audit table below records the narrower behavioral gaps; existence of
+an operation does not imply executable runtime dispatch.
 
 | Old command, route or job | New operation or job |
 | --- | --- |
@@ -61,9 +95,10 @@ already available. The final PR must replace this sentence with its parity evide
 | `wake pause`, `wake resume` | `clock.pause`, `clock.resume`; keep due work, release once |
 | `wake schedule set/rm/list/run` | `clock.scheduleSet`, `clock.scheduleRemove`, `clock.schedules`, `clock.scheduleRun` |
 | `wake lane set/assign/rm/list/text` | schedule rows carrying lane text and assignment; corresponding `clock.lane*` operations |
-| `wake vouch`, `wake ask-vouch`, `vouch-approved` action | owner answer through approvals role; never infer owner authority from an unknown wake |
+| `wake vouch`, `vouch-approved` action | `clock.vouch`, opt-in owner client, and atomic Approvals application; app action remains unfinished |
+| `wake ask-vouch` | Filing, automatic grouping, denial suppression and app/client flow remain unfinished |
 | `wake relay`, `wake relays` | same refusal directing the caller to runtime; already removed upstream |
-| `wake reap`, legacy session reaper | dropped: runtime owns every new body and stuck-body handling |
+| `wake reap`, legacy session reaper | dropped from Clock: runtime owns body lifecycle; executable runtime dispatch remains blocked |
 | `wake bundle export/import` | coordinated core backup/import, not an independently encrypted child program |
 | `wake api` | foundation HTTP/MCP/direct operations; no subprocess envelope |
 | `wake ui` manifest/page | registered Clock app at `/p/clock-preview`; live `wake` and `schedule` |
@@ -72,33 +107,34 @@ already available. The final PR must replace this sentence with its parity evide
 | UI lane create/edit/assign/remove | the same lane operations as CLI |
 | parked request checks every 5 minutes | role notifications where available, plus daemon deadline/check job |
 | schedule fire creates one next occurrence | next row committed with the current fire intent |
-| dead-man when spool empty | daemon job, subject to central policy and staging hold |
+| dead-man when spool empty | Explicit configured-agent fixed 24-hour daemon job; central policy and staging hold apply |
 | transient unit collision recovery | dropped: no transient units in the new side |
 | fire/standby lock files | dropped: single daemon owns SQLite and its timers |
 | dispatch retry/backoff and quota handling | only known-not-started outcomes may retry; uncertain fires are held, never repeated |
-| allocated-house watch/session command launch | dropped from clock: runtime starts and tracks bodies through its role |
-| local approvals, standing jobs, continuation handles | preserve capability and approval metadata through runtime/approvals roles; no alternate launcher |
+| allocated-house watch/session command launch | dropped from Clock: runtime owns starts/tracking; executable start/delivery composition remains blocked |
+| local approvals, standing jobs, continuation handles | Local filing/recovery/standing and authenticated continuation inspection remain unfinished; imported metadata stays inert |
 
-## Required verification before completion
+## Implemented verification and remaining completion boundary
 
-Use `startLoom` with `FakeClock` for operations and daemon lifecycle: overdue while
+Implemented in-process fixtures use `startLoom` with `FakeClock` for operations and daemon lifecycle: overdue while
 down; crash after intent and before outcome; late outcome from the stopped daemon;
 cancel before dispatch and racing a fire; pause/resume; parked answers and timeout;
 one occurrence per schedule; DST; staging holds; owner/member/project/agent policy;
 scope aging after 24 hours. No fixed sleeps, subprocesses or browser suite on loom's
 machine. The standalone calendar tests cover DST and invalid input directly.
 
-The importer must compare source ids, counts and content, and commit all rows and
-its source checksum in one transaction. Test identical-source no-op, different
-source refusal, and injected interruption rollback on constructed old-format data.
+Importer fixtures compare source ids, counts and content, with all rows and
+the source checksum in one transaction. They cover identical-source no-op,
+different-source refusal and injected interruption rollback on constructed old-format data.
 Preserve opaque old metadata without treating it as new authorization. A source
 `_firing` is uncertain, so hold it instead of replaying it.
 
-The generated `loom-wake-client` must share declarative registry command metadata,
-hold no domain logic or database access, and match upstream output and exit codes
-on fixtures. The Clock app must use the kit, `useRecords` and `call`, with one
-browser test for two-window behavior and CI screenshot artifacts at the required
-widths and looks.
+The opt-in `loom-wake-client` shares declarative registry command metadata and
+keeps domain logic in daemon operations. Client fixtures cover output, exit codes
+and receipt retries, including a lost committed HTTP answer. The Clock app uses
+the kit, `useRecords` and `call`; its two-window browser proof and six screenshots
+are described below. Remaining vouch/local-approval flows are not covered by
+these completion claims.
 
 ## Final move (coordinator, owner present)
 
@@ -134,8 +170,10 @@ Imported wakes are held for provenance review and schedules disabled. Their
 runner, even if a household member happens to use the same id. In-flight and old
 runtime watch records are held uncertain and cannot use fire-now. All original
 wake fields are retained in `legacy`; the exact source archive retains schedules,
-logs, filed approvals and lane text. Restoration of lane operations and explicit
-owner provenance adoption are unfinished. Importing alone intentionally does not
+logs, filed approvals and lane text. New-side lane operations are implemented; imported schedules remain disabled.
+Explicit owner adoption exists only for eligible unknown plain one-offs, as
+described below. Known-person/owner imports, schedules and capability-bearing
+work still need owning recovery or a documented deliberate drop. Importing alone intentionally does not
 authorize or start any work. The coordinator's final cutover must review held
 work and reconcile uncertain bodies before enabling any schedule.
 
@@ -146,7 +184,7 @@ work and reconcile uncertain bodies before enabling any schedule.
 schedule row (`lane/<name>`) carrying its full text, optional repository-relative
 source name and local-placement preference. Partial edits preserve omitted fields;
 inline text replacement clears the old source name. The daemon never opens that
-source path. The generated client will supply file contents when asked to set a
+source path. The opt-in client supplies file contents when asked to set a
 lane from a file. Long text stays in the row and the dispatch prompt points to
 `wake lane text`. The local marker is runtime input, never a host launcher or grant;
 the staging runtime holds every start regardless of placement.
@@ -162,7 +200,7 @@ self-chained work, retaining cancellation history rather than deleting the wake.
 
 The lane operation fixtures port the old set/assign/text/remove, partial sheet
 edits, long text/local marker, slot and file self-chain cases, plus reassignment
-while dispatch is in flight. The old page and client formatting are still pending.
+while dispatch is in flight. The Clock app and client now expose lane settings, text replacement and assignment.
 
 Each lane revision has a version carried by its occurrences. If a superseded or
 removed lane's in-flight runtime call returns definitely-not-started, that
@@ -230,23 +268,24 @@ the command inventory above, the source has these domain obligations:
 
 | Legacy behavior | Current new-side gap or choice |
 | --- | --- |
-| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API schedules 20 | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
+| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares, schedule cap and verified conversation provenance are unfinished. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
-| `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
-| `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | Current continuation field is opaque data only; validation and runtime capability inspection remain unfinished. It must not convey authority by its presence. |
+| `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Owner-authored schedule suppression and its client response are implemented below; agent-authored eligibility still needs authenticated runtime provenance. |
+| `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | New writes reject file/slot/place/approval/exact-local-marker combinations. The continuation remains opaque; issuer, handle and deadline inspection await runtime and confer no authority today. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
 | `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
-| Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
-| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
-| Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
+| Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Local filing/recovery/standing integration remains unfinished; a local marker or free approval id is not a grant. |
+| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Owner adoption of eligible unknown plain imports and atomic owner-applied Allow are implemented, with an owner client. Ask filing, grouping, denial suppression, app actions and other imported recovery remain unfinished. |
+| Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Explicit configured-agent fixed 24-hour safety wakes are implemented below; default configuration is empty and no owner Viewer is synthesized. |
 | Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notices are implemented through the Attention source described below. |
-| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices and scoped Next/jobs reads exist; desk composition remains unfinished. |
+| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices, scoped Next/jobs reads and live Home agent-card composition are implemented. |
 
-The client still owes exact stdout/stderr/exit fixtures, including the runtime
-relay refusal, nested verb options, and schedule/list/log formatting. The app
-still owes lane settings and text replacement, schedule details, distinct held
-and parked states, confirmations and relevant undo actions. Local file pickers,
+Client fixtures cover runtime relay refusal, nested options, schedule/list/log
+formatting and owner vouch. The app covers lane settings/text, schedules, held
+and parked states and confirmations. Pause has Resume as its inverse; cancellation
+does not offer an undo that could repeat a body. Ask-vouch and local-approval
+app/client workflows remain incomplete. Local file pickers,
 house allocation/watch, harness session reaping, transient units, launcher
 fallbacks and independent bundle encryption are replaced by the new client,
 runtime or coordinated core move as listed above; they must not be reintroduced
@@ -359,7 +398,7 @@ places do not qualify. Agent-authored schedules cannot substitute for a rearm
 until authenticated runtime conversation provenance is available; that remaining
 parity obligation is tracked on t-2201. Non-owner member requests remain explicit
 extra work. This deliberately narrows the old local clock's file matching while
-preserving its six-hour boundary. The generated client must render this result
+preserving its six-hour boundary. The opt-in client renders this result
 as `already scheduled: <schedule>, next at <time> (nothing armed)`.
 
 
@@ -386,10 +425,9 @@ opaque import metadata are not returned. Authenticated conversation links remain
 owed with runtime provenance; legacy metadata is never promoted into them.
 
 All deadlines are epoch milliseconds for the consuming kit to format in the
-viewer's timezone. The Clock preview link is reserved for the app still to land.
-These reads do not write Attention status or duplicate its runtime job state;
-composition into the desk and live refresh remain later integration work on
-t-2201. The existing live wake/clock records signal refreshes.
+viewer's timezone. The Clock preview link opens the registered app. These reads do not write
+Attention status or duplicate runtime job state. Home composition and live refresh
+are implemented as described below; wake/clock records signal refreshes.
 
 ## Clock preview app
 
@@ -462,8 +500,8 @@ The authenticated owner token replaces the old host-terminal identity test and
 interactive typed-id confirmation. Agent tokens cannot vouch. `ask-vouch` remains
 an explicit refusal until its owning filing/grouping workflow lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
 refused in favor of the daemon, runtime, Clock app and core migration. This client
-slice does not claim completion of provenance, local approvals, runtime dispatch
-or importer-all registration; those remain on t-2201.
+slice does not claim completion of provenance, local approvals or runtime
+dispatch; those remain on t-2201. Importer-all registration is implemented in #951.
 
 
 | Old client detail | New client choice and reason |
@@ -531,8 +569,8 @@ request again; it never carries a house grant forward. Other resource questions
 report that their piece applied the access and ask the body to check it; they
 never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
 approval or grants access, and runtime dispatch remains held until its owning
-implementation is composed. Local-wake filing/recovery/standing and vouch
-applications remain separate unfinished flows. This composition replaces the
+implementation is composed. Local-wake filing/recovery/standing remains unfinished. Owner-vouch application
+is composed separately as described below; ask-vouch filing remains unfinished. This composition replaces the
 previously missing next-mode approval parking seam.
 
 
