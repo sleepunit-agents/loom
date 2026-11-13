@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { maySee, operation, OperationError, type Clock, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { maySee, operation, OperationError, type Clock, type Db, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import type { ConversationWriteBinding, ConversationCard } from './role.js';
 import type { WordsKey } from './crypto.js';
 
@@ -8,12 +8,12 @@ import type { WordsKey } from './crypto.js';
 export interface StepConversation { agent: string; venue: string; version: string }
 interface Row { seq: number; conversation: string; at: number; words: Buffer | null; record: Buffer | null }
 interface Options {
- db: Db; operations: Operations; clock: Clock; key: WordsKey; days: number;
+ db: Db; operations: Operations; live: Live; clock: Clock; key: WordsKey; days: number;
  sharing(): Sharing; closed(): boolean; changed(): void;
  conversation?(id: string): StepConversation | undefined;
 }
 export function installConversationSteps(o: Options) {
- const { db, operations, clock, key } = o;
+ const { db, operations, live, clock, key } = o;
  const unavailable = (): never => { throw new OperationError('denied', 'Conversation unavailable'); };
  const lookup = (viewer: Viewer, conversation: string) => {
   const c = o.conversation?.(conversation);
@@ -26,6 +26,34 @@ export function installConversationSteps(o: Options) {
   (db.prepare('SELECT * FROM comms_conversation_steps WHERE conversation=? AND seq<? AND at>? ORDER BY seq DESC LIMIT 100').all(conversation, before, cutoff) as Row[]).reverse();
  const retained = (row: Row) => row.words !== null && row.record !== null && row.at + o.days * 86400_000 > clock.now();
  const routing = (row: Row) => ({ seq: row.seq, conversation: row.conversation, at: row.at, keepUntil: row.at + o.days * 86400_000, text: null });
+
+ const decode = async (snapshot: Row[]) => Promise.all(snapshot.map(async row => {
+    if (!retained(row)) return routing(row);
+    const text = await key.open(row.words!);
+    const metadata = z.object({ run: z.string(), id: z.string(), tool: z.string(), state: z.enum(['running', 'done', 'failed']) }).parse(JSON.parse(await key.open(row.record!)));
+    if (metadata.tool === 'text') return routing(row);
+    // Explicit fields only: an imported envelope cannot override routing or add output/body words.
+    return { ...routing(row), ...metadata, text };
+ }));
+ const retainedRecords = (snapshot: Row[], records: unknown[]) => snapshot.map((row,n)=>retained(row)?records[n]:routing(row));
+ // One bounded page per conversation keeps the final retention check after ALL crypto.
+ // The core rereads the entire ciphertext/metadata snapshot and policy before sending it.
+ live.register({name:'conversationSteps',windowOnly:true,
+  ids:scope=>scope && scope.length<=200?[scope]:[],
+  read:(id,viewer)=>{
+   if(viewer.kind!=='member')return;
+   const conversation=lookup(viewer,id);if(!conversation)return;
+   return {id,conversation,snapshot:rows(id,Number.MAX_SAFE_INTEGER,clock.now()-o.days*86400_000)};
+  },
+  inScope:(record,scope)=>record.id===scope,
+  resolve:async record=>{
+   const snapshot=record.snapshot as Row[],records=await decode(snapshot);
+   return {id:record.id,steps:retainedRecords(snapshot,records)};
+  },
+  // The authoritative conversation store must announce metadata changes, including
+  // deletion/replacement; access changes are also refreshed by core.access.
+  refreshOn:change=>change.type==='conversation'||change.type==='thread',
+ });
  operations.register(operation({ name: 'comms.conversationSteps', doors: ['socket'], windowOnly: true,
   input: z.object({ conversation: z.string().min(1).max(200), before: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict(),
   output: z.unknown(),
@@ -34,14 +62,7 @@ export function installConversationSteps(o: Options) {
    const conversation = lookup(ctx.viewer, input.conversation); if (!conversation) return unavailable();
    const cutoff = clock.now() - o.days * 86400_000;
    const snapshot = rows(input.conversation, input.before ?? Number.MAX_SAFE_INTEGER, cutoff);
-   const records = await Promise.all(snapshot.map(async row => {
-    if (!retained(row)) return routing(row);
-    const text = await key.open(row.words!);
-    const metadata = z.object({ run: z.string(), id: z.string(), tool: z.string(), state: z.enum(['running', 'done', 'failed']) }).parse(JSON.parse(await key.open(row.record!)));
-    if (metadata.tool === 'text') return routing(row);
-    // Explicit fields only: an imported envelope cannot override routing or add output/body words.
-    return { ...routing(row), ...metadata, text };
-   }));
+   const records = await decode(snapshot);
    return { conversation, cutoff, snapshot, records };
   },
   run(ctx, input, prepared) {
@@ -50,7 +71,7 @@ export function installConversationSteps(o: Options) {
    if (!current || JSON.stringify(current) !== JSON.stringify(saved.conversation)) return unavailable();
    if (JSON.stringify(rows(input.conversation, input.before ?? Number.MAX_SAFE_INTEGER, saved.cutoff)) !== JSON.stringify(saved.snapshot))
     throw new OperationError('conflict', 'Conversation changed; load this page again');
-   return { steps: saved.snapshot.map((row, n) => retained(row) ? saved.records[n] : routing(row)) };
+   return { steps: retainedRecords(saved.snapshot,saved.records) };
   },
  }));
  return { writer(binding: ConversationWriteBinding) {
@@ -97,7 +118,7 @@ export function installConversationSteps(o: Options) {
     db.prepare('DELETE FROM comms_conversation_steps WHERE conversation=? AND seq NOT IN (SELECT seq FROM comms_conversation_steps WHERE conversation=? ORDER BY seq DESC LIMIT 1000)').run(conversation,conversation);
     return {added,updated};
    })();
-   o.changed(); return result;
+   o.changed(); live.changed([{type:'conversationSteps',id:conversation}]); return result;
   }};
  }};
 

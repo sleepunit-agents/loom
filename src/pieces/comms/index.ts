@@ -464,7 +464,9 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   live.changed(stale.map(t=>({type:'thread',id:t.id})));
   const rows=db.prepare('SELECT thread,seq FROM comms_messages WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {thread:string;seq:number}[];
   db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher','$.privateCipher') WHERE at <= ?").run(clock.now()-days*day);
+  const conversations=db.prepare('SELECT DISTINCT conversation FROM comms_conversation_steps WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {conversation:string}[];
   db.prepare('UPDATE comms_conversation_steps SET words=NULL,record=NULL WHERE at <= ?').run(clock.now()-days*day);
+  live.changed(conversations.map(r=>({type:'conversationSteps',id:r.conversation})));
   live.changed(rows.map(r=>({type:'message',id:messageId(r.thread,r.seq)})));
   armSweep();
  }

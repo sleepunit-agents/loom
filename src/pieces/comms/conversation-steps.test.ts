@@ -1,4 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +21,7 @@ async function setup(wrap?: (key: WordsKey) => WordsKey, configured = true) {
  const key = wrap?.(base) ?? base;
  let role: Comms;
  let close: () => Promise<void> = async () => {};
- const app = await startLoom({ home, clock, install: a => {
+ const app = await startLoom({ home, clock, authenticate: req => ({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:()=>true}), install: a => {
   const comms = installComms({ ...a, clock, key, days: 1, sharing: () => sharing,
    runtime: { deliver: async () => {}, end: async () => {} }, hold: async f => f(), attention: { answer: () => ({ ok: true, value: {} }) },
    ...{ conversation: configured ? (id: string) => conversations.get(id) : undefined },
@@ -42,6 +44,7 @@ it('reads retained encrypted conversation labels in pages of one hundred without
  const steps = (first as { ok: true; value: { steps: { seq: number; text: string }[] } }).value.steps;
  expect(steps).toHaveLength(100); expect(steps[0]).toMatchObject({ seq: 4, text: 'private label 4', run: 'private-run', tool: 'Shell', state: 'done', keepUntil: s.clock.now() + 86400_000 });
  expect(steps[99].seq).toBe(103);
+ const live=await liveSteps(s);expect(await live.next()).toMatchObject({records:[{id:'cv-public',steps}]});
  expect(await s.read({ conversation: 'cv-public', before: 4 })).toMatchObject({ ok: true, value: { steps: [{ seq: 1 }, { seq: 2 }, { seq: 3 }] } });
  expect(JSON.stringify(first)).not.toContain('must never be exposed');
  expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_conversation_steps').all())).not.toContain('private');
@@ -239,4 +242,64 @@ it('commits no partial batch when encryption fails and fences concurrent updates
  const rejected=expect(paused).rejects.toMatchObject({code:'conflict'});await began;
  await writer.write([{...card,summary:'winning label',state:'done'}]);release();await rejected;
  expect(await s.read()).toMatchObject({ok:true,value:{steps:[{text:'winning label',state:'done'}]}});
+});
+
+async function liveSteps(s: Awaited<ReturnType<typeof setup>>, scope = 'cv-public', member = 'jonathan', window = true) {
+ const ws = new WebSocket(s.app.url.replace('http:', 'ws:') + '/live', {headers:{'x-member':member,'x-window':window?'yes':'no'}});
+ const queue: unknown[] = [], waiting: ((v: unknown)=>void)[] = [];
+ ws.on('message', data => {const value=JSON.parse(data.toString());const next=waiting.shift();if(next)next(value);else queue.push(value);});
+ await once(ws,'open');cleanups.push(async()=>{ws.terminate();});
+ const next=()=>queue.length?Promise.resolve(queue.shift()):new Promise<unknown>(r=>waiting.push(r));
+ ws.send(JSON.stringify({kind:'subscribe',type:'conversationSteps',scope}));
+ return {ws,next};
+}
+it('streams bounded conversation labels, stable updates and exact expiry without leaking ciphertext', async()=>{
+ const s=await setup(),c=await liveSteps(s);
+ expect(await c.next()).toEqual({kind:'set',type:'conversationSteps',scope:'cv-public',records:[{id:'cv-public',steps:[]}]});
+ const writer=s.writer({agent:'art',conversation:'cv-public',run:'run',startedAt:s.clock.now(),valid:()=>true});
+ const card={id:'card',tool:'Shell',summary:'private live label',state:'running' as const};
+ await writer.write([card]);
+ expect(await c.next()).toMatchObject({records:[{id:'cv-public',steps:[{seq:1,text:'private live label',state:'running'}]}]});
+ await writer.write([{...card,summary:'updated live label',state:'done'}]);
+ const updated=await c.next();expect(updated).toMatchObject({records:[{steps:[{seq:1,text:'updated live label',state:'done'}]}]});
+ expect(JSON.stringify(updated)).not.toMatch(/"(?:words|record|snapshot|Buffer)"/);
+ s.clock.advance(86400_000);
+ expect(await c.next()).toMatchObject({records:[{id:'cv-public',steps:[]}]});
+});
+it('denies bearer windows and removes streamed labels on ownership and conversation privacy changes',async()=>{
+ const s=await setup();await s.seed(1);
+ const token=await liveSteps(s,'cv-public','jonathan',false);
+ expect(await token.next()).toMatchObject({ok:false,code:'denied'});
+ const other=await liveSteps(s,'cv-public','other');expect(await other.next()).toMatchObject({records:[]});
+ const missing=await liveSteps(s,'missing');expect(await missing.next()).toMatchObject({records:[]});
+ const c=await liveSteps(s);expect(await c.next()).toMatchObject({records:[{steps:[{text:'private label 1'}]}]});
+ s.revoke();s.app.live.changed([{type:'core.access',id:'sharing'}]);
+ expect(await c.next()).toMatchObject({records:[]});
+ const owner=await liveSteps(s,'cv-public','owner');expect(await owner.next()).toMatchObject({records:[{steps:[{text:'private label 1'}]}]});
+ s.conversations.get('cv-public')!.venue='spawn';s.app.live.changed([{type:'conversation',id:'cv-public'}]);
+ expect(await owner.next()).toMatchObject({records:[]});
+});
+for(const boundary of ['row','replacement','privacy','deadline'] as const)it(`rechecks streamed labels after suspended crypto (${boundary})`,async()=>{
+ let block=true,release=()=>{},started=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup(k=>({...k,open:async words=>{expect(s.app.db.inTransaction).toBe(false);if(block){started();await waiting;}return k.open(words);}}));
+ await s.seed(1);const at=s.clock.now(),c=await liveSteps(s);await began;
+ if(boundary==='row')s.app.db.prepare('UPDATE comms_conversation_steps SET words=? WHERE seq=1').run(await s.base.seal('replacement label'));
+ if(boundary==='replacement'){s.conversations.get('cv-public')!.version='new';s.app.db.prepare('DELETE FROM comms_conversation_steps').run();}
+ if(boundary==='privacy')s.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('private','other','art','cv-public',at);
+ if(boundary==='deadline')s.clock.now=()=>at+86400_000;
+ block=false;release();const result=await c.next();
+ if(boundary==='row')expect(result).toMatchObject({records:[{steps:[{text:'replacement label'}]}]});
+ else if(boundary==='privacy')expect(result).toMatchObject({records:[]});
+ else expect(result).toMatchObject({records:[{steps:[]}]});
+ expect(JSON.stringify(result)).not.toContain('private label 1');
+});
+
+it('never decrypts private Live subscriptions and closes with generic diagnostics on crypto failure',async()=>{
+ let opens=0,broken=false;
+ const s=await setup(k=>({...k,open:async words=>{opens++;if(broken)throw new Error('private crypto diagnostics');return k.open(words);}}));
+ await s.seed(1);s.conversations.get('cv-public')!.venue='loom';
+ const hidden=await liveSteps(s,'cv-public','owner');expect(await hidden.next()).toMatchObject({records:[]});expect(opens).toBe(0);
+ s.conversations.get('cv-public')!.venue='discord';broken=true;
+ const c=await liveSteps(s);expect(await c.next()).toEqual({ok:false,code:'unavailable',message:'Subscription could not load'});
 });
