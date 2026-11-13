@@ -275,8 +275,9 @@ need corresponding new-side registry/app assertions rather than a port of the
 old subprocess test. The README additionally requires continuation deadline
 validation both before commit and before delivery, immutable delivery across
 recovery, no retry of a failed continuation, quota reset plus one minute, and
-suppression of the runtime-quota triage wake itself. These remain runtime/domain
-integration obligations; the new implementation must not restore old launchers.
+suppression of the runtime-quota triage wake itself. The reset and triage
+suppression behavior is implemented below; continuation validation remains a
+runtime/domain integration obligation; the new implementation must not restore old launchers.
 
 ## Foundation review corrections
 

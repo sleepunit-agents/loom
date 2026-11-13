@@ -174,6 +174,30 @@ describe('durable daemon clock', () => {
     result.resolve({ state: 'not-started', code: 'quota', reason: 'No room' }); await settled();
     expect(wake(app.db, run.id)).toMatchObject({ state: 'cancelled', failures: 0 });
   });
+  it('backs off ordinary failures through six attempts even when the reason mentions quota', async () => {
+    const startBody = vi.fn(async () => ({ state: 'not-started', reason: 'quota: no model has room' } as const));
+    const app = await loom({ runtime: { startBody } });
+    const w = app.set();
+    for (let failure = 1; failure <= 6; failure++) {
+      app.clock.advance(wake(app.db, w.id)!.due - app.clock.now()); await settled();
+      expect(wake(app.db, w.id)).toMatchObject({ failures: failure, state: failure === 6 ? 'failed' : 'pending' });
+      expect(startBody).toHaveBeenCalledTimes(failure);
+      if (failure < 6) expect(wake(app.db, w.id)!.due - app.clock.now()).toBe(15 * 60_000 * 2 ** (failure - 1));
+    }
+    app.clock.advance(8 * 86400_000); await settled(); expect(startBody).toHaveBeenCalledTimes(6);
+  });
+  it.each(['replace', 'remove'] as const)('does not revive an ordinary schedule on quota after %s', async action => {
+    const result = deferred<StartResult>(), invoked = deferred<void>();
+    const clock = new FakeClock(Date.parse('2026-11-13T09:00:00Z'));
+    const app = await loom({ runtime: { startBody() { invoked.resolve(); return result.promise; } } }, home(), clock);
+    const input = { id: 'daily', agent: 'art', at: '03:31', prompt: 'Old words', note: 'daily' };
+    app.value('scheduleSet', input); clock.advance(31 * 60_000); await invoked.promise;
+    const firing = wakes(app.db).find(w => w.state === 'firing')!;
+    if (action === 'replace') app.value('scheduleSet', { ...input, prompt: 'New words' });
+    else app.value('scheduleRemove', { id: input.id });
+    result.resolve({ state: 'not-started', code: 'quota', reason: 'No room' }); await settled();
+    expect(wake(app.db, firing.id)).toMatchObject({ state: 'cancelled', failures: 0 });
+  });
   it('fires an overdue wake once after downtime and records intent before runtime', async () => {
     const dir = home(), clock = new FakeClock(), started = vi.fn(async ({ wake: w }: { wake: Wake }) => {
       expect(wake(second.db, w.id)?.state).toBe('firing');
