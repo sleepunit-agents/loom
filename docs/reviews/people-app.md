@@ -97,3 +97,13 @@ additively to avoid rewriting the shared registration list. All 101 affected
 tests (including the current workflow inventory), root TypeScript and full web
 build passed. Prior-head CI/evidence are not claimed for this new head; fresh
 checks and screenshots are required.
+
+CI at rebased 83c00c1 exposed the already flagged account/dock overlap as a
+real deterministic failure: next-shell's Open Live example button was covered
+by the signed-in account strip. People browser itself passed with six shots.
+Fixed shell CSS only: dock scrolls horizontally and reserves a separate lower
+row for the existing account strip. Existing next-shell browser test now asserts
+the account row and dock button do not overlap before the actual click. No
+sign-in, session or credential handler changed; no extra browser test and no
+local browser run. This fixes the shared-frame flag instead of rerunning a
+known deterministic failure.
