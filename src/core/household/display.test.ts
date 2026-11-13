@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixture, installFixture } from '../../fixture.js';
 import { FakeClock, type RecordType, type Viewer } from '../index.js';
+import { HouseholdRows } from './rows.js';
 import { HouseholdDatabase } from './document.js';
 import { installHouseholdDisplay, agentDisplay } from './display.js';
 const closes: (()=>Promise<void>)[] = [];
@@ -25,6 +26,10 @@ it('reads only database metadata and rechecks central visibility after ownership
  db.change(home,raw=>{raw.faces={art:{shape:'drop',eyes:'oval'}};raw.private='never published';});
  writeFileSync(join(home,'household.json'),JSON.stringify({agents:['alien'],faces:{art:{shape:'clover'}}}));
  const type=types.get('household.agentDisplay')!;
+ const manifest={cell:[1,1],states:{idle:{south:[{row:0,frames:1,weight:1}]}}};
+ new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:Buffer.from(JSON.stringify(manifest)).toString('base64'),sheets:{'sheet.png':'private bytes'},v:'imported-version'});
+ expect(type.read('art',{kind:'member',id:'jonathan'})).toMatchObject({sprite:{facings:['south'],v:'imported-version',base:'/faces/art/'}});
+ expect(JSON.stringify(type.read('art',{kind:'member',id:'jonathan'}))).not.toContain('private bytes');
  expect(type.read('art',{kind:'member',id:'jonathan'})).toMatchObject({face:{shape:'drop'}});
  expect(type.read('art',{kind:'agent',id:'art'})).toMatchObject({id:'art'});
  for(const v of [{kind:'member',id:'pollock'},{kind:'member',id:'absent'},{kind:'agent',id:'mark'},{kind:'runner',id:'box'},{kind:'service',id:'display'}] as Viewer[])expect(type.read('art',v)).toBeUndefined();

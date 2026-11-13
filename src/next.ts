@@ -229,7 +229,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
       !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
     const sprite = storedSprite(app.db, agent);
     if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
-    return new Response(file === 'manifest.json' ? JSON.stringify(sprite.manifest) : new Uint8Array(Buffer.from(sprite.sheets[file], 'base64')), {
+    return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
       headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
     });
   });

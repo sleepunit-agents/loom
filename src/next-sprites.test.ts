@@ -16,14 +16,14 @@ it('serves only imported manifest-named artwork to current authorized viewers, n
  }});
  try {
   const manifest={cell:[1,1],states:{idle:{south:[{row:0,frames:1,weight:1}]}}};
-  const bytes=Buffer.from('database bytes');
-  new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,sheets:{'sheet.png':bytes.toString('base64')},v:'saved'});
+  const bytes=Buffer.from('database bytes'), raw=Buffer.from(JSON.stringify(manifest,null,2)+'\n');
+  new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:raw.toString('base64'),sheets:{'sheet.png':bytes.toString('base64')},v:'saved'});
   expect(spriteDisplay(app.db,'art')).toEqual({facings:['south'],base:'/faces/art/',v:'saved'});
   mkdirSync(join(home,'faces/art'),{recursive:true});writeFileSync(join(home,'faces/art/sheet.png'),'legacy bytes');
   const get=(file:string,as?:string)=>fetch(app.url+'/faces/art/'+file,{headers:as?{authorization:as}:{}});
   for(const as of ['owner','art']) {
    const response=await get('sheet.png',as);expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
-   expect(await (await get('manifest.json',as)).json()).toEqual(manifest);
+   expect(Buffer.from(await (await get('manifest.json',as)).arrayBuffer())).toEqual(raw);
    expect((await get('private.png',as)).status).toBe(404);
   }
   for(const as of [undefined,'pollock','mark'])expect((await get('sheet.png',as)).status).toBe(404);

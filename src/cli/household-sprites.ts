@@ -39,6 +39,6 @@ export function spriteRows(files: Map<string, Buffer | undefined>): Array<[strin
     const manifest = checkSpriteManifest(JSON.parse(bytes!.toString('utf8'))), base = path.slice(0, -'manifest.json'.length);
     const sheets = Object.fromEntries(spriteSheets(manifest).map(name => [name, files.get(base + name)!.toString('base64')]));
     const v = createHash('sha256').update(bytes!).update(JSON.stringify(sheets)).digest('hex');
-    return [spriteKey(path.split('/')[1]), { manifest, sheets, v }];
+    return [spriteKey(path.split('/')[1]), { manifest, rawManifest: bytes!.toString('base64'), sheets, v }];
   });
 }
