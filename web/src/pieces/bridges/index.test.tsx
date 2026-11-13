@@ -177,7 +177,7 @@ it('edits every connection field with references only and strips live metadata',
   await change('Only channels', 'D1\n\nG1'); await change('Ignored channels', 'G2'); await change('Bot role IDs', 'R1\nR2');
   await click('Connection enabled'); await submit();
   expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putVenues', { id: 'art-discord', platform: 'slack', agent: 'mark', workspace: 'T1', bot: 'U1', tokenSecret: 'slack-token', appSecret: 'slack-app', enabled: false, only: ['D1', 'G1'], ignore: ['G2'], botRoles: ['R1', 'R2'] });
-  await submit(); expect(f.call).toHaveBeenCalledTimes(1); expect(button('Save connection').props.disabled).toBe(true);
+  await submit(); expect(f.call).toHaveBeenCalledTimes(1); expect(button('Save connection').props.disabled).toBe(true); expect(text()).toContain('Saving connection…');
   await answer({ ok: false, code: 'denied', message: 'Owner required' }); expect(text()).toContain('denied: Owner required');
 });
 it('preserves unusual connection strings and list entries on an unrelated edit', async () => {
@@ -201,8 +201,8 @@ it('creates distinct connections with stable retry ids and required identity fie
 it('confirms connection removal and keeps its pending request through navigation', async () => {
   pendingWrite(); await draw('/p/bridges-preview/item/venues/art-discord'); await click('Remove connection'); expect(f.call).not.toHaveBeenCalled();
   await click('Keep connection'); expect(button('Confirm removal')).toBeUndefined(); await click('Remove connection'); await click('Confirm removal');
-  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.removeVenues', { id: 'art-discord' });
-  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/routes/route' })); }); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.removeVenues', { id: 'art-discord' }); expect(text()).toContain('Removing connection…');
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/routes/route' })); }); await submit(); expect(f.call).toHaveBeenCalledTimes(1); expect(text()).toContain('Another setup change is pending…');
   await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/venues/art-discord' })); });
   expect(button('Remove connection').props.disabled).toBe(true); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
 });
@@ -227,4 +227,17 @@ it.each(['offline', 'denied'] as const)('clears connection controls on %s', asyn
 it('whitelists a saved connection reopened through its creation URL', async () => {
   pendingWrite(); await draw('/p/bridges-preview/item/new-venue/art-discord'); await submit();
   expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putVenues', { id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'house', bot: '100', tokenSecret: 'discord-token', appSecret: 'discord-app', enabled: true, only: ['300'], ignore: ['400'], botRoles: ['500'] });
+});
+
+it.each(['Only channels', 'Ignored channels', 'Bot role IDs'])('normalizes modified-and-restored %s while preserving other connection lists', async label => {
+  pendingWrite(); const v = { ...f.snapshots['bridges.venue'].records[0], only: ['a\nb'], ignore: ['c\nd'], botRoles: ['e\nf'] };
+  await publish('bridges.venue', [v]); await draw('/p/bridges-preview/item/venues/art-discord');
+  const key = label === 'Only channels' ? 'only' : label === 'Ignored channels' ? 'ignore' : 'botRoles';
+  await change(label, 'temporary'); await change(label, v[key].join('\n')); await submit();
+  expect(f.call.mock.calls[0][1]).toMatchObject({ only: v.only, ignore: v.ignore, botRoles: v.botRoles, [key]: v[key][0].split('\n') });
+});
+it.each(['Reader agents', 'Note references'])('normalizes modified-and-restored route %s', async label => {
+  pendingWrite(); await publish('bridges.route', [{ ...f.snapshots['bridges.route'].records[0], readers: ['a\nb'], notes: ['c\nd'] }]);
+  await draw('/p/bridges-preview/item/routes/route'); const key = label === 'Reader agents' ? 'readers' : 'notes'; const raw = key === 'readers' ? 'a\nb' : 'c\nd';
+  await change(label, 'temporary'); await change(label, raw); await submit(); expect(f.call.mock.calls[0][1]).toMatchObject({ [key]: raw.split('\n') });
 });

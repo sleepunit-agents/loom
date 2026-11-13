@@ -19,6 +19,7 @@ export function VenueEditor({ connection, fresh, request, busy, write }: {
   const [observed, setObserved] = useState({ signature: current, stale: false });
   if (observed.signature !== current) setObserved({ signature: current, stale: true });
   const [lists, setLists] = useState({ only: connection.only.join('\n'), ignore: connection.ignore.join('\n'), botRoles: connection.botRoles.join('\n') });
+  const [editedLists, setEditedLists] = useState({ only: false, ignore: false, botRoles: false });
   const [confirm, setConfirm] = useState(false);
   const answer = useSyncExternalStore(request?.call.subscribe ?? noop, request?.call.getSnapshot ?? (() => idle));
   const busyAnswer = useSyncExternalStore(busy?.subscribe ?? noop, busy?.getSnapshot ?? (() => idle));
@@ -32,9 +33,9 @@ export function VenueEditor({ connection, fresh, request, busy, write }: {
     e.preventDefault();
     if (disabled || !draft.workspace || !draft.agent || !draft.bot || !draft.tokenSecret) return;
     write('save', { ...draft, appSecret: draft.appSecret || undefined,
-      only: lists.only === draft.only.join('\n') ? draft.only : lines(lists.only),
-      ignore: lists.ignore === draft.ignore.join('\n') ? draft.ignore : lines(lists.ignore),
-      botRoles: lists.botRoles === draft.botRoles.join('\n') ? draft.botRoles : lines(lists.botRoles) });
+      only: editedLists.only ? lines(lists.only) : draft.only,
+      ignore: editedLists.ignore ? lines(lists.ignore) : draft.ignore,
+      botRoles: editedLists.botRoles ? lines(lists.botRoles) : draft.botRoles });
     setConfirm(false);
   };
   return <form className="grid min-w-0 gap-4" onSubmit={submit}>
@@ -50,9 +51,9 @@ export function VenueEditor({ connection, fresh, request, busy, write }: {
       onClick={() => { setDraft({ ...draft, enabled: !draft.enabled }); setConfirm(false); }}>Connection {draft.enabled ? 'enabled' : 'disabled'}</Button>
     {([['only', 'Only channels'], ['ignore', 'Ignored channels'], ['botRoles', 'Bot role IDs']] as const).map(([key, label]) =>
       <label key={key} className="grid min-w-0 gap-1">{label} (one per line)<Textarea aria-label={label} value={lists[key]} disabled={pending}
-        onChange={e => { setLists({ ...lists, [key]: e.target.value }); setConfirm(false); }} /></label>)}
+        onChange={e => { setLists({ ...lists, [key]: e.target.value }); setEditedLists({ ...editedLists, [key]: true }); setConfirm(false); }} /></label>)}
     {changed && <Error title="This connection changed" text="Reload the current connection before saving your changes." retry={() => {
-      setDraft(connection); setObserved({ signature: current, stale: false }); setLists({ only: connection.only.join('\n'), ignore: connection.ignore.join('\n'), botRoles: connection.botRoles.join('\n') }); setConfirm(false);
+      setDraft(connection); setEditedLists({ only: false, ignore: false, botRoles: false }); setObserved({ signature: current, stale: false }); setLists({ only: connection.only.join('\n'), ignore: connection.ignore.join('\n'), botRoles: connection.botRoles.join('\n') }); setConfirm(false);
     }} />}
     <div className="flex flex-wrap gap-2"><Button type="submit" disabled={disabled || !draft.workspace || !draft.agent || !draft.bot || !draft.tokenSecret}>Save connection</Button>
       {!fresh && <Button type="button" variant="outline" disabled={disabled} onClick={() => { if (!disabled) setConfirm(true); }}>Remove connection</Button>}</div>
