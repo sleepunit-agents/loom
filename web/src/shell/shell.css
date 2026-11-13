@@ -1,6 +1,13 @@
 .next-shell { height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--v-canvas); color:var(--v-text); }
 .next-bar { height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 24px; border-bottom:1px solid var(--v-edge); font-size:12px; letter-spacing:.08em; }
 .next-bar strong { color:var(--v-pink); }
+.next-preferences { position:relative; letter-spacing:normal; }
+.next-preferences summary { cursor:pointer; }
+.next-preferences-panel { position:fixed; right:12px; top:48px; z-index:20; width:280px; max-width:calc(100vw - 24px); padding:16px; display:grid; gap:12px; border:1px solid var(--v-edge); border-radius:8px; background:var(--v-paper); box-shadow:0 10px 40px #0004; }
+.next-preferences-panel label { display:grid; gap:6px; }
+.next-preferences-panel label:has(input) { display:flex; align-items:center; }
+.next-preferences-panel select { width:100%; padding:8px; color:var(--v-text); background:var(--v-canvas); border:1px solid var(--v-edge); border-radius:4px; }
+.next-preferences-panel p:empty { display:none; }
 .next-ground { position:relative; flex:1; min-height:0; margin:24px; }
 .next-tile { position:absolute; display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--v-edge); border-radius:8px; background:var(--v-paper); box-shadow:0 8px 32px #0002; animation:next-in .18s ease-out; }
 .next-tile[data-focused] { border-color:var(--v-pink); }
