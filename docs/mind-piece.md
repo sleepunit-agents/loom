@@ -79,10 +79,29 @@ access; partial agent ownership does not grant the household Knowledge surface.
 There are no new content tables, migrations, importers, jobs or commands.
 
 The composition root still needs to register `core.touched` and bind/close its
-commons socket under the daemon home lock. It must refresh dependent knowledge
-records when a referring page changes, since `citedBy` is derived across pages.
+commons socket under the daemon home lock.
 Verification actions, People, Projects, Activity, generated clients and all four
 apps remain subsequent units. This installer is not yet registered in next mode.
+
+### Derived records and the role
+
+Knowledge opts into Live's `refreshOn(change)` hook for knowledge changes. Once
+per change batch, Live rereads the union of each subscription's current candidate
+ids and previously sent ids, using that subscription's viewer. A scoped page
+therefore refreshes when a different page changes its `citedBy` list; a disappeared
+page still sends `del`. Removed links, archives, restores, renames and purges do
+not require retaining old bodies or a dependency cache. Time boundaries still use
+the ordinary per-record clock deadlines.
+
+This deliberately rereads every subscribed Knowledge candidate on any knowledge
+change. It favors correctness for the bounded commons reader over a cached link
+graph. Only opted-in record types do this; other types retain identity updates.
+Within a batch each candidate is read once per subscription. Permission checks
+remain in the record reader for every viewer, including dependent refreshes.
+
+Other pieces call `mindRole(operations).call(viewer, verb, input, operationId?)`,
+the same direct registry role pattern as Tasks. It carries no store paths and
+does not bypass operation policy. Only Knowledge list/read are installed so far.
 
 ## Synchronous verification primitive
 

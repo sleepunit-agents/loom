@@ -15,6 +15,10 @@ export interface RecordType {
   inScope(record: LiveRecord, scope: string | undefined, now: number): boolean;
   /** The next instant this record may leave a time-bounded scope. */
   expires?(record: LiveRecord, scope: string | undefined): number | undefined;
+  /** A derived field depends on this change. Reread current and previously sent
+   * candidates, including scoped records and deleted sources, for each viewer.
+   */
+  refreshOn?(change: Change): boolean;
 }
 const subscribe = z.object({ kind: z.literal('subscribe'), type: z.string(), scope: z.string().optional() });
 const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional() });
@@ -28,8 +32,13 @@ export class Live {
   private ws = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   constructor(private clock: Clock, private ops: Operations) {
     this.emitter.on('changed', (changes: Change[]) => {
-      for (const c of this.clients) for (const sub of c.types.values()) for (const change of changes) {
-        if (sub.type.name === change.type) { try { this.update(c, sub, change.id); } catch { this.failed(c); } }
+      for (const c of this.clients) for (const sub of c.types.values()) {
+        try {
+          const ids = changes.some(change => sub.type.refreshOn?.(change))
+            ? new Set([...sub.sent, ...sub.type.ids(sub.scope)])
+            : new Set(changes.filter(change => sub.type.name === change.type).map(change => change.id));
+          for (const id of ids) this.update(c, sub, id);
+        } catch { this.failed(c); }
       }
     });
   }
