@@ -35,7 +35,7 @@ export function httpDoor(app: Foundation, authenticate: (req: IncomingMessage) =
     if (!auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const id = 'id' in body ? body.id : undefined;
     if (id !== undefined && typeof id !== 'string') return c.json(failure('invalid', 'Invalid operation id'), 400);
-    const answer = app.operations.call('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`, body.input, id);
+    const answer = await app.operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`, body.input, id, false, () => auth.valid());
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return (req: IncomingMessage, res: ServerResponse) => {

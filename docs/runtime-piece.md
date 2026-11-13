@@ -630,3 +630,30 @@ commands and own cancellation/timeouts and its environment. Repository fetch,
 credentials, filesystem materialization checks, current authority and staging
 checks, process adapter and build/launch remain runner integration work. This
 reader neither fetches nor checks whether an image exists on a machine.
+
+## Claimed runner input release
+
+The input-fetch part of old claim/poll is `runtime.takeInput {job}` over
+HTTP. It uses asynchronous dispatch and the real next-mode `OutsideEffects`
+gate, outside the registry transaction. Only the exact assigned active runner
+can take input from a claimed `starting` job. Private member jobs remain denied
+by central policy. Current hosting, box capabilities and claimed house identity
+are checked before release and again after preparation. No credential values,
+login, ports or sockets are supplied.
+
+In staging the first request creates a held `body-start` effect with id
+`runtime:input:<job>`. The owner's existing `core.releaseEffect` action permits
+one subsequent fetch. Normal next mode permits that fetch immediately. The
+payload contains job/agent, claimed house identity, brief and needs. It is a
+read response, never stored in registry retry results or live records. Input
+fetch does not mark a body started: `reportJob {state:"running"}` is the runner's
+confirmation. A claim without that report remains `starting`.
+
+The release is intentionally consumed once, including across daemon restart.
+A lost response or a crash after consuming the gate is uncertain: reconcile
+that job, never retry an automatic start. Repeated fetch is refused. This
+conservative choice uses the existing gate without inventing a second dispatch
+ledger; reliable runner recovery/acknowledgement is still required before the
+final move. `runtime.startBody`, trusted body credentials, Clock dispatch,
+conversation in/out and Comms linkage remain outstanding. This operation does
+not claim to implement those paths or change the separate runner program.
