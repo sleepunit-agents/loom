@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { migrate, type Db } from '../../core/index.js';
 import { schema } from './schema/001.js';
-import { type Approval, type Rule, type Standing, type State } from './model.js';
+import { type Approval, type Rule, type Standing, type State, retiredAgentGrantReason } from './model.js';
 import { load, persist } from './store.js';
 import { approvalSchema, standingSchema, ruleSchema, noticeSchema, auditSchema } from './validation.js';
 import { person } from './targets.js';
@@ -58,7 +58,7 @@ export function readApprovalsImport(from: string, options: { projects?: Record<s
     if(a.kind==='grant' && a.state==='pending'){
       // Source time keeps the pure import projection repeatable for verification.
       a.state='withdrawn';a.withdrawn=a.at;
-      const reason='no longer applies: agent access follows record scope';
+      const reason=retiredAgentGrantReason;
       a.details=[a.details,reason].filter(Boolean).join('\n');
       expected.audit.push({at:a.at,event:'retire-agent-grant',id:a.id,kind:a.kind,target:a.target,who:a.who,reason});
     }

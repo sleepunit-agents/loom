@@ -17,6 +17,7 @@ export interface Standing extends Principal {
 }
 export interface Notice { at: string; agent: string; kind: string; target: string; what: string; for?: string }
 export interface State { approvals: Approval[]; rules: Rule[]; grants: Rule[]; standing: Standing[]; notices: Notice[]; audit: Record<string, unknown>[] }
+export const retiredAgentGrantReason = 'no longer applies: agent access follows record scope';
 export const empty = (): State => ({ approvals: [], rules: [], grants: [], standing: [], notices: [], audit: [] });
 export const iso = (now: number) => new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z');
 export const stateOf = (a: Approval, now: number) => a.state === 'allowed' && a.expires && Date.parse(a.expires) <= now ? 'expired' : a.state;

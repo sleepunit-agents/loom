@@ -74,3 +74,13 @@ it('retires only pending legacy agent grants without spending or changing the so
   expect(importApprovals(a.db,a.source,now+10000)).toMatchObject({imported:false});
   expect(load(a.db)).toEqual(state);
 });
+
+it('projects legacy grant closure identically across fresh imports at different times',()=>{
+  const a=setup(),b=setup();
+  const pending={id:receipt.id,kind:'grant',target:'tasks:mark',state:'pending',what:'Access Tasks.',why:'Old request.',who,for:'owner',minutes:60,at};
+  for(const app of [a,b])writeFileSync(join(app.source,'approvals.json'),JSON.stringify({v:1,approvals:{[pending.id]:pending}}));
+  importApprovals(a.db,a.source,now+10000);importApprovals(b.db,b.source,now+20000);
+  expect(load(a.db)).toEqual(load(b.db));
+  expect(load(a.db).approvals[0]).toMatchObject({state:'withdrawn',withdrawn:at});
+  expect(load(a.db).audit.at(-1)).toMatchObject({event:'retire-agent-grant',at});
+});

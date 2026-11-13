@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { OperationError } from '../../core/index.js';
-import { type State, type Approval, type Caller, type Standing, iso, stateOf, maySpend, samePrincipal, forOf, pieceKinds, pieceSpent, serviceOf } from './model.js';
+import { type State, type Approval, type Caller, type Standing, iso, stateOf, maySpend, samePrincipal, forOf, pieceKinds, pieceSpent, serviceOf, retiredAgentGrantReason } from './model.js';
 import { invalid, denied, exactTarget, repoOf, hostOf, vouchOf, resetOf, writeoffOf, covered, standingTarget } from './targets.js';
 import { plain, checkPlain, principalWords } from './words.js';
 import { rulesFor, setRule, type Project } from './rules.js';
@@ -25,7 +25,7 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
     const tier = rulesFor(s,caller,kind,[target],c.projects,now)[target].tier;
     if (tier === 'do' || tier === 'tell') denied(`the standing rule for this merge is ${tier}: merge it at this exact head${tier === 'tell' ? ', then approvals tell' : ''}; no card was filed`);
   }
-  if (kind === 'grant') invalid('no longer applies: agent access follows record scope');
+  if (kind === 'grant') invalid(retiredAgentGrantReason);
   const own = kind === 'vouch-wake' ? vouchOf(target) : kind === 'principal-reset' ? resetOf(target) : kind === 'box-write-off' ? writeoffOf(target) : undefined;
   if (['vouch-wake','principal-reset','box-write-off'].includes(kind)) {
     if (!own) invalid(`invalid ${kind} target`);
@@ -91,7 +91,7 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
   s.approvals.push(a); log(s,'request',a,now,{what,why}); return a;
 }
 export function use(s: State, id: string, kind: string, target: string, c: DomainContext) {
-  if (kind === 'grant') denied('no longer applies: agent access follows record scope');
+  if (kind === 'grant') denied(retiredAgentGrantReason);
   if (pieceSpent.has(kind) && !c.piece) denied(`a ${kind} approval is spent by the piece that runs it, not by a body`);
   exactTarget(target);
   const a = find(s,id), { caller, now } = c;
@@ -107,7 +107,7 @@ export function use(s: State, id: string, kind: string, target: string, c: Domai
   a.state = 'used'; a.used = iso(now); log(s,'use',a,now); return a;
 }
 export function answer(s: State, id: string, action: string, by: string, now: number, minutes?: number) {
-  const a = find(s,id); if (a.kind === 'grant') denied('no longer applies: agent access follows record scope');
+  const a = find(s,id); if (a.kind === 'grant') denied(retiredAgentGrantReason);
   if (stateOf(a,now) !== 'pending') denied(`it's already ${stateOf(a,now)}`);
   if (!['allow','deny'].includes(action)) invalid('answer is allow or deny');
   Object.assign(a,{state: action === 'allow' ? 'allowed' : 'denied',decided: iso(now),by});
