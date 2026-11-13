@@ -1,5 +1,5 @@
 /** Offline migration extension point. Never imported by the daemon. */
-import { realpathSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { Db } from '../core/index.js';
 import type { SnapshotManifest } from './migration-snapshot.js';
@@ -38,19 +38,30 @@ export function snapshotPath(context: MigrationContext, path: string): string {
   const target = realpathSync(resolve(root, path));
   const rel = relative(root, target);
   if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) throw Error('Snapshot input escapes root');
+  const checkTree = (entry: string): void => {
+    const stat = lstatSync(entry);
+    if (stat.isSymbolicLink()) throw Error('Snapshot input contains a symlink');
+    if (stat.isDirectory()) for (const name of readdirSync(entry)) checkTree(resolve(entry, name));
+    else if (!stat.isFile()) throw Error('Snapshot input contains a special file');
+  };
+  checkTree(target);
   return target;
 }
 
 export class MigrationRegistry {
+  // Heterogeneous option types are erased only inside the registry; register retains each adapter type.
   private readonly entries = new Map<string, MigrationImporter<any>>();
   register<Options>(importer: MigrationImporter<Options>): void {
     if (!/^[a-z][a-z0-9-]*$/.test(importer.name) || this.entries.has(importer.name)) throw Error('Invalid or duplicate importer name');
     this.entries.set(importer.name, importer);
   }
   /** Unknown requested pieces are reported, never silently treated as imported. */
+  // The returned entries retain their own typed run closures; callers validate plan options per importer.
   order(requested: readonly string[] = [...this.entries.keys()]): { importers: MigrationImporter<any>[]; missing: string[]; blocked: string[] } {
     const importers: MigrationImporter<any>[] = [], missing = new Set<string>();
     const visiting = new Set<string>(), done = new Set<string>(), blocked = new Set<string>();
+    const rank = new Map([...this.entries.keys()].map((name, index) => [name, index]));
+    const sorted = (names: readonly string[]) => [...names].sort((a, b) => (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity) || a.localeCompare(b));
     const visit = (name: string): boolean => {
       if (done.has(name)) return !blocked.has(name);
       if (visiting.has(name)) throw Error('Migration dependency cycle');
@@ -58,13 +69,21 @@ export class MigrationRegistry {
       if (!entry) { missing.add(name); return false; }
       visiting.add(name);
       let available = true;
-      for (const dependency of entry.dependencies) if (!visit(dependency)) available = false;
+      for (const dependency of sorted(entry.dependencies)) if (!visit(dependency)) available = false;
       visiting.delete(name); done.add(name);
       if (available) importers.push(entry); else blocked.add(name);
       return available;
     };
-    for (const name of requested) visit(name);
-    return { importers, missing: [...missing].sort(), blocked: [...blocked].sort() };
+    for (const name of sorted(requested)) visit(name);
+    // Same heterogeneous type erasure as entries: each registration owns its option validation.
+    const ordered: MigrationImporter<any>[] = [];
+    const pending = new Map(importers.map(entry => [entry.name, entry]));
+    while (pending.size) {
+      const next = sorted([...pending.keys()]).map(name => pending.get(name)!).find(entry => entry.dependencies.every(name => !pending.has(name)));
+      if (!next) throw Error('Migration dependency cycle');
+      ordered.push(next); pending.delete(next.name);
+    }
+    return { importers: ordered, missing: [...missing].sort(), blocked: [...blocked].sort() };
   }
 }
 

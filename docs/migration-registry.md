@@ -10,7 +10,8 @@ names), `reads` (a human-readable snapshot input inventory), and an in-process
 piece program. The context supplies the open destination database, destination
 home, one timestamp and the validated snapshot root/manifest. The input supplies
 snapshot-relative paths and typed options. Use `snapshotPath` for every path;
-it rejects missing inputs and paths or symlinks escaping the snapshot root.
+it rejects missing inputs and paths escaping the snapshot root, and recursively
+rejects child symlinks and special files inside directory inputs.
 The coordinator must validate the snapshot manifest before constructing context,
 reject overlapping source/destination homes, hold the destination's stopped-home
 lock and validate all editable plan options before calling any importer.

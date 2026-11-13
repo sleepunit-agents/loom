@@ -49,3 +49,14 @@ it('blocks transitive dependents of an unavailable registration without running 
   expect(result.missing).toEqual(['absent']);
   expect(result.blocked).toEqual(['leaf', 'middle']);
 });
+
+it('uses registration order to break ties regardless of requested order', () => {
+  expect(createMigrationRegistry().order(['changes', 'tasks']).importers.map(i => i.name)).toEqual(['household', 'tasks', 'changes']);
+});
+it('rejects child symlinks inside a directory input', () => {
+  const root = mkdtempSync(join(tmpdir(), 'migration-child-')); roots.push(root);
+  mkdirSync(join(root, 'home')); writeFileSync(join(root, 'outside'), 'private');
+  symlinkSync(join(root, 'outside'), join(root, 'home', 'household.json'));
+  const context = { snapshot: { root } } as MigrationContext;
+  expect(() => snapshotPath(context, 'home')).toThrow('symlink');
+});
