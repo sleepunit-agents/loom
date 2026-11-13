@@ -4,7 +4,7 @@ import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from
 import { readDraft, writeDraft, editDraft, clearDraft, type Draft } from './drafts';
 import { replyHtml } from './render';
 import { latestHarness, messageView, type Message } from './message';
-import { workingView } from './working';
+import { thinkingView, workingView } from './working';
 import { EarlierPages, retainedMessage } from './pages';
 import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
@@ -62,10 +62,11 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
   const timer=setTimeout(()=>{pages.expire(Date.now());setOlder(pages.rows);setNow(Date.now());},Math.min(2147483647,Math.max(1,Math.min(...deadlines)-Date.now())));
   return()=>clearTimeout(timer);
  },[older,records,status,pages,now]);
- const working=workingView(thread,all,now,status==='live'),on=latestHarness(all);
+ const working=workingView(thread,all,now,status==='live'),thinking=thinkingView(thread,all,status==='live'),on=latestHarness(all);
  const scroller=useRef<HTMLDivElement>(null);const follow=useReplyFollow(scroller,records,status==='live');
  return <article className="flex min-h-0 flex-1 flex-col">
   <header className="grid gap-2 border-b p-4"><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}{on&&<span aria-label="Reply harness"> · ON {on.toUpperCase()}</span>}</p>
+   {thinking&&<p role="status" aria-label="Thinking status">{thinking}</p>}
    {working&&<p role="status" aria-label="Working status" data-alive={working.face}>{working.text}</p>}
    {status==='live'&&thread.working&&thread.alive&&<p aria-label="Body activity">Last body activity <time dateTime={new Date(thread.alive.at).toISOString()}>{new Date(thread.alive.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time>{thread.alive.tokens!==undefined&&` · ${thread.alive.tokens.toLocaleString('en-US')} tokens`}</p>}
    <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>act(thread.pinned?'unpin':'pin')}>{thread.pinned?'Unpin':'Pin'}</Button><Button variant="outline" onClick={()=>act(thread.archived===null?'archive':'unarchive')}>{thread.archived===null?'Archive':'Unarchive'}</Button><Button variant="outline" onClick={()=>act('stop')}>Stop</Button><Button variant="outline" onClick={()=>setDeleting(true)}>Delete</Button></div>

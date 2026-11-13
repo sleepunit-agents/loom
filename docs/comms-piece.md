@@ -598,3 +598,19 @@ The switched-harness browser extension passed on `24e1a806ea9a89abe9df5e4ccef587
 [Comms evidence](https://github.com/sleepunit-agents/loom/actions/runs/43390267757),
 [12 screenshots](https://github.com/sleepunit-agents/loom/actions/runs/43390267757/artifacts/14020287715).
 This is evidence for that head; subsequent changes require their own CI results.
+
+The thread header now says “art is thinking” (using its agent id) while the
+latest retained member message is sending or delivered and has no later card,
+reply or ask. Start-retry notices keep that wait; final failure, loop/no-reply
+and other errors end it. Later progress settles the wait even when its words
+have expired. Working, archived and disconnected threads do not show this line;
+held/failed sends do not claim that the agent is thinking. This is the pending
+turn label, not runtime queue timing or the complete animated channel display.
+
+The regression first failed because `thinkingView` was absent. It now covers
+out-of-order snapshots, new sends after replies, retry/terminal notices,
+retention, working/archive/disconnect and unknown delivery states. All 18 app
+helper tests, root TypeScript and the web build pass. The single browser fixture
+now checks thinking after an accepted queued send and clearing on final failure;
+current-head CI must validate it. No local browser ran. Review budgets remain
+backend/security 2/3 and importer 1/3.

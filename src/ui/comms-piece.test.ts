@@ -190,3 +190,25 @@ it('marks replies read when a hidden thread returns, coalesces events, retries f
  const stale=bindThreadRead(9,async seq=>{calls.push(seq);return true;});stale();await Promise.resolve();expect(calls).toEqual([8,8]);
  vi.useRealTimers();
 });
+
+import { thinkingView } from '../../web/src/pieces/comms/working.js';
+it('shows thinking only for a retained pending turn, clearing on progress, terminal notices and disconnect',()=>{
+ const thread={agent:'art',working:false,archived:null};
+ const send:Message={id:'send',thread:'th',seq:10,at:0,kind:'message',from:'jonathan',text:'Hello',delivery:'sending'};
+ expect(thinkingView(thread,[send],true)).toBe('art is thinking');
+ expect(thinkingView(thread,[{...send,delivery:'delivered'}],true)).toBe('art is thinking');
+ for(const delivery of ['held','failed',undefined])expect(thinkingView(thread,[{...send,delivery}],true)).toBeNull();
+ const progress={...send,id:'reply',seq:11,kind:'reply',from:'art',text:'Answer'};
+ for(const kind of ['reply','card','ask'])expect(thinkingView(thread,[{...progress,kind},send],true)).toBeNull();
+ for(const error of ['no-reply','loop','start-failed'])expect(thinkingView(thread,[send,{...progress,kind:'error',step:{error}}],true)).toBeNull();
+ expect(thinkingView(thread,[send,{...progress,kind:'error',step:{error:'start-retry'}}],true)).toBe('art is thinking');
+ expect(thinkingView(thread,[{...progress,seq:9},send],true)).toBe('art is thinking');
+ expect(thinkingView(thread,[{...send,generation:1},{...progress,kind:'error',step:{error:'start-failed',generation:0}}],true)).toBe('art is thinking');
+ expect(thinkingView(thread,[send,{...progress,seq:11},{...send,id:'next',seq:12}],true)).toBe('art is thinking');
+ expect(thinkingView(thread,[{...send,text:null}],true)).toBeNull();
+ expect(thinkingView(thread,[send,{...progress,text:null}],true)).toBeNull();
+ expect(thinkingView({...thread,working:true},[send],true)).toBeNull();
+ expect(thinkingView({...thread,archived:1},[send],true)).toBeNull();
+ expect(thinkingView(thread,[send],false)).toBeNull();
+ expect(thinkingView(thread,[],true)).toBeNull();
+});

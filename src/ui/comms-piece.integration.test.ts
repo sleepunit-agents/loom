@@ -87,6 +87,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   // Retry notices follow runtime acceptance; do not race the delivery receipt write.
   await comms.deliver('art',place,seq);
   expect(comms.trace('art',place).messages.find(m=>m.seq===seq)?.delivery).toBe('delivered');
+  await expect.poll(()=>b.getByLabel('Thinking status').textContent()).toBe('art is thinking');
   const retryAt=new Date(clock.now()+60000).toISOString();
   await comms.startNotice('art',place,{kind:'start-retry',seq,attempt:2,retryAt,reason:'private fixture host reason'});
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
@@ -98,6 +99,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await capture('comms',true);
   await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByLabel('Thinking status').count()).toBe(0);
   await b.getByRole('button',{name:'Send again',exact:true}).click();
   await expect.poll(()=>starts.filter(d=>d.seq===seq&&d.generation===1).length).toBe(1);
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(0);
