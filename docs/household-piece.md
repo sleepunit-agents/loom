@@ -111,3 +111,9 @@ legacy venue registry, or run an external renderer. Omitted selection preserves
 legacy venue rendering. `homeFor` also accepts the selection for subsequent
 composition. This slice does not change the house conversation gate, digest,
 profile, Comms, or project-hub composition, and exposes no new entry point.
+
+During the remaining memory cutover, explicit knowledge isolation checks both
+`<contextDir>/memories.db` and the active legacy memory environment override.
+An override cannot hide a hard link between local memory and selected knowledge;
+the active legacy store also remains protected. Memory tools still need explicit
+routing before the new stdio entry point can ship.
