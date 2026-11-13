@@ -76,6 +76,8 @@ it('real person-specific pending requests are answered without becoming owner gr
   expect(request).toMatchObject({ok:true});
   principal='loren';
   expect(call('approvals.request',{kind:'merge',target:`${change().id}@${change().head.id}`,what:'merge the change',why:'ready',ask:'Merge this change?',if_yes:'I merge it.',if_no:'I leave it open.'},{kind:'agent',id:'art'})).toMatchObject({ok:true});
+  principal='dan';
+  expect(call('approvals.request',{kind:'merge',target:`${change().id}@${change().head.id}`,what:'merge the change',why:'ready',ask:'Merge this change?',if_yes:'I merge it.',if_no:'I leave it open.'},{kind:'agent',id:'art'})).toMatchObject({ok:true});
   expect(call('changes.show',{id:change().id})).toMatchObject({ok:true,value:{rule:{for:{slug:'pollock',state:'pending'}}}});
   const input={id:change().id,head:change().head.id,action:'yes'};
   expect(call('changes.answer',input)).toMatchObject({ok:false,code:'conflict'});
@@ -85,6 +87,31 @@ it('real person-specific pending requests are answered without becoming owner gr
   expect(call('changes.show',{id:change().id})).toMatchObject({ok:true,value:{group:'you',rule:{for:{slug:'loren',state:'pending'}}}});
   // Existing Approvals contract: a newer denial revokes sibling answers across principals.
   expect(call('changes.answer',{...input,person:'loren',action:'not-yet'})).toMatchObject({ok:true,value:{for:'loren',state:'denied'}});
-  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({for:'loren',state:'denied'}),expect.objectContaining({for:'pollock',state:'denied'})])}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({for:'loren',state:'denied'}),expect.objectContaining({for:'pollock',state:'denied'}),expect.objectContaining({for:'dan',state:'denied'})])}});
+ } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('Changes Yes and Not yet preserve pending authenticated conversation requests',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'changes-conversation-'));
+ const conversation='cv-0123456789ab';
+ const loom=await startLoom({home,next:true,sharing:fixtureSharing,stdout:()=>{},clock:new FakeClock(Date.parse('2026-11-13T00:00:00Z')),install:app=>installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:viewer=>viewer.kind==='agent'?{who:{agent:viewer.id,where:'authenticated runtime'},for:'pollock',conversation}:undefined})});
+ let serial=0;
+ const call=(name:string,input:object={},viewer:import('./core/index.js').Viewer={kind:'member',id:'jonathan'})=>loom.operations.call('direct',viewer,name,input,`conversation-${++serial}`);
+ try {
+  loom.db.transaction(()=>{
+   new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art'],members:[{person:'jonathan',role:'owner',agents:'*'}]});
+   replaceChanges(loom.db,[change()]);
+  })();
+  expect(call('household.setAgentAccounts',{agent:'art',accounts:{github:['art-bot']}})).toMatchObject({ok:true});
+  const request=call('approvals.request',{kind:'merge',target:`${change().id}@${change().head.id}`,conversation,what:'merge the change',why:'ready',ask:'Merge this change?',if_yes:'I merge it.',if_no:'I leave it open.'},{kind:'agent',id:'art'});
+  expect(request).toMatchObject({ok:true,value:{state:'pending',conversation}});
+  const pending=(request as {value:{id:string}}).value.id;
+  const input={id:change().id,head:change().head.id,person:'pollock'};
+  expect(call('changes.answer',{...input,action:'yes'})).toMatchObject({ok:true,value:{state:'allowed',for:'pollock',granted:true}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({id:pending,state:'pending',conversation}),expect.objectContaining({state:'allowed',granted:true})])}});
+  expect(call('changes.answer',{...input,action:'not-yet'})).toMatchObject({ok:true,value:{state:'denied',for:'pollock',granted:true}});
+  const cards=call('approvals.list');
+  expect(cards).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({id:pending,state:'pending',conversation}),expect.objectContaining({state:'denied',granted:true})])}});
+  expect((cards as {value:{approvals:{state:string}[]}}).value.approvals.filter(a=>a.state==='allowed')).toEqual([]);
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
