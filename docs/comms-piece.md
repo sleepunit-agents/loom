@@ -63,7 +63,7 @@ data does not remove the behavior it delivered.
 | `/title`, `setTitle`, `comms_title` | `comms.change` and `Comms.title` | Partial: title bounds and member-title precedence work; agent command binding missing. |
 | `/project`, `setProject`, filed threads | `comms.change` | Partial: project gate works; project integration and lookup missing. |
 | Pin/unpin | `comms.change` | Present: eight-pin cap, idempotent pin, unpin releases capacity. |
-| Archive/unarchive/delete | `comms.change` and staged runtime end | Partial: archive and cascade/tombstone work; end retries need per-generation identity and automatic resume after staging release. |
+| Archive/unarchive/delete | `comms.change` and staged runtime end | Partial: archive and cascade/tombstone work; end effects now have per-archive lifecycle identity and recheck the generation inside the hold, so reopening cancels a delayed old end; durable end recovery and automatic resume after staging release remain missing. |
 | `/read`, `markRead`, in-front suppression | `comms.change` | Partial: read sequence is monotonic; foreground presence and notification suppression missing. |
 | `/stop`, `/resume`, `/model` | Runtime control seam | Partial: one-shot stop flag only; actual interrupt/resume/model selection and state missing. |
 | Adapter `describe` | Runtime role | Missing: member-only brief/readers, project, title guidance and inline-ask guidance. |

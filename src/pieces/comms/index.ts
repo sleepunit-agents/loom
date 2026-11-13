@@ -55,7 +55,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   inScope:(r,scope)=>r.thread===scope,
  });
  const output=z.unknown();
- const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional()});
+ const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional(),endGeneration:z.number().int().optional()});
  const hashText=(text:string)=>{const salt=db.prepare("SELECT value FROM comms_meta WHERE key='legacy-salt'").get() as {value:string}|undefined;return salt?createHmac('sha256',Buffer.from(salt.value,'base64')).update(`words\0${text}`).digest('hex'):key.hash(text);};
  operations.register(operation({name:'comms.agents',doors:['socket'],windowOnly:true,input:z.object({}),output,
   may:v=>v.kind==='member',run:ctx=>({member:ctx.viewer.id,agents:o.sharing().members[ctx.viewer.id]?.agents ?? []}),
@@ -148,18 +148,32 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      if(!t.pinned && pins>=8)return fail('conflict','At most eight pinned threads');t.pinned=true;break;
     }
     case 'unpin':t.pinned=false;break;
-    case 'archive':t.archived=ctx.now;break;
+    case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;}break;
     case 'unarchive':t.archived=null;break;
     case 'read': if(i.seq===undefined)return fail('invalid','A message number is required'); t.readSeq=Math.max(t.readSeq,Math.min(i.seq,t.nextSeq-1));break;
     case 'stop':t.stop=true;break;
     case 'delete':
      db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(t.id,t.member,t.agent,t.conversation,ctx.now);
      for(const r of messageRows(db,t.id,undefined,2147483647))ctx.changed('message',messageId(t.id,r.seq));
-     db.prepare('DELETE FROM comms_threads WHERE id=?').run(t.id);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation};
+     db.prepare('DELETE FROM comms_threads WHERE id=?').run(t.id);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation,endGeneration:(t.endGeneration??0)+1};
    }
-   saveThread(db,t);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation};
+   saveThread(db,t);ctx.changed('thread',t.id);return {thread:t.id,conversation:t.conversation,endGeneration:t.endGeneration??0};
   },
-  after(i,result) {if((i.action==='archive'||i.action==='delete')&&result.ok) void o.hold(()=>o.runtime.end((result.value as {conversation:string}).conversation),{id:`comms-end:${i.thread}:${key.hash(JSON.stringify(i))}`,kind:'body-start',title:'End a Comms body'}).catch(()=>{});},
+  after(i,result) {
+   if((i.action!=='archive'&&i.action!=='delete')||!result.ok||closed)return;
+   const value=result.value as {conversation:string;endGeneration:number};
+   const marker=`comms-end:${i.thread}:${value.endGeneration}`;
+   if(pending.has(marker))return;
+   const task=o.hold(async()=>{
+    if(closed)return;
+    const current=thread(db,i.thread);
+    // A held archive from an earlier lifecycle must never end a reopened body.
+    if(i.action==='archive'&&(!current||current.archived===null||current.endGeneration!==value.endGeneration))return;
+    if(i.action==='delete'&&current)return;
+    await o.runtime.end(value.conversation);
+   },{id:marker,kind:'body-start',title:'End a Comms body'}).catch(()=>{}).finally(()=>pending.delete(marker));
+   pending.set(marker,task);
+  },
  }));
  operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,input:target.extend({seq:z.number().int().positive()}),output:ack,may:(v,i)=>writable(v,i),
   run(ctx,i) {const t=thread(db,i.thread)!;const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(t.id,i.seq) as MessageRow|undefined;

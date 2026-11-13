@@ -230,3 +230,25 @@ it('revokes a bound runtime read while decryption is suspended',async()=>{
  const read=reader.read({thread:place});await began;valid=false;resume();
  await expect(read).rejects.toMatchObject({code:'denied'});
 });
+it('gives each archive lifecycle a distinct end effect while duplicate archives share one',async()=>{
+ const accepted=new Set<string>();const attempts:string[]=[];
+ const s=await setup({hold:stagingHold({beforeOutside:f=>{if(f.title==='End a Comms body'){attempts.push(f.id);if(accepted.has(f.id))return false;accepted.add(f.id);}return true;},finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'archive'});
+ await s.call('change',{thread:place,action:'archive'});
+ expect(s.ends).toHaveLength(1);
+ await s.call('change',{thread:place,action:'unarchive'});
+ await s.call('change',{thread:place,action:'archive'});
+ expect(s.ends).toHaveLength(2);
+ expect(new Set(attempts).size).toBe(2);
+ await s.call('change',{thread:place,action:'delete'});expect(s.ends).toHaveLength(3);
+});
+for(const archiveAgain of [false,true])it(`a delayed archive end cannot stop a reopened thread (rearchive=${archiveAgain})`,async()=>{
+ let release:()=>void=()=>{},started:()=>void=()=>{},finished:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{release=r;}),begin=new Promise<void>(r=>{started=r;}),done=new Promise<void>(r=>{finished=r;});
+ let first=true;const s=await setup({hold:async(run,facts)=>{if(facts?.title==='End a Comms body'&&first){first=false;started();await wait;try{return await run();}finally{finished();}}return run();}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.call('change',{thread:place,action:'archive'});await begin;
+ await s.call('change',{thread:place,action:'unarchive'});if(archiveAgain)await s.call('change',{thread:place,action:'archive'});release();await done;
+ expect(s.ends).toHaveLength(archiveAgain?1:0);
+});

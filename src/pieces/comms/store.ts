@@ -3,7 +3,7 @@ export interface Thread {
  id: string; member: string; agent: string; conversation: string; project?: string;
  title: string | null; titledBy: 'member' | 'agent' | null; pinned: boolean; archived: number | null;
  opened: number; last: number; readSeq: number; nextSeq: number; stop: boolean;
- firstId: string; firstHash: string; working: boolean;
+ firstId: string; firstHash: string; working: boolean; endGeneration?: number;
  [key: string]: unknown;
 }
 export interface MessageRow {
