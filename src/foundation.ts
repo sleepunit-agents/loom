@@ -4,6 +4,8 @@ import { createFoundation, httpDoor, type Foundation } from './core/app.js';
 import type { Clock } from './core/clock.js';
 import type { Authentication } from './core/live/index.js';
 import type { IncomingMessage } from 'node:http';
+import { installSharing } from './pieces/sharing/index.js';
+import { SharingDatabase } from './core/household/sharing.js';
 import { installTasks } from './pieces/tasks/index.js';
 import type { Sharing } from './core/index.js';
 export { createFoundation } from './core/app.js';
@@ -15,7 +17,13 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   listen?: (app: Foundation) => Promise<{ url: string; close(): Promise<void> }>;
 }): Promise<Foundation & { url: string; close(): Promise<void> }> {
   const app = createFoundation({ home, clock });
-  try { install?.(app); if (!listen && !app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => ({ members: {}, projects: {}, services: {} }))); } catch (e) { app.close(); throw e; }
+  try {
+    install?.(app);
+    if (!listen) {
+      if (!app.operations.has('household.createProject')) installSharing(app, home);
+      if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => new SharingDatabase(app.db, home).sharing()));
+    }
+  } catch (e) { app.close(); throw e; }
   if (listen) {
     try {
       const server = await listen(app);
