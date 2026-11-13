@@ -110,7 +110,7 @@ export function firstSignin(app: Foundation, home: string, url: string, stdout: 
       const input = { agent: 'assistant', name: 'Assistant', purpose: 'Help with the work you are given.', voice: 'Use clear, direct language.', rules: '', ask: '' };
       publishBootstrapContext(home, input, member, {
         viewer: `local-os-owner:${userInfo().uid}`, id: 'household-first-start-v1', inputHash: hash(JSON.stringify(input)),
-      });
+      }, { requireCompleteRecovery: true });
       new HouseholdDatabase(app.db).replace(home, { v: 1, agents: ['assistant'], owner: member, members: [{ person: member, role: 'owner', agents: '*' }] });
     }
     if (!s.tokens.document()) s.tokens.replace({ v: 1, tokens: [] }, {});

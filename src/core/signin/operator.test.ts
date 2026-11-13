@@ -15,6 +15,11 @@ import { requestLocalLink } from './operator.js';
 import { signin, Signin, hash } from './index.js';
 import * as database from '../db/index.js';
 const fault = vi.hoisted(() => ({ wrongOwner: '' }));
+vi.mock('node:os', async original => {
+  const os = await original<typeof import('node:os')>();
+  return { ...os, userInfo: vi.fn(os.userInfo) };
+});
+const actualOs = await vi.importActual<typeof import('node:os')>('node:os');
 vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return { ...fs, lstatSync: (...args: Parameters<typeof fs.lstatSync>) => {
@@ -24,7 +29,7 @@ vi.mock('node:fs', async importOriginal => {
   } };
 });
 const cleanup: Array<() => void | Promise<void>> = [];
-afterEach(async () => { vi.restoreAllMocks(); fault.wrongOwner = ''; for (const f of cleanup.splice(0).reverse()) await f(); });
+afterEach(async () => { vi.restoreAllMocks(); vi.mocked(userInfo).mockImplementation(actualOs.userInfo); fault.wrongOwner = ''; for (const f of cleanup.splice(0).reverse()) await f(); });
 function home() { const path = mkdtempSync(join(tmpdir(), 'local-signin-')); cleanup.push(() => rmSync(path, { recursive: true, force: true })); return path; }
 async function setup() {
   const path = home(), clock = new FakeClock();
@@ -135,9 +140,15 @@ it('first start creates a household and prints one owner link, with no second pr
   expect(output.trim()).toMatch(/^http:\/\/127.0.0.1:\d+\/login\/[0-9a-f]{64}$/);
   expect(existsSync(join(path, 'household.json'))).toBe(false);
   const linkPath = new URL(output.trim()).pathname; await first.close();
+  writeFileSync(join(context, 'IDENTITY.md'), 'My edited identity');
+  rmSync(join(context, 'preferences.md'));
+  const before = createFoundation({ home: path }); const metadata = new HouseholdDatabase(before.db).document(); before.close();
   output = ''; const second = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } }); cleanup.push(() => second.close());
   expect(output).toBe('');
-  expect(readFileSync(join(context, 'IDENTITY.md'))).toEqual(identity);
+  expect(identity.toString()).toContain('# Assistant');
+  expect(readFileSync(join(context, 'IDENTITY.md'), 'utf8')).toBe('My edited identity');
+  expect(existsSync(join(context, 'preferences.md'))).toBe(false);
+  expect(new HouseholdDatabase(second.db).document()).toEqual(metadata);
   const res = await fetch(second.url + linkPath, { method: 'POST', redirect: 'manual' }); expect(res.status).toBe(303);
   const cookie = res.headers.get('set-cookie')!.split(';')[0]; expect((await (await fetch(second.url + '/auth/session', { headers: { cookie } })).json()).viewer.id).toBe(member);
 });
@@ -206,6 +217,19 @@ it('first-start rollback publishes no household or credential and retries only t
   expect(new HouseholdRows(db.db, 'sessions').entries()).toEqual([]);
   expect(new HouseholdRows(db.db, 'links').entries()).toEqual([]);
   db.db.exec('DROP TRIGGER fail_first_audit'); db.close();
+  const markerPath = join(context, '.loom-bootstrap.json'), marker = readFileSync(markerPath);
+  const receipt = JSON.parse(marker.toString());
+  expect(receipt.viewer).toBe(`local-os-owner:${userInfo().uid}`); expect(receipt.id).toBe('household-first-start-v1');
+  vi.mocked(userInfo).mockReturnValue({ ...actualOs.userInfo(), uid: actualOs.userInfo().uid + 1 });
+  await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
+  vi.mocked(userInfo).mockImplementation(actualOs.userInfo);
+  writeFileSync(markerPath, JSON.stringify({ ...receipt, id: 'household-first-start-v0' }));
+  await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
+  writeFileSync(markerPath, marker);
+  rmSync(join(context, 'IDENTITY.md'));
+  await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
+  expect(existsSync(join(context, 'IDENTITY.md'))).toBe(false); expect(output).toBe('');
+  writeFileSync(join(context, 'IDENTITY.md'), identity);
   writeFileSync(join(context, 'IDENTITY.md'), 'Changed after rollback');
   await expect(startLoom({ home: path, next: true, clock, stdout: text => { output += text; } })).rejects.toThrow();
   expect(output).toBe(''); expect(readFileSync(join(context, 'IDENTITY.md'), 'utf8')).toBe('Changed after rollback');

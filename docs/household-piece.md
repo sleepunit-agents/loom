@@ -562,7 +562,9 @@ purpose, voice and rules. No token is implicitly minted for the context.
 The initial context and household/link rows cannot commit together. Failed row
 or audit writes leave no registered household or usable credential. Restart may
 recover only the unchanged publication bound to this OS uid and initialization
-version. Existing directories refuse adoption. Once initialized, startup never
+version. Missing files in an interrupted initial publication fail closed; startup
+does not recreate a deleted orphan file. Such incomplete reservations remain
+unregistered and require explicit recovery outside this flow. Existing directories refuse adoption. Once initialized, startup never
 recreates or rewrites an agent's files, including a missing or edited identity.
 A stopped daemon still permits the default `loom mcp --next --home NEW_HOME`
 identity load. Existing imported households are unchanged.

@@ -35,7 +35,7 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
 }
 
 /** Filesystem publication only. The caller commits its registration and recovery identity. */
-export function publishBootstrapContext(home: string, input: BootstrapInput, owner: string | undefined, publication: Pick<WriteReceipt, 'viewer' | 'id' | 'inputHash'>): string {
+export function publishBootstrapContext(home: string, input: BootstrapInput, owner: string | undefined, publication: Pick<WriteReceipt, 'viewer' | 'id' | 'inputHash'>, options: { requireCompleteRecovery?: boolean } = {}): string {
   realDir(home);
   const parent = join(home, 'agents'), target = join(parent, input.agent);
   if (!existsSync(parent)) { mkdirSync(parent, { mode: 0o700 }); syncDir(home); }
@@ -58,7 +58,7 @@ export function publishBootstrapContext(home: string, input: BootstrapInput, own
       for (const [name, value] of Object.entries(all)) {
         const path = join(target, name);
         let stat;
-        try { stat = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
+        try { stat = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT' && !options.requireCompleteRecovery) continue; throw e; }
         if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !readFileSync(path).equals(Buffer.from(value))) throw new Error('Changed context');
       }
     } catch { throw new OperationError('conflict', 'Context already exists; register it separately or retry its original unchanged creation'); }
