@@ -1036,6 +1036,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
 
+### Security
+
+- Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

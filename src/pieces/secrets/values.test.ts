@@ -22,7 +22,7 @@ it('writes a value but leaks none to records, operation results, live feed, or l
   const clock = new FakeClock();
   const app = await startLoom({ home, clock, sharing: fixtureSharing, authenticate: () => ({ viewer: owner, valid: () => true }), install: a => {
     installSecrets(a.db, a.operations, a.live, fixtureSharing);
-    installSecretValues(a.db, a.operations, fixtureSharing, holder);
+    installSecretValues(a.db, a.operations, fixtureSharing, holder, Buffer.alloc(32, 1));
   } }); closes.push(app.close);
   const logs: unknown[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((...a) => { logs.push(a); });

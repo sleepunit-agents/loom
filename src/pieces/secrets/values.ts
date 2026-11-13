@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHmac, createSecretKey } from 'node:crypto';
 import { operation, mayAct, OperationError, type Db, type Live, type Operations, type Sharing } from '../../core/index.js';
 import { type GrantAttention, grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
@@ -8,10 +9,18 @@ import { beginSecretUsage } from './usage.js';
 import { recordSecretChange } from './history.js';
 import { removeSecretMetadata } from './removal.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
- * The registry stores only an input hash and this fixed acknowledgement.
+ * The registry stores only a keyed input fingerprint and this fixed acknowledgement.
+ * Supply a persistent independent 32-byte random daemon key, kept outside DB
+ * backups. There is no default key. createSecretKey snapshots caller-owned bytes;
+ * composition retains responsibility for erasing its input and loading the SAME
+ * key on restart. This key is separate from the holder receipt fingerprint key.
  */
-export function installSecretValues(db: Db, operations: Operations, sharing: () => Sharing, holder: KeyHolder, attention?: GrantAttention) {
-  operations.register(operation({ name: 'secrets.remove', write: true,
+export function installSecretValues(db: Db, operations: Operations, sharing: () => Sharing, holder: KeyHolder, fingerprintKey: Uint8Array, attention?: GrantAttention) {
+  if (!(fingerprintKey instanceof Uint8Array) || fingerprintKey.byteLength !== 32) throw new Error('Invalid secret retry key');
+  const key = createSecretKey(fingerprintKey);
+  const inputHash = (canonicalInput: string) => createHmac('sha256', key)
+    .update('loom-secrets-operation-v1\0').update(canonicalInput).digest('hex');
+  operations.register(operation({ name: 'secrets.remove', write: true, inputHash,
     input: z.object({ name, writeId: z.uuid() }).strict(), output: z.object({ removed: z.literal(true) }),
     may: v => mayAct(v, { type: 'secret.name' }, sharing(), 'household', 'secrets.remove'),
     run(ctx, input) {
@@ -32,7 +41,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
       return { removed: true as const };
     },
   }));
-  operations.register(operation({ name: 'secrets.set', write: true,
+  operations.register(operation({ name: 'secrets.set', write: true, inputHash,
     input: z.object({ name, value: z.string().refine(v => Buffer.byteLength(v) > 0 && Buffer.byteLength(v) <= 64 * 1024), mode: z.enum(['add', 'replace']), writeId: z.uuid() }).strict(),
     output: z.object({ saved: z.literal(true) }),
     may: v => mayAct(v, { type: 'secret.name' }, sharing(), 'household', 'secrets.set'),

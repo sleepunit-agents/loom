@@ -20,7 +20,7 @@ it('Settings capability is household-owner only, names-only and reflects holder 
  expect(settings.read('settings',owner)).toEqual({id:'settings',agents:['art','mark','pond-bot'],valuesAvailable:false,now:clock.now()});
  for(const viewer of [{kind:'member',id:'pollock'},{kind:'agent',id:'art'},{kind:'service',id:'hostile'},{kind:'runner',id:'one'}] as Viewer[])expect(settings.read('settings',viewer)).toBeUndefined();
  expect(settings.read('other',owner)).toBeUndefined();
- installSecretValues(app.db,app.operations,sharing,{names:()=>['never expose this'],set(){},remove(){},handTo(){},rotate(){}});
+ installSecretValues(app.db,app.operations,sharing,{names:()=>['never expose this'],set(){},remove(){},handTo(){},rotate(){}}, Buffer.alloc(32, 1));
  expect(settings.read('settings',owner)).toMatchObject({valuesAvailable:true});
  expect(JSON.stringify(settings.read('settings',owner))).not.toContain('never expose this');
 });
