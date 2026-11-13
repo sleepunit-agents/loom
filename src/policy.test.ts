@@ -69,3 +69,13 @@ describe('ordered household policy', () => {
     expect(maySee({ kind: 'member', id: 'removed' }, { member: 'removed' }, sharing)).toBe(false);
   });
 });
+
+it('allows only an exact runner to report its own nonprivate box, without registry visibility', () => {
+  const own = { type: 'runtime.box', runner: 'box' };
+  const runner: Viewer = { kind: 'runner', id: 'box' };
+  expect(viewers.map(v => mayAct(v, own, sharing, 'report-box'))).toEqual([false, false, false, false, false, true, false]);
+  for (const record of [{ ...own, runner: 'other' }, { ...own, member: 'jonathan' }, { ...own, type: 'runtime.job' }, { type: 'runtime.box' }])
+    expect(mayAct(runner, record, sharing, 'report-box')).toBe(false);
+  expect(maySee(runner, own, sharing)).toBe(false);
+  expect(mayAct(runner, own, sharing)).toBe(false);
+});
