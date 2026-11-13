@@ -29,3 +29,12 @@ Frozen c5e4d6c41dae6646f8031345db7fbfc687abbda1 in `/home/art/scratch/attention-
 - Spec CRITICAL, actionable: an opening confirmation is consumed on the reader's first mount, so history departure/return cannot reuse it. Regression leaves the reader through a controlled path change, remounts it, then completes the old display read and proves no answer controls appear.
 
 39 affected tests across component, backend and architecture pass. The third round is the final permitted review round; no fourth.
+
+## Round 3 — BLOCKING, final bound; folded, no fourth round
+
+Frozen 824ea0c31701d2f461609c09c7d48c1ee338317f (signed merge of main0606623) in `/home/art/scratch/attention-inbox-review/round-3/tree`, excluding this ledger; TREE sha256:f6fd4502621e24b87005a288cdef52211d8c823a804a0314e4c1f537753e878c. Reply beside tree. The main merge conflict was only app registration; both Knowledge and Inbox remain registered.
+
+- Spec CRITICAL, actionable: the already mounted reader now accepts and consumes each new opening confirmation, without creating a request in its effect. Re-clicking the selected row after a live-set invalidation now enables controls when its fresh display read succeeds. Regression covers that exact path.
+- Spec MAJOR, actionable: tests now separately invalidate a completed display confirmation after a changed live set and disconnection, and refuse denied/closed display reads. They distinguish display confirmation from the immediate pre-write check.
+
+Final 42 affected tests/3files, root TypeScript, web build and diff-check pass. Review COMPLETE at the three-round bound, final verdict BLOCKING; all actionable findings folded, no known remaining hole, no fourth round. The author chooses to ship on green CI and reports the non-clear final verdict in PR/task. Later final changes implement the two findings and their tests, not a claim that reviewed bytes were already clear.

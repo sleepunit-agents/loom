@@ -29,7 +29,9 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
   const {busy} = guard;
   const sending = guard.lock;
   // Consume the opening request once; browser/shell history must never revive it on a later mount.
-  useEffect(() => { onOpened?.(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialConfirmation) { setConfirmation(initialConfirmation); onOpened?.(); }
+  },[initialConfirmation]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; },[]);
   const link = decisionLink(ask);
   // Opening a row or pressing Check again creates the read; effects never replay requests.

@@ -135,3 +135,18 @@ it('serializes display checks and does not revive them when history remounts a r
   await shown.finish({ok:true,value:ask()});
   expect(buttons('Yes')).toHaveLength(0);expect(buttons('Check again')[0].props.disabled).toBe(false);
 });
+it('invalidates a completed display confirmation on live changes, and reopening the selected row consumes its new read',async()=>{
+  const shown=request<Ask>(),reopened=request<Ask>();f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(reopened.call);
+  await draw(h(InboxApp));
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());await shown.finish({ok:true,value:ask()});expect(buttons('Yes')).toHaveLength(1);
+  await publish({records:[ask('ask-1',{why:'New live set'})],status:'live'});expect(buttons('Yes')).toHaveLength(0);
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());await reopened.finish({ok:true,value:ask()});expect(buttons('Yes')).toHaveLength(1);
+  await publish({records:[],status:'offline'});expect(buttons('Yes')).toHaveLength(0);
+});
+it.each(['denied','closed'] as const)('offers no answer after a %s display read',async(mode)=>{
+  const shown=request<Ask>();f.call.mockReturnValueOnce(shown.call);
+  await draw(h(AskReader,{ask:ask(),snapshot:f.snapshot,go:vi.fn()}));
+  await shown.finish(mode==='denied'?{ok:false,code:'denied',message:'No longer visible'}:{ok:true,value:ask('ask-1',{state:'resolved'})});
+  expect(buttons('Yes')).toHaveLength(0);expect(text()).toContain(mode==='denied'?'No longer visible':'This ask is no longer open.');
+  expect(f.call).toHaveBeenCalledTimes(1);
+});
