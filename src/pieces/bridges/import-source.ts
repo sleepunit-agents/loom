@@ -71,7 +71,13 @@ export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyB
         if (length > 8*1024*1024 || length !== stat.size) throw Error();
         bytes = buffer.subarray(0,length);
       } finally { closeSync(fd); }
-      const raw: unknown = JSON.parse(bytes.toString('utf8'));
+      // The reviver's source is essential: JSON.parse can round a fractional or
+      // unsafe numeric lexeme into a safe integer before schema validation.
+      // Unknown metadata remains ignored; selected numeric fields reject NaN.
+      const raw: unknown = JSON.parse(bytes.toString('utf8'),
+        (_key: string, value: unknown, context?: { source?: string }) =>
+          typeof value !== 'number' ? value : context?.source !== undefined
+            && /^(0|[1-9]\d*)$/.test(context.source) && Number.isSafeInteger(value) ? value : NaN);
       result.sources.push({name:file.name,kind:file.kind,sha256:hash(bytes),bytes:bytes.length});
       if (file.kind === 'shuttle') {
         const v = shuttle.parse(raw);

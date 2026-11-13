@@ -101,7 +101,10 @@ describe('offline legacy Bridges source inventory',()=>{
   it('accepts exact safe numeric legacy ids and refuses lossy numbers',()=>{
     const {file}=fixture();const f=file('people.json','people',{people:{a:{discord:123,slack:{T1:456}}}});
     expect(readBridgeInventory([f]).accounts.map(a=>a.user)).toEqual(['123','456']);
-    writeFileSync(f.path,'{"people":{"a":{"discord":9007199254740993}}}');expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
+    for (const spelling of ['9007199254740993','9007199254740991.1','123.000000000000001','1e2','123.0']) {
+      writeFileSync(f.path,`{"people":{"a":{"discord":${spelling}}}}`);
+      expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    }
   });
   it('refuses malformed, duplicate, traversal, unknown leaf, oversized, symlink and nonregular inputs with sanitized errors',()=>{
     const {file,root}=fixture();const f=file('people.json','people',{});
@@ -110,6 +113,9 @@ describe('offline legacy Bridges source inventory',()=>{
     }
     writeFileSync(f.path,'{"people":{"a":{"discord":true}},"private":"SENTINEL"}');
     expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    writeFileSync(f.path,'{"private":"PARSER_SENTINEL",');
+    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    expect(()=>readBridgeInventory([{...f,path:join(root,'FS_SENTINEL','people.json')}])).toThrow(/^Invalid offline Bridges configuration inventory$/);
     writeFileSync(f.path,Buffer.alloc(8*1024*1024+1,32));expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
     const target=file('target/people.json','people',{});rmSync(f.path);symlinkSync(target.path,f.path);
     expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
