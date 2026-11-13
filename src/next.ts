@@ -11,6 +11,7 @@ import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
 import type { Sharing } from './core/index.js';
+import { installSharing } from './pieces/sharing/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
@@ -24,6 +25,7 @@ export interface NextOptions {
 }
 export function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
+  if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   return installEffects(app, sharing, !!options.staging);

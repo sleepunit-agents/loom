@@ -26,7 +26,14 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   let effects: OutsideEffects | undefined;
   const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing };
   if (next && listen) { app.close(); await release(); throw new Error("next mode owns its listener"); }
-  try { install?.(app); if (next) effects = installNext(app, nextOptions); if (!listen && !app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => ({ members: {}, projects: {}, services: {} }))); } catch (e) { app.close(); await release(); throw e; }
+  try {
+    install?.(app);
+    if (next) effects = installNext(app, nextOptions);
+    else if (!listen) {
+      if (!app.operations.has('household.createProject')) installSharing(app, home);
+      if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing ?? (() => new SharingDatabase(app.db, home).sharing()));
+    }
+  } catch (e) { app.close(); await release(); throw e; }
   if (next) {
     try {
       const server = await listenNext(app, nextOptions);

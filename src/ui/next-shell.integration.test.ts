@@ -20,6 +20,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     const a=await context.newPage(); const b=await context.newPage();
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));
     await a.goto(loom.url);
+    await expect.poll(()=>a.getByRole('button',{name:'Open Project sharing',exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Pond work'}).count()).toBe(1);
     await a.locator('[data-split-row]').filter({hasText:'Pond work'}).click();

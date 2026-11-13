@@ -20,6 +20,7 @@ it('next serves only the new root, foundation doors and live, ignoring poisoned 
   const loom = await startLoom({home,next:true,clock:new FakeClock(0),install:installFixture,sharing:fixtureSharing,webRoot:home,
     authenticate: req => req.headers.authorization === 'fixture' ? { viewer:{kind:'member',id:'jonathan'},valid:()=>true } : undefined });
   try {
+    expect(loom.operations.has('household.createProject')).toBe(true);
     await expect(startLoom({home,next:true})).rejects.toThrow('already running');
     expect((await fetch(loom.url+'/api/tasks/list',{method:'POST',headers:{origin:'https://other.test',authorization:'fixture','content-type':'application/json'},body:JSON.stringify({input:{}})})).status).toBe(403);
     expect(await (await fetch(loom.url)).text()).toContain('new shell');
