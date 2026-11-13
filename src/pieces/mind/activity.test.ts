@@ -16,7 +16,7 @@ const dir=()=>{const h=mkdtempSync(join(tmpdir(),'activity-'));homes.push(h);ret
 afterEach(async()=>{for(const fn of closes.splice(0).reverse())await fn();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
 const now=Date.parse('2026-11-13T18:00:00Z'),owner:Viewer={kind:'member',id:'owner'},partial:Viewer={kind:'member',id:'partial'};
 const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}},services:{'conversation-reader':{types:['conversation'],operations:[]},'memory-reader':{types:['memory'],operations:[]}}};
-function source(){const path=join(dir(),'memories.db'),db=new BetterSqlite3(path);db.exec('CREATE TABLE memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');closes.push(()=>db.close());return {path,db,add(ref:string,input:Record<string,unknown>={}){const row={ref,title:ref,content:'A complete story mentioning t-12 and sleepunit-agents/loom#941.',created:'2026-11-13T17:00:00Z',project:null,metadata:'{"where":"terminal"}',expires_at:null,category:'episode',archived:0,...input};db.prepare('INSERT OR REPLACE INTO memories VALUES(@ref,@title,@content,@created,@project,@metadata,@expires_at,@category,@archived)').run(row);}};}
+function source(path=join(dir(),'memories.db')){const db=new BetterSqlite3(path);db.exec('CREATE TABLE memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');closes.push(()=>db.close());return {path,db,add(ref:string,input:Record<string,unknown>={}){const row={ref,title:ref,content:'A complete story mentioning t-12 and sleepunit-agents/loom#941.',created:'2026-11-13T17:00:00Z',project:null,metadata:'{"where":"terminal"}',expires_at:null,category:'episode',archived:0,...input};db.prepare('INSERT OR REPLACE INTO memories VALUES(@ref,@title,@content,@created,@project,@metadata,@expires_at,@category,@archived)').run(row);}};}
 const conv=(id='cv-111111111111',input:Partial<ActivityConversation>={}):ActivityConversation=>({id,agent:'art',venue:'terminal',place:'terminal',label:'Build the household',people:['owner'],...input});
 const run=(key:string,input:Partial<ActivityRun>={}):ActivityRun=>({kind:'digest',key,at:'2026-11-13T17:10:00Z',conversation:conv(),summary:'Shipped Activity. The full story follows.',asked:['Show what happened'],decided:['Use the new role'],tasks:['t-2207'],links:[],more:[],...input});
 function role(rows:ActivityRun[]):ActivityConversations{return {list:(_v,q)=>({available:true,rows:rows.filter(r=>r.conversation.agent===q.agent&&Date.parse(r.at)>=q.from&&Date.parse(r.at)<q.until)}),read:(_v,a,k,key)=>rows.find(r=>r.conversation.agent===a&&r.kind===k&&r.key===key),conversation:(_v,a,id)=>rows.find(r=>r.conversation.agent===a&&r.conversation.id===id)?.conversation};}
@@ -95,4 +95,24 @@ it('rolls recent windows, access dates and thirty-day readers at local midnight'
 it('suppresses normalized conversation ids from prompt content even without metadata outside the nearby-run heuristic',async()=>{
  const a=source();a.add('prompt',{title:'You are art, in a conversation on terminal: House work.',content:'Ask: You are art, in a conversation on terminal: House work. Its conversation is cv-111111111111',metadata:'{}',created:'2026-11-13T12:00:00Z'});
  const app=await fixture(a.path,undefined,role([run('dg-one')]));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-one']);
+});
+
+it('preserves contextual venue labels and a canonical NEW memory reader destination',async()=>{
+ const a=source();a.add('m-slack',{created:'2026-11-13T12:00:00Z',metadata:'{"where":"slack:dm:patrick-kells"}'});const app=await fixture(a.path,undefined,role([run('dg-discord',{conversation:conv(undefined,{venue:'discord',label:'#household'})})]));
+ expect(list(app).entries.find(e=>e.id==='d~art~dg-discord')?.where).toBe('Discord #household');expect(read(app,'e~art~m-slack')).toMatchObject({value:{where:'Slack DM · Patrick Kells',links:[{label:'The memory',href:'/p/activity-preview/memory/art%3Am-slack'}]}});
+});
+it('keeps the startup source inventory fixed when an absent path later appears',async()=>{
+ const a=source(),missing=join(dir(),'later.db'),app=await fixture(a.path,missing);a.add('m-known');const later=source(missing);later.add('m-later');app.operations.call('direct',{kind:'agent',id:'art'},'core.touched',{type:'memory',id:'art:m-known'});expect(list(app)).toMatchObject({episodes:'unavailable'});expect(list(app).entries.map(e=>e.id)).toEqual(['e~art~m-known']);expect(read(app,'e~other~m-later')).toMatchObject({value:{state:'unavailable'}});
+});
+it.each(['conversation','digest','comms.thread'])('refreshes windows and open readers on NEW %s role events',async type=>{
+ const a=source(),rows=[run('dg-live')],app=await fixture(a.path,undefined,role(rows));
+ const sockets=await Promise.all([['activity.window','recent'],['activity.entry','d~art~dg-live']].map(async([type,scope])=>{const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type,scope}));await initial;return ws;}));
+ const next=sockets.map(ws=>once(ws,'message'));rows[0].summary='Updated by NEW owner.';app.live.changed([{type,id:'dg-live'}]);expect(JSON.parse((await next[0])[0].toString()).record.entries[0].line).toBe('Updated by NEW owner.');expect(JSON.parse((await next[1])[0].toString()).record.story).toBe('Updated by NEW owner.');
+});
+
+it('withdraws an open named episode at its conversation expiry and reports lookup failures as source errors',async()=>{
+ const a=source();a.add('named',{metadata:'{"conversation":"cv-111111111111","where":"slack:#house"}'});const r=role([run('dg-one',{conversation:conv(undefined,{expires:now+1000})})]),app=await fixture(a.path,undefined,r);
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'activity.entry',scope:'e~art~named'}));expect(JSON.parse((await initial)[0].toString()).records[0].expires).toBe(now+1000);
+ const expired=once(ws,'message');(app.operations.clock as FakeClock).advance(1000);expect(JSON.parse((await expired)[0].toString())).toMatchObject({kind:'del',id:'e~art~named'});
+ r.conversation=()=>{throw Error('private path');};expect(read(app,'e~art~named')).toMatchObject({value:{state:'error'}});
 });

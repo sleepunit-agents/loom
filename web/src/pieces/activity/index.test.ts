@@ -46,3 +46,13 @@ it('changes day-specific counts and distinguishes reader service errors from mis
  const day=tree!.root.findByType('select');await act(async()=>day.props.onChange({target:{value:'2026-11-13'}}));expect(props.go.mock.lastCall?.[0]).toContain('day=2026-11-13');
  f.detail={records:[{id:'d~art~dg-one',state:'error',message:'The conversation service couldn’t open this entry.'}],status:'live'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).toContain('couldn’t open this entry');expect(text()).not.toContain('This entry is no longer available');
 });
+
+it('separates the latest plan and folds repeated completed steps while leaving errors visible',async()=>{
+ f.detail={records:[{...entry(),asked:[],decided:[],tasks:[],prs:[],links:[],more:[],steps:[{label:'Plan (1/3): Ship',state:'done',tool:'TodoWrite'},...['one','two','three'].map(n=>({label:`Read ${n}`,state:'done',tool:'Read'})),{label:'Read failed',state:'failed',tool:'Read'}]}],status:'live'};
+ await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'}));});expect(text()).toContain('Read 3 files');expect(text()).toContain('Plan (1/3): Ship');expect(text()).toContain('failed');expect(text()).toContain('Steps · ');
+});
+
+it('opens the canonical memory route with the independent live entry reader',async()=>{
+ f.detail={records:[{...entry('e~art~m-one'),story:'The memory body',asked:[],decided:[],tasks:[],prs:[],links:[],more:[]}],status:'live'};
+ await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/memory/art%3Am-one'}));});expect(f.scopes).toContain('activity.entry:e~art~m-one');expect(text()).toContain('The memory body');
+});

@@ -10,6 +10,7 @@ missing files stay missing until restart. Content never moves into loom.db.
 | `/activity` and its `who/where/what/day/e` address | `/p/activity-preview/` with the same filter and reader parameters |
 | `activityView`, three days and Earlier up to thirty days back | `mind.activityList`, scoped `activity.window` live records; each Earlier adds one three-day subscription |
 | `openEntry`, digest or moved conversation | `mind.activityRead`, `activity.entry`, through the new synchronous `ActivityConversations` role |
+| Episode memory link | `/p/activity-preview/memory/<encoded-agent:ref>`, same independently authorized NEW reader |
 | `tapeRows`, episode reader | Retained existing `memories.db`, active unexpired episodes, full reader up to 20,000 characters |
 | Conversation digest, moved conversation and steps IO | New role only; explicit unavailable until its owner is composed |
 | Who / Where / What, shown-day counts and hourly strip | Kit Split folders, narrow filter menu, hourly jump, OR within groups and AND between groups |
@@ -30,7 +31,7 @@ digest in that window; and its reader and conversation lookup enforce the same
 member policy. It supplies safe plain titles, metadata and only authorized sibling
 run titles. Comms rows always name their member, even for the household owner.
 `needsForMember` identifies who may see a run's needs and destination. Text cards
-are not steps. Role failures/malformed output preserve the episode section and
+are not steps. Plan cards stay separate and repeated completed steps fold as before. Role failures/malformed output preserve the episode section and
 show an error instead of implying an empty household. Source errors are generic. Reader error/unavailable records remain distinct from
 missing/unauthorized entries; one broken episode database leaves healthy sources working.
 
@@ -53,7 +54,8 @@ the same not-found answer. Offline and denied feeds render no retained content.
 
 The coordinator wires the NEW Conversations/Comms role; it must emit `conversation`,
 `digest`, or `comms.*` changes for new/changed/removed content and return its next
-expiry deadline. Each run returned by `read` carries its own `expires` deadline;
+expiry deadline. Conversations may carry their own expiry, which also withdraws
+related open episode readers; lookup failures become generic source errors. Each run returned by `read` carries its own `expires` deadline;
 Activity withdraws an open reader at that instant, even without a change event. No old conversations/comms program or database is permitted.
 Use the household database's timezone, owner and GitHub owner metadata. Verify
 existing listed agent memory paths in the copied home, ensure no competing source

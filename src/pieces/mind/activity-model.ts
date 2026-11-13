@@ -64,3 +64,13 @@ export function startOf(day:string,tz:string):number {
 }
 export function windowDays(to:string,today:string):string[]{return Array.from({length:3},(_,i)=>dayBefore(to,i)).filter(d=>d>=dayBefore(today,MAX_BACK));}
 export function validDay(day:string):boolean{return DAY.test(day)&&Number.isFinite(Date.parse(day))&&new Date(`${day}T00:00:00Z`).toISOString().slice(0,10)===day;}
+
+/** Contextual location words, without a store lookup or raw Comms thread id. */
+export function whereLabel(where:string):string{
+ if(!where||where==='?')return '';
+ const [surface,...rest]=where.split(':'),names:Record<string,string>={slack:'Slack',discord:'Discord',wake:'Wake',web:'Web',cli:'Terminal',mcp:'MCP'};
+ const name=names[surface]??(surface?surface[0].toUpperCase()+surface.slice(1):where);
+ if(surface==='wake')return name;if(surface==='loom'||surface==='comms')return 'Comms';
+ if(rest[0]==='dm'&&rest[1])return `${name} DM · ${rest.slice(1).join(':').split('-').map(w=>w?w[0].toUpperCase()+w.slice(1):w).join(' ')}`;
+ return rest.length?`${name} ${rest.join(':')}`:name;
+}

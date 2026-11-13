@@ -35,3 +35,29 @@ TREE sha256:77bc44251e96e008ace82dbb6e0e8cd697ab2f7c24d8c43301c3729f50988dd8.
   server implementation import. Discriminating UI/source tests and build check compatibility.
 
 Raw reports and hosted evidence are retained in loom/2026-11-13-activity-app-evidence.
+
+## Round 2 — BLOCKING
+
+TREE sha256:79e4b632cbdcbd8c20168346ea49d4de17d508b1b2393d641e752c18fffd2046.
+
+- CRITICAL missing-source discovery: contract misread, out of scope. The recorded
+  source-inventory rule explicitly requires retained connections and absent paths
+  to remain absent until restart. Carrier docs/activity-piece.md: “missing files
+  stay missing until restart.” Clarified that rule in the review contract; added a
+  test creating a file after startup that must remain unavailable. No discovery added.
+- CRITICAL episode memory destination: actionable. Canonical Activity memory route
+  opens the same independently authorized live reader; backend/UI checks and the
+  one hosted test follow the link. Never links into an old store or page.
+- CRITICAL contextual locations: actionable. Pure whereLabel and whereOfConversation
+  preserve Slack DM/Discord place words while hiding Comms ids. Exact location tests.
+- MAJOR production composition: actionable. activity-next.test.ts starts actual next
+  mode with household database metadata, nondefault listed agent, timezone and GitHub
+  owner; unlisted agent data remains unreadable.
+- MAJOR conversation events: actionable. Socket tests exercise conversation, digest
+  and comms.thread events updating both windows and independent open readers.
+- NIT duplicated DTOs: same valid trade-off as round 1.
+
+Author checks before round 3 also restored latest-plan/repeated-step folding with a
+UI regression, day-address scrolling, and screenshot waiting for lazy story prose.
+Conversation expiry now withdraws named episode readers too; role lookup failures
+produce generic source errors. Exact deadline and failure regression added.

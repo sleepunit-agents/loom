@@ -3,11 +3,11 @@ import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
 import {z} from 'zod';
 import {operation,maySee,type Operations,type Live,type Viewer,type Sharing} from '../../core/index.js';
-import {plainEpisode,fallbackParts} from './activity-episode.js';
-import {MAX_BACK,MAX_ENTRIES,VENUES,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
+import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
+import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {ActivityConversations,ActivityConversation,ActivityRun} from './activity-role.js';
 const link=z.object({label:z.string(),href:z.string().optional()}).strict();
-const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),member:z.string().optional()}).strict();
+const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional()}).strict();
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
 interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
 interface Episode {ref:string;title:string;content:string;created:string;project:string|null;metadata:string|null;expires_at:string|null}
@@ -22,13 +22,13 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||allowed(v,a.agent,'conversation'));
  // These are private agent records, never project-scoped. A member scope is
  // checked independently so even the household owner cannot read another thread.
- const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
- const conversation=(v:Viewer,agent:string,id:string)=>{try{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;}catch{return;}};
+ const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
+ const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const stamp=(at:string)=>({day:isoDay(Date.parse(at),tz),hour:hourOf(Date.parse(at),tz)});
  function fromRun(r:ActivityRun):ActivityEntry{
   const c=r.conversation,title=c.label.trim().replace(/^(?:schedule|alert) [\w.-]+:\s+(?=\S)/,'').replace(/^\p{Ll}/u,x=>x.toUpperCase())||`A ${VENUES[venueKey(c.venue)]??c.venue} conversation`;
-  const venue=venueKey(c.venue),where=venue==='wakes'?(/^lane:|^schedule /.test(c.place)||/^schedule /.test(c.label)?'Lane':/^alert:/.test(c.place)?'Alert':'Wake'):VENUES[venue]??c.venue;
-  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turns${r.replies?`, ${r.replies} replies`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires?{expires:r.expires}:{}),...(venue==='comms'||(options.owner&&c.people.includes(options.owner))?{owner:true as const}:{})};
+  const venue=venueKey(c.venue),where=venue==='wakes'?(/^lane:|^schedule /.test(c.place)||/^schedule /.test(c.label)?'Lane':/^alert:/.test(c.place)?'Alert':'Wake'):whereLabel(whereOfConversation(c))||VENUES[venue]||c.venue;
+  return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turns${r.replies?`, ${r.replies} replies`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(options.owner&&c.people.includes(options.owner))?{owner:true as const}:{})};
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
   const entry=fromRun(r),refs=refsIn([r.summary??'',...r.decided].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
@@ -39,19 +39,19 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  function episode(v:Viewer,agent:string,e:Episode):(ActivityOpen & {conversationId?:string})|undefined{
   const meta=parse(e.metadata),where=typeof meta.where==='string'?meta.where:e.project??'?';
   const p=plainEpisode({title:e.title,content:e.content,where,meta},agent,id=>conversation(v,agent,id));
-  const venue=venueKey(p.where.split(/[:/]/)[0]);
+  const venue=venueKey(p.where.split(/[:/]/)[0]),related=p.conversation?conversation(v,agent,p.conversation):undefined;
   if(venue==='comms'){
-   const c=p.conversation&&conversation(v,agent,p.conversation);
+   const c=related;
    if(!c||venueKey(c.venue)!=='comms')return;
   }
   // A conversation id on any episode can refer to a private Comms thread even
   // when its writer used "terminal" as the surface. Fail closed on named ids
   // the NEW owner cannot authorize; do not guess via legacy stores.
-  if(p.conversation&&!conversation(v,agent,p.conversation))return;
+  if(p.conversation&&!related)return;
   const parts=fallbackParts(e.content),refs=refsIn(`${p.title}\n${e.content}`,options.github);
-  return {id:`e~${agent}~${e.ref}`,...(p.conversation?{conversationId:p.conversation}:{}),agent,at:e.created,...stamp(e.created),...splitTitle(p.title),venue,where:VENUES[venue]??p.where,what:whatOf({place:p.where,title:p.title}),
-   ...(options.owner&&p.where.includes(options.owner)?{owner:true as const}:{}),...(e.expires_at?{expires:Date.parse(e.expires_at)}:{}),
-   asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${id}`})),prs:refs.prs,links:[],more:[]};
+  return {id:`e~${agent}~${e.ref}`,...(p.conversation?{conversationId:p.conversation}:{}),agent,at:e.created,...stamp(e.created),...splitTitle(p.title),venue,where:whereLabel(p.where)||VENUES[venue]||venue,what:whatOf({place:p.where,title:p.title}),
+   ...(options.owner&&p.where.includes(options.owner)?{owner:true as const}:{}),...(e.expires_at||related?.expires!==undefined?{expires:Math.min(e.expires_at?Date.parse(e.expires_at):Infinity,related?.expires??Infinity)}:{}),
+   asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${id}`})),prs:refs.prs,links:[{label:'The memory',href:`/p/activity-preview/memory/${encodeURIComponent(`${agent}:${e.ref}`)}`}],more:[]};
  }
  function window(scope:string,v:Viewer):ActivityWindow|undefined{
   if(!agents(v).length)return;

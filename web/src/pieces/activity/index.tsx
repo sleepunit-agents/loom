@@ -2,6 +2,7 @@ import {Suspense,useEffect,useRef,useState} from 'react';
 import {useRecords} from '../../data';
 import {Split,List,Row,Empty,Loading,Error,Button,Markdown,type SplitFolder} from '../../kit';
 import Face from '../../face';
+import {folded,groupLabel,isPlan,stepOf} from '../../steps';
 import {reducedMotion} from '../../access';
 import {VENUES,address,filtersOf,passes,safeHref,type Filters,type ActivityWindow,type ActivityEntry,type ActivityOpen} from './model';
 interface Failure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
@@ -24,6 +25,11 @@ function useWindows(dates:string[],count:number){
  return [w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10].slice(0,count);
 }
 function Link({label,href,go}:{label:string;href?:string;go?:(p:string)=>void}){const safe=safeHref(href);return safe?<a className="underline" href={safe} onClick={e=>{if(go&&safe.startsWith('/')&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go(safe);}}} {...(safe.startsWith('https:')?{target:'_blank',rel:'noopener noreferrer'}:{})}>{label}</a>:<span>{label}</span>;}
+function Steps({steps}:{steps:NonNullable<ActivityOpen['steps']>}){
+ const cards=steps.map((s,i)=>({seq:i,text:s.label,card:{tool:s.tool,state:s.state}})),plan=cards.filter(isPlan).at(-1),rows=cards.filter(s=>!isPlan(s));
+ const line=(s:typeof cards[number])=><li key={s.seq}>{s.text} · {stepOf(s)==='current'?'running':stepOf(s)==='error'?'failed':'done'}</li>;
+ return <section><h2>Steps · {rows.length}</h2>{plan&&<p>{plan.text}</p>}{folded(rows).map(g=>'few' in g?<ol key={g.few[0].seq}>{g.few.map(line)}</ol>:<details key={g.many[0].seq}><summary>{groupLabel(g.many)} · {g.many.at(-1)!.text}</summary><ol>{g.many.map(line)}</ol></details>)}</section>;
+}
 function Reader({entry:e,go,pick,tz}:{entry:ActivityOpen;go?:(p:string)=>void;pick:(id:string)=>void;tz:string}){
  return <article className="grid gap-5 p-5"><header><p>{e.agent}{e.owner?' · with the owner':''} · {e.where} · <time dateTime={e.at}>{new Date(e.at).toLocaleString([],{timeZone:tz})}</time></p><h1 className="text-2xl font-semibold">{e.title}</h1></header>
  {e.needs&&<p role="status">Needs you: {e.needs}</p>}
@@ -31,14 +37,17 @@ function Reader({entry:e,go,pick,tz}:{entry:ActivityOpen;go?:(p:string)=>void;pi
  {e.story&&<section><h2>What happened</h2><Suspense fallback={<Loading label="Opening words…"/>}><Markdown text={e.story} onLink={href=>{const safe=safeHref(href);if(!safe)return true;if(go&&safe.startsWith('/')){go(safe);return true;}return false;}}/></Suspense></section>}
  {!!e.decided.length&&<section><h2>{e.id.startsWith('e~')?'Shipped':'What was decided'}</h2><ul>{e.decided.map((s,i)=><li key={i}>{s}</li>)}</ul></section>}
  {!!(e.tasks.length+e.prs.length)&&<section><h2>Tasks and pull requests</h2><ul>{[...e.tasks,...e.prs].map((l,i)=><li key={i}><Link {...l} go={go}/></li>)}</ul></section>}
- {!!e.steps?.length&&<section><h2>Steps</h2><ol>{e.steps.map((s,i)=><li key={i}>{s.label} · {s.state}</li>)}</ol></section>}
+ {!!e.steps?.length&&<Steps steps={e.steps}/>}
  {!!e.links.length&&<section><h2>Read more</h2><ul>{e.links.map((l,i)=><li key={i}><Link {...l} go={go}/></li>)}</ul></section>}
  {!!e.more.length&&<section><h2>Earlier in this conversation</h2>{e.more.map(m=><Button key={m.id} variant="ghost" onClick={()=>pick(m.id)}>{m.title} · {new Date(m.at).toLocaleString([],{timeZone:tz})}</Button>)}</section>}
  </article>;
 }
 export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:string)=>void}={}){
  const [local,setLocal]=useState(()=>typeof location==='undefined'?'/p/activity-preview':location.pathname+location.search);
- const q=new URL(shellPath??local,'http://loom').searchParams,f=filtersOf(q),selected=q.get('e')??undefined;
+ const url=new URL(shellPath??local,'http://loom'),q=url.searchParams,f=filtersOf(q);
+ let memoryId:string|undefined;
+ if(url.pathname.startsWith('/p/activity-preview/memory/'))try{const raw=decodeURIComponent(url.pathname.slice('/p/activity-preview/memory/'.length)),colon=raw.indexOf(':');memoryId=colon>0?`e~${raw.slice(0,colon)}~${raw.slice(colon+1)}`:'invalid';}catch{memoryId='invalid';}
+ const selected=memoryId??q.get('e')??undefined;
  const access=useRecords<Access>('activity.access'),permission=access.status==='live'?access.records[0]:undefined;
  const [count,setCount]=useState(activitySession.windows),windows=useWindows(permission?.windows??[],count),detail=useRecords<ActivityOpen|Failure>('activity.entry',selected??'');
  const records=windows.flatMap(w=>w.status==='live'?w.records:[]),entries=[...new Map(records.flatMap(w=>w.entries).map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id));
@@ -50,6 +59,8 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  const needed=permission?.windows?.findIndex((d,i)=>requestedDay&&requestedDay<=d&&(i===10||requestedDay>permission.windows[i+1]))??-1;
  useEffect(()=>{if(needed>=count){setCount(needed+1);activitySession.windows=needed+1;}},[needed,count]);
  const rowsRef=useRef<HTMLDivElement>(null);
+ const dayReady=entries.some(e=>e.day===day);
+ useEffect(()=>{const row=[...(rowsRef.current?.querySelectorAll<HTMLElement>('[data-split-row]')??[])].find(r=>r.dataset.day===day);row?.scrollIntoView({block:'start',behavior:'instant'});},[day,dayReady]);
  const pick=(id:string)=>navigate(f,id);
  const toggle=(id:string)=>{if(id==='all'){navigate({who:[],where:[],what:[]});return;}const [group,...value]=id.split(':');if(!['who','where','what'].includes(group))return;const k=group as keyof Filters,v=value.join(':');navigate({...f,[k]:f[k].includes(v)?f[k].filter(x=>x!==v):[...f[k],v].sort()});};
  const isOn=(id:string)=>id==='all'?!f.who.length&&!f.where.length&&!f.what.length:(f[id.split(':')[0] as keyof Filters]??[]).includes(id.split(':').slice(1).join(':'));

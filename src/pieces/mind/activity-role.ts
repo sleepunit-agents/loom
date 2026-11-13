@@ -3,7 +3,7 @@
  * another member's private thread, and emits conversation/digest/comms changes.
  */
 import type {Viewer} from '../../core/index.js';
-export interface ActivityConversation {id:string;agent:string;venue:string;place:string;label:string;people:string[];member?:string}
+export interface ActivityConversation {id:string;agent:string;venue:string;place:string;label:string;people:string[];expires?:number;member?:string}
 export interface ActivityRun {
  kind:'digest'|'conversation';key:string;at:string;expires?:number;conversation:ActivityConversation;
  summary?:string;turns?:number;replies?:number;asked:string[];decided:string[];tasks:string[];
