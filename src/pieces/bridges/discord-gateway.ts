@@ -24,7 +24,7 @@ export interface DiscordGatewayOptions {
   commit(event: DiscordDispatch, checkpoint: DiscordCheckpoint): Promise<void>;
   /** Durably forget the invalid resume cursor before another Identify. */
   reset(): Promise<void>;
-  socket?: (url: string) => Socket;
+  socket?: (url: string, options: WebSocket.ClientOptions) => Socket;
   random?: () => number;
 }
 const INITIAL = 'wss://gateway.discord.gg/?v=10&encoding=json';
@@ -43,7 +43,7 @@ const fatal = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
  * Invalid sessions can lose events Discord no longer retains: no history replay. */
 export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<void> } {
   const { clock } = o;
-  const dial = o.socket ?? (url => new WebSocket(url, {maxPayload:1024*1024,followRedirects:false,handshakeTimeout:15_000}));
+  const dial = o.socket ?? ((url, options) => new WebSocket(url, options));
   let closed = false, stopped = false, generation = 0, failures = 0, pending = 0;
   let socket: Socket | undefined, checkpoint: DiscordCheckpoint | undefined;
   let queue: Promise<void> = Promise.resolve();
@@ -94,7 +94,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
       checkpoint = o.load();
       if (checkpoint && !checkpointValid(checkpoint)) throw Error();
       const target = checkpoint ? gateway(checkpoint.url) : INITIAL;
-      const s = dial(target); socket = s;
+      const s = dial(target, {maxPayload:1024*1024,followRedirects:false,perMessageDeflate:false,handshakeTimeout:15_000}); socket = s;
       let hello = false, authenticated = false, sessionReady = false, resumed = false, waitingAck = false;
       let received: number | null = checkpoint?.seq ?? null;
       let interval = 0;

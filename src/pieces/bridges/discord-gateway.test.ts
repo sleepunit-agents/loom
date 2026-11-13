@@ -14,6 +14,14 @@ class Socket extends EventEmitter {
   hello() { this.frame({op:10,d:{heartbeat_interval:10_000}}); }
   sent() { return this.send.mock.calls.map(([s]) => JSON.parse(s)); }
 }
+class TrackingClock extends FakeClock {
+  active = new Set<object>();
+  override at(time:number,fn:()=>void) {
+    const key={}; this.active.add(key);
+    const cancel=super.at(time,()=>{this.active.delete(key);fn();});
+    return ()=>{this.active.delete(key);cancel();};
+  }
+}
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
 async function settled() { for (let i=0;i<50;i++) await Promise.resolve(); }
@@ -38,7 +46,7 @@ async function retry(f: ReturnType<typeof fixture>,delay=1000) { await settled()
 describe('Discord gateway session transport',()=>{
   it('uses fixed Discord JSON v10 and current service credential only in Identify',async()=>{
     const f=fixture(); await settled(); expect(f.withValue).not.toHaveBeenCalled();
-    expect(f.socket).toHaveBeenCalledExactlyOnceWith('wss://gateway.discord.gg/?v=10&encoding=json');
+    expect(f.socket).toHaveBeenCalledExactlyOnceWith('wss://gateway.discord.gg/?v=10&encoding=json', {maxPayload:1024*1024,followRedirects:false,perMessageDeflate:false,handshakeTimeout:15_000});
     const s=await identified(f);
     expect(s.sent()).toEqual([{op:2,d:{token:'PRIVATE-TOKEN',intents:37377,properties:{os:'linux',browser:'loom',device:'loom'}}}]);
     expect(f.withValue.mock.calls[0][0]).toBe('discord-token');
@@ -160,6 +168,19 @@ describe('Discord gateway session transport',()=>{
       expect(store.load()?.seq).toBe(3); expect(app.db.prepare('SELECT seq FROM gateway_events ORDER BY seq').all()).toEqual([{seq:1},{seq:2},{seq:3}]);
       await g.transport.close();
     } finally {await app.close(); rmSync(home,{recursive:true,force:true});}
+  });
+  it('does not Identify again within five seconds even after a failed socket write',async()=>{
+    const f=fixture(); await settled(); f.sockets[0].send.mockImplementationOnce((_text,callback)=>callback(Error('failed')));
+    await identified(f); expect(f.withValue).toHaveBeenCalledOnce();
+    const b=await retry(f); b.hello(); await settled(); expect(b.send).not.toHaveBeenCalled(); expect(f.withValue).toHaveBeenCalledOnce();
+    const c=await retry(f,2000); c.hello(); await settled(); expect(c.send).not.toHaveBeenCalled();
+    const d=await retry(f,4000); d.hello(); await settled(); expect(d.sent()[0].op).toBe(2); expect(f.withValue).toHaveBeenCalledTimes(2);
+  });
+  it.each(['deadline','heartbeat','retry'])('close removes every timer during %s',async phase=>{
+    const clock=new TrackingClock(); const f=fixture({clock}); await settled(); const s=f.sockets[0];
+    if(phase==='heartbeat') {s.hello();await settled();s.frame(ready());await settled();}
+    if(phase==='retry') {s.emit('close',1006);await settled();}
+    expect(clock.active.size).toBeGreaterThan(0); await f.transport.close(); expect(clock.active.size).toBe(0);
   });
   it('caps reconnect backoff and cancels scheduled retries on close',async()=>{
     const socket=vi.fn(()=>{throw Error('private');}); const f=fixture({socket}); await settled();
