@@ -42,7 +42,7 @@ it('next installs Changes without a fixture and reads current household project 
   loom.db.transaction(()=>new SharingDatabase(loom.db,home).setMembers('pond',[]))();
   expect(await call('pollock','list')).toMatchObject({ok:true,value:[]});
   expect(await call('stranger','list')).toMatchObject({ok:true,value:[]});
-  expect(loom.operations.has('changes.commit-sync')).toBe(false);
+  expect(loom.operations.has('changes.commit-sync')).toBe(true);
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
 

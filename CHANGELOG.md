@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
+
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
