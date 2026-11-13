@@ -281,6 +281,23 @@ questions, "may this viewer see this record" and "may this viewer do this to it"
 **The other tokens are narrow.** A runner sees and reports only the jobs assigned to it. The secrets key holder
 and an outside piece see only the record types and operations a household owner granted them.
 
+**A built-in piece's own job has its own viewer.** Background work a piece runs in the daemon (Changes syncing
+from GitHub, the clock firing a wake, a bridge receiving a message) acts as that piece's **service**, registered
+when the piece is installed. A piece's service may read and write that piece's own record types and nothing else;
+it needs no grant from anyone for that. When it calls another piece, it calls that piece's role as itself, and
+the other piece's operations check it like any caller: a service is allowed there only what a household owner
+granted it. A job never acts as a member and never borrows an owner's authority.
+
+**Using a secret inside the daemon.** A built-in piece that must present a credential to the outside (GitHub,
+Discord, Slack) asks the secrets role for it with `withValue(name, use)`: the grants list is checked for that
+piece's service, the key holder hands the value to the daemon over their local channel, `use` runs with it, and
+the value is dropped when `use` returns. It is never put in a record, a log, a stored result, the live feed or an
+error. The key itself never leaves the key holder. Handing a secret to a body on another machine is the other
+path (`handTo`), which goes to the runner and never returns the value to the daemon.
+
+**Who an agent is elsewhere.** An agent's record may name its accounts on outside services (its GitHub login,
+for one), set by a household owner. Pieces that attribute outside activity to an agent read it from there.
+
 **Making and moving a record is checked too.** Whoever makes a record must be allowed to see the project and
 agent they put on it, and moving one is checked against both where it was and where it's going. A private
 record's member never changes.
