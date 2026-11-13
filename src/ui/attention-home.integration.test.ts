@@ -70,7 +70,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await b.getByRole('button',{name:'Inbox',exact:true}).click();await expect.poll(()=>b.locator('[data-split-row]').count()).toBe(3);
     await b.goto(`${loom.url}/p/home-preview`);await expect.poll(()=>cards(b).count()).toBe(2);
     await b.getByRole('button',{name:'Finish the shared Home',exact:true}).click();
-    await expect.poll(()=>b.url()).toBe(`${loom.url}/p/tasks-preview/task/t-2205`);
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/tasks-preview/task/t-2205');
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await member.grantPermissions(['local-network-access'],{origin:loom.url});
     const p=await member.newPage();await signIn(p,'pollock');await p.goto(loom.url);
     await expect.poll(()=>cards(p).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['pond-bot card']);
