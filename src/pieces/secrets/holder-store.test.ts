@@ -7,6 +7,10 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { generateIdentity, Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
 import { openHolderStore, type HolderStore } from './holder-store.js';
 
+vi.mock('node:crypto', async importOriginal => {
+  const actual=await importOriginal<typeof import('node:crypto')>();
+  return {...actual,randomUUID:vi.fn(actual.randomUUID)};
+});
 const homes: string[] = [], stores: HolderStore[] = [];
 afterEach(() => { for (const s of stores.splice(0)) s.close(); for (const h of homes.splice(0)) rmSync(h, {recursive:true, force:true}); vi.restoreAllMocks(); });
 const who = (member = 'jonathan') => ({member, writeId:randomUUID()});
@@ -68,9 +72,16 @@ it('rolls back ciphertext and receipt together on storage failure, then permits 
 });
 it('snapshots caller input before awaiting and resolves concurrent identical writes only once across handles', async () => {
   const f = await setup(), other = await f.open(), id = who(), input = value();
+  const original=Encrypter.prototype.encrypt;
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  vi.spyOn(Encrypter.prototype,'encrypt')
+    .mockImplementationOnce(function(this:Encrypter,bytes:Uint8Array|string){return original.call(this,bytes);})
+    .mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){await gate;return original.call(this,bytes);});
   const caller = {...id}; const first = f.s.set(caller, 'api-key', input, 'add');
   input.fill(0); caller.member = 'changed'; caller.writeId = randomUUID();
-  await Promise.all([first, other.set(id, 'api-key', value(), 'add')]);
+  const second=other.set(id,'api-key',value(),'add');
+  await first;const committed=f.s.generation();release();await second;
+  expect(other.generation()).toBe(committed);
   expect(await text(f.s)).toBe(value().toString());
   const db = new Database(join(f.home, 'holder.db'));
   try {expect(db.prepare('SELECT member,write_id FROM holder_receipts').all()).toEqual([{member:id.member,write_id:id.writeId}]);}
@@ -213,4 +224,65 @@ it('an absent receipt does not rule out a concurrently encrypting write committi
   const pending=f.s.set(id,'api-key',value(),'add');
   expect(other.hasReceipt(id)).toBe(false);resume();await pending;
   expect(other.hasReceipt(id)).toBe(true);expect(await text(other)).toBe(value().toString());
+});
+
+it('publishes an independent durable generation only when a mutation commits', async () => {
+  const f=await setup(), add=who(), remove=who();
+  const initial=f.s.generation();expect(initial).toMatch(/^[0-9a-f-]{36}$/);
+  const decrypt=vi.spyOn(Decrypter.prototype,'decrypt');
+  const other=await f.open();expect(other.generation()).toBe(initial);
+  await f.s.set(add,'api-key',value(),'add');
+  const added=f.s.generation();expect(added).not.toBe(initial);expect(other.generation()).toBe(added);
+  await f.s.set(add,'api-key',value(),'add');expect(f.s.generation()).toBe(added);
+  await expect(f.s.set(who(),'api-key',value(),'add')).rejects.toThrow();expect(f.s.generation()).toBe(added);
+  // Replacing with identical bytes still ends the previous receiving lifetime.
+  await f.s.set(who(),'api-key',value(),'replace');const replaced=f.s.generation();expect(replaced).not.toBe(added);
+  const db=new Database(join(f.home,'holder.db'));
+  try {
+    db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON holder_receipts BEGIN SELECT RAISE(ABORT, 'PRIVATE'); END");
+    expect(()=>f.s.remove(remove,'api-key')).toThrow();expect(f.s.generation()).toBe(replaced);
+    await expect(f.s.set(who(),'api-key',value('new'),'replace')).rejects.toThrow();expect(f.s.generation()).toBe(replaced);
+    db.exec('DROP TRIGGER fail_receipt');
+  } finally {db.close();}
+  f.s.remove(remove,'api-key');const removed=f.s.generation();expect(removed).not.toBe(replaced);
+  f.s.remove(remove,'api-key');expect(f.s.generation()).toBe(removed);
+  f.s.close();expect(()=>f.s.generation()).toThrow(/^Secret holder storage unavailable$/);
+  const restarted=await f.open();expect(restarted.generation()).toBe(removed);
+  await restarted.set(who(),'api-key',value(),'add');expect(restarted.generation()).not.toBe(removed);
+  expect(decrypt).not.toHaveBeenCalled();
+});
+it('initializes generation for an existing holder without rewriting values or receipts', async () => {
+  const f=await setup(),id=who();await f.s.set(id,'api-key',value(),'add');f.s.close();
+  const db=new Database(join(f.home,'holder.db'));
+  const values=db.prepare('SELECT * FROM holder_values').all(),receipts=db.prepare('SELECT * FROM holder_receipts').all();
+  db.exec('DROP TABLE holder_generation');db.close();
+  const s=await f.open();expect(s.generation()).toMatch(/^[0-9a-f-]{36}$/);
+  const verify=new Database(join(f.home,'holder.db'));
+  try {
+    expect(verify.prepare('SELECT * FROM holder_values').all()).toEqual(values);
+    expect(verify.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts);
+  } finally {verify.close();}
+  expect(await text(s)).toBe(value().toString());
+});
+
+it('rolls back values and receipts when generation publication fails', async () => {
+  const f=await setup();await f.s.set(who(),'api-key',value(),'add');
+  const marker=f.s.generation(), db=new Database(join(f.home,'holder.db'));
+  const values=db.prepare('SELECT * FROM holder_values').all(),receipts=db.prepare('SELECT * FROM holder_receipts').all();
+  try {
+    db.exec("CREATE TRIGGER fail_generation BEFORE UPDATE ON holder_generation BEGIN SELECT RAISE(ABORT, 'PRIVATE'); END");
+    await expect(f.s.set(who(),'api-key',value('new'),'replace')).rejects.toThrow();
+    await expect(f.s.set(who(),'other',value(),'add')).rejects.toThrow();
+    expect(()=>f.s.remove(who(),'api-key')).toThrow();
+    expect(f.s.generation()).toBe(marker);
+    expect(db.prepare('SELECT * FROM holder_values').all()).toEqual(values);
+    expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts);
+  } finally {db.close();}
+});
+it('stores the independently generated random UUID rather than a value-derived marker', async () => {
+  const first='12345678-1234-4234-8234-123456789abc',second='87654321-4321-4321-8321-cba987654321';
+  const random=vi.mocked(randomUUID).mockReturnValueOnce(first);
+  const f=await setup();expect(f.s.generation()).toBe(first);
+  const id=who();random.mockReturnValueOnce(second);
+  await f.s.set(id,'api-key',value(),'add');expect(f.s.generation()).toBe(second);
 });

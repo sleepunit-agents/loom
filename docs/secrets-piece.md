@@ -805,3 +805,24 @@ rotation, holder identity/receipt-key rotation, daemon retry and reconciliation
 without caller plaintext, production root composition, trusted runtime sinks and
 house APIs, Changes/Bridges composition and the final move remain required on
 t-2208. This slice changes no installed configuration or live secret store.
+
+### Public holder generation
+
+The persistent holder exposes `generation()` through `localSecretSource(config)`
+and authenticated `GET /v1/generation` on the same private mutual-TLS read
+socket. It returns one opaque random UUID, independent of all credential bytes,
+and never decrypts a value. Only the pinned daemon can read it in persistent
+holder composition. It is metadata, not authority to read a secret.
+
+The marker changes in the same FULL-durability SQLite transaction as each
+successful add, replacement (including identical bytes), or removal. Exact
+receipt replays, rejected writes and rollbacks leave it unchanged; restart
+preserves it. Opening a pre-generation holder initializes the marker without
+rewriting values or receipts. One global marker intentionally invalidates every
+consumer lifetime on any credential mutation.
+
+Bridges still require the follow-up that polls this role and binds its public
+marker to both daemons, composes People names and CLI options, and removes the
+old engine credential interface. This PR adds the real prerequisite; it does
+not activate a bridge or change an installed holder. The legacy age-file source
+has no generation capability and the endpoint refuses it.

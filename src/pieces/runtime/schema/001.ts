@@ -16,4 +16,11 @@ CREATE TABLE runtime_results (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), 
 ` }, { number: 4, sql: `
 -- Private routing receipts contain no message words or credentials.
 CREATE TABLE runtime_deliveries (id TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES runtime_jobs(id));
+` }, { number: 5, sql: `
+-- Private sender/queued-source metadata; never contains message words.
+CREATE TABLE runtime_provenance (conversation TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+CREATE TABLE runtime_provenance_sources (conversation TEXT NOT NULL, key TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(conversation,key));
+CREATE TABLE runtime_owner_requests (target TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+-- Runner progress is distinct from administrative runtime_jobs.changed_at.
+CREATE TABLE runtime_job_heartbeats (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), heard_at INTEGER NOT NULL);
 ` }];

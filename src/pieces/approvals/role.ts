@@ -1,6 +1,6 @@
 import { maySee, type Db, type Sharing, type Operations, type Viewer } from '../../core/index.js';
 import { approvalScope, stateOf, type Caller } from './model.js';
-import { readApproval } from './store.js';
+import { load, readApproval } from './store.js';
 /** Owner UI composition keeps the authenticated viewer; no body Caller is minted. */
 export function ownerApprovalsRole(operations: Operations) {
   return {
@@ -44,6 +44,7 @@ export function approvalAnswers(db: Db, sharing: () => Sharing, now: () => numbe
 
 /** Owning target grammar and synchronous application contract for consumers. */
 export { vouchOf } from './targets.js';
+export { isApplyingOwnerAnswer } from './apply.js';
 export type { ApprovalApplication } from './apply.js';
 
 export { vouchDetails, type VouchWords } from './vouch-details.js';
@@ -55,3 +56,11 @@ export type { Caller } from './model.js';
 export { serviceOf } from './model.js';
 
 export { localOwner, sameLocalCaller } from './local-authority.js';
+/** Trusted owning application seam. Returns original cards before request can
+ * enrich them, so a consumer can bind its durable snapshot to the exact card.
+ * This is not a registry read and confers no transport access.
+ */
+export function owningApprovalCards(db: Db, kind: string, target: string, agent: string) {
+  return load(db).approvals.filter(a => a.kind === kind && a.target === target && a.who.agent === agent).map(a => structuredClone(a));
+}
+export type { Approval } from './model.js';

@@ -1,3 +1,5 @@
+import { hearJob } from './heartbeat.js';
+import { provenanceStore } from './provenance-store.js';
 import { assignedRunner } from './control.js';
 /** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
 import { z } from 'zod';
@@ -18,6 +20,16 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     if (store.put('job', { ...job, state }, ctx.now)) ctx.changed('runtime.job', id);
     return { job: id, state };
   }
+  operations.register(operation({
+    name:'runtime.jobControl',doors:['http','direct'],input,output:z.object({stop:z.boolean(),history:z.enum(['retain','discard','unknown'])}),
+    may:(viewer,{job})=>assigned(viewer,job),
+    run(_ctx,{job:id}){
+      const job=store.read('job',id)!;
+      if(job.writtenOff||job.principalReset)return {stop:true,history:'discard' as const};
+      if(job.state==='uncertain'||job.state==='lost')return {stop:false,history:'unknown' as const};
+      return {stop:['done','failed','stopped'].includes(job.state),history:'retain' as const};
+    },
+  }));
   operations.register(operation({
     name: 'runtime.claimJob', write: true, input, output,
     may: (viewer, { job }) => assigned(viewer, job),
@@ -60,6 +72,11 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     run(ctx, { job: id, state, build, exit, log }) {
       const before = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      hearJob(db,id,ctx.now);
+      if (before.conversation) {
+        const rows = db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(id) as {id:string}[];
+        provenanceStore(db).consumed(before.conversation, rows.map(row=>row.id));
+      }
       // Result and metadata writes share the operation's transaction/receipt.
       // Notify only the job id; log words are never in the live payload.
       if (results.put(id, { exit, log })) ctx.changed('runtime.job', id);

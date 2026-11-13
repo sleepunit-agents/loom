@@ -234,3 +234,19 @@ it('clears a queued historical image and rolls the entire claim snapshot back on
   expect(f.store.read('job', 'j')).toMatchObject({ made: f.store.read('settings', 'art')!.house, claimedAt: f.clock.now() });
   expect(f.store.read('job', 'j')?.build).toBeUndefined();
 });
+
+it('records body report liveness separately and rolls it back when the report is rejected', async () => {
+  const f = await setup();
+  const heard = () => f.app.db.prepare('SELECT heard_at FROM runtime_job_heartbeats WHERE job=?').get('j');
+  expect(heard()).toBeUndefined();
+  expect(f.call('claimJob', { job:'j' }).ok).toBe(true);
+  expect(heard()).toBeUndefined();
+  f.clock.advance(10);
+  expect(f.call('reportJob', { job:'j',state:'running' }).ok).toBe(true);
+  expect(heard()).toEqual({heard_at:f.clock.now()});
+  const last=f.clock.now();f.clock.advance(10);
+  expect(f.call('reportJob', { job:'j',state:'running',build:'wrong-image' }).ok).toBe(false);
+  expect(heard()).toEqual({heard_at:last});
+  f.app.db.transaction(()=>{const {changedAt:_,...job}=f.store.read('job','j')!;f.store.put('job',{...job,title:'administrative rename'},f.clock.now());})();
+  expect(heard()).toEqual({heard_at:last});
+});

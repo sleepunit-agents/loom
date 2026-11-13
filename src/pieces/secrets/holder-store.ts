@@ -4,7 +4,7 @@
  */
 import Database from 'better-sqlite3';
 import { Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -25,6 +25,8 @@ export interface HolderStore {
    * caller must durably bind this id to full input before using it to reconcile. */
   hasReceipt(who: HolderWrite): boolean;
   read(name: string): Promise<Uint8Array>;
+  /** Opaque public lifetime marker; never derived from a value. */
+  generation(): string;
   close(): void;
 }
 
@@ -69,12 +71,14 @@ export async function openHolderStore(directory: string, identityFile: string, f
     const verifier = createHmac('sha256', key).update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
     db.transaction(() => {
       db!.exec(`CREATE TABLE IF NOT EXISTS holder_config (id INTEGER PRIMARY KEY CHECK(id=1), verifier TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS holder_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_values (name TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_receipts (member TEXT NOT NULL, write_id TEXT NOT NULL,
           fingerprint TEXT NOT NULL, PRIMARY KEY(member, write_id));`);
       const old = db!.prepare('SELECT verifier FROM holder_config WHERE id=1').get() as {verifier:string} | undefined;
       if (old && old.verifier !== verifier) throw unavailable();
       if (!old) db!.prepare('INSERT INTO holder_config VALUES (1,?)').run(verifier);
+      db!.prepare('INSERT OR IGNORE INTO holder_generation VALUES (1,?)').run(randomUUID());
     }).immediate();
     const store = db, fingerprintKey = key;
     let closed = false;
@@ -113,6 +117,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             if (exists !== (mode === 'replace')) throw unavailable();
             store.prepare('INSERT INTO holder_values VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
             receipt(who, hash);
+            store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
         } catch { throw unavailable(); }
         finally { bytes?.fill(0); }
@@ -125,6 +130,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             if (replay(who, hash)) return;
             if (!store.prepare('DELETE FROM holder_values WHERE name=?').run(name).changes) throw unavailable();
             receipt(who, hash);
+            store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
         } catch { throw unavailable(); }
       },
@@ -132,6 +138,12 @@ export async function openHolderStore(directory: string, identityFile: string, f
         try {
           check(); who = context.parse(who);
           return !!store.prepare('SELECT 1 FROM holder_receipts WHERE member=? AND write_id=?').get(who.member, who.writeId);
+        } catch { throw unavailable(); }
+      },
+      generation() {
+        try {
+          check();
+          return (store.prepare('SELECT generation FROM holder_generation WHERE id=1').get() as {generation:string}).generation;
         } catch { throw unavailable(); }
       },
       async read(name) {

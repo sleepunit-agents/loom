@@ -1,3 +1,4 @@
+import { provenanceStore } from './provenance-store.js';
 import { readApproval } from '../approvals/store.js';
 import * as commsCrypto from '../comms/crypto.js';
 import { runtimeRole } from './role.js';
@@ -46,6 +47,10 @@ it('runs private conversation input/reply/status through actual next auth, socke
  for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
  expect(jobs).toHaveLength(1);const job=jobs[0];
  expect(runtimeStore(f.app.db).read('job',job)).toMatchObject({state:'queued',member:'jonathan'});
+ const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ const provenance=provenanceStore(f.app.db).read(conversation)!;
+ expect(provenance).toMatchObject({agent:'art',history:{owner:true,unknown:false,owners:['jonathan'],people:[]},queue:[{sender:{kind:'person',person:'jonathan'}}]});
+ expect(JSON.stringify(provenance)).not.toContain('PRIVATE');
  expect(JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working).toBe(false);
  expect(await f.post(f.runner,'runtime.listJobs',{})).toMatchObject({ok:true,value:{records:[]}});
  expect(await f.post(f.runner,'runtime.claimJob',{job})).toMatchObject({ok:true});
@@ -55,6 +60,8 @@ it('runs private conversation input/reply/status through actual next auth, socke
  expect(JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working).toBe(false);
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(f.runner,'runtime.reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ expect(provenanceStore(f.app.db).read(conversation)?.queue).toEqual([]);
+ expect(provenanceStore(f.app.db).read(conversation)?.history.owners).toEqual(['jonathan']);
  expect(await f.socket('comms.messages',{thread})).toMatchObject({ok:true});
  for(const secret of [f.runner,f.owner,f.unbound,f.token('agent:art@another')])expect(await f.post(secret,'runtime.readConversation',{})).toMatchObject({ok:false});
  const wrongAgent=f.token(`agent:mark@${job}`);
