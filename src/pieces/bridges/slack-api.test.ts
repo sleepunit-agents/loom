@@ -101,7 +101,7 @@ describe('Slack service API inspection', () => {
     expect(await f.api.inspect(venue,message)).toBe('drop');
   });
   it('bounds response size and does not leak malformed or upstream responses', async () => {
-    const f = fixture(); f.request.mockResolvedValueOnce(new Response('SECRET'.repeat(200_000)));
+    const f = fixture(); f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false},padding:'x'.repeat(1024*1024)}));
     expect(await f.api.inspect(venue,message)).toBe('wait');
     f.request.mockRejectedValueOnce(Error('SECRET'));
     expect(await f.api.inspect(venue,message)).toBe('wait');
@@ -183,4 +183,15 @@ it('rechecks staging between calls before obtaining another credential', async (
   f.request.mockImplementationOnce(async()=>{open=false;return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});});
   expect(await slackApi({withValue:f.read as any},()=>open,f.request as typeof fetch).inspect(venue,message)).toBe('wait');
   expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).toHaveBeenCalledTimes(1);
+});
+it.each([{}, {ok:null}, {ok:'false'}])('waits rather than permanently dropping malformed denial envelope %j', async envelope => {
+  const f=fixture(); f.request.mockResolvedValueOnce(Response.json({...envelope,error:'channel_not_found'}));
+  expect(await f.api.inspect(venue,message)).toBe('wait');
+});
+it.each(['workspace','bot','channel','user'])('waits on malformed %s input before credentials or HTTP', async field => {
+  const f=fixture();
+  const v={...venue,...(['workspace','bot'].includes(field)?{[field]:''}:{})};
+  const m={...message,...(['channel','user'].includes(field)?{[field]:''}:{})};
+  expect(await f.api.inspect(v,m)).toBe('wait');
+  expect(f.read).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
 });

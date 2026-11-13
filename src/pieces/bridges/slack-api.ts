@@ -41,7 +41,7 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
       return parsed;
     });
     if (result.ok !== true) {
-      if (typeof result.error === 'string' && denied.has(result.error)) throw new Refused();
+      if (result.ok === false && typeof result.error === 'string' && denied.has(result.error)) throw new Refused();
       throw Error('Slack unavailable');
     }
     return result;
@@ -51,7 +51,8 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
      * Unknown flags and incomplete pagination fail closed as wait.
      */
     async inspect(venue: Venue, message: Message): Promise<Inspection> {
-      if (message.user === venue.bot || venue.platform !== 'slack' || !id(venue.workspace) || !id(venue.bot) || !id(message.channel) || !id(message.user)) return 'drop';
+      if (venue.platform !== 'slack' || message.user === venue.bot) return 'drop';
+      if (!id(venue.workspace) || !id(venue.bot) || !id(message.channel) || !id(message.user)) return 'wait';
       try {
         const info = await call(venue, 'conversations.info', { channel: message.channel });
         const channel = info.channel;
