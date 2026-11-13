@@ -73,6 +73,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       writeFileSync(join(shots,`home-${look}-${width}-layout.json`),JSON.stringify(dimensions,null,2));
       if(dimensions.home[1]>dimensions.home[0] || dimensions.page[1]>dimensions.page[0])overflows.push({look,width,...dimensions});
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      await b.getByRole('region',{name:'Art E Fish clock',exact:true}).scrollIntoViewIfNeeded();
+      await b.screenshot({path:join(shots,`home-clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       await b.getByRole('region',{name:'Art E Fish reported work',exact:true}).scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`home-work-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
