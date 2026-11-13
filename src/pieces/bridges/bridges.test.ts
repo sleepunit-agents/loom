@@ -385,6 +385,19 @@ describe('in-process bridge delivery',()=>{
     await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
     expect(f.app.db.prepare("SELECT state FROM bridges_outbox WHERE id='second'").get()).toEqual({state:'held'});
   });
+  it('keeps transient outgoing replies eligible beyond the intake hour and sends exactly once after recovery',async()=>{
+    const f=await groupFixture(); await f.engine.receive(f.venue.id,f.groupMessage); await f.engine.flush();
+    const incomingId=[...f.deliveries.keys()][0];
+    f.engine.reply({id:'late-reply',incomingId,text:'reply after a long outage'});
+    f.adapter.inspection='wait'; await f.engine.flush();
+    f.clock.advance(3_600_001); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state,text FROM bridges_outbox').get()).toEqual({state:'pending',text:'reply after a long outage'});
+    expect(f.adapter.posts).toEqual([]);
+    f.adapter.inspection={kind:'allow',members:['100','200','201']}; await f.engine.flush();
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply after a long outage');
+    expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'sent'});
+    await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
+  });
   it('preserves event time and label through durable receipt, restart and duplicate receipt',async()=>{
     const f=await fixture(); f.setGate('wait');
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
@@ -491,8 +504,11 @@ describe('in-process bridge delivery',()=>{
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     f.app.db.prepare('UPDATE bridges_inbox SET reason=?').run(reason);
     const before=f.app.db.prepare('SELECT * FROM bridges_inbox').get();
-    await f.close(); closes.pop();
-    const restarted=await fixture('discord',false,f.home); await restarted.engine.sync();
+    f.clock.advance(3_600_001); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
+    const now=f.clock.now(); await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home,now); await restarted.engine.sync();
+    restarted.clock.advance(3_600_001); await restarted.engine.flush();
     expect(restarted.deliveries.size).toBe(0);
     expect(restarted.app.db.prepare('SELECT * FROM bridges_inbox').get()).toEqual(before);
   });
