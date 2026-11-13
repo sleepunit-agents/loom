@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { installHouseholdPreferences } from './preferences.js';
 import { HouseholdDatabase } from './document.js';
 import { changeHouseholdMember, memberAgents, memberPerson } from './members.js';
 import { AGENT_NAME } from '../../household.js';
@@ -12,6 +13,7 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 
 /** Explicit installation only until importer and all production callers cut over together. */
 export function installHouseholdProjects(app: Foundation, home: string): void {
+  installHouseholdPreferences(app, home);
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
   app.operations.register(operation({
