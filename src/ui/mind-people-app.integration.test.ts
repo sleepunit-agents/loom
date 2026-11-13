@@ -14,7 +14,7 @@ import { PeopleStore } from '../backends/people.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 if(process.env.CI&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
-it.runIf(chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
+it.runIf(!!process.env.CI&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'people-app-'));const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
   metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
@@ -27,7 +27,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('People filters, authorized
   directory.write({slug:'casey',name:'Casey Smith'});
   relationship.write({slug:'jonathan',name:'Jonathan Barket',summary:'Builds the household',how:{mode:'direct'},may:[{text:'May discuss projects',source:'Jonathan'}]});
   other.write({slug:'casey',name:'Casey Smith',summary:'Knows the workshop'});
-  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art','other']}},projects:{},services:{}}),authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true})});
+  const app=await startLoom({home,next:true,clock,webRoot:root});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});

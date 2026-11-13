@@ -44,13 +44,13 @@ export function installMindPeople(operations: Operations, live: Live, options: {
       const card = JSON.parse(row.card_json) as PersonCard;
       const now = operations.clock.now(), nowIso = new Date(now).toISOString();
       let evidence: PersonEvidence[] = [], newer = 0;
-      if (agent && has(db,'memories')) {
+      if (agent && maySee(viewer,{type:'memory',agent},options.sharing()) && has(db,'memories')) {
         evidence = db.prepare(`SELECT created,category,title,content FROM memories WHERE json_extract(metadata,'$.person')=? AND category IN ('user','feedback') AND archived=0 AND (expires_at IS NULL OR expires_at>?) ORDER BY created DESC LIMIT 40`).all(slug,nowIso) as PersonEvidence[];
         newer = (db.prepare(`SELECT count(*) AS n FROM memories WHERE json_extract(metadata,'$.person')=? AND category='user' AND archived=0 AND (expires_at IS NULL OR expires_at>?) AND (? IS NULL OR created>?)`).get(slug,nowIso,row.synthesized_at,row.synthesized_at) as {n:number}).n;
       }
       const projects:PersonRecord['projects']=[];
       for(const [agentId,store] of sources) {
-        if(agentId==='commons'||!allowed(viewer,agentId)||!has(store,'projects')) continue;
+        if(agentId==='commons'||!allowed(viewer,agentId)||!maySee(viewer,{type:'project',agent:agentId},options.sharing())||!has(store,'projects')) continue;
         const rel=has(store,'people') ? store.prepare('SELECT card_json FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as {card_json:string}|undefined : undefined;
         const where={...card.where,...(rel?(JSON.parse(rel.card_json) as PersonCard).where:{})};
         for(const project of store.prepare('SELECT card_json FROM projects WHERE archived_at IS NULL').all() as {card_json:string}[]) {
@@ -76,7 +76,7 @@ export function installMindPeople(operations: Operations, live: Live, options: {
     may:(v,input) => { const source=input.id.slice(0,input.id.indexOf(':'));return allowed(v,source==='commons' ? undefined : source); },
     run:(ctx,input) => read(input.id,ctx.viewer) ?? {ok:false,code:'not-found',message:'Person card not found'} }));
   live.register({name:'person',ids,read,inScope:(r,scope) => scope===undefined || r.id===scope,
-    refreshOn:c => c.type==='person' || c.type==='memory',
+    refreshOn:c => c.type==='person' || c.type==='memory' || c.type==='project',
     expires(record) {
       const r=record as unknown as PersonRecord, now=operations.clock.now();
       const deadlines=Object.values(r.card.where ?? {}).flatMap(f => f.verified_at && f.stale_after_days !== undefined ? [Date.parse(f.verified_at)+f.stale_after_days*86400000] : []);
