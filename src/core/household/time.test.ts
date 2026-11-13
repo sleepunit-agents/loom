@@ -27,6 +27,11 @@ it('publishes only the signed-in member minute, advances on server boundaries an
  expect(await next()).toMatchObject({kind:'put',record:{at:Date.parse('2026-11-13T18:42:00Z'),timezone:'America/Chicago'}});
  household.change(home,raw=>{raw.tz='Asia/Tokyo';});clock.advance(60_000);
  expect(await next()).toMatchObject({kind:'put',record:{timezone:'Asia/Tokyo'}});
+ let minutes = 0;
+ const stop = app.live.observe(changes=>{if(changes.some(c=>c.type==='household.time'))minutes++;});
+ clock.advance(31*86400_000);
+ expect(await next()).toMatchObject({kind:'put',record:{at:clock.now(),timezone:'Asia/Tokyo'}});
+ expect(minutes).toBe(1);stop();
  household.change(home,raw=>{raw.members=(raw.members as {person:string}[]).filter(m=>m.person!=='pollock');});
  app.live.refreshAccess();expect(await next()).toMatchObject({kind:'set',records:[]});
 });

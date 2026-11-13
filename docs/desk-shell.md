@@ -90,8 +90,9 @@ legacy data.
 ### Server time and system indicators
 
 `household.time` is a member-scoped read-only record, using the existing central
-member rule. Live refreshes it at each server minute and cancels its deadline on
-unsubscribe/close. It reads the household timezone from loom.db (UTC when unset).
+member rule. A foundation-owned clock job refreshes it at each server minute and stops on
+close. Scheduling after the clock turn coalesces a long sleep or clock jump into
+one current update instead of replaying missed minutes. It reads the household timezone from loom.db (UTC when unset).
 The bar uses that snapshot directly: no device clock, elapsed-time estimate or
 polling. An unavailable snapshot immediately clears the time. No operation, CLI,
 importer or schema is needed for this derived record.
