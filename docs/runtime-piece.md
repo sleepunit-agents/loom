@@ -788,5 +788,9 @@ though its principal remains unknown; losing that suffix would widen spending.
 A shared agent credential, missing job or copied Viewer establishes no principal.
 An authenticated job without current private membership remains `?`; starting a
 job or carrying a project is not evidence of its requesting person. Runtime's
-owner application for grant, principal-reset and box-write-off remains pending.
+owner application for principal-reset and box-write-off remains pending.
 This resolver reads only next-mode state and creates no authority store.
+
+| Old permission command | New behavior |
+| --- | --- |
+| Per-agent piece/path grants (`grants set`, legacy `grant` approval) | Retired in favour of central record scope; no Runtime ACL or blanket service grant substitutes for them. Imported pending approval cards are withdrawn, never applied or spent. Service record-type/operation grants and secret-use grants remain separate. |

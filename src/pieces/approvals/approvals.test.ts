@@ -29,7 +29,8 @@ async function setup(applications?: ApprovalApplications,resolver?:ApprovalOptio
   const app=await startLoom({home:dir(),clock,sharing,authenticate:req=>{const id=req.headers.authorization?.replace('Bearer ','');return id==='art'?{viewer:{kind:'agent',id},valid:()=>true}:id&&access.members[id]?{viewer:{kind:'member',id},valid:()=>!!access.members[id]}:undefined;},install:app=>installApprovals(app.db,app.operations,app.live,sharing,{applications,localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:resolver??(v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined)})});closes.push(app.close);let seq=0;
   const call=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent,id=`op-${++seq}`)=>app.operations.call('direct',viewer,`approvals.${op}`,input,id);
   const value=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent)=>{const r=call(op,input,viewer);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
-  return {...app,clock,call,value,access,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
+  const resetCard=()=>{const r=approvalsRole(app.operations,'runtime').call('request',identity,{...ask,kind:'principal-reset',target:'art:cv-0123456789ab',details:'Reset the conversation cv-0123456789ab.'},`reset-${++seq}`);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
+  return {...app,clock,call,value,access,resetCard,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
 }
 describe('approval receipts and central policy',()=>{
   it('allows once, exact kind and raw target, never another agent',async()=>{
@@ -80,11 +81,11 @@ describe('approval receipts and central policy',()=>{
     const a=await setup(),cv='cv-0123456789ab',card=a.value('request',{...ask,conversation:cv});expect(card).not.toHaveProperty('conversation');a.identity({conversation:cv});expect(a.value('request',{...ask,conversation:cv})).toMatchObject({id:card.id,conversation:cv});a.identity({conversation:'cv-abcdef012345'});expect(a.value('request',{...ask,conversation:'cv-abcdef012345'})).toMatchObject({conversation:cv});
   });
   it('uses project sharing for records and denies owner-only answers to agent owners',async()=>{
-    const a=await setup({runtime:{apply:()=>({ok:true,value:null})}});a.identity({project:'pond'});const card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'grant',target:'tasks:mark'})).toMatchObject({code:'denied'});expect(load(a.db).approvals.find(r=>r.id===card.id)).toMatchObject({state:'used'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'grant',target:'tasks:mark'},'piece-grant')).toMatchObject({ok:false,code:'denied'});
+    const a=await setup({runtime:{apply:()=>({ok:true,value:null})}});a.identity({project:'pond'});const card=a.resetCard();expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'})).toMatchObject({code:'denied'});expect(load(a.db).approvals.find(r=>r.id===card.id)).toMatchObject({state:'used'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'},'piece-grant')).toMatchObject({ok:false,code:'denied'});
   });
 
   it('leaves owner-applied cards pending when their application role is missing',async()=>{
-    const a=await setup(),card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});
+    const a=await setup(),card=a.resetCard();
     expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
     expect(load(a.db).approvals[0]).toMatchObject({state:'pending'});
     expect(load(a.db).audit.map(r=>r.event)).toEqual(['request']);
@@ -98,7 +99,7 @@ describe('approval receipts and central policy',()=>{
       return fail?{ok:false,code:'conflict',message:'Target changed'}:{ok:true,value:null};
     }}});
     app.db.exec('CREATE TABLE application_effects (id TEXT PRIMARY KEY)');
-    const card=app.value('request',{...ask,kind:'grant',target:'tasks:mark'}),input={id:card.id,action:'allow'};
+    const card=app.resetCard(),input={id:card.id,action:'allow'};
     expect(app.call('answer',input,owner,'apply')).toMatchObject({ok:false,code:'conflict'});
     expect(app.db.prepare('SELECT * FROM application_effects').all()).toEqual([]);
     expect(load(app.db).approvals[0].state).toBe('pending');
@@ -315,7 +316,6 @@ describe('frozen independent old CLI oracle',()=>{
 describe('owner application routing and denial retention',()=>{
   const caller:Caller={who:{agent:'art',where:'h-1'},for:'owner'};
   it.each([
-    ['grant','tasks:mark','runtime','Access to Tasks.'],
     ['vouch-wake','art:w-000001,w-000002','clock','w-000001 fires at ten\nw-000002 fires at eleven'],
     ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten'],
     ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab,w-abcdef','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten\nw-abcdef fires at eleven'],
@@ -324,7 +324,7 @@ describe('owner application routing and denial retention',()=>{
   ])('applies %s through %s exactly once at Allow',async(kind,target,route,details)=>{
     const calls:string[]=[];
     const a=await setup({runtime:{apply:card=>{calls.push('runtime:'+card.kind);return {ok:true,value:null};}},clock:{apply:card=>{calls.push('clock:'+card.kind);return {ok:true,value:null};}}});
-    const response=kind==='grant'?a.call('request',{...ask,kind,target,details}):a.role.call('request',caller,{...ask,kind,target,details},'piece-file');
+    const response=a.role.call('request',caller,{...ask,kind,target,details},'piece-file');
     expect(response).toMatchObject({ok:true});if(!response.ok)return;
     const card=response.value as {id:string};
     expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({ok:false});
@@ -492,7 +492,7 @@ describe('cold review authorization regressions',()=>{
     let a:Awaited<ReturnType<typeof setup>>;
     a=await setup({runtime:{apply:((card:any)=>{a.db.prepare('INSERT INTO async_effect VALUES (?)').run(card.id);return Promise.resolve({ok:true,value:null});}) as any}});
     a.db.exec('CREATE TABLE async_effect (id TEXT)');
-    const card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});
+    const card=a.resetCard();
     expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
     expect(a.db.prepare('SELECT * FROM async_effect').all()).toEqual([]);
     expect(load(a.db).approvals[0].state).toBe('pending');
@@ -582,5 +582,23 @@ describe('final cold review scope regressions',()=>{
     a.identity({for:'loren'});expect(a.value('request',ask)).toMatchObject({id:loren.id,state:'allowed'});
     const otherTarget=target.replace('#12@','#99@'),own=a.value('grant',{kind:'merge',target:otherTarget,for:'art'},owner);
     expect(a.value('request',{...ask,target:otherTarget})).not.toMatchObject({id:own.id});
+  });
+});
+
+describe('retired per-agent piece grants',()=>{
+  it.each(['tasks:mark','tasks:mark:read/*','service:mark:read'])('files no card for the retired target %s',async target=>{
+    const a=await setup({runtime:{apply:()=>{throw Error('must not apply');}}});
+    expect(a.call('request',{...ask,kind:'grant',target})).toMatchObject({ok:false,code:'invalid',message:'no longer applies: agent access follows record scope'});
+    expect(a.role.call('request',{who:{agent:'art',where:'h-1'},for:'owner'},{...ask,kind:'grant',target},'retired-piece')).toMatchObject({ok:false,code:'invalid'});
+    expect(load(a.db).approvals).toEqual([]);
+  });
+  it('refuses both answering and spending legacy cards already in a next database',async()=>{
+    let applied=0;const a=await setup({runtime:{apply:()=>{applied++;return {ok:true,value:null};}}});
+    const card={id:'a-01234567',kind:'grant',target:'tasks:mark',what:'Access to Tasks.',why:'Old request.',who:{agent:'art',where:'h-1'},for:'owner',agent:'art',minutes:60,at:'2026-11-12T23:00:00Z',state:'pending' as const};
+    persist(a.db,{...load(a.db),approvals:[card]},a.clock.now());
+    expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'denied'});
+    persist(a.db,{...load(a.db),approvals:[{...card,state:'allowed',decided:card.at,expires:'2026-11-13T01:00:00Z'}]},a.clock.now());
+    expect(a.role.call('use',{who:card.who,for:'owner'},{id:card.id,kind:'grant',target:card.target},'retired-use')).toMatchObject({ok:false,code:'denied'});
+    expect(applied).toBe(0);expect(load(a.db).audit.some(r=>r.event==='use')).toBe(false);
   });
 });

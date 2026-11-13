@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFoundation } from '../../core/app.js';
@@ -54,4 +54,23 @@ it('uses only the explicit map for project scope even when source asserts a proj
   importApprovals(a.db,a.source,now);expect(load(a.db).approvals[0]).not.toHaveProperty('project');
   const b=setup();writeFileSync(join(b.source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:{...receipt,project:'pond'}}}));
   importApprovals(b.db,b.source,now,{projects:{[receipt.id]:'guides'}});expect(load(b.db).approvals[0].project).toBe('guides');
+});
+it('retires only pending legacy agent grants without spending or changing the source',()=>{
+  const a=setup();
+  const pending={id:receipt.id,kind:'grant',target:'tasks:mark:read/*',state:'pending',details:'Original request.',what:receipt.what,why:receipt.why,who,for:'owner',minutes:60,at};
+  const allowed={...receipt,id:'a-89abcdef',kind:'grant',target:'tasks:mark',state:'allowed'};
+  const secret={...receipt,id:'a-fedcba98',kind:'secret-use',target:'api-key',state:'pending'};
+  const source=JSON.stringify({v:1,approvals:{[pending.id]:pending,[allowed.id]:allowed,[secret.id]:secret}});
+  writeFileSync(join(a.source,'approvals.json'),source);
+  expect(()=>importApprovals(a.db,a.source,now,{interrupt:()=>{throw Error('interrupted');}})).toThrow('interrupted');
+  expect(importApprovals(a.db,a.source,now)).toMatchObject({imported:true});
+  const state=load(a.db),retired=state.approvals.find(r=>r.id===pending.id)!;
+  expect(retired).toMatchObject({...pending,state:'withdrawn',withdrawn:at,details:'Original request.\nno longer applies: agent access follows record scope'});
+  expect(retired).not.toHaveProperty('used');expect(retired).not.toHaveProperty('decided');
+  expect(readFileSync(join(a.source,'approvals.json'),'utf8')).toBe(source);
+  expect(state.approvals.find(r=>r.id===allowed.id)).toMatchObject(allowed);
+  expect(state.approvals.find(r=>r.id===secret.id)).toMatchObject(secret);
+  expect(state.audit.filter(r=>r.event==='retire-agent-grant')).toEqual([expect.objectContaining({id:pending.id,reason:'no longer applies: agent access follows record scope'})]);
+  expect(importApprovals(a.db,a.source,now+10000)).toMatchObject({imported:false});
+  expect(load(a.db)).toEqual(state);
 });

@@ -55,6 +55,13 @@ export function readApprovalsImport(from: string, options: { projects?: Record<s
     delete a.project;
     if(project)a.project=project;
     a.agent=a.who.agent;
+    if(a.kind==='grant' && a.state==='pending'){
+      // Source time keeps the pure import projection repeatable for verification.
+      a.state='withdrawn';a.withdrawn=a.at;
+      const reason='no longer applies: agent access follows record scope';
+      a.details=[a.details,reason].filter(Boolean).join('\n');
+      expected.audit.push({at:a.at,event:'retire-agent-grant',id:a.id,kind:a.kind,target:a.target,who:a.who,reason});
+    }
   }
   return { expected, checksum, approvals };
 }

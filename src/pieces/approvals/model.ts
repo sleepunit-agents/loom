@@ -25,7 +25,7 @@ export const samePrincipal = (a: { for?: string; people?: string[] }, p: Princip
 export const serviceOf = (who: Who) => /\(([^()]*)\)$/.exec(who.where)?.[1];
 export const maySpend = (asked: Who, who: Who) => asked.agent === who.agent && (serviceOf(who) === undefined || serviceOf(who) === serviceOf(asked));
 export const pieceKinds = new Set(['local-wake', 'vouch-wake', 'principal-reset', 'box-write-off']);
-export const ownerApplied = new Set(['grant', 'vouch-wake', 'principal-reset', 'box-write-off']);
+export const ownerApplied = new Set(['vouch-wake', 'principal-reset', 'box-write-off']);
 export const pieceSpent = new Set([...ownerApplied, 'host', 'local-wake']);
 export const ownerAnswered = new Set([...ownerApplied, 'host']);
 
