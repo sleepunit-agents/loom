@@ -50,6 +50,7 @@ it('runs the real queue/claim/input/report protocol through the next staging hol
   expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`runtime:input:${job}`},'release').ok).toBe(true);
   const input = await f.post(token,'takeInput',{job});
   expect(input).toEqual({ok:true,value:{job,agent:'art',brief:'private input',needs:[],house:{repo:'/fixture/art',houseFile:'house/house.json'}}});
+  expect(f.store.read('job',job)?.state).toBe('starting');
   expect(await f.post(token,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
   expect(await f.post(token,'reportJob',{job,state:'running'})).toEqual({ok:true,value:{job,state:'running'}});
   expect(await f.post(token,'finishJob',{job,state:'done',exit:0,log:'body replied'})).toEqual({ok:true,value:{job,state:'done'}});
@@ -115,13 +116,24 @@ it('preserves consumed release across restart and refuses changed capabilities b
   const app = await startLoom({home:f.home,clock:f.clock,next:true,stdout:()=>{}});cleanups.push(app.close);
   expect(await app.operations.callAsync('direct',{kind:'runner',id:'a'},'runtime.takeInput',{job:'j'})).toMatchObject({ok:false,code:'conflict'});
 });
-it('rechecks the full payload and hosting after preparation instead of sending stale input', async () => {
+it.each(['hosting','revoked','capabilities','house','policy'] as const)('rechecks %s after preparation instead of sending stale input', async kind => {
   const f = await setup(), token = f.bearer('a');
   expect(await f.post(token,'claimJob',{job:'j'})).toMatchObject({ok:true});
   f.app.db.prepare('INSERT INTO runtime_inputs VALUES (?,?,?)').run('j','private input','[]');
   const finish = f.app.effects!.finish;
   vi.spyOn(f.app.effects!, 'finish').mockImplementation((id,certain)=>{
-    finish(id,certain); f.box({mayHost:[]});
+    finish(id,certain);
+    if(kind==='hosting') f.box({mayHost:[]});
+    if(kind==='revoked') f.box({revokedAt:0});
+    if(kind==='capabilities') f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["gpu"]','j');
+    if(kind==='house') f.app.db.transaction(()=>{
+      const {changedAt:_,...settings}=f.store.read('settings','art')!;
+      f.store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house/house.json'}},f.clock.now());
+    })();
+    if(kind==='policy') f.app.db.transaction(()=>{
+      const {changedAt:_,...job}=f.store.read('job','j')!;
+      f.store.put('job',{...job,member:'jonathan'},f.clock.now());
+    })();
   });
   expect(await f.post(token,'takeInput',{job:'j'})).toMatchObject({ok:false,code:'denied'});
 });
