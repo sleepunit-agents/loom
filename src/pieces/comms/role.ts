@@ -1,5 +1,5 @@
 /** Runtime is in-process and holds this capability; tokens never obtain it. */
-export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; text: string; project?: string }
+export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; generation?: number; text: string; project?: string }
 export type DeliveryReceipt = Omit<Delivery, 'text'>;
 export interface RuntimeDelivery {
  /** Authoritative lookup by stable routing identity. Unknown/errors never authorize replay.
@@ -23,8 +23,10 @@ export interface AgentPost {
 }
 /** Body record movement, distinct from the working heartbeat. Times are epoch milliseconds. */
 export interface BodyAlive { at: number; tokens?: number }
-/** A failed start for one member-message sequence, after runtime accepted it as queued. */
-export type StartNotice = {seq: number; attempt: number; reason?: string; run?: string} &
+/** A failed start for one member-message generation, after runtime accepted it as queued.
+ * start-failed is authoritative: this generation can never subsequently start.
+ * Echo Delivery.generation on every callback; absent means the initial generation (0). */
+export type StartNotice = {seq: number; generation?: number; attempt: number; reason?: string; run?: string} &
  ({kind: 'start-retry'; retryAt: string} | {kind: 'start-failed'});
 export interface DeliveryTrace {
  alive?: BodyAlive;

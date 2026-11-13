@@ -13,11 +13,11 @@ import { draftKey } from '../../web/src/pieces/comms/drafts.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across two windows, retains a device draft, sanitises replies and captures both looks',async()=>{
- const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);let comms!:ReturnType<typeof installComms>;let reply=true;
+ const home=mkdtempSync(join(tmpdir(),'comms-browser-')),clock=new FakeClock(),key=await loadKey(home);const starts:{seq:number;generation?:number}[]=[];let comms!:ReturnType<typeof installComms>;let reply=true;
  const loom=await startLoom({home,clock,authenticate:()=>({viewer:{kind:'member',id:'jonathan'},window:true,valid:()=>true}),install:app=>{
   installFixture(app);
   comms=installComms({...app,clock,key,sharing:fixtureSharing,hold:effect=>effect(),attention:{answer:()=>({ok:true,value:{answered:true}})},runtime:{
-   deliver:async d=>{if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
+   deliver:async d=>{starts.push({seq:d.seq,generation:d.generation});if(!reply)return;await comms.post(d.agent,d.thread,{id:`reply-${d.seq}`,kind:'reply',text:'Fixture reply **received**. [Unsafe](javascript:alert(1)) <script>bad()</script> ![no image](https://example.com/image.png)'});},end:async()=>{},
   }});
  }});
  const first=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'fixturefirstaaaa',text:'Comms fixture message'},'fixture-first',true);
@@ -82,6 +82,13 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`comms-${look}-${width}.png`),fullPage:true,animations:'disabled'});}
+  await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
+  await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
+  await b.getByRole('button',{name:'Send again',exact:true}).click();
+  await expect.poll(()=>starts.filter(d=>d.seq===seq&&d.generation===1).length).toBe(1);
+  await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(0);
+  await comms.startNotice('art',place,{kind:'start-retry',seq,generation:1,attempt:1,retryAt});
+  await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
   comms.status('art',place,'working');
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
   await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);

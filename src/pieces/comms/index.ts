@@ -31,10 +31,17 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const progressed=(t:Thread,seq:number)=>t.working||(t.startedThrough??0)>=seq||!!db.prepare(
   "SELECT 1 FROM comms_messages WHERE thread=? AND seq>? AND (kind IN ('card','reply') OR (kind='error' AND (id LIKE 'notice:no-reply:%' OR id LIKE 'noreply-%'))) LIMIT 1"
  ).get(t.id,seq);
- const settleStart=(r:MessageRow,record:LiveRecord):LiveRecord=>{
+ const settleStart=(r:MessageRow,decoded:LiveRecord):LiveRecord=>{
+  const {retryStart:_,...record}=decoded;
   if(r.kind!=='error'||!/^start:[1-9][0-9]*$/.test(r.id))return record;
   const step=record.step as Record<string,unknown>|undefined,t=thread(db,r.thread);
-  if(!t||step?.error!=='start-retry'||!progressed(t,Number(r.id.slice(6))))return record;
+  if(!t)return record;
+  const seq=Number(r.id.slice(6));
+  const source=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(r.thread,seq) as MessageRow|undefined;
+  const generation=source?JSON.parse(source.record).generation??0:undefined;
+  if(step?.error==='start-failed'&&source?.words&&source.at+days*day>clock.now()&&t.archived===null&&
+   !progressed(t,seq)&&generation===(step.generation??0))return {...record,retryStart:{seq,generation}};
+  if(step?.error!=='start-retry'||!progressed(t,seq))return record;
   const name=t.agent.charAt(0).toUpperCase()+t.agent.slice(1);
   return {...record,text:`${name} couldn't start at first.`,step:{...step,settled:true}};
  };
@@ -165,12 +172,13 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    };
    checked();
    const state=JSON.parse(row.record);
+   const attempt=state.generation?{generation:state.generation}:{};
    // Fresh persisted rows and staging refusals have not reached runtime. Every
    // other retry must fence prior acceptance while owning the same pending slot.
    if(state.delivery!=='held' && state.attempted!==false) {
     if(!o.runtime.receipt)return;
     let receipt:'accepted'|'not-accepted'|'unknown';
-    try {receipt=await o.runtime.receipt({thread:place,agent,member:original.member,conversation:original.conversation,seq,...(original.project?{project:original.project}:{})});}
+    try {receipt=await o.runtime.receipt({thread:place,agent,member:original.member,conversation:original.conversation,seq,...attempt,...(original.project?{project:original.project}:{})});}
     catch {return;}
     checked();
     if(receipt==='accepted'){settle(place,seq,'delivered',row);return;}
@@ -188,8 +196,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow;
     snapshot=row;
     runtimeEntered=true;
-    await o.runtime.deliver({thread:place,agent,member:t.member,conversation:t.conversation,seq,text:words.text,...(t.project?{project:t.project}:{})});
-   },{id:`comms-deliver:${place}:${seq}`,kind:'body-start',title:'Deliver a Comms message'});
+    await o.runtime.deliver({thread:place,agent,member:t.member,conversation:t.conversation,seq,...attempt,text:words.text,...(t.project?{project:t.project}:{})});
+   },{id:`comms-deliver:${place}:${seq}${state.generation?`:g${state.generation}`:''}`,kind:'body-start',title:'Deliver a Comms message'});
    settle(place,seq,'delivered',row);
   } catch(error) { if(snapshot)settle(place,seq,error instanceof HeldEffect&&!runtimeEntered?'held':'failed',snapshot); }
 
@@ -302,6 +310,34 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   // Only an authoritative runtime fence may authorize another delivery.
   after:(_i,r)=>{if(r.ok&&!closed)void reconcileDeliveries();},
  }));
+ operations.register(operation({name:'comms.retryStart',doors:['socket'],windowOnly:true,write:true,
+  input:target.extend({seq:z.number().int().positive(),generation:z.number().int().min(0).max(999)}),output:ack,may:(v,i)=>writable(v,i),
+  prepare:async(i)=>{
+   const source=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(i.thread,i.seq) as MessageRow|undefined;
+   const notice=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='error' AND id=?").get(i.thread,`start:${i.seq}`) as MessageRow|undefined;
+   if(!source?.words||!notice?.words)return fail('conflict','Start failure unavailable');
+   const original=thread(db,i.thread)!;
+   const payload=JSON.parse(await key.open(notice.words));
+   return {source,notice,original,payload};
+  },
+  run(ctx,i,raw){
+   const {source,notice,original,payload}=raw as {source:MessageRow;notice:MessageRow;original:Thread;payload:{step?:{error?:string;generation?:number}}};
+   const t=thread(db,i.thread)!;
+   const current=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(i.thread,i.seq);
+   const currentNotice=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(i.thread,notice.seq);
+   if(closed||t.archived!==null||t.member!==original.member||t.conversation!==original.conversation||t.project!==original.project||
+    JSON.stringify(current)!==JSON.stringify(source)||JSON.stringify(currentNotice)!==JSON.stringify(notice)||
+    source.at+days*day<=ctx.now||notice.at+days*day<=ctx.now||progressed(t,i.seq)||pending.has(messageId(i.thread,i.seq))||
+    (JSON.parse(source.record).generation??0)!==i.generation||payload.step?.error!=='start-failed'||(payload.step.generation??0)!==i.generation)
+    return fail('conflict','Start failure changed; load the thread again');
+   // Only an authoritative final-start failure authorizes a NEW generation. Lost
+   // acceptance for that generation still uses the ordinary receipt fence.
+   db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(
+    JSON.stringify({...JSON.parse(source.record),generation:i.generation+1,delivery:'sending',attempted:false}),i.thread,i.seq);
+   ctx.changed('message',messageId(i.thread,i.seq));ctx.changed('message',messageId(i.thread,notice.seq));
+   return {thread:i.thread,seq:i.seq};
+  },after:(i,r)=>sendAfter(i,r),
+ }));
  operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async (i,ctx)=>{
    const original=thread(db,i.thread);
@@ -356,7 +392,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   return result;
  }
  async function startNotice(agent:string,place:string,raw:StartNotice) {
-  const common={seq:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),attempt:z.number().int().min(1).max(1000),
+  const common={generation:z.number().int().min(0).max(1000).optional(),seq:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),attempt:z.number().int().min(1).max(1000),
    reason:z.string().min(1).max(200).refine(s=>!/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s)).optional(),
    run:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional()};
   const n=z.discriminatedUnion('kind',[
@@ -371,6 +407,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const before=available();
   const source=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,n.seq,before.member) as MessageRow|undefined;
   if(!source||!source.words||source.at+days*day<=clock.now())return fail('unavailable','Message unavailable');
+  const generation=JSON.parse(source.record).generation??0;
+  if((n.generation??0)!==generation)return {seq:null};
   const noticeId=`start:${n.seq}`;
   const readNotice=()=>db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='error' AND id=?").get(place,noticeId) as MessageRow|undefined;
   const old=readNotice();
@@ -387,13 +425,13 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   // Attempt, error reason and run stay inside ciphertext, including retry arbitration.
   const previous=old?JSON.parse(await key.open(old.words!)):undefined;
   if(progressed(recheck(),n.seq))return {seq:old?.seq??null};
-  if(previous&&(previous.step?.error!=='start-retry'||n.attempt<previous.step.attempt||
+  if(previous&&(previous.step?.generation??0)===generation&&(previous.step?.error!=='start-retry'||n.attempt<previous.step.attempt||
    (n.attempt===previous.step.attempt&&n.kind==='start-retry')))return {seq:old!.seq};
   const name=agent.charAt(0).toUpperCase()+agent.slice(1);
   const payload={text:n.kind==='start-retry'
    ? n.attempt===1?`${name} couldn't start; retrying.`:`${name} couldn't start (${n.attempt} tries so far); retrying.`
    : n.attempt===1?`${name} couldn't start.`:`${name} couldn't start after ${n.attempt} tries.`,
-   run:n.run??previous?.run,step:{error:n.kind,attempt:n.attempt,
+   run:n.run??previous?.run,step:{error:n.kind,attempt:n.attempt,...(generation?{generation}:{}),
     ...(n.kind==='start-retry'?{retry_at:new Date(n.retryAt).toISOString()}:{}),
     ...(n.reason??previous?.step?.reason?{reason:n.reason??previous.step.reason}:{})}};
   const encoded=JSON.stringify(payload),words=await key.seal(encoded);
