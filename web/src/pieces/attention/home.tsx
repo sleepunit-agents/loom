@@ -1,7 +1,7 @@
 import './home.css';
 import { useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
-import { Button, Empty, Error, List, Loading, Row } from '../../kit';
+import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
@@ -38,7 +38,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
   return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
-    <div className="desk-home-content"><div className="desk-home-title"><h1>Your desk</h1><Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button></div>
+    <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
         <section aria-label="Needs you" className="desk-home-needs grid min-w-0 gap-2">
           {asks.status !== 'live' ? <Unavailable status={asks.status} label="asks" /> : <>
@@ -93,6 +93,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
           })}
         </div>}
       </div>
-    </div>
+    </AppFrame></div>
   </div>;
 }

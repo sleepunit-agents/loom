@@ -1,8 +1,6 @@
 /* Home uses the same canvas, accents and cut corners as the desk frames. */
 .desk-home{container-type:inline-size;color:var(--v-text)}
 .desk-home-content{display:grid;gap:16px;padding:4px 0 16px}
-.desk-home-title{display:flex;align-items:center;justify-content:space-between;gap:16px;font:500 11px var(--font-data,monospace);letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
-.desk-home-title h1{font:inherit}
 .desk-home-needs{padding:14px 18px;border-left:3px solid var(--v-blue);background:color-mix(in srgb,var(--v-blue) 6%,var(--v-canvas));backdrop-filter:blur(8px)}
 .desk-home-needs h2{font:600 12px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-blue)}
 .desk-home-needs [aria-label="First three asks"]{display:flex;flex-wrap:wrap;gap:8px;border:0;background:none}
