@@ -19,3 +19,7 @@ TREE sha256:43ae6b18774dbae5940eb5dc01793d8a8a00fdca5722c6aef4f72dbf464f6013. Sa
 ## Validation
 
 Before implementation all three new real-next-composition regressions failed (uncanonicalized aliases and unknown-name acceptance). After implementation 180 affected tests/16files and root TypeScript/diff checks passed. Tests cover real next composition, same alias across two agents, live archive/venue changes, ambiguous/absent venue matches, row/receipt/notification invariance on invalid references, original viewer and typed refusal forwarding, and committed retry stability. No UI changes or local browser suite. CI verified separately on the PR's final head before merge.
+
+## Author correction after review
+
+The superseded implementation CI shard3 (run43408765689) caught an architecture seam violation missed locally: the type-only import of Mind's projects-model bypassed its public role.ts. Replaced only that erased type with a narrow local ProjectReference projection; runtime behavior is unchanged and the only cross-piece import is now Mind's role. Added the existing architecture contract suite to affected verification: 195 tests/17files plus root TypeScript and diff checks pass. This is a real CI finding, not an unrelated failure or a reason to weaken the gate. No additional cold round for an erased-type-only correction after CLEAR.
