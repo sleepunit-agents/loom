@@ -5,9 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
-import { HouseholdDatabase } from '../../core/household/document.js';
 import { signin, hash } from '../../core/signin/index.js';
-import { fixtureSharing } from '../../fixture.js';
+import { fixture, fixtureSharing } from '../../fixture.js';
 import { runtimeStore } from './store.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -15,11 +14,11 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'runtime-runner-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+  fixture(home);
   const clock = new FakeClock();
   const app = await startLoom({ home, clock, next: true, sharing: () => ({ ...fixtureSharing(), services: { keyholder: { types: ['runtime.box'], operations: ['runtime.hearBox'] } } }) }); cleanups.push(app.close);
   const store = runtimeStore(app.db), s = signin(app);
   app.db.transaction(() => {
-    new HouseholdDatabase(app.db).replace(home, { v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] });
     s.tokens.replace({ v: 1, tokens: [] }, {});
     for (const id of ['a', 'b', 'gone']) store.put('box', {
       id, name: 'shared-name', owner: 'jonathan', local: false, mayHost: ['art'], lentTo: ['mark'],
@@ -73,6 +72,11 @@ it('rejects identity, configuration and time injection plus malformed facts befo
   for (const input of [{ box: 'b' }, { owner: 'pollock' }, { lastSeen: 9 }, { labels: [] }, { facts: ['BadKey'] }, { facts: Array(33).fill('cap') }])
     expect(f.call(input)).toMatchObject({ ok: false, code: 'invalid' });
   expect(f.store.read('box', 'a')).toEqual(before);
+});
+it('accepts exactly 32 distinct facts', async () => {
+  const f = await setup(), facts = Array.from({ length: 32 }, (_, i) => `cap:${i}`);
+  expect(f.call({ facts })).toMatchObject({ ok: true });
+  expect(f.store.read('box', 'a')?.facts).toEqual(facts);
 });
 it('commits only changed reports, preserves omitted facts, clears explicit facts and replays receipts without freshening liveness', async () => {
   const f = await setup(), changed = vi.spyOn(f.app.live, 'changed');
