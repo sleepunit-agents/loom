@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Foundation } from '../app.js';
 import { OperationError, type Operation } from '../operations/index.js';
 import { HouseholdRows } from '../household/rows.js';
-import { hash, signin } from './index.js';
+import { hash, signin, sessionExpiresAt } from './index.js';
 import { cleanLabel } from '../../ui/sessions.js';
 const label=z.string().trim().min(1).max(120).regex(/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u);
 const isAgentSession=(s:{agent?:true;device?:string})=>s.agent===true||/^HeadlessChrome\b/.test(s.device??'');
@@ -23,10 +23,10 @@ export function installAccessAdmin(app:Foundation) {
   }
   const listTokens=()=>s.tokens.list().map(safeToken);
   const listSessions=()=>{
-    const tokens=s.tokens.list(),now=s.now();
+    const tokens=s.tokens.list(),now=app.operations.clock.now();
     return Object.entries(s.sessions.read().sessions).map(([id,x])=>{
       const t=tokens.find(t=>t.sha256===x.secret),resolved=s.token(x.secret),agent=isAgentSession(x);
-      return {ref:id.slice(0,16),issuedAt:x.issuedAt,expiresAt:Math.min((x.issuedAt+(agent?6*3600:30*86400))*1000,t?.expires?Date.parse(t.expires):Infinity),...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.device?{device:x.device}:{}),...(x.label?{label:x.label}:{}),...(x.via?{via:x.via}:{}),agent,...(t?{token:t.label}:{}),...(resolved?.viewer.kind==='member'?{member:resolved.viewer.id}:{}),ended:!resolved||resolved.viewer.kind!=='member'||now>=x.issuedAt+(agent?6*3600:30*86400)};
+      return {ref:id.slice(0,16),issuedAt:x.issuedAt,expiresAt:Math.min(sessionExpiresAt(x),t?.expires?Date.parse(t.expires):Infinity),...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.device?{device:x.device}:{}),...(x.label?{label:x.label}:{}),...(x.via?{via:x.via}:{}),agent,...(t?{token:t.label}:{}),...(resolved?.viewer.kind==='member'?{member:resolved.viewer.id}:{}),ended:!resolved||resolved.viewer.kind!=='member'||now>=sessionExpiresAt(x)};
     }).sort((a,b)=>(b.seenAt??b.issuedAt)-(a.seenAt??a.issuedAt));
   };
   register('token',{name:'token.list',input:z.object({}).strict(),run:listTokens});

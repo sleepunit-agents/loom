@@ -16,6 +16,7 @@
     "loom-approvals-client": "dist/approvals-client.js",
     "loom-wake-client": "dist/wake-client.js",
     "loom-token": "dist/token-client.js",
+    "loom-account": "dist/account-client.js",
     "loom-sessions": "dist/sessions-client.js"
   },
   "files": [

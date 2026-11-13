@@ -1,4 +1,5 @@
 /** Generated JSON argument binding only; schemas, policy and transitions stay in the daemon. */
+import { accountCommands, accountResponses } from '../core/signin/account-commands.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -6,9 +7,9 @@ import { accessCommands, accessResponses } from '../core/signin/commands.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
-export async function runAccessClient(piece: 'token'|'sessions', argv: string[], io: IOStreams, runtime: ClientRuntime & { now?: () => number } = defaults): Promise<number> {
-  const commands = accessCommands(piece);
-  const responses: Record<string, z.ZodType> = accessResponses[piece];
+export async function runAccessClient(piece: 'token'|'sessions'|'account', argv: string[], io: IOStreams, runtime: ClientRuntime & { now?: () => number } = defaults): Promise<number> {
+  const commands = piece==='account'?accountCommands():accessCommands(piece);
+  const responses: Record<string, z.ZodType> = piece==='account'?accountResponses:accessResponses[piece];
   const ephemeral = piece === 'token' && argv[0] === 'create';
   const help = `usage: loom-${piece} <${commands.map(c => c.name).join('|')}> [json-object]\n`;
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') { io.stdout(help); return 0; }

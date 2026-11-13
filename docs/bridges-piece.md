@@ -618,3 +618,27 @@ registration remain required. Nothing starts a socket or reads an old store here
 | Bot-token identity/configuration | `discordApi.authenticate`; root lifetime binding still required |
 | Channel/thread-parent lookup | Fresh `discordApi.channel`, safe parent label; raw drain still required |
 | DM sender/place inference | Fresh one-recipient DM match; runtime admission still required |
+
+## Discord raw receipt normalization
+
+`discordDrain` serializes bounded pages of the epoch-bound private inbox through
+fresh `discordApi.channel` evidence and `discordMessage` into `Bridges.receive`.
+Only after that normalized durable commit resolves are raw words erased; replay
+after a failed consume uses the same engine deduplication key. Definite unsupported
+payloads and platform refusals become permanent raw tombstones. Transient metadata
+or commit failures retry after five seconds, without changing receipt time. Raw
+receipts expire after more than one hour, checked before starting an attempt;
+an attempt started within the hour may finish. Pages hold at most 64 receipts and
+advance past waiting prefixes before wrapping, so one failure cannot starve later
+receipts. Current configured bot roles resolve explicit managed-role summons.
+
+Setup revision, public credential generation, composition lifetime and staging
+are rechecked after metadata and normalized commit waits. A changed binding
+permanently stops that drain; staging retains words until release. Close cancels
+retry timers and awaits in-flight work. The injected metadata role must be the
+fresh service-scoped REST client; it grants no runtime admission.
+
+This is an unregistered building block. Authentication, Gateway/store/drain
+composition, daemon startup/release hooks and real holder-generation sources are
+still required before Discord activation. Peer/webhook identity and legacy
+receipt disposition remain in the earlier intake inventory on t-2210.

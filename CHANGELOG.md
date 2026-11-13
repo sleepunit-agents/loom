@@ -12,8 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
-
+- Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
@@ -35,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
+
+- Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
@@ -1095,6 +1096,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
 
 - Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
+
+- Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
 
 ## [0.16.1] - 2026-10-25
 

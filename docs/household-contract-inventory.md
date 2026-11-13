@@ -1,6 +1,6 @@
 # Household replacement inventory
 
-This is an implementation inventory for t-2203, checked against main `b909cd0`.
+This is an implementation inventory for t-2203, checked against main `b462c82` plus this Account implementation.
 It records existing behavior and gaps; it does not change the contract in
 [web-foundation.md](specs/web-foundation.md#moving-there). **Pending** means
 there is no complete replacement yet, not that the behavior has been dropped.
@@ -54,7 +54,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | --- | --- |
 | `member-set`, `member-remove` | `household.setMember`, `household.removeMember`; owner operations and Setup member controls are implemented |
 | `add-agent` | `household.addAgent` covers registration only; `household.bootstrapAgent` creates context/creed/rules; Setup selects first-token creation and shows an explicit next-mode harness snippet. Appearance remains **pending** |
-| `create-token`, `revoke-token` on agent Setup | `token.create` / `token.revoke` in `/p/setup-preview`; single-send mint and confirmed optional passkey/device cascade; first-token bootstrap still pending |
+| `create-token`, `revoke-token` on agent Setup | `token.create` / `token.revoke` in `/p/setup-preview`; single-send mint and confirmed optional passkey/device cascade; newly created agent selected for deliberate first-token mint |
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
 | `about-set`, `about-ask` | **Pending** household profile editing and regeneration request. Explicit offline `describe_self` refuses app access |
 | `identity-set`, `identity-section-set`, `identity-section-add` | **Pending** Setup/identity behavior reconciliation; no next page editor. The household spec describes Setup identity as read-only |
@@ -63,8 +63,8 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
 | GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |
 | GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; fresh context bootstrap via `household.bootstrapAgent` and Setup |
-| GET `/account`, GET `/passkeys` | **Pending** complete Account administration screen; the new sign-in shell is not that screen |
-| `passkey-remove` (including descendants), `session-revoke` | **Pending** Account administration operations/records; passkey login/registration and own-session logout already exist |
+| GET `/account`, GET `/passkeys` | `/p/account-preview`: own passkey and browser metadata, named registration, confirmed removal/session end and this-device logout; notification/device links remain **pending** |
+| `passkey-remove` (including descendants), `session-revoke` | `account.removePasskey`, `account.revokeSession`, `account.read` and member-private `account.self`; Account controls and generated `loom-account` client. Cascade follows same-member digest ancestry; shared legacy key tokens are retained |
 | `signin-link`, `member-link` | `signin.link` and the explicit next link client cover owner link issuance; **pending** Account/Setup UI. Browser sessions cannot mint links through its HTTP door |
 | GET/POST `/login/CODE` | Existing confirmation-only GET and atomic POST spend/session creation |
 | POST `/logout` | Existing same-origin, CSRF-protected own-session logout and access refresh |

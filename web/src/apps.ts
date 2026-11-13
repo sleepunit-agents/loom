@@ -1,3 +1,4 @@
+import { accountApp } from './pieces/account/registration';
 import { settingsApp } from './pieces/settings/registration';
 import { setupApp } from './pieces/household/registration';
 import { activityApp } from './pieces/activity/registration';
@@ -30,3 +31,5 @@ apps.push(activityApp);
 
 apps.push(settingsApp);
 apps.push(setupApp);
+
+apps.push(accountApp);
