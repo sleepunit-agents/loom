@@ -25,7 +25,7 @@ const draw=async(element:ReactElement)=>{await act(async()=>{tree=create(element
 const text=()=>JSON.stringify(tree!.toJSON());
 const words=(n:Node|string):string=>typeof n==='string'?n:(n.children??[]).map(words).join('');
 const buttons=(label:string)=>tree!.root.findAllByType('button').filter((b:Node)=>words(b)===label);
-const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick();});
+const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick({preventDefault(){}});});
 async function publish(snapshot:Snapshot<Ask>) { await act(async()=>{f.snapshot=snapshot;f.listeners.forEach(fn=>fn());}); }
 beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
@@ -115,9 +115,23 @@ it('keeps one pending write above reader navigation and never claims delivery',a
   expect(text()).toContain('Delivery to the agent is not connected');
   await click('Yes');await fresh.finish({ok:true,value:first});
   const row=tree!.root.findAllByProps({'data-split-row':''}).find((n:Node)=>words(n).includes('Another question'))!;
-  await act(async()=>row.props.onClick());await other.finish({ok:true,value:second});
-  expect(tree!.root.findByType('fieldset').props.disabled).toBe(true);
-  await click('Yes');expect(f.call.mock.calls.filter(([op])=>op==='attention.answer')).toHaveLength(1);
+  await act(async()=>row.props.onClick());
+  expect(buttons('Yes')).toHaveLength(0);expect(buttons('Check again')[0].props.disabled).toBe(true);
+  expect(f.call).toHaveBeenCalledTimes(3);
   await write.finish({ok:true,value:{...first,state:'answered'}});
+  await click('Check again');await other.finish({ok:true,value:second});
   expect(tree!.root.findByType('fieldset').props.disabled).toBe(false);
+  expect(f.call.mock.calls.filter(([op])=>op==='attention.answer')).toHaveLength(1);
+});
+
+it('serializes display checks and does not revive them when history remounts a reader',async()=>{
+  const shown=request<Ask>();f.call.mockReturnValueOnce(shown.call);
+  f.snapshot={records:[ask(),ask('ask-2')],status:'live'};
+  await draw(h(InboxApp));
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());
+  expect(buttons('Check again')[0].props.disabled).toBe(true);await click('Check again');expect(f.call).toHaveBeenCalledTimes(1);
+  await act(async()=>tree!.update(h<{path?:string}>(InboxApp,{path:'/p/inbox-preview'})));
+  await act(async()=>tree!.update(h<{path?:string}>(InboxApp,{path:'/p/inbox-preview/ask/ask-1'})));
+  await shown.finish({ok:true,value:ask()});
+  expect(buttons('Yes')).toHaveLength(0);expect(buttons('Check again')[0].props.disabled).toBe(false);
 });

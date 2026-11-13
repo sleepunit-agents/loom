@@ -19,3 +19,13 @@ Frozen 83ef55b89ba8c87a4051fcfa7c213a9d8aae1e26 in `/home/art/scratch/attention-
 - Spec MAJOR, actionable: full-reader regression asserts authored references, recorded answer words, actor, CT time and resolution.
 
 Runtime delivery, optional public words on yes/no, private encrypted replies, Home and production composition remain required on t-2205 and docs/attention-piece.md. This preview explicitly labels answers as recorded and does not claim that they have reached an agent.
+
+## Round 2 — BLOCKING, folded
+
+Frozen c5e4d6c41dae6646f8031345db7fbfc687abbda1 in `/home/art/scratch/attention-inbox-review/round-2/tree`, excluding this ledger from archive and diff; TREE sha256:5b59499f726e627c56d4c7c2e56ffe1027918c5b38ae347794d4bf1d1610b033. Reply beside tree.
+
+- Standards NIT, actionable: bundled lock/busy/setBusy as Guard.
+- Spec CRITICAL, actionable: display reads now acquire the same shared guard. Check again cannot replay a pending display read; opening another row during a pending answer starts no new read. Regression covers no extra call and recovery when the original write settles.
+- Spec CRITICAL, actionable: an opening confirmation is consumed on the reader's first mount, so history departure/return cannot reuse it. Regression leaves the reader through a controlled path change, remounts it, then completes the old display read and proves no answer controls appear.
+
+39 affected tests across component, backend and architecture pass. The third round is the final permitted review round; no fourth.
