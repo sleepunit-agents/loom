@@ -68,3 +68,8 @@ it.each(['discord','slack'] as const)('%s reauthorizes after a pending holder be
   const result=expect(pending).rejects.toThrow(/^Bridge reply attempt uncertain$/);
   await started.promise;allowed=false;finish.resolve();await result;expect(f.request).not.toHaveBeenCalled();
 });
+
+it.each(['discord','slack'] as const)('%s rejects an otherwise valid receipt for a different channel',async platform=>{
+  const f=fixture(platform);f.request.mockResolvedValueOnce(Response.json(platform==='discord'?{id:'400',channel_id:'301'}:{ok:true,channel:'D2',ts:'1794503533.000001'}));
+  await expect(f.adapter.send(v(platform),{channel:m(platform).channel,dm:false},'hello','reply',async()=>true)).rejects.toThrow(/^Bridge reply attempt uncertain$/);expect(f.request).toHaveBeenCalledOnce();
+});

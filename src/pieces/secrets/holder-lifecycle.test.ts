@@ -317,6 +317,9 @@ it('runs durable bridge inspection and split sends on the persistent holder, hou
     expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('partial')).toEqual({state:'uncertain'});await engine.flush();expect(posts).toHaveLength(3);
     revoke=false;expireAt=clock.now()+1000;admission=0;expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE',expiresAt:expireAt}).ok).toBe(true);
     engine.reply({id:'expiry',incomingId:deliveries[0],text:'must not post after final admission expiry'});await engine.flush();expect(admission).toBe(3);expect(posts).toHaveLength(3);expect(app.db.prepare('SELECT state FROM bridges_outbox WHERE id=?').get('expiry')).toEqual({state:'uncertain'});
+    // Expiry also ends inspected intake while runtime admission is pending.
+    expireAt=clock.now()+1000;admission=2;expect(op('secrets.grantService',{service:'bridges',name:'BRIDGE',expiresAt:expireAt}).ok).toBe(true);
+    await engine.receive(venue.id,{id:'601',channel:'400',user:'300',dm:false,at:'2026-11-13T18:01:00Z',text:'do not deliver after expiry',mentions:[]});await engine.flush();expect(deliveries).toHaveLength(1);expect(app.db.prepare("SELECT count(*) AS n FROM bridges_inbox WHERE state='pending'").get()).toEqual({n:1});
     for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(sentinel);
   } finally {await engine.close();}
 });

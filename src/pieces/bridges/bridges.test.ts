@@ -831,3 +831,20 @@ it('does not deliver an inspection lifetime invalidated during runtime admission
   expect(f.deliveries.size).toBe(0);expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
   f.runtime.admit=async()=> 'allow';f.clock.advance(5000);await f.engine.flush();expect(f.deliveries.size).toBe(1);
 });
+
+it.each(['deliver','stop'] as const)('does not consume a deferred runtime %s result after lifetime/setup/shutdown invalidation',async phase=>{
+  for(const change of ['lifetime','setup','shutdown'] as const) {
+    const f=await fixture(),started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let active=true;
+    f.adapter.current=()=>()=>active;
+    f.runtime.deliver=async input=>{started.resolve();await finish.promise;f.deliveries.set(input.id,input);return 'delivered';};
+    f.runtime.stop=async input=>{started.resolve();await finish.promise;f.stops.push(input);};
+    await f.engine.receive(f.venue.id,f.message({text:phase==='stop'?'cancel':'hello'}));await started.promise;
+    let closing:Promise<void>|undefined;
+    if(change==='lifetime')active=false;
+    else if(change==='setup')expect(f.op('putVenues',{...f.venue,ignore:['400']}).ok).toBe(true);
+    else closing=f.engine.close();
+    finish.resolve();if(closing)await closing;else for(let n=0;n<100;n++)await Promise.resolve();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+    if(change!=='shutdown') {active=true;f.clock.advance(5000);await f.engine.flush();expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'delivered'});if(phase==='deliver')expect(f.deliveries.size).toBe(1);}
+  }
+});

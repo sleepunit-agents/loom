@@ -28,7 +28,7 @@ export function venueAdapters(secrets:SecretUseAuthority, options:{
   const request=options.request??fetch;
   function lease(v:Venue) {
     const marker=options.lifetime(v);
-    return ()=>marker!==undefined && marker===options.lifetime(v) && options.beforeRead(v);
+    return ()=>marker!==undefined && marker===options.lifetime(v) && secrets.mayUse(v.tokenSecret) && options.beforeRead(v);
   }
   async function inspect(input:Venue,inputMessage:Message):Promise<Inspection> {
     const v=structuredClone(input),m=structuredClone(inputMessage),current=lease(v);

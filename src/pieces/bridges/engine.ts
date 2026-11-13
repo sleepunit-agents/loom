@@ -184,9 +184,11 @@ export class Bridges implements BridgesRole {
               if (admitted === 'allow') {
                 if (!message.bot && isStop(message.text)) {
                   await this.runtime.stop({agent:v.agent,venue:key.venue,person,id:row.id});
+                  if(!current() || !this.setupUnchanged(v,message,route,revision)){this.waitIntake(row);continue;}
                   state='delivered';
                 } else {
                   const outcome = await this.runtime.deliver({id:row.id,key,person,text:message.text,at,label:message.label,address:{channel:message.channel,thread:message.thread,dm:message.dm,group:message.group},route});
+                  if(!current() || !this.setupUnchanged(v,message,route,revision)){this.waitIntake(row);continue;}
                   if (outcome === 'retry') { this.waitIntake(row); continue; }
                   if (outcome === 'refused') { state='dropped'; reason='runtime refused'; }
                   else if (outcome !== 'delivered') { state='held'; reason='runtime delivery held'; }
