@@ -42,6 +42,11 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
   may:v=>mayAct(v,{type:'change'},sharing(),'household','changes.refresh'),
   run(ctx){db.prepare('INSERT INTO changes_jobs(id,due) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET due=excluded.due').run(ctx.now);ctx.changed('change-sync','status');options.onRefresh?.();return {message:'asked for a read'};}
  }));
+ operations.register(operation({name:'changes.confirm',input:z.object({id:z.string(),head:z.string()}),output:z.object({open:z.boolean(),person:z.string().optional()}),
+  may:(v,input)=>{const c=loadChanges(db).find(c=>c.id===input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.confirm');},
+  run(ctx,input){const c=loadChanges(db).find(c=>c.id===input.id)!;const rule=c.agent?options.approvals?.rule(ctx.viewer,c.agent,targetOf(c)):undefined;return {open:!!rule&&c.head.id===input.head&&/^[0-9a-f]{40}$/.test(c.head.id)&&waitsOn(c,rule).group==='you',...(rule?.for?{person:rule.for.slug}:{})};}
+ }));
+ live.register({name:'change-sync',ids:()=>['status'],read(_id,v){if(!maySee(v,{type:'change'},sharing())) return;const row=db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get() as {value:string}|undefined;return {id:'status',...(row?JSON.parse(row.value):{at:null,error:false}),available:!!row};},inScope:()=>true});
  operations.register(operation({name:'changes.answer',write:true,input:z.object({id:z.string(),head:z.string().regex(/^[0-9a-f]{40}$/),action:z.enum(['yes','not-yet','always']),person:z.string().optional()}),output:z.unknown(),
   may:(v,input)=>{const c=loadChanges(db).find(c=>c.id===input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.answer')&&mayAct(v,scope(c),sharing(),'answer-person','changes.answer');},
   run(ctx,input){
@@ -60,5 +65,6 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
   }
  }));
  live.register({name:'change',ids:()=>loadChanges(db).map(c=>c.id),read(id,v){const c=loadChanges(db).find(c=>c.id===id);return c&&see(v,c)?decorate(c,v):undefined;},inScope:(r,parent,now)=>(parent===undefined||r.project===parent)&&active(r as unknown as Change,now),expires:r=>r.state==='open'?undefined:Date.parse(String(r.closed))+week});
+ live.observe(changes=>{if(changes.some(c=>c.type==='task'||c.type==='approval')) live.changed(loadChanges(db).map(c=>({type:'change',id:c.id})));});
  return { decorate };
 }
