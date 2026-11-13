@@ -2,6 +2,7 @@ import { useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { call, useRecords } from '../../data';
 import { AppFrame, Button, Input, Empty, Error, Loading } from '../../kit';
 import AccessAdmin from './access';
+import BootstrapAgent, { createdAgent } from './bootstrap';
 import { accountInput, memberInput, mutation, idle, frozen, type Household, type Project } from './model';
 const noop = () => () => {};
 function CheckList({ name, choices, selected = [] }: { name: string; choices: string[]; selected?: string[] }) {
@@ -28,7 +29,8 @@ export default function SetupApp({ go = () => {}, active = true }: { path?: stri
       {feed.status === 'loading' ? <Loading label="Opening household…" /> : feed.status === 'denied' ? <Error text="Household setup is only available to household owners." /> : !h ? <Empty title="Household setup is unavailable" text="Sign in as a household owner and check the connection." /> : <>
         {feed.status !== 'live' && <Error text="Connection lost. Changes are disabled until the household reconnects." />}
         {held.request && <section aria-label="Last setup change" className="grid gap-2" aria-live="polite"><p>{held.label}</p>{state.pending ? <Loading label={state.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} /> : state.result?.ok ? <p role="status">Saved</p> : state.result && <><Error title="Couldn’t save" text={`${state.result.code}: ${state.result.message}`} />{state.result.code === 'unavailable' && <><p>The result is uncertain. Retry this change before making another.</p><Button disabled={feed.status !== 'live'} onClick={() => held.request?.retry?.()}>Retry this change</Button></>}</>}</section>}
-        <AccessAdmin active={active} />
+        <BootstrapAgent enabled={enabled && active} />
+        <AccessAdmin active={active} firstAgent={held.label?.startsWith('Create agent ') && state.result?.ok ? createdAgent(state.result.value)?.agent : undefined} />
         <section className="grid gap-3"><h2 className="text-xl font-semibold">Agents</h2><p>Default agent: {h.defaultAgent}</p>
           {h.agents.map(agent => <section key={agent} className="grid min-w-0 gap-2"><h3 className="font-semibold">{agent}</h3>{form(`Save accounts for ${agent}`, 'household.setAgentAccounts', data => accountInput(data, agent), <label key={(h.agentAccounts[agent]?.github ?? []).join(',')} className="grid gap-1">GitHub accounts<Input name="github" defaultValue={(h.agentAccounts[agent]?.github ?? []).join(', ')} maxLength={4000} /><span className="text-sm text-muted-foreground">Comma-separated logins used for attribution. These do not grant access.</span></label>)}</section>)}
           {form('Register existing agent', 'household.addAgent', data => ({ agent: data.get('agent') }), <><p>Register a context already prepared in the household’s agents directory.</p><label className="grid gap-1">Agent name<Input name="agent" required pattern="[a-z][a-z0-9-]*" maxLength={40} /></label><p className="text-sm text-muted-foreground">This does not create an identity or a first token.</p></>)}

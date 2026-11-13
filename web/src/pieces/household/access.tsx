@@ -14,7 +14,7 @@ export function tokenInput(data: FormData) {
     ...(role === 'owner' ? { member: String(data.get('member') ?? '') } : role === 'agent' ? { agent: String(data.get('agent') ?? '') } : { principal: String(data.get('principal') ?? '') }),
     ...(expires ? { expires } : {}) };
 }
-export default function AccessAdmin({ active = true }: { active?: boolean }) {
+export default function AccessAdmin({ active = true, firstAgent }: { active?: boolean; firstAgent?: string }) {
   const feed = useRecords<Admin>('signin.admin'), household = useRecords<Household>('household.sharing');
   const held = useSyncExternalStore(mutation.subscribe, mutation.getSnapshot);
   const change = useSyncExternalStore(held.request?.subscribe ?? noop, held.request?.getSnapshot ?? (() => idle));
@@ -22,6 +22,7 @@ export default function AccessAdmin({ active = true }: { active?: boolean }) {
   const result = useSyncExternalStore(mint?.subscribe ?? noop, mint?.getSnapshot ?? (() => idle));
   const attempted = useSyncExternalStore(tokenAttempt.subscribe, tokenAttempt.getSnapshot);
   const [role, setRole] = useState('owner');
+  useEffect(() => { if (firstAgent) setRole('agent'); }, [firstAgent]);
   const admin = feed.records[0], h = household.records[0];
   // Never retain a returned bearer beyond this mounted, authorized, connected screen.
   useEffect(() => { if (feed.status !== 'live' || !active || !admin || !h) setMint(undefined); }, [feed.status, active, admin, h]);
@@ -49,9 +50,9 @@ export default function AccessAdmin({ active = true }: { active?: boolean }) {
       setMint(callOnce<{ token: string }>('token.create', input));
     }}><fieldset disabled={!enabled} className="grid min-w-0 gap-3">
       <legend className="font-semibold">Create token</legend>
-      <label className="grid gap-1">Token label<Input name="label" required maxLength={120} /></label>
+      <label className="grid gap-1">Token label<Input key={firstAgent} name="label" required maxLength={120} defaultValue={firstAgent ? `${firstAgent} · first token` : undefined} /></label>
       <label className="grid gap-1">Identity<select name="role" value={role} onChange={event => setRole(event.target.value)}><option value="owner">Household member</option><option value="agent">Agent</option><option value="runner">Active runner</option><option value="service">Active service</option></select></label>
-      {role === 'owner' ? <label className="grid gap-1">Member<select name="member">{h.members.map(person => <option key={person}>{person}</option>)}</select></label> : role === 'agent' ? <label className="grid gap-1">Agent<select name="agent">{h.agents.map(agent => <option key={agent}>{agent}</option>)}</select></label> : <label className="grid gap-1">Active principal<Input name="principal" required /><span className="text-sm text-muted-foreground">Exact name of an already active {role}. Creating a token does not activate it or grant access.</span></label>}
+      {role === 'owner' ? <label className="grid gap-1">Member<select name="member">{h.members.map(person => <option key={person}>{person}</option>)}</select></label> : role === 'agent' ? <label className="grid gap-1">Agent<select key={firstAgent} name="agent" defaultValue={firstAgent}>{h.agents.map(agent => <option key={agent}>{agent}</option>)}</select></label> : <label className="grid gap-1">Active principal<Input name="principal" required /><span className="text-sm text-muted-foreground">Exact name of an already active {role}. Creating a token does not activate it or grant access.</span></label>}
       <label className="grid gap-1">Expires (optional)<Input name="expires" placeholder="2027-01-01T00:00:00Z" /><span className="text-sm text-muted-foreground">ISO timestamp with timezone; leave empty for no expiry.</span></label>
       <Button type="submit" variant="outline">Create token</Button>
     </fieldset></form>

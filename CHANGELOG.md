@@ -1069,6 +1069,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Record token and session last use on the new side, including activity in open windows.
 
+- Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

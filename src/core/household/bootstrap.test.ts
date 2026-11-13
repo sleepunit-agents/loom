@@ -1,0 +1,86 @@
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { startLoom } from '../../foundation.js';
+import { fixture } from '../../fixture.js';
+import { FakeClock } from '../clock.js';
+import { HouseholdDatabase } from './document.js';
+import { HouseholdRows } from './rows.js';
+import { signin } from '../signin/index.js';
+import { readContinuityHousehold } from '../../continuity/household.js';
+import type { Viewer } from '../../policy.js';
+const homes: string[] = [], closes: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+const owner: Viewer = { kind: 'member', id: 'jonathan' };
+const input = { agent: 'gabe', name: 'Gabe', purpose: 'You help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Ask before spending money.' };
+async function setup() { const home = mkdtempSync(join(tmpdir(), 'loom-bootstrap-')); homes.push(home); fixture(home); const clock = new FakeClock(); const app = await startLoom({ home, clock, next: true }); closes.push(app.close); return { home, clock, app }; }
+it('creates a portable context, publishes Live after commit and mints its first token separately without journaling the bearer', async () => {
+  const { app, home } = await setup(), h = new HouseholdDatabase(app.db), before = h.document()!;
+  const tokens = new HouseholdRows(app.db, 'tokens').entries(), projects = new HouseholdRows(app.db, 'projects').entries();
+  const events: unknown[] = []; app.live.observe(changes => { if (changes.length) events.push({ changes, transaction: app.db.inTransaction }); });
+  const made = app.operations.call('socket', owner, 'household.bootstrapAgent', input, 'create-gabe');
+  const dir = join(home, 'agents', 'gabe');
+  expect(made).toEqual({ ok: true, value: { agent: 'gabe', contextDir: dir, mcp: { command: 'loom', args: ['mcp', '--next', '--home', home, '--agent', 'gabe'] } } });
+  expect(h.document()).toEqual({ ...before, agents: [...before.agents as string[], 'gabe'] });
+  expect(new HouseholdRows(app.db, 'projects').entries()).toEqual(projects); expect(new HouseholdRows(app.db, 'tokens').entries()).toEqual(tokens);
+  expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain('# Gabe\n\nYou help with the garden.');
+  for (const content of ['## Voice\n\nWarm and direct.', '## Rules\n\nKeep private things private.', '## When to ask first\n\nAsk before spending money.']) expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain(content);
+  expect(readFileSync(join(dir, 'preferences.md'), 'utf8')).toContain('# Gabe — Preferences');
+  expect(readFileSync(join(dir, 'self-model.md'), 'utf8')).toContain('## Strengths');
+  expect(statSync(dir).mode & 0o777).toBe(0o700);
+  for (const name of readdirSync(dir)) expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+  expect(events).toEqual([{ changes: [{ type: 'household.sharing', id: 'household' }, { type: 'core.access', id: 'household' }], transaction: false }]);
+  const mint = app.operations.call('socket', owner, 'token.create', { role: 'agent', agent: 'gabe', label: 'gabe · first token' });
+  if (!mint.ok) throw new Error('Mint failed'); const token = (mint.value as { token: string }).token;
+  expect(signin(app).token(signinHash(token))?.viewer).toEqual({ kind: 'agent', id: 'gabe' });
+  expect(JSON.stringify(app.db.prepare('SELECT * FROM core_operations').all())).not.toContain(token);
+  await app.close();
+  expect(readContinuityHousehold(home, 'gabe').agent).toBe('gabe');
+  expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain('garden');
+});
+function signinHash(value: string) { return createHash('sha256').update(value).digest('hex'); }
+import { createHash } from 'node:crypto';
+it('refuses every nonowner and invalid or occupied path before creating files or rows', async () => {
+  const { app, home } = await setup(), before = new HouseholdDatabase(app.db).document();
+  for (const door of ['http', 'socket', 'mcp', 'direct'] as const) for (const viewer of [{ kind: 'member', id: 'pollock' }, { kind: 'agent', id: 'art' }, { kind: 'service', id: 'sharing' }, { kind: 'runner', id: 'box' }] as Viewer[]) expect(app.operations.call(door, viewer, 'household.bootstrapAgent', input, `${door}:${viewer.id}`)).toMatchObject({ code: 'denied' });
+  expect(readdirSync(home)).not.toContain('agents');
+  for (const change of [{ agent: '../outside' }, { agent: 'ART' }, { name: 'Bad\n# heading' }, { purpose: ' ' }, { voice: '' }, { force: true }]) expect(app.operations.call('direct', owner, 'household.bootstrapAgent', { ...input, ...change }, JSON.stringify(change))).toMatchObject({ code: 'invalid' });
+  mkdirSync(join(home, 'agents', 'gabe'), { recursive: true }); writeFileSync(join(home, 'agents', 'gabe', 'IDENTITY.md'), 'Existing creed');
+  expect(app.operations.call('http', owner, 'household.bootstrapAgent', input, 'occupied')).toMatchObject({ code: 'conflict' });
+  expect(readFileSync(join(home, 'agents', 'gabe', 'IDENTITY.md'), 'utf8')).toBe('Existing creed');
+  rmSync(join(home, 'agents', 'gabe'), { recursive: true }); symlinkSync(join(home, 'not-there'), join(home, 'agents', 'gabe'));
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'alias')).toMatchObject({ code: 'invalid' });
+  rmSync(join(home, 'agents'), { recursive: true }); mkdirSync(join(home, 'elsewhere')); symlinkSync(join(home, 'elsewhere'), join(home, 'agents'));
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'parent-alias')).toMatchObject({ code: 'invalid' });
+  expect(new HouseholdDatabase(app.db).document()).toEqual(before); expect(readdirSync(join(home, 'elsewhere'))).toEqual([]);
+});
+it('recovers the exact unchanged filesystem publication after SQLite rollback and restart; cannot replay a different request', async () => {
+  const { app, home, clock } = await setup(), before = new HouseholdDatabase(app.db).document();
+  const events: unknown[] = []; app.live.observe(c => { if (c.length) events.push(c); });
+  app.db.exec("CREATE TRIGGER fail_bootstrap BEFORE INSERT ON core_operations WHEN NEW.id='create-gabe' BEGIN SELECT RAISE(ABORT,'retry failed'); END");
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'unavailable' });
+  expect(new HouseholdDatabase(app.db).document()).toEqual(before); expect(events).toEqual([]);
+  const identity = readFileSync(join(home, 'agents', 'gabe', 'IDENTITY.md'));
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'different')).toMatchObject({ code: 'conflict' });
+  app.db.exec('DROP TRIGGER fail_bootstrap'); await app.close();
+  const reopened = await startLoom({ home, clock, next: true }); closes.push(reopened.close);
+  const call = () => reopened.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe');
+  expect(call()).toMatchObject({ ok: true });
+  writeFileSync(join(home, 'agents', 'gabe', 'preferences.md'), 'Later preferences');
+  expect(call()).toMatchObject({ ok: true }); // committed receipt, no filesystem rewrite
+  expect(readFileSync(join(home, 'agents', 'gabe', 'preferences.md'), 'utf8')).toBe('Later preferences');
+  expect(readFileSync(join(home, 'agents', 'gabe', 'IDENTITY.md'))).toEqual(identity);
+  expect(reopened.operations.call('direct', owner, 'household.bootstrapAgent', { ...input, purpose: 'Different' }, 'create-gabe')).toMatchObject({ code: 'conflict' });
+});
+it('refuses adoption when a rolled-back context was changed or replaced by a link', async () => {
+  const { app, home } = await setup();
+  app.db.exec("CREATE TRIGGER fail_bootstrap BEFORE INSERT ON core_operations WHEN NEW.id='create-gabe' BEGIN SELECT RAISE(ABORT,'retry failed'); END");
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'unavailable' });
+  app.db.exec('DROP TRIGGER fail_bootstrap');
+  const path = join(home, 'agents', 'gabe', 'IDENTITY.md'); writeFileSync(path, 'Changed');
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'conflict' });
+  rmSync(path); symlinkSync(join(home, 'loom.db'), path);
+  expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'conflict' });
+  expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
+});

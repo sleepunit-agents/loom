@@ -32,6 +32,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
+  bootstrapAgent: { agent: 'gabe', name: 'Gabe', purpose: 'Help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Before spending money.' },
   show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
   addAgent: { agent: 'new-agent' }, setMemberProjects: { person: 'pollock', projects: ['other'] },
   setOwnedAgents: { person: 'pollock', agents: ['mark'] }, setAgentAccounts: { agent: 'art', accounts: { github: ['art-e-fish'] } },
