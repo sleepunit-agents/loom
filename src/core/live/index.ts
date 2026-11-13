@@ -9,6 +9,9 @@ import type { Change, Operations } from '../operations/index.js';
 export interface LiveRecord { id: string; [key: string]: unknown }
 export interface RecordType {
   name: string;
+  windowOnly?: boolean;
+  /** Resolve encrypted fields outside SQLite. read is repeated before sending. */
+  resolve?(record: LiveRecord): Promise<LiveRecord>;
   read(id: string, viewer: Viewer): LiveRecord | undefined;
   /** Candidate ids, with read doing the permission check for each. */
   ids(scope: string | undefined): string[];
@@ -22,10 +25,11 @@ export interface RecordType {
 }
 const subscribe = z.object({ kind: z.literal('subscribe'), type: z.string(), scope: z.string().optional() });
 const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional() });
-interface Subscriber { viewer: Viewer; send(value: unknown): void; close(): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
-export interface Authentication { viewer: Viewer; valid(): boolean; expiresAt?: number }
+interface Subscriber { window: boolean; valid(): boolean; viewer: Viewer; send(value: unknown): void; close(): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
+export interface Authentication { window?: boolean; viewer: Viewer; valid(): boolean; expiresAt?: number }
 export class Live {
   private types = new Map<string, RecordType>();
+  private revisions = new WeakMap<object, number>();
   private emitter = new EventEmitter();
   private clients = new Set<Subscriber>();
   private sockets = new Map<WebSocket, Authentication>();
@@ -58,6 +62,7 @@ export class Live {
     c.close();
   }
   private update(c: Subscriber, sub: Subscriber['types'] extends Map<string, infer T> ? T : never, id: string) {
+    if (sub.type.resolve) { void this.resolveSet(c, sub.type, sub.scope); return; }
     const r = sub.type.read(id, c.viewer);
     const visible = r && sub.type.inScope(r, sub.scope, this.clock.now());
     const until = visible ? sub.type.expires?.(r, sub.scope) : undefined;
@@ -67,7 +72,24 @@ export class Live {
       if (until !== undefined && until > this.clock.now()) sub.cancel.set(id, this.clock.at(until, () => { try { this.update(c, sub, id); } catch { this.failed(c); } }));
     } else if (sub.sent.delete(id)) c.send({ kind: 'del', type: sub.type.name, scope: sub.scope, id });
   }
+  private async resolveSet(c: Subscriber, type: RecordType, scope?: string) {
+    const key = JSON.stringify([type.name, scope]);
+    let sub = c.types.get(key);
+    if (!sub) { sub = { type, scope, sent: new Set(), cancel: new Map() }; c.types.set(key, sub); }
+    const version = (this.revisions.get(sub) ?? 0) + 1; this.revisions.set(sub, version);
+    try {
+      const candidates = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && type.inScope(r, scope, this.clock.now()));
+      const records = await Promise.all(candidates.map(r => type.resolve!(r)));
+      if (!this.clients.has(c) || !c.valid() || this.revisions.get(sub) !== version) return;
+      // A policy change or row revision during crypto cannot send an old plaintext snapshot.
+      if (candidates.some(r => JSON.stringify(type.read(r.id, c.viewer)) !== JSON.stringify(r))) { this.set(c, type, scope); return; }
+      c.send({ kind: 'set', type: type.name, scope, records });
+      sub.sent = new Set(records.map(r => r.id));
+    } catch { if (this.clients.has(c)) this.failed(c); }
+  }
   private set(c: Subscriber, type: RecordType, scope?: string) {
+    if (type.windowOnly && (!c.window || c.viewer.kind !== 'member')) { c.send({ ok: false, code: 'denied', message: 'A signed-in window is required' }); return; }
+    if (type.resolve) { void this.resolveSet(c, type, scope); return; }
     const key = JSON.stringify([type.name, scope]);
     const old = c.types.get(key);
     const sub = { type, scope, sent: new Set<string>(), cancel: new Map<string, () => void>() };
@@ -100,11 +122,19 @@ export class Live {
         const auth = authenticated;
         const stopExpiry = auth.expiresAt === undefined ? undefined : this.clock.at(auth.expiresAt, () => ws.close(1008, 'Session ended'));
         this.sockets.set(ws, auth);
-        const c: Subscriber = { viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
+        const c: Subscriber = { window: auth.window === true, valid: () => auth.valid(), viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
         this.clients.add(c);
-        ws.on('message', raw => {
+        ws.on('message', async raw => {
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
           let data: unknown; try { data = JSON.parse(raw.toString()); } catch { c.send({ ok: false, code: 'invalid', message: 'Invalid JSON' }); return; }
+          if (data && typeof data === 'object' && 'kind' in data && data.kind === 'unsubscribe') {
+            const unsub = subscribe.extend({kind:z.literal('unsubscribe')}).safeParse(data);
+            if (!unsub.success) return;
+            const key = JSON.stringify([unsub.data.type, unsub.data.scope]);
+            const sub = c.types.get(key); sub?.cancel.forEach(cancel=>cancel());
+            if(sub)this.revisions.set(sub,(this.revisions.get(sub)??0)+1);
+            c.types.delete(key); return;
+          }
           const s = subscribe.safeParse(data);
           if (s.success) {
             const type = this.types.get(s.data.type);
@@ -115,7 +145,8 @@ export class Live {
           const op = call.safeParse(data);
           if (!op.success) { c.send({ ok: false, code: 'invalid', message: 'Invalid socket message' }); return; }
           c.send({ kind: 'pending', request: op.data.request });
-          const result = this.ops.call('socket', c.viewer, op.data.name, op.data.input, op.data.id);
+          const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
+          if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
           c.send({ kind: 'result', request: op.data.request, result });
         });
         ws.on('close', () => { stopExpiry?.(); this.sockets.delete(ws); this.clients.delete(c); for (const s of c.types.values()) s.cancel.forEach(cancel => cancel()); });
