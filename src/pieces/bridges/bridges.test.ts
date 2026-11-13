@@ -429,6 +429,18 @@ describe('in-process bridge delivery',()=>{
     f.engine.reply({id:'reply',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
     expect(f.secretGets).toHaveLength(gets); expect(f.adapter.posts).toHaveLength(0);
   });
+  it('holds pending intake on connection removal durably without later delivery',async()=>{
+    const f=await fixture(); f.setGate('wait');
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'venue removed'});
+    f.setGate('allow'); f.clock.advance(60_000); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    await f.close(); closes.pop();
+    const restarted=await fixture('discord',false,f.home); await restarted.engine.flush();
+    expect(restarted.app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'held',reason:'venue removed'});
+    expect(restarted.deliveries.size).toBe(0);
+  });
   it('announces held sends on venue removal and removes sent records from live scope',async()=>{
     const f=await fixture('discord',true); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     f.engine.reply({id:'held',incomingId:[...f.deliveries.keys()][0],text:'hello'}); await f.engine.flush();
@@ -477,6 +489,21 @@ describe('in-process bridge delivery',()=>{
     expect(f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all()).not.toEqual(before);
     expect(f.op('removeRoutes',{id:'channel'}).ok).toBe(true);
     expect(f.app.db.prepare('SELECT id FROM bridges_routes').all()).toEqual([]);
+  });
+  it('refuses non-owner connection writes and removal with exact saved content unchanged',async()=>{
+    const f=await fixture();
+    const before=f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all();
+    const changed={...f.venue,bot:'replacement',enabled:false};
+    for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const){
+      for(const [name,input] of [['putVenues',changed],['removeVenues',{id:f.venue.id}]] as const){
+        expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+        expect(f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all()).toEqual(before);
+      }
+    }
+    expect(f.op('putVenues',changed).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_venues ORDER BY id').all()).not.toEqual(before);
+    expect(f.op('removeVenues',{id:f.venue.id}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id FROM bridges_venues').all()).toEqual([]);
   });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();
