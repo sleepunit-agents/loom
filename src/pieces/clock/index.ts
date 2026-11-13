@@ -5,6 +5,7 @@ import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
+import { unpark } from './unpark.js';
 import type { Approvals } from './dependencies/approvals.js';
 const day = 86400_000;
 const scope = (w: Work, type = 'wake') => ({ type, agent: w.agent, project: w.project, member: w.member });
@@ -208,9 +209,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const w = get(i.id); if (w.state !== 'parked' || !w.wait) return null;
     const a = options.approvals?.check(w.wait.id, w.by);
     if (a && a.state !== 'pending' || ctx.now >= w.wait.until) {
-      w.wait.answer = !a || a.state === 'pending' ? 'expired' : a.state;
-      // Instructions originate in the approvals role, never in request metadata.
-      w.prompt = `${w.prompt ?? ''}\n\nOwner answer: ${w.wait.answer}${a?.instruction ? `\n${a.instruction}` : ''}`;
+      // Pending at the deadline is unanswered, not an expired Allow. If the role
+      // cannot read the request, never reuse its saved kind/target as authority.
+      unpark(w, a ?? { state: 'unknown' });
       w.state = 'pending'; w.due = ctx.now; saveWake(ctx, w); event(ctx, w, 'unpark');
     } else { w.due = Math.min(w.wait.until, ctx.now + 5 * 60_000); saveWake(ctx, w); }
     return w;

@@ -345,7 +345,29 @@ describe('durable daemon clock', () => {
     answer = 'allowed'; for (const f of listeners) f(); app.clock.advance(0); await settled();
     expect(wake(app.db, w.id)?.prompt).toContain('Spend exact-head once'); expect(wake(app.db, w.id)?.state).toBe('held');
     answer = 'pending'; const timeout = app.value('park', { agent: 'art', prompt: 'Continue', note: 'timeout', on: 'q-123' }); app.clock.advance(24*60*60_000); await settled();
-    expect(wake(app.db, timeout.id)?.wait?.answer).toBe('expired');
+    expect(wake(app.db, timeout.id)?.wait?.answer).toBe('pending');
+    expect(wake(app.db, timeout.id)?.prompt).toContain('No answer to q-123 after 24h.');
+    expect(wake(app.db, timeout.id)?.note).toBe('Resumed, no answer in 24h: timeout');
+  });
+  it('resumes a parked answer once across restart, ignoring stale instructions on denial', async () => {
+    const dir = home(), clock = new FakeClock();
+    let answer: 'pending' | 'denied' = 'pending';
+    const options: ClockOptions = { approvals: { check: () => ({ state: answer, instruction: 'Spend the stale Allow', kind: 'merge', target: 'head' }), subscribe: () => () => {} } };
+    const first = await loom(options, dir, clock);
+    const w = first.value('park', { agent: 'art', prompt: 'Continue the work', note: 'Resumed after your OK: old work', on: 'a-123' });
+    clock.advance(0); await first.close(); answer = 'denied';
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'resume-body' } as const));
+    const restarted = await loom({ ...options, runtime: { startBody } }, dir, clock);
+    clock.advance(5*60_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    const resumed = wake(restarted.db, w.id)!;
+    expect(resumed.note).toBe('Resumed after you said no: old work');
+    expect(resumed.prompt).toBe("The owner's answer to a-123: denied. Don't work around it: comment on the task what's blocked and why, and wrap up cleanly.\n\n---\n\nContinue the work");
+    expect(resumed.wait).toMatchObject({ id: 'a-123', answer: 'denied' });
+    expect(resumed.by).toEqual(owner);
+    await restarted.close(); const again = await loom({ ...options, runtime: { startBody } }, dir, clock);
+    clock.advance(24*60*60_000); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1); expect(wake(again.db, w.id)?.note).toBe(resumed.note);
   });
   it('uses central scope policy, denies foreign agents and holds revoked dispatch authority', async () => {
     const access = structuredClone(sharing), startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const)), app = await loom({ runtime: { startBody } }, home(), new FakeClock(), access);
