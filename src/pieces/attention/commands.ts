@@ -1,7 +1,7 @@
 /** The same declarations drive operation CLI metadata and the opt-in client. */
 import { operation as defineOperation, type Operation, type CliCommand } from '../../core/index.js';
 export const attentionCommands: CliCommand[] = [
-  ...['raise', 'answer', 'resolve', 'reportStatus', 'recordTurn', 'writeDigest', 'fold', 'retain', 'writeFinding'].map(name => ({ name, write: true, positional: ['json'] })),
+  ...['checkWait', 'raise', 'answer', 'resolve', 'reportStatus', 'recordTurn', 'writeDigest', 'fold', 'retain', 'writeFinding'].map(name => ({ name, write: true, positional: ['json'] })),
   ...['get', 'conversation', 'conversations', 'turns', 'digests', 'days', 'stats', 'findings'].map(name => ({ name, positional: ['json'] })),
 ];
 export function operation<I>(op: Operation<I>): Operation<I> {
