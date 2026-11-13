@@ -4,6 +4,7 @@
  * which agent's conversations. The records themselves are src/backends/conversations.ts.
  */
 import { createHash } from 'node:crypto';
+import type { MemorySelection } from './config.js';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
   ConversationError, MAX_PLACE, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
@@ -179,15 +180,15 @@ export interface ConversationView {
  * its venue is installed (not orphaned) with a `render`, run through the section-feed runner
  * (`--conversation <id>`, 3 s, the feed schema); else, or when that fails, core's generic one.
  */
-export async function conversationView(contextDir: string, agent: string, id: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): Promise<ConversationView | undefined> {
-  const c = isConversationId(id) ? getConversation(contextDir, id) : undefined;
+export async function conversationView(contextDir: string, agent: string, id: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection, memorySelection?: MemorySelection): Promise<ConversationView | undefined> {
+  const c = isConversationId(id) ? getConversation(contextDir, id, memorySelection) : undefined;
   if (!c) return undefined;
   const home = homeFor(contextDir, env, selection);
-  const digests = digestsOf(contextDir, id);
-  const stats = turnStats(contextDir, id);
+  const digests = digestsOf(contextDir, id, memorySelection);
+  const stats = turnStats(contextDir, id, memorySelection);
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const label = selectedVenueLabel(home, c.venue, selection);
-  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id)) };
+  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id, memorySelection)) };
   let v;
   try { v = selection !== undefined || coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
@@ -203,15 +204,15 @@ export async function conversationView(contextDir: string, agent: string, id: st
   return {
     conversation: { ...c, venue_label: label, turns: total },
     digests,
-    findings: findingsOf(contextDir, { conversation: id }),
+    findings: findingsOf(contextDir, { conversation: id }, memorySelection),
     render,
   };
 }
 
 /** `conversations(...)`, with each venue's label. */
-export function conversationsList(contextDir: string, f: ListFilter = {}, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): Array<ConversationListItem & { venue_label: string }> {
+export function conversationsList(contextDir: string, f: ListFilter = {}, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection, memorySelection?: MemorySelection): Array<ConversationListItem & { venue_label: string }> {
   const home = homeFor(contextDir, env, selection);
-  return listConversations(contextDir, f).map((c) => ({ ...c, venue_label: selectedVenueLabel(home, c.venue, selection) }));
+  return listConversations(contextDir, f, memorySelection).map((c) => ({ ...c, venue_label: selectedVenueLabel(home, c.venue, selection) }));
 }
 
 
@@ -263,9 +264,9 @@ export function conversationOwner(h: Household, v: Viewer, id: string): string |
  * label, people, last, the newest digest's summary, any open needs_owner, and `new` (last after
  * `since`). `since` marks, it doesn't filter. project_hub calls this with the project's slug.
  */
-export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): { key: 'conversations'; items: HubConversation[] } | null {
+export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection, memorySelection?: MemorySelection): { key: 'conversations'; items: HubConversation[] } | null {
   // No conversations store yet: the section is absent, as projects.md has it for a missing store.
-  const db = openConversationsReadonly(contextDir);
+  const db = openConversationsReadonly(contextDir, memorySelection);
   if (!db) return null;
   db.close();
   const home = homeFor(contextDir, env, selection);
@@ -273,5 +274,5 @@ export function conversationsSection(contextDir: string, slug: string, since: st
   // Explicit offline readers use core records only; filing belongs to the running Comms app.
   const agent = selection === undefined ? householdOf(contextDir)?.agent : undefined;
   const filed = home && agent ? filedThreads(home, agent, slug) : [];
-  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => selectedVenueLabel(home, v, selection), filed) };
+  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => selectedVenueLabel(home, v, selection), filed, memorySelection) };
 }

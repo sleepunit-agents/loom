@@ -239,3 +239,76 @@ it('does not fall back to a legacy project store when an explicitly selected pri
   }
   expect(readProject(selected, 'loom')).toMatchObject({ found: true, card: { name: 'Legacy project' } });
 });
+
+it('isolates MCP conversation reads, digest writes, findings and project aliases from the legacy memory selector', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-conversation-memory-')); homes.push(home);
+  const dirs = ['art', 'mark', 'solo', 'legacy'].map(agent => {
+    const dir = join(home, agent); mkdirSync(dir); writeFileSync(join(dir, 'IDENTITY.md'), `I am ${agent}.`); return dir;
+  });
+  const { writeFinding, digestsOf, getConversation, findingsOf, openNeedDigest } = await import('../backends/conversations.js');
+  let conversation = '';
+  for (const [i, dir] of dirs.entries()) {
+    const store = openProjectsStore(dir, { selection: null })!;
+    store.write({ slug: `project-${i}`, name: `Project ${i}`, links: { aliases: ['alias'] } }); store.close();
+    // Identical ids in all four databases expose misrouted subreads and writes as well as list reads.
+    ({ conversation } = recordTurn(dir, 'same-agent', {
+      venue: 'terminal', place: 'same-place', at: '2026-11-13T00:00:00Z', from: { kind: 'person', slug: 'jonathan' }, kind: 'message', label: `Private conversation ${i}`,
+    }, 'test', null));
+    for (let n = 0; n < i; n++) recordTurn(dir, 'same-agent', { venue: 'terminal', place: 'same-place', at: '2026-11-13T00:00:30Z', from: { kind: 'unknown' }, kind: 'message' }, 'test', null);
+    writeDigest(dir, { conversation, run: `seed-${i}` }, { summary: `Seed digest ${i}`, projects: ['alias'], needs_owner: 'Please choose a colour' }, new Date('2026-11-13T00:01:00Z'), null, null);
+    writeFinding(dir, { conversation, seq: 1, measure: 'test', score: 1, text: `Private finding ${i}` }, new Date(), null);
+  }
+  const override = join(dirs[3], 'memories.db'); const before = readFileSync(override);
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', override);
+  const calls = await Promise.all(dirs.slice(0, 3).map((dir, i) => connect(dir, i === 2 ? null : { agent: ['art', 'mark'][i] }, { conversationSelection: null, peopleSelection: null })));
+  for (const [i, call] of calls.entries()) {
+    const list = JSON.parse(await call('conversations', { project: 'alias' }));
+    expect(JSON.stringify(list)).toContain(`Private conversation ${i}`);
+    const view = JSON.parse(await call('conversation', { id: conversation }));
+    expect(view.conversation).toMatchObject({ label: `Private conversation ${i}`, turns: i + 1 });
+    expect(view.digests[0].summary).toBe(`Seed digest ${i}`);
+    expect(view.findings[0].text).toBe(`Private finding ${i}`);
+    expect(JSON.stringify(view.render)).toContain(openNeedDigest(dirs[i], conversation, null));
+    expect(JSON.stringify(view.render)).toContain(`Seed digest ${i}`);
+    expect(await call('conversation_findings')).toContain(`Private finding ${i}`);
+    const hub = await call('project_hub', { slug: 'alias' });
+    expect(hub).toContain(`Private conversation ${i}`);
+    for (let j = 0; j < 4; j++) if (j !== i) {
+      for (const text of [JSON.stringify(list), JSON.stringify(view), hub, await call('conversation_findings')]) {
+        expect(text).not.toContain(`Private conversation ${j}`); expect(text).not.toContain(`Private finding ${j}`); expect(text).not.toContain(`Seed digest ${j}`);
+      }
+    }
+    await call('identity', { conversation, run: 'updated' });
+    await call('conversation_digest', { summary: `Updated digest ${i}`, projects: ['alias'], needs_owner: null });
+    const [written] = digestsOf(dirs[i], conversation, null);
+    expect(written).toMatchObject({ summary: `Updated digest ${i}`, projects: [`project-${i}`] });
+    expect(getConversation(dirs[i], conversation, null)?.label).toBe(`Private conversation ${i}`);
+    expect(findingsOf(dirs[i], {}, null)[0].text).toBe(`Private finding ${i}`);
+  }
+  expect(readFileSync(override)).toEqual(before);
+  expect(process.env.LOOM_SQLITE_DB_PATH).toBe(override);
+  const legacy = await connect(dirs[0], undefined, { conversationSelection: null, peopleSelection: null });
+  expect(await legacy('conversations', { project: 'alias' })).toContain('Private conversation 3');
+  expect(await legacy('conversation', { id: conversation })).toContain('Private finding 3');
+  expect(digestsOf(dirs[0], conversation)[0].summary).toBe('Seed digest 3');
+}, 30_000);
+
+it('returns no conversation data for a missing selected store rather than reading the legacy override', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-conversation-absent-')); homes.push(home);
+  const dir = join(home, 'selected'); mkdirSync(dir);
+  const legacy = join(home, 'legacy'); mkdirSync(legacy);
+  const { conversation } = recordTurn(legacy, 'legacy', { venue: 'terminal', place: 'private', at: new Date().toISOString(), from: { kind: 'unknown' }, kind: 'message' }, 'test', null);
+  vi.stubEnv('LOOM_SQLITE_DB_PATH', join(legacy, 'memories.db'));
+  const { getConversation, findingsOf, resolveProjectName } = await import('../backends/conversations.js');
+  const { conversationsSection } = await import('../conversations.js');
+  for (const selection of [null, { agent: 'selected' }]) {
+    expect(getConversation(dir, conversation, selection)).toBeUndefined();
+    expect(findingsOf(dir, {}, selection)).toEqual([]);
+    expect(resolveProjectName(dir, 'unknown', selection)).toBe('unknown');
+    expect(conversationsSection(dir, 'unknown', new Date().toISOString(), process.env, null, selection)).toBeNull();
+    const call = await connect(dir, selection, { conversationSelection: null });
+    expect(JSON.parse(await call('conversations'))).toEqual({ conversations: [] });
+    expect(JSON.parse(await call('conversation_findings'))).toEqual({ findings: [] });
+  }
+  expect(getConversation(dir, conversation)?.agent).toBe('legacy');
+});

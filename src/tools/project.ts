@@ -397,7 +397,7 @@ export async function projectHubOf(
       section('notes', () => notesSection(contextDir, row.card, since, nowMs)),
       section('people', () => peopleSection(contextDir, row.card, nowMs, opts.peopleSelection)),
       // After people (docs/specs/conversations.md, "Projects"): digests store project slugs, resolved at write.
-      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since, process.env, opts.conversationSelection)),
+      opts.noConversations ? null : section('conversations', () => conversationsSection(contextDir, row.card.slug, since, process.env, opts.conversationSelection, opts.memorySelection)),
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
