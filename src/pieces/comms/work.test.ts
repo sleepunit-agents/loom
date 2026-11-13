@@ -18,10 +18,11 @@ async function setup() {
  const home=mkdtempSync(join(tmpdir(),'comms-work-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const key=await loadKey(home), clock=new FakeClock();
  const sharing:Sharing={members:{jonathan:{owner:false,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['jonathan'],agents:['art']},hidden:{members:['other'],agents:[]}},services:{}};
+ let comms!:ReturnType<typeof installComms>;
  const app=await startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']!=='no',valid:()=>true}),install:app=>{
   installTasks(app.db,app.operations,app.live,()=>sharing);
   installChanges(app.db,app.operations,app.live,()=>sharing,{attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]})});
-  const comms=installComms({...app,clock,key,sharing:()=>sharing,runtime:{async deliver(){},async end(){}},hold:run=>run(),attention:{answer:()=>({ok:true,value:{}})}});
+  comms=installComms({...app,clock,key,sharing:()=>sharing,runtime:{async deliver(){},async end(){}},hold:run=>run(),attention:{answer:()=>({ok:true,value:{}})}});
   cleanup.push(comms.close);
  }});cleanup.push(app.close);
  let seq=0;const member:Viewer={kind:'member',id:'jonathan'};
@@ -29,6 +30,9 @@ async function setup() {
  const opened=await call('open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Private words'});
  if(!opened.ok)throw new Error('fixture open failed');
  const thread=(opened.value as {thread:string}).thread;
+ // The operation acknowledgement precedes asynchronous delivery settlement.
+ // Start socket proofs only after that initial lifecycle has fully settled.
+ await comms.deliver('art',thread,1);
  const row=app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string};
  const conversation=(JSON.parse(row.record) as {conversation:string}).conversation;
  const task=(id:string,source=conversation,project='pond',status='open',description?:string,createdAt='2026-11-01T00:00:00Z')=>{
