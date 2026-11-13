@@ -5,8 +5,7 @@ import { prose } from '../../../../src/ui/prose';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
-function Reader({ page, open, canVerify, canRecheck }: { page: Page; open(slug: string): void; canVerify: boolean; canRecheck: boolean }) {
-  const [request, setRequest] = useState<Call>();
+function Reader({ page, open, canVerify, canRecheck, request, act }: { page: Page; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
   const answer = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
   const body = useMemo(() => prose(page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`))
     .replaceAll('href="https://loom.invalid/knowledge/', 'data-knowledge="" href="/p/knowledge-preview/page/'), [page.body]);
@@ -21,7 +20,7 @@ function Reader({ page, open, canVerify, canRecheck }: { page: Page; open(slug: 
     }} />
     <section><h2>Sources</h2>{page.sources.length ? <dl className="grid gap-3">{page.sources.map((source,n) => <div key={n}><dt>{source.kind}</dt><dd>{source.claim}{source.locator && <> · {source.href ? <a className="underline" href={source.href} target="_blank" rel="noreferrer">{source.locator}</a> : source.locator}</>}</dd></div>)}</dl> : <p>No sources recorded</p>}</section>
     <section><h2>Cited by</h2>{page.citedBy.length ? <List label="Cited by">{page.citedBy.map(p => <Row key={p.slug} title={p.title} onClick={() => open(p.slug)} />)}</List> : <p>No referring pages</p>}</section>
-    <div className="flex flex-wrap gap-2"><Button disabled={answer.pending || !canVerify} onClick={() => setRequest(call('mind.knowledgeVerify', { slug: page.slug }))}>Still true</Button><Button variant="outline" disabled={answer.pending || !canRecheck} onClick={() => setRequest(call('mind.knowledgeRecheck', { slug: page.slug }))}>Check again</Button></div>
+    <div className="flex flex-wrap gap-2"><Button disabled={answer.pending || !canVerify} onClick={() => act('knowledgeVerify')}>Still true</Button><Button variant="outline" disabled={answer.pending || !canRecheck} onClick={() => act('knowledgeRecheck')}>Check again</Button></div>
     {answer.pending ? <Loading label={answer.status === 'offline' ? 'Waiting for connection…' : 'Saving check…'} /> : answer.result && (!answer.result.ok ? <Error title="Couldn’t save check" text={`${answer.result.code}: ${answer.result.message}`} /> : <p role="status">Check saved</p>)}
     <p>{page.sourcing && `Sourcing: ${page.sourcing}. `}{page.by && `Written by ${page.by}.`}</p>
   </article>;
@@ -42,6 +41,7 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     const pop = () => setLocalPath(location.pathname);
     window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, [go]);
+  const [requests, setRequests] = useState(() => new Map<string, Call>());
   const access = useRecords<{ id: string; allowed: boolean; canVerify: boolean; canRecheck: boolean }>('knowledge.access');
   const permission = access.status === 'live' ? access.records[0] : undefined;
   const feed = useRecords<Page>('knowledge');
@@ -69,6 +69,10 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     search={<label className="grid gap-1">Search knowledge<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTitle={query.trim() ? `Matching “${query.trim()}”` : listTitle} listMeta={`${shown.length} pages`}
     list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => navigate(page.slug)} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
-    reader={feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} /> : selected ? <Empty title="This page is no longer available" text="It may have been archived or moved." /> : null}
+    reader={feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
+      if (requests.get(current.slug)?.getSnapshot().pending) return;
+      const request = call(`mind.${verb}`, { slug: current.slug });
+      setRequests(previous => new Map(previous).set(current.slug, request));
+    }} /> : selected ? <Empty title="This page is no longer available" text="It may have been archived or moved." /> : null}
     open={!!selected} onBack={() => navigate()} backLabel="Knowledge" blank={<Empty title="Open a page" text="Choose a fact to read its sources and check it." />} />;
 }

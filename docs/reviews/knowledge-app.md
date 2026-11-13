@@ -1,0 +1,47 @@
+# Knowledge app and source composition cold review
+
+Scope: the Knowledge app, next-mode source identities and complete transport /
+reader lifetime. The artifact is the PR diff; the frozen tree supplies context.
+Review ledgers are excluded from subsequent freezes.
+
+Assessment: high. (1) Existing receipt metadata migration is activated on selected
+stores; (2) source identity boundary and policy-driven UI; (3) operations/live app
+contracts; (4) sockets, shutdown and retained retries; (5) next-mode composition
+and CI browser evidence; (6) affected tests reverify the claims, so this final
+trigger does not apply. No tier reduction. Claim: Knowledge should operate end to
+end on the new side without losing request identity or source lifetime. This
+claim did not enter the review prompt. At most three rounds; no fourth read.
+
+## Round 1
+
+Frozen commit dee3cc55bddd19bc56d22149c45e5b18dee71053.
+TREE sha256:cf01111130727e1f1c082eb2b6e15f56885d05580ad068536861ddfebb399715.
+Raw verdict BLOCKING, three critical, four major, one nit.
+
+- Major / valid actionable: untyped wire test frames need a comment explaining
+  the intentional erasure. Added that comment.
+- Critical / valid actionable: a Reader-local request was lost on disconnect.
+  Lifted retained requests into the app, keyed by slug. A focused component test
+  disconnects, reconnects, navigates away/back and receives the original failure;
+  it asserts no second call and disabled buttons throughout pending recovery.
+- Critical / valid actionable: initial feed loading rendered an offline reader.
+  Added the loading branch and a component test distinguishing initial loading,
+  offline and denied from empty content. Independently added content-free
+  knowledge.access policy state to distinguish an empty store from denied access.
+- Critical / valid actionable: browser fixture aging used wall-clock content
+  timestamps. Seeded explicit verified_at values aligned with FakeClock.
+- Major / valid actionable: missing topic/recent/direct-beyond-cap evidence.
+  Added browser topic/recent assertions and an in-process 2,001-page fixture whose
+  scoped WebSocket target is outside the list cap.
+- Major / valid actionable: agent and commons-person binding lacked checks.
+  Added source inventory, exact namespace, wrong viewer/type and empty-local-id
+  tests for memory, person and project, including absent agents/stores.
+- Major / valid actionable: close ordering lacked observations. Reader callbacks
+  now assert source endpoints are removed while loom.db remains open on success
+  and post-source HTTP startup failure. Added shared concurrent close/restart and
+  failing synchronous-reader cleanup tests. Home release runs in finally.
+- Nit / valid actionable: a resized desktop was weak phone evidence. Open one
+  window at phone width and the other at desktop width; capture the phone image
+  from the former, desktop images from the latter.
+
+No known findings left standing after these folds. Round 2 pending.

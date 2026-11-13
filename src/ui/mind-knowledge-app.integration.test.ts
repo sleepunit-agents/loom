@@ -17,17 +17,22 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
   metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner'}))();metadata.close();
   const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
-  await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
-  await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',body:'Set the clock tempo with params.'});
-  await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',body:'Backups run overnight.'});
+  await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
+  await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
+  await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
   const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}}),authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true})});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
-    const a=await context.newPage(),b=await context.newPage();
+    const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
     await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
     const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({hasText:title});
+    await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
+    await a.setViewportSize({width:1280,height:900});
+    await b.getByRole('button',{name:/^ours/}).click();
+    await expect.poll(()=>row(b,'Nightly backup').count()).toBe(1);expect(await row(b,'Six voices').count()).toBe(0);
+    await b.getByRole('button',{name:/Recently verified/}).click();
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
     await row(a,'Six voices').click();await row(b,'Six voices').click();
     await expect.poll(()=>b.locator('article strong').textContent()).toBe('six voices');
@@ -43,10 +48,11 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>b.getByRole('heading',{name:'Six voices',exact:true}).count()).toBe(1);
     const shots=resolve('artifacts/knowledge-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      await b.screenshot({path:join(shots,`knowledge-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      const target=width<640?b:a;
+      await target.setViewportSize({width,height:900});
+      await target.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>target.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await target.screenshot({path:join(shots,`knowledge-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await b.setViewportSize({width:390,height:900});await b.getByRole('button',{name:'Knowledge',exact:true}).last().click();
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);
