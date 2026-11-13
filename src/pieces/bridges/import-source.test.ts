@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, openSync, readFileSync, readSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readBridgeInventory, type BridgeSourceFile, type BridgeSourceKind } from './import-source.js';
+const io = vi.hoisted(()=>({ afterStat: undefined as (()=>void) | undefined, forbidWholeFile: false }));
+vi.mock('node:fs',async importOriginal=>{
+  const actual=await importOriginal<typeof import('node:fs')>();
+  return {...actual,openSync:vi.fn(actual.openSync),readSync:vi.fn(actual.readSync),
+    readFileSync:vi.fn((...args:Parameters<typeof actual.readFileSync>)=>{
+      if(io.forbidWholeFile)throw Error('unbounded whole-file read');
+      return actual.readFileSync(...args);
+    }),
+    fstatSync:(...args:Parameters<typeof actual.fstatSync>)=>{
+      const stat=actual.fstatSync(...args),hook=io.afterStat;io.afterStat=undefined;hook?.();return stat;
+    },
+  };
+});
 const roots: string[] = [];
-afterEach(()=>{for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{io.afterStat=undefined;io.forbidWholeFile=false;vi.clearAllMocks();for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true});});
 function fixture() {
   const root=mkdtempSync(join(tmpdir(),'bridges-source-'));roots.push(root);
   const file=(name:string,kind:BridgeSourceKind,value:unknown):BridgeSourceFile=>{
@@ -33,6 +46,21 @@ describe('offline legacy Bridges source inventory',()=>{
         {channel:'400',thread:true,primary:'peer',parent:'300',peer:false,guest:false,readers:[]}],only:['300'],ignore:['500'],webhookPeers:{'600':'peer'},notify:{general:'300'},peerTurnsEach:4});
     expect(JSON.stringify(v)).not.toMatch(/ignored|exit 99|do-not-open|tier|grants/);
     expect(sources.map(f=>readFileSync(f.path))).toEqual(before);
+  });
+  it('opens only selected files and bounds descriptor IO when the source grows after stat',()=>{
+    const {file}=fixture();const f=file('people.json','people',{});
+    vi.clearAllMocks();io.forbidWholeFile=true;
+    expect(readBridgeInventory([f]).accounts).toEqual([]);
+    expect(vi.mocked(openSync).mock.calls.map(call=>call[0])).toEqual([f.path]);
+    expect(vi.mocked(readFileSync)).not.toHaveBeenCalled();
+    vi.clearAllMocks();
+    io.afterStat=()=>writeFileSync(f.path,Buffer.alloc(9*1024*1024,32));
+    expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
+    const reads=vi.mocked(readSync).mock.calls;
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every(call=>Buffer.isBuffer(call[1])&&call[1].byteLength<=8*1024*1024+1)).toBe(true);
+    expect(reads.reduce((sum,call)=>sum+Number(call[3]),0)).toBeLessThanOrEqual(8*1024*1024+1);
+    expect(vi.mocked(readFileSync)).not.toHaveBeenCalled();
   });
   it('retains ambiguous account and primary claims for importer refusal instead of picking a winner',()=>{
     const {file}=fixture();
