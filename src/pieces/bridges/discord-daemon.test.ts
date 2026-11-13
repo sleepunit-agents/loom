@@ -235,3 +235,14 @@ it('does not acquire Discord credentials until initial asynchronous generation i
     held.resolve('00000000-0000-4000-8000-000000000000');await until(()=>f.sockets.length===1);
   } finally {held.resolve('00000000-0000-4000-8000-000000000000');}
 });
+it('requires a new Discord staging release after holder failure and same-generation recovery',async()=>{
+  const f=await setup({staging:true});await settle();
+  const release=()=>{const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due' AND kind='bridge-send'").get() as {id:string};expect(row).toBeDefined();expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},`release-${row.id}`).ok).toBe(true);return row.id;};
+  const oldRelease=release();f.clock.advance(0);await until(()=>f.sockets.length===1);const epoch=await f.source.generation();
+  f.source.generation.mockRejectedValue(Error('PRIVATE HOLDER FAILURE'));f.clock.advance(5000);await settle();
+  expect(f.sockets[0].terminate).toHaveBeenCalledOnce();const reads=f.source.read.mock.calls.length,calls=f.request.mock.calls.length;
+  f.source.generation.mockResolvedValue(epoch);f.clock.advance(5000);await settle();
+  expect(f.source.read).toHaveBeenCalledTimes(reads);expect(f.request).toHaveBeenCalledTimes(calls);expect(f.sockets).toHaveLength(1);
+  expect(release()).not.toBe(oldRelease);f.clock.advance(0);await until(()=>f.sockets.length===2);
+  expect(f.source.read.mock.calls.length).toBeGreaterThan(reads);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(2);
+});
