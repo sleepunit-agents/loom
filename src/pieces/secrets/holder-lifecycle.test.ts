@@ -54,16 +54,20 @@ it('composes persistent holder and actual current database authority across rest
   await expect(api.set({member:'pollock',writeId:randomUUID()},'API',Buffer.from(value),'add')).rejects.toThrow();
   await expect(api.set({member:'art',writeId:randomUUID()},'API',Buffer.from(value),'add')).rejects.toThrow();
   await expect(api.set({member:'missing',writeId:randomUUID()},'API',Buffer.from(value),'add')).rejects.toThrow();
+  await expect(api.hasReceipt(who)).resolves.toBe(false);
   await api.set(who,'API',Buffer.from(value),'add');
+  await expect(api.hasReceipt(who)).resolves.toBe(true);
   const first=await source.read('API');expect(Buffer.from(first).toString()).toBe(value);first.fill(0);
   await api.set({...who,writeId:randomUUID()},'API',Buffer.from('NEW'),'replace');
   await holder.close();await app.close();
   app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,stdout:()=>{}});holder=await startPersistentHolder(s.file);
+  await expect(api.hasReceipt(who)).resolves.toBe(true);
   await api.set(who,'API',Buffer.from(value),'add');
   const newer=await source.read('API');expect(Buffer.from(newer).toString()).toBe('NEW');newer.fill(0);
   await expect(api.set(who,'API',Buffer.from('CHANGED'),'add')).rejects.toThrow();
   const household=new HouseholdDatabase(app.db);
   app.db.transaction(()=>household.change(s.appHome,raw=>{raw.members=[...(raw.members as Array<{person:string}>).filter(m=>m.person!=='jonathan'),{person:'dana',role:'owner',agents:'*'}];}))();
+  await expect(api.hasReceipt(who)).rejects.toThrow();
   // Exact durable receipt replay is still forbidden after current member removal.
   await expect(api.set(who,'API',Buffer.from(value),'add')).rejects.toThrow();
   await expect(api.remove({...who,writeId:randomUUID()},'API')).rejects.toThrow();
@@ -71,6 +75,7 @@ it('composes persistent holder and actual current database authority across rest
   await app.close();app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,
     sharing:()=>({members:{jonathan:{owner:true,agents:['art']}},projects:{},services:{}}),stdout:()=>{}});
   await expect(api.remove({...who,writeId:randomUUID()},'API')).rejects.toThrow();
+  await expect(api.hasReceipt(who)).rejects.toThrow();
   for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])
     expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain(value);
   expect(readFileSync(join(s.config.directory,'holder.db')).includes(value)).toBe(false);

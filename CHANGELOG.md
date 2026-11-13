@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
+- Reduce first-page JavaScript while keeping app screens loaded on demand.
 
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
@@ -69,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
 - Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
+- Add authenticated, value-free committed holder receipt lookup for uncertain write recovery; durable registry admission and metadata reconciliation remain required before enabling Settings values.
 - Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.

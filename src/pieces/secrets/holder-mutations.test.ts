@@ -11,6 +11,9 @@ import {connect as netConnect} from 'node:net';
 import {generateIdentity} from 'age-encryption';
 import {listenHolderMutations,localHolderMutations} from './holder-mutations.js';
 import {openHolderStore} from './holder-store.js';
+import {startLoom} from '../../foundation.js';
+import {fixture} from '../../fixture.js';
+import {FakeClock} from '../../core/clock.js';
 import {localSecretSource,privateBytes} from './local-holder.js';
 const homes:string[]=[],closes:(()=>Promise<void>)[]=[];
 afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});vi.restoreAllMocks();});
@@ -24,8 +27,8 @@ function setup(){
   const fingerprint=new X509Certificate(readFileSync(client.cert)).fingerprint256;
   const authority=vi.fn(async(peer:string,member:string)=>peer===fingerprint&&member==='asserted-owner'?'actual-owner':null);
   const who={member:'asserted-owner',writeId:randomUUID()};
-  const raw=(path:string,body:Buffer,headers:Record<string,string>={})=>new Promise<number>((resolve,reject)=>{
-    const request=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),agent:false,method:'POST',path,
+  const raw=(path:string,body:Buffer,headers:Record<string,string>={},method='POST')=>new Promise<number>((resolve,reject)=>{
+    const request=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),agent:false,method,path,
       headers:{'content-type':'application/octet-stream','content-length':String(body.length),'x-holder-member':Buffer.from(who.member).toString('base64url'),'x-holder-write-id':who.writeId,...headers}},response=>{const chunks:Buffer[]=[];response.on('data',b=>chunks.push(b));response.on('end',()=>{expect(Buffer.concat(chunks).length).toBe(0);resolve(response.statusCode!);});});
     request.on('error',reject);request.end(body);
   });
@@ -50,7 +53,7 @@ it('awaits persistent mutations, resolves actual membership and survives restart
   try{expect(db.prepare('SELECT DISTINCT member FROM holder_receipts').all()).toEqual([{member:'actual-owner'}]);expect(readFileSync(join(home,'holder.db')).includes(sentinel)).toBe(false);if(db.pragma('journal_mode',{simple:true})==='wal')expect(readFileSync(join(home,'holder.db-wal')).includes(sentinel)).toBe(false);}finally{db.close();}
 });
 it('rejects wrong peers, false membership and revoked permission even on exact retries',async()=>{
-  const {home,client,server,authority,who}=setup();const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const {home,client,server,authority,who}=setup();const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   const api=localHolderMutations(client);
   await expect(localHolderMutations({...client,cert:join(home,'stranger.pem'),key:join(home,'stranger.key')}).set(who,'github',Buffer.from('X'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
   await expect(localHolderMutations({...client,servername:'wrong.test'}).remove(who,'github')).rejects.toThrow();expect(authority).not.toHaveBeenCalled();
@@ -60,13 +63,13 @@ it('rejects wrong peers, false membership and revoked permission even on exact r
 });
 it('checks current permission again after input and before a mutation',async()=>{
   const {client,server,authority,who}=setup();authority.mockResolvedValueOnce('actual-owner').mockResolvedValue(null);
-  const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   await expect(localHolderMutations(client).set(who,'github',Buffer.from('VALUE'),'add')).rejects.toThrow();expect(authority).toHaveBeenCalledTimes(2);expect(set).not.toHaveBeenCalled();
 });
 it('acknowledges only completed work and erases owned provider input on success and failure',async()=>{
   const {client,server,authority,who}=setup();const owned:Uint8Array[]=[];let finish!:()=>void;
   const set=vi.fn(async(_who:unknown,_name:string,bytes:Uint8Array)=>{owned.push(bytes);await new Promise<void>(resolve=>{finish=resolve;});});
-  const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
+  const holder=await listenHolderMutations(server,{set,remove:()=>{},hasReceipt:()=>false},authority);closes.push(holder.close);
   let done=false;const pending=localHolderMutations(client).set(who,'github',Buffer.from('VALUE'),'add').then(()=>{done=true;});
   await vi.waitFor(()=>expect(set).toHaveBeenCalledOnce());expect(done).toBe(false);expect(Buffer.from(owned[0]).toString()).toBe('VALUE');finish();await pending;expect(owned[0].every(v=>v===0)).toBe(true);
   set.mockImplementationOnce(async(_who,_name,bytes)=>{owned.push(bytes);throw Error('VALUE-MUST-NOT-LEAK');});
@@ -75,7 +78,7 @@ it('acknowledges only completed work and erases owned provider input on success 
   await expect(localSecretSource(client).read('github')).rejects.toThrow();
 });
 it('bounds input and rejects malformed framing or routes without touching storage',async()=>{
-  const {client,server,authority,who,raw}=setup();const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const {client,server,authority,who,raw}=setup();const set=vi.fn(async(_who:unknown,_name:string,_bytes:Uint8Array,_mode:string)=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   for(const [path,body,headers] of [
     ['/v1/mutation/add/github',Buffer.alloc(0),{}],['/v1/mutation/add/github',Buffer.alloc(65537),{}],
     ['/v1/mutation/remove/github',Buffer.from('X'),{}],['/v1/mutation/rotate/github',Buffer.from('X'),{}],
@@ -89,7 +92,7 @@ it('bounds input and rejects malformed framing or routes without touching storag
 });
 it('absolute deadline bounds a stalled authority and prevents late mutations',async()=>{
   const {client,server,authority,who}=setup();let finish!:(member:string)=>void;authority.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
-  const set=vi.fn(async()=>{});const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
+  const set=vi.fn(async()=>{});const holder=await listenHolderMutations(server,{set,remove:()=>{},hasReceipt:()=>false},authority);closes.push(holder.close);
   vi.useFakeTimers();try{
     const pending=expect(localHolderMutations(client).set(who,'github',Buffer.from('VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
     await vi.waitFor(()=>expect(authority).toHaveBeenCalledOnce());await vi.advanceTimersByTimeAsync(5000);await pending;finish('actual-owner');await Promise.resolve();expect(set).not.toHaveBeenCalled();
@@ -109,7 +112,7 @@ it('erases the client snapshot and refuses holder-controlled acknowledgement bod
 it('client deadline also bounds an already started mutation and erases both copies after late completion',async()=>{
   const {client,server,authority,who}=setup();const snapshots=clientSnapshots();let finish!:()=>void;let provider:Uint8Array|undefined;
   const set=vi.fn(async(_who:unknown,_name:string,bytes:Uint8Array)=>{provider=bytes;await new Promise<void>(resolve=>{finish=resolve;});});
-  const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
+  const holder=await listenHolderMutations(server,{set,remove:()=>{},hasReceipt:()=>false},authority);closes.push(holder.close);
   vi.useFakeTimers();try{
     const pending=expect(localHolderMutations(client).set(who,'github',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
     await vi.waitFor(()=>expect(set).toHaveBeenCalledOnce());await vi.advanceTimersByTimeAsync(5000);await pending;
@@ -122,14 +125,14 @@ it('client deadline also bounds an already started mutation and erases both copi
 
 it('rejects changed actual identity at the second authority check',async()=>{
   const {client,server,authority,who}=setup();authority.mockResolvedValueOnce('actual-owner').mockResolvedValue('different-owner');
-  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   await expect(localHolderMutations(client).remove(who,'github')).rejects.toThrow();expect(authority).toHaveBeenCalledTimes(2);expect(remove).not.toHaveBeenCalled();
 });
 it('does not consume request input while admission authority is pending',async()=>{
   const {client,server,authority,who}=setup();let admit!:(member:string)=>void;
   authority.mockImplementationOnce(()=>new Promise(resolve=>{admit=resolve;}));
   const reads=vi.spyOn(IncomingMessage.prototype,'read');
-  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   const pending=localHolderMutations(client).set(who,'github',Buffer.alloc(65536,65),'add');
   await vi.waitFor(()=>expect(authority).toHaveBeenCalledOnce());
   const bodyReads=()=>reads.mock.contexts.filter(req=>req.url==='/v1/mutation/add/github');
@@ -138,13 +141,13 @@ it('does not consume request input while admission authority is pending',async()
 });
 it('refuses an occupied socket and leaves its original listener reachable',async()=>{
   const {client,server,authority,who}=setup();const original=vi.fn(async()=>{}),impostor=vi.fn(async()=>{});
-  const holder=await listenHolderMutations(server,{set:original,remove:()=>{}},authority);closes.push(holder.close);
-  await expect(listenHolderMutations(server,{set:impostor,remove:()=>{}},authority)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  const holder=await listenHolderMutations(server,{set:original,remove:()=>{},hasReceipt:()=>false},authority);closes.push(holder.close);
+  await expect(listenHolderMutations(server,{set:impostor,remove:()=>{},hasReceipt:()=>false},authority)).rejects.toThrow(/^Local secret mutation unavailable$/);
   await localHolderMutations(client).set(who,'github',Buffer.from('VALUE'),'add');expect(original).toHaveBeenCalledOnce();expect(impostor).not.toHaveBeenCalled();
 });
 it('bounds connections before TLS completion or complete HTTP headers arrive',async()=>{
   const {client,server,authority}=setup();const set=vi.fn(async()=>{}),remove=vi.fn();
-  const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt:()=>false},authority);closes.push(holder.close);
   for(const tls of [false,true]) {
     vi.useFakeTimers();let connected=false,closed=false;
     const peer=tls?tlsConnect({path:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),minVersion:'TLSv1.3'},()=>{connected=true;peer.write('POST /v1/mutation/add/github HTTP/1.1\r\nHost: holder.test\r\n');})
@@ -181,7 +184,7 @@ it('independently bounds the client against a trusted peer with no server deadli
 });
 
 it('normalizes missing or unsafe listener parents to the fixed error',async()=>{
-  const {home,server,authority}=setup();const store={set:async()=>{},remove:()=>{}};
+  const {home,server,authority}=setup();const store={set:async()=>{},remove:()=>{},hasReceipt:()=>false};
   await expect(listenHolderMutations({...server,socket:join(home,'PRIVATE-PATH-SENTINEL','holder.sock')},store,authority)).rejects.toThrow(/^Local secret mutation unavailable$/);
   chmodSync(home,0o755);try{await expect(listenHolderMutations(server,store,authority)).rejects.toThrow(/^Local secret mutation unavailable$/);}finally{chmodSync(home,0o700);}
 });
@@ -192,11 +195,120 @@ it('erases original incoming chunks as well as concatenated input on success and
     const bytes=original.call(this,size);if(this.url==='/v1/mutation/add/github'&&Buffer.isBuffer(bytes))chunks.push(bytes);return bytes;
   });
   let reject=false;const set=async()=>{if(reject)throw Error('PRIVATE-PROVIDER-FAILURE');};
-  const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
+  const holder=await listenHolderMutations(server,{set,remove:()=>{},hasReceipt:()=>false},authority);closes.push(holder.close);
   const api=localHolderMutations(client);
   for(const failed of [false,true]){
     reject=failed;const pending=api.set({...who,writeId:randomUUID()},'github',Buffer.alloc(65536,65),'add');
     if(failed)await expect(pending).rejects.toThrow(/^Local secret mutation unavailable$/);else await pending;
     expect(chunks.length).toBeGreaterThan(0);expect(chunks.every(b=>b.every(v=>v===0))).toBe(true);chunks.splice(0);
   }
+});
+
+it('queries durable commit evidence without replaying a mutation, using actual resolved membership',async()=>{
+  const {home,client,server,authority,who}=await receiptSetup();
+  const identity=join(home,'identity'),key=join(home,'receipt-key');writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(key,randomBytes(32),{mode:0o600});
+  let store=await openHolderStore(home,identity,key),holder=await listenHolderMutations(server,store,authority);
+  closes.push(async()=>{await holder.close();store.close();});const api=localHolderMutations(client);
+  await expect(api.hasReceipt(who)).resolves.toBe(false);
+  const persist=store.set.bind(store);
+  vi.spyOn(store,'set').mockImplementationOnce(async(...args)=>{await persist(...args);throw Error('ACK-LOST-AFTER-COMMIT');});
+  await expect(api.set(who,'github',Buffer.from('COMMITTED-ONLY'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
+  await expect(api.hasReceipt(who)).resolves.toBe(true);
+  await api.set({...who,writeId:randomUUID()},'github',Buffer.from('NEWER'),'replace');
+  await holder.close();store.close();store=await openHolderStore(home,identity,key);holder=await listenHolderMutations(server,store,authority);
+  const set=vi.spyOn(store,'set'),remove=vi.spyOn(store,'remove'),read=vi.spyOn(store,'read');
+  await expect(api.hasReceipt(who)).resolves.toBe(true);
+  await expect(api.hasReceipt({...who,writeId:randomUUID()})).resolves.toBe(false);
+  expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();
+  expect(authority.mock.calls.every(c=>c[1]==='asserted-owner')).toBe(true);
+});
+it('denies receipt evidence to wrong peers, false members and changed authority before and after lookup',async()=>{
+  const {home,client,server,authority,who}=await receiptSetup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
+  const api=localHolderMutations(client);
+  await expect(localHolderMutations({...client,cert:join(home,'stranger.pem'),key:join(home,'stranger.key')}).hasReceipt(who)).rejects.toThrow();
+  await expect(localHolderMutations({...client,servername:'wrong.test'}).hasReceipt(who)).rejects.toThrow();
+  expect(authority).not.toHaveBeenCalled();
+  await expect(api.hasReceipt({...who,member:'actual-owner'})).rejects.toThrow();expect(hasReceipt).not.toHaveBeenCalled();
+  authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce(null);
+  await expect(api.hasReceipt(who)).rejects.toThrow();expect(hasReceipt).not.toHaveBeenCalled();
+  authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('different-owner');
+  await expect(api.hasReceipt(who)).rejects.toThrow();expect(hasReceipt).toHaveBeenCalledExactlyOnceWith({member:'actual-owner',writeId:who.writeId});
+  authority.mockResolvedValue(null);await expect(api.hasReceipt(who)).rejects.toThrow();expect(hasReceipt).toHaveBeenCalledOnce();
+  expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+});
+it('rejects malformed receipt requests before lookup and normalizes provider failure',async()=>{
+  const {client,server,authority,who,raw}=await receiptSetup();const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
+  for(const [path,body,headers] of [
+    ['/v1/receipt',Buffer.from('UNEXPECTED'),{}],['/v1/receipt?name=github',Buffer.alloc(0),{}],
+    ['/v1/receipt',Buffer.alloc(0),{'x-holder-write-id':'invalid'}],
+    ['/v1/receipt',Buffer.alloc(0),{'content-type':'application/json'}],
+  ] as [string,Buffer,Record<string,string>][])expect(await raw(path,body,headers)).toBe(503);
+  expect(await raw('/v1/receipt',Buffer.alloc(0),{},'GET')).toBe(503);
+  expect(hasReceipt).not.toHaveBeenCalled();
+  hasReceipt.mockImplementation(()=>{throw Error('RECEIPT-PRIVATE-SENTINEL');});
+  await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  hasReceipt.mockReturnValue('invalid' as unknown as boolean);
+  await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  hasReceipt.mockImplementation(()=>Promise.reject(Error('PRIVATE-ASYNC')) as unknown as boolean);
+  await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+});
+it.each([
+  {label:'nonempty204',status:204,headers:{'content-length':'12'},body:'PRIVATE-BODY'},
+  {label:'nonempty404',status:404,headers:{'content-length':'12'},body:'PRIVATE-BODY'},
+  {label:'empty chunked404',status:404,headers:{'transfer-encoding':'chunked'},body:''},
+  {label:'unexpected empty200',status:200,headers:{'content-length':'0'},body:''},
+  {label:'missing length204',status:204,headers:{},body:''},
+])('requires exact empty receipt framing: $label',async({status,headers,body})=>{
+  const {client,server,who}=await receiptSetup();
+  const peer=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
+    req.resume();req.on('end',()=>{res.writeHead(status,headers);res.end(body);});
+  });
+  // The outside holder peer is faked in-process beside the next fixture daemon.
+  await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
+  closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
+  await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
+});
+it('bounds receipt authority before disclosure and never returns late evidence',async()=>{
+  const {client,server,authority,who}=await receiptSetup();let finish!:(member:string)=>void;
+  authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('actual-owner').mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
+  vi.useFakeTimers();try{
+    const pending=expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
+    await vi.waitFor(()=>expect(authority).toHaveBeenCalledTimes(3));expect(hasReceipt).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);await pending;finish('actual-owner');await Promise.resolve();
+    expect(hasReceipt).toHaveBeenCalledOnce();expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+  }finally{vi.useRealTimers();}
+});
+
+/** Private holder peers are outside-process roles, faked in the test process.
+ * All new receipt server cases run beside the real next-mode fixture daemon. */
+async function receiptSetup(){
+  const s=setup(),appHome=join(s.home,'app');fixture(appHome);
+  const app=await startLoom({home:appHome,next:true,staging:true,clock:new FakeClock(),stdout:()=>{}});
+  closes.push(app.close);return s;
+}
+
+it('closes a raw receipt caller at the server deadline without disclosing late evidence',async()=>{
+  const {client,server,authority,who}=await receiptSetup();let finish!:(member:string)=>void;
+  authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('actual-owner').mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
+  vi.useFakeTimers();let closed=false;const responses:Buffer[]=[];
+  const peer=tlsConnect({path:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),minVersion:'TLSv1.3'},()=>{
+    peer.write(['POST /v1/receipt HTTP/1.1','Host: holder.test','Connection: close','Content-Type: application/octet-stream','Content-Length: 0',
+      `X-Holder-Member: ${Buffer.from(who.member).toString('base64url')}`,`X-Holder-Write-Id: ${who.writeId}`,'',''].join('\r\n'));
+  });
+  peer.on('data',bytes=>responses.push(bytes));peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+  try{
+    await vi.waitFor(()=>expect(authority).toHaveBeenCalledTimes(3));expect(hasReceipt).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));
+    expect(Buffer.concat(responses).length).toBe(0);
+    finish('actual-owner');await Promise.resolve();await Promise.resolve();
+    expect(Buffer.concat(responses).length).toBe(0);expect(hasReceipt).toHaveBeenCalledOnce();
+    expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+  }finally{peer.destroy();vi.useRealTimers();}
 });
