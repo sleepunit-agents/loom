@@ -40,7 +40,23 @@ Schema 4 adds folded days and checked findings. `attention.fold({conversation})`
 
 ## Completion and final move
 
-The remaining rebuild units must add Inbox and Home apps, liveness checks and CI screenshot artifacts. The mapping above covers installed operations, not a completed replacement of every old conversation route or job.
+The Inbox preview is registered at `/p/inbox-preview` on the kit and reads only `attention.ask` through `useRecords`. It has Needs you, alphabetical agent folders, search, answered/resolved history and a full question reader. Opening a row starts `attention.get`; direct links and invalidated checks offer Check again. It shows answer controls only after that read confirms the ask is open, then repeats that read immediately before `attention.answer`. Connection loss, scope loss, a changed live set or leaving the reader invalidates a pending check. A shared guard above reader navigation permits only one pending check/write, including after closing or switching the reader. One pending call retains its operation id through reconnects; failures are inline and a rejected words answer retains its draft while the reader stays open. Done and Dismiss wait while a words draft is unsent. Drafts are local component state, not saved across closing or reloading.
+
+Approval/task source asks and `waits_on` decisions open the owning preview app rather than recording an ineffective central yes. Member-private asks show no central answer controls: replies must stay encrypted in Comms. Ordinary asks can record yes/no, words (only in words mode), done or dismiss under server policy. This bounded preview **records** an answer; it does not deliver a message or start a body. Runtime delivery, optional public words on yes/no asks and private encrypted replies remain required before final move. The UI states this limitation. The current live type includes every visible ask, including all answered history; there is no second archive cache or legacy Inbox read.
+
+The single Inbox browser test brings a disposable next-mode loom and fake clock, proves two-window first-answer propagation and private/project filtering, and captures 390/1280/1920 screenshots in Neon Noir and Daylight under `artifacts/attention-inbox`, uploaded by the ordinary CI shard artifact. No browser suite runs on loom's machine.
+
+| Old Inbox surface | New preview |
+|---|---|
+| Needs you / by-agent folders / answered | Central `attention.ask` filtered in the screen; resolved asks appear under Answered |
+| Full ask, why, if-yes/no, refs, answer/by/time | Kit Split reader, with HTTP(S)-only authored reference links |
+| `/inbox/open`, fresh before action | Socket `attention.get` on opening a row (or Check again for a direct link) and immediately before write |
+| Done / Dismiss / words / Yes / No | `attention.answer`; source-owned decisions link to their owning app |
+| Conversation reply delivery | Pending runtime composition; preview labels answers as recorded, never delivered |
+| Private question/reply wording | Remains in Comms; Inbox uses only opaque central metadata |
+| Read/unread marks, local persistent reply drafts, FYI/error folders and bulk actions | Not added to this preview: central asks have no read-mark or notice model; final composition must reconcile owning-piece notices before the old Inbox is retired |
+
+Home, final delivery and production role composition remain. The mapping above covers installed operations and the bounded preview, not a completed replacement of every old conversation route or job.
 
 For the final move, the importer must read only a copy of old data and verify ids, counts and content in one transaction. No real import or deployment is part of this implementation. After all pieces and apps are merged and the owner approves the move, the coordinator backs up, imports, starts next mode and verifies the shared counts and answers. Until then, the old side is untouched and the new side depends on no import having run.
 
