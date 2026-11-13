@@ -254,3 +254,51 @@ verify copied existing content paths and database household metadata, stop any
 competing source listener, and start/verify next mode at the final coordinated
 move. There is no Mind importer or content-table migration.
 People, Projects and Activity remain separate app units under t-2207.
+
+## Next-mode People
+
+`/p/people-preview` reads `person` records, canonically `commons:<slug>` for
+shared directory cards and `<agent>:<slug>` for relationships. Source inventory
+comes only from household database metadata; files absent at startup stay absent
+until restart. Each record uses central policy independently. The household
+owner sees the directory; an agent or partial member sees only its authorized
+relationship cards. Project membership never widens a relationship. The reader
+honors directory merge redirects, archived cards, stale contact fields and active,
+unexpired user/feedback evidence. Memory expiry and contact staleness have live
+clock deadlines. Other person/memory writes refresh derived records per viewer.
+
+| Old People surface | New surface |
+| --- | --- |
+| `/people`, kind/search filters | `mind.peopleList`, `person` records and local kind/name/agent filters |
+| `/people/<slug>`, `/a/<agent>/people/<slug>` | `mind.personRead({id})`, scoped records, combined directory/authorized relationship reader |
+| Reach/facts/relationships/newer memories/evidence/recorded permissions | Existing source SQL projection, no copied content tables |
+| Owner roles and linked projects | Central household sharing metadata and authorized existing project cards |
+| Conversation links | `PeopleConversations` metadata role; explicit unavailable state until installed |
+| Access link | New Sharing app; card text never grants access |
+| `person-add` form | `mind.personAdd`, contact details in directory, summary in default agent relationship |
+
+Person MCP maintenance tools (verify/archive/restore/merge/history/revision
+restore/write) have no buttons on these old screens and are not replaced by this
+app unit. Existing source writers continue to announce `core.touched`.
+
+Creation requires both existing sources. It creates cards, never updates an
+existing or archived slug. Source retry metadata uses the already versioned Mind
+receipt schema. Each half commits with its own receipt. These are separate source
+transactions: a failed relationship commit can leave a directory card visible.
+The request remains unsuccessful until both halves exist; retrying its original
+id/input resumes the second half, and a different operation/input cannot steal
+that id. `Call.retry()` explicitly resends an unavailable save using the retained
+id/input; its subscribers and current `result` promise observe the new attempt.
+No timer or effect retries a completed error. The form retains its draft/request
+across navigation/disconnect, freezes an unavailable attempt for explicit retry,
+and requires Add another after success. Complete source receipts recover a failed
+core receipt across restart without duplicating either card. Partial retries still
+require current authorization. Receipts contain only the slug result and identity,
+not copied contact or summary text. No content schema is created or imported.
+
+The new full conversation owner has not landed in this base. Composition may
+supply `PeopleConversations.list(viewer, person)`; it must enforce its own central
+member/private scope and return metadata links only. Without it, People says the
+service is unavailable, rather than claiming there are no conversations.
+Final coordinator composition must wire that role when available. No host rollout
+or source discovery is included.
