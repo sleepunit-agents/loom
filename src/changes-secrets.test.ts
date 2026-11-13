@@ -2,13 +2,13 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
-import { fixture, fixtureSharing } from '../../fixture.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { installSecrets } from '../secrets/index.js';
-import { installSecretServices, secretUseRole } from '../secrets/service.js';
-import { githubSecrets } from './secrets.js';
-import { githubReader } from './github.js';
+import { startLoom } from './foundation.js';
+import { fixture, fixtureSharing } from './fixture.js';
+import { FakeClock, type Viewer } from './core/index.js';
+import { installSecrets } from './pieces/secrets/index.js';
+import { installSecretServices, secretUseRole } from './pieces/secrets/service.js';
+import { githubSecrets } from './pieces/changes/secrets.js';
+import { githubReader } from './pieces/changes/github.js';
 
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => {
