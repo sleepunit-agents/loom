@@ -1,3 +1,4 @@
+import { HomeConversations, HomeComposer, useHomeComms } from './home-comms';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import './home.css';
 import { useRef, useState } from 'react';
@@ -26,6 +27,7 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
   const displays = useAgentDisplays();
+  const conversations = useHomeComms();
   const people = useRecords<AgentPerson>('person');
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
@@ -67,17 +69,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
-              <section aria-label={`${agent.name} clock`} className="grid min-w-0 gap-2">
-                <h3>Next</h3>
-                {clockStatus !== 'live' ? <Unavailable status={clockStatus} label="clock" /> : <>
-                  <p>{next.paused ? 'Clock paused' : next.next ? `${time(next.next.due)} · ${next.next.text}` : 'No wake scheduled'}</p>
-                  <h3>Clock jobs · {jobs.length}</h3>
-                  {!jobs.length ? <p>No clock jobs.</p> : <List label={`${agent.name} clock jobs`}>{jobs.map(job => {
-                    const wake = work.find(w => w.id === job.wake)!;
-                    return <Row key={job.id} title={job.text} status={state(wake, paused)} meta={job.status === 'scheduled' ? time(job.at) : undefined} onClick={()=>go(job.href)} />;
-                  })}</List>}
-                </>}
-              </section>
+              <div className="desk-home-columns">
+                <div className="grid min-w-0 content-start gap-4">
               <section aria-label={`${agent.name} runtime jobs`} className="grid min-w-0 gap-2">
                 {runtime.status !== 'live' ? <><h3>Runtime jobs</h3><Unavailable status={runtime.status} label="runtime jobs" /></> : <>
                   <h3>Runtime jobs · {runtimeJobs.length}</h3>
@@ -92,7 +85,24 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />
                 <ReportedItems title="Watching" empty="No watched items reported." items={status.watched} go={go} />
               </>}</>}</section>
+                  <HomeConversations agent={agent.id} name={agent.name} reading={conversations} go={go} />
+                </div>
+                <div className="grid min-w-0 content-start gap-4">
+              <section aria-label={`${agent.name} clock`} className="grid min-w-0 gap-2">
+                <h3>Next</h3>
+                {clockStatus !== 'live' ? <Unavailable status={clockStatus} label="clock" /> : <>
+                  <p>{next.paused ? 'Clock paused' : next.next ? `${time(next.next.due)} · ${next.next.text}` : 'No wake scheduled'}</p>
+                  <h3>Clock jobs · {jobs.length}</h3>
+                  {!jobs.length ? <p>No clock jobs.</p> : <List label={`${agent.name} clock jobs`}>{jobs.map(job => {
+                    const wake = work.find(w => w.id === job.wake)!;
+                    return <Row key={job.id} title={job.text} status={state(wake, paused)} meta={job.status === 'scheduled' ? time(job.at) : undefined} onClick={()=>go(job.href)} />;
+                  })}</List>}
+                </>}
+              </section>
+                </div>
               </div>
+              </div>
+              <HomeComposer agent={agent.id} name={agent.name} reading={conversations} go={go} />
             </section>;
           })}
         </div>}

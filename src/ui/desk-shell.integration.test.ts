@@ -19,7 +19,7 @@ const root = resolve('dist/web');
 if (enabled && (!chrome || !existsSync(chrome) || !existsSync(join(root,'next.html')))) throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('desk applies member appearance live across fresh windows and serves PWA assets', async () => {
   const home = mkdtempSync(join(tmpdir(),'desk-shell-'));
-  const app = await startLoom({home,next:true,clock:new FakeClock(),webRoot:root,install(app) {
+  const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:root,install(app) {
     migrateHouseholdTables(app.db);
     app.db.transaction(() => {
       new HouseholdDatabase(app.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
@@ -95,6 +95,19 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await a.unroute('**/faces/art/manifest.json*'); await b.unroute('**/faces/art/sheet.png*');
     new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
     await a.getByRole('button',{name:'Home',exact:true}).click();
+    // Home shares Comms' durable draft and opens exactly the acknowledged thread.
+    const homeComposer=b.locator('.desk-home-compose');
+    await expect.poll(()=>homeComposer.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
+    await homeComposer.getByRole('textbox',{name:'Message',exact:true}).fill('A Home conversation');
+    await b.reload();
+    await expect.poll(()=>b.locator('.desk-home-compose').getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('A Home conversation');
+    await b.locator('.desk-home-compose').getByRole('button',{name:'Send',exact:true}).click();
+    await expect.poll(()=>b.locator('.comms-thread').count()).toBe(1);
+    await expect.poll(()=>b.getByText('A Home conversation',{exact:true}).count()).toBe(1);
+    expect(app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
+    await b.getByRole('button',{name:'Home',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
+    await expect.poll(()=>b.locator('.desk-home-compose').getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
     // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
