@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
-import { installEffects } from '../../core/effects.js';
-import { installBridges } from './index.js';
+import { fixture as homeFixture, fixtureSharing } from '../../fixture.js';
 import { venueSchema } from './model.js';
 import { put } from './store.js';
 import { discordInbox } from './discord-inbox.js';
@@ -20,7 +19,8 @@ const payload=(id='300',patch:Record<string,unknown>={})=>({id,channel_id:'400',
 const cursor=(seq:number)=>({session:'SESSION',url:'wss://gateway.discord.gg/?v=10&encoding=json',seq});
 async function fixture(existing?:string) {
  const home=existing??mkdtempSync(join(tmpdir(),'discord-drain-'));if(!existing)homes.push(home);
- const clock=new FakeClock(1000);const app=await startLoom({home,clock,install:app=>installBridges(app,()=>({members:{},projects:{},services:{}}))});
+ if(!existing)homeFixture(home);
+ const clock=new FakeClock(1000);const app=await startLoom({home,next:true,clock,sharing:fixtureSharing,stdout:()=>{}});
  let closed=false;const close=async()=>{if(!closed){closed=true;await app.close();}};closes.push(close);
  if(!existing) {put(app.db,'venues',venue);put(app.db,'links',{id:'jonathan',platform:'discord',workspace:'100',user:'500',person:'jonathan'});put(app.db,'routes',{id:'primary',platform:'discord',workspace:'100',channel:'400',primary:'art'});}
  let epoch='one';const currentEpoch=()=>epoch;
@@ -163,12 +163,22 @@ it('permanently invalidates on the public credential generation even if current 
  const d=f.drain();const flush=d.flush();f.epoch('two');metadata.resolve({id:'400',kind:'channel'});await flush;f.epoch('one');await d.flush();expect(f.receive).not.toHaveBeenCalled();expect(f.inbox.pending()).toHaveLength(1);
 });
 it('replays a normalized commit after failed raw consumption through restart without duplicate delivery',async()=>{
- const f=await fixture();const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);const delivered:Incoming[]=[];
+ const f=await fixture();const effects=f.app.effects!;const delivered:Incoming[]=[];
  const engine=new Bridges(f.app,f.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},{may:async()=>true,get:async()=> 'fixture'},[{platform:'discord',connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],effects);closes.unshift(()=>engine.close());
  await f.add();f.app.db.exec("CREATE TRIGGER fail_consume BEFORE UPDATE ON bridges_discord_receipts BEGIN SELECT RAISE(ABORT,'fail'); END;");
  const first=f.drain({receive:engine.receive.bind(engine)});await first.flush();await engine.flush();expect(delivered).toHaveLength(1);expect(f.inbox.pending()).toHaveLength(1);
  await first.close();await engine.close();f.app.db.exec('DROP TRIGGER fail_consume');await f.close();
- const g=await fixture(f.home);const nextEffects=installEffects(g.app,()=>({members:{},projects:{},services:{}}),false);
+ const g=await fixture(f.home);const nextEffects=g.app.effects!;
  const next=new Bridges(g.app,g.clock,{admit:async()=> 'allow',deliver:async input=>{delivered.push(input);return 'delivered';},stop:async()=>{}},{may:async()=>true,get:async()=> 'fixture'},[{platform:'discord',connect:async()=>({close(){}}),inspect:async()=> 'allow',send:async()=>({id:'post'})}],nextEffects);closes.unshift(()=>next.close());
  await g.drain({receive:next.receive.bind(next)}).flush();await next.flush();expect(delivered).toHaveLength(1);expect(g.inbox.pending()).toEqual([]);expect(g.app.db.prepare('SELECT count(*) AS n FROM bridges_inbox').get()).toEqual({n:1});
+});
+
+it.each(['lifetime','setup','restore','epoch'] as const)('preserves raw words and permanently stops after %s changes during normalized commit',async mode=>{
+ const f=await fixture();await f.add();const commit=deferred<void>();f.receive.mockReturnValueOnce(commit.promise);
+ const d=f.drain();const flush=d.flush();await until(()=>f.receive.mock.calls.length===1);
+ if(mode==='lifetime')f.current.mockReturnValue(false);
+ else if(mode==='epoch')f.epoch('two');
+ else {put(f.app.db,'venues',{...venue,enabled:false});if(mode==='restore')put(f.app.db,'venues',venue);}
+ commit.resolve();await flush;expect(f.app.db.prepare('SELECT state,event FROM bridges_discord_receipts').get()).toEqual({state:'pending',event:JSON.stringify(payload())});
+ f.current.mockReturnValue(true);f.epoch('one');await d.flush();expect(f.receive).toHaveBeenCalledOnce();
 });
