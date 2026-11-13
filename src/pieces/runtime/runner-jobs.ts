@@ -76,7 +76,8 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       hearJob(db,id,ctx.now);
       if (before.conversation) {
         const rows = db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(id) as {id:string}[];
-        provenanceStore(db).consumed(before.conversation, rows.map(row=>row.id));
+        const bridgeRows=db.prepare("SELECT id FROM runtime_bridge_turns WHERE conversation=? AND direction='in'").all(before.conversation) as {id:string}[];
+        provenanceStore(db).consumed(before.conversation, [...rows.map(row=>row.id),...bridgeRows.map(row=>`bridge:${row.id}`)]);
       }
       // Result and metadata writes share the operation's transaction/receipt.
       // Notify only the job id; log words are never in the live payload.

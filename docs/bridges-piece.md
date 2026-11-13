@@ -739,14 +739,32 @@ access to unscoped commons cards; there is no commons fallback or service grant.
 denied cards yield an absent name; neither owner impersonation nor account fields
 on People cards grant bridge authority.
 
-The installed runtime conversation implementation currently binds private Comms
-threads, not bridge venues. `NextBridgesOptions.runtime` therefore remains an
-explicit trusted role; the root's named missing-role fake refuses admission with
-`wait` when absent. Existing transient retention rules apply. Tests inject only
-this missing runtime and platform HTTP/sockets; real persistent holder, pinned
-mTLS, household mutation authority, service grants, SQLite queues, People reader
-and staging paths are exercised. **Real bridge runtime delivery/reply composition
-is still required**; CLI wiring is not a claim that agent bodies receive messages.
+The installed runtime now also supports household-linked one-person Discord and
+Slack DMs. `bridgeRuntime` uses the existing household member/agent relationship
+rule, queues the actual `runtime.startBody` intent, and binds the private runtime
+transcript to that member and job. An assigned runner claims the job and takes its
+staging-gated input with a central body credential. Only that current running or
+waiting body may use `runtime.readConversation` and `runtime.reply`; copied agent
+names, unbound credentials, other jobs, owners and runners confer no transcript
+access. Revoked relationships, boxes, house configurations, stopped jobs and root
+shutdown invalidate access.
+
+Incoming IDs permanently deduplicate private turns and body starts beyond registry
+receipt expiry. A reply transaction stores its transcript acknowledgement and calls
+`Bridges.reply` with a stable conversation-scoped ID and the original incoming
+receipt. Retries retain that address even after another turn arrives or the daemon
+restarts. Reply words remain outside registry/live records and stored operation
+results. The existing engine performs fresh platform, lifetime, grant and admission
+checks and its separate send effect before posting. `stop` revokes the bound body's
+credentials and records its own receipt so replay cannot stop a later body.
+
+This first runtime integration is deliberately limited to private household DMs.
+Groups, guild channels, peers, guest/readers and paired routes return admission
+`wait` until their runtime contracts are implemented; People links alone never
+grant access. `NextBridgesOptions.runtime` remains an explicit trusted override
+for fixtures. End-to-end fixtures use actual SQLite, Signin, runner claim/input,
+body read/reply, provenance and Bridges queues, with fake holder/HTTP/sockets; they
+do not launch an external runner process or activate a running home.
 
 | Old path | New path in this unit |
 | --- | --- |
@@ -758,3 +776,8 @@ is still required**; CLI wiring is not a claim that agent bodies receive message
 Retained command parity, proactive first DM, files, read/describe/presence, peers,
 pairs, attributed relay, offline importer, raw identity disposition and final move
 inventory remain obligations of the full rebuild.
+
+The runtime also rechecks the current delivered source's account link before a
+body read or reply. New outbox addresses retain the intended linked person;
+relinking an account to another admitted member holds those pending replies.
+This metadata never supplies a platform recipient or grants admission.

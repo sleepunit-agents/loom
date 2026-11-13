@@ -35,7 +35,9 @@ export interface VenueAdapter {
   send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>): Promise<{ id: string }>;
 }
 export interface BridgesRole {
+  /** Current delivered source still belongs to this linked household person. */
+  currentIncoming(id: string, person: string): boolean;
   /** Stable id from runtime's reply operation. Replay returns the original state.
    * Inside an operation transaction pass its context, so changes publish only on commit. */
-  reply(input: { id: string; incomingId: string; text: string }, context?: Pick<Context, 'changed'>): void;
+  reply(input: { id: string; incomingId: string; text: string; person?: string }, context?: Pick<Context, 'changed'>): void;
 }

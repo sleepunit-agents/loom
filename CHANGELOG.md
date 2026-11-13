@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
+
 - Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
 
 ### Added

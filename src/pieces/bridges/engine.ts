@@ -81,7 +81,15 @@ export class Bridges implements BridgesRole {
     // Receipt is durable before the gateway ACK. Delivery can fail independently.
     void this.flush();
   }
-  reply(input: {id: string; incomingId: string; text: string}, context?: Pick<Context,'changed'>) {
+  currentIncoming(id: string, person: string) {
+    if(this.closed)return false;
+    const row=this.app.db.prepare("SELECT * FROM bridges_inbox WHERE id=? AND state='delivered'").get(id) as Inbox|undefined;
+    const v=row?venueById(this.app.db,row.venue):undefined;
+    if(!row||!v?.enabled||identity(v)!==row.identity)return false;
+    const message=JSON.parse(row.message) as Message;
+    return personFor(this.app.db,v,message.user)===person;
+  }
+  reply(input: {id: string; incomingId: string; text: string; person?: string}, context?: Pick<Context,'changed'>) {
     const db = this.app.db;
     if (db.inTransaction && !context) throw new Error('Transactional replies require the operation context');
     if (!input.id || input.id.length > 200 || !input.text.trim()) throw new Error('Invalid reply');
@@ -92,7 +100,9 @@ export class Bridges implements BridgesRole {
     const raw = JSON.parse(incoming.message) as Message;
     const v = venueById(db,incoming.venue);
     const m = v ? {...raw,...conversationKind(v,raw)} : raw;
-    const address: Address = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group};
+    const person=v?personFor(db,v,m.user):undefined;
+    if(input.person!==undefined&&input.person!==person)throw new Error('Reply person changed');
+    const address: Address & {person?:string} = {channel:m.channel, thread:m.thread, dm:m.dm, group:m.group,...(person?{person}:{})};
     db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run(input.id,input.incomingId,incoming.venue,incoming.identity,JSON.stringify(address),input.text,this.clock.now());
     if (context) context.changed('bridges.send',input.id); else this.changed('bridges.send',input.id);
     // If invoked within runtime's transaction, defer IO until that transaction has committed.
@@ -221,6 +231,9 @@ export class Bridges implements BridgesRole {
       const raw = original ? JSON.parse(original.message) as Message : undefined;
       const message = raw ? {...raw,...conversationKind(v,raw)} : undefined;
       const route = message ? routeFor(db,v,message.channel,message.parent) : undefined;
+      const {person:expectedPerson,...destination}=JSON.parse(row.address) as Address & {person?:string};
+      const samePerson=()=>expectedPerson===undefined || (!!message&&personFor(db,v,message.user)===expectedPerson);
+      if(!samePerson()){db.prepare("UPDATE bridges_outbox SET state='held' WHERE id=? AND state='pending'").run(row.id);this.changed('bridges.send',row.id);continue;}
       if (message) {
         let admitted: 'allow'|'drop'|'wait';
         try { admitted = await this.admit(v,message,route,adapter,personFor(db,v,message.user) ?? ''); } catch { this.retry(); continue; }
@@ -237,11 +250,10 @@ export class Bridges implements BridgesRole {
       if (!this.effects.beforeOutside({id:`bridges:${row.id}`,kind:'bridge-send',title:`Bridge reply via ${v.id}`})) continue;
       if (!db.prepare("UPDATE bridges_outbox SET state='sending' WHERE id=? AND state='pending'").run(row.id).changes) continue;
       try {
-        const address = JSON.parse(row.address) as Address;
-        const result = await adapter.send(v,{...address,...conversationKind(v,address)},row.text,row.id,async()=>{
-          if (!current() || !message || !this.setupUnchanged(v,message,route,revision)) return false;
+        const result = await adapter.send(v,{...destination,...conversationKind(v,destination)},row.text,row.id,async()=>{
+          if (!current() || !samePerson() || !message || !this.setupUnchanged(v,message,route,revision)) return false;
           const admitted=await this.admit(v,message,route,adapter,personFor(db,v,message.user) ?? '');
-          return current() && admitted === 'allow' && !!this.setupUnchanged(v,message,route,revision);
+          return current() && samePerson() && admitted === 'allow' && !!this.setupUnchanged(v,message,route,revision);
         });
         db.prepare("UPDATE bridges_outbox SET state='sent',remote_id=? WHERE id=?").run(result.id,row.id);
         this.effects.finish(`bridges:${row.id}`);

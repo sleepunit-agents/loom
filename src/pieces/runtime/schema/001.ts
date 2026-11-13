@@ -29,4 +29,9 @@ CREATE TABLE runtime_import_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE runtime_import_sources (path TEXT PRIMARY KEY, content TEXT NOT NULL);
 CREATE TABLE runtime_import_documents (collection TEXT NOT NULL, key TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(collection,key));
 CREATE TABLE runtime_import_revisions (id INTEGER PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+` }, { number: 7, sql: `
+-- Private venue words and permanent receipt identities, never live records.
+CREATE TABLE runtime_bridge_turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, direction TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)));
+CREATE INDEX runtime_bridge_conversation ON runtime_bridge_turns(conversation,seq);
+CREATE TABLE runtime_bridge_stops (id TEXT PRIMARY KEY);
 ` }];
