@@ -45,9 +45,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     const result=await response.json() as Result<T>;expect(result.ok).toBe(true);if(!result.ok)throw new Error(result.message);return result.value;
   };
   let seq=0;
-  const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r.ok).toBe(true);return r; };
+  const call = (op:string,input:object,who='jonathan') => { const r=loom.operations.call('direct',{kind:'member',id:who},`clock.${op}`,input,`fixture:clock:${++seq}`);expect(r).toMatchObject({ok:true});return r; };
   call('in',{agent:'art',prompt:'Review today’s work',note:'Morning review',when:'2h'});
-  call('park',{agent:'art',prompt:'Continue after the answer',note:'Waiting for the owner',on:'a-fixture'});
   expect(await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'clock.in',{agent:'art',member:'jonathan',prompt:'Private words',note:'Private clock work',when:'3h'},`fixture:private:${++seq}`,true)).toMatchObject({ok:true});
   call('in',{agent:'pond-bot',project:'pond',prompt:'Check pond',note:'Pond check',when:'1h'},'pollock');
   call('laneSet',{name:'morning',agent:'art',text:'Look at the queue and choose useful work.',note:'Daily planning',at:'08:31',days:'Mon-Fri'});
@@ -126,6 +125,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       await expect.poll(()=>a.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
       await expect.poll(()=>a.getByText(prompt,{exact:false}).count()).toBeGreaterThan(0);
     }
+    call('park',{agent:'art',prompt:'Continue after the answer',note:'Waiting for the owner',on:localCards[0]});
     await Promise.all([a.goto(`${loom.url}/p/clock-preview`),b.goto(`${loom.url}/p/clock-preview`)]);
     const row=(p:typeof a,text:string)=>p.locator('[data-split-row]').filter({hasText:text});
     console.info('Clock browser: initial windows');
@@ -143,7 +143,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByRole('button',{name:'Resume art',exact:true}).count()).toBe(1);
     await row(b,'Waiting for the owner').click();
     await expect.poll(()=>b.getByText('Parked · awaiting answer',{exact:false}).count()).toBeGreaterThan(0);
-    expect(await b.getByText('Waiting on a-fixture until',{exact:false}).count()).toBe(1);
+    expect(await b.getByText(`Waiting on ${localCards[0]} until`,{exact:false}).count()).toBe(1);
     await row(a,'Shared follow-up').click();
     await a.getByRole('button',{name:'Cancel wake',exact:true}).click();
     await a.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Cancel wake',exact:true}).click();
