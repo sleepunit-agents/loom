@@ -308,14 +308,16 @@ it('returns the generic CLI refusal for an asynchronous importer rejection witho
 });
 
 it('recovers only the source-identical root Comms publication pair under a matching migration receipt', async () => {
-  for (const kind of ['valid', 'external', 'bytes', 'receipt', 'nested', 'extra']) {
+  for (const kind of ['valid', 'external', 'bytes', 'receipt', 'nested', 'extra', 'malformed', 'cookie-malformed']) {
     const f = await fixture();
     await loadKey(f.old);
     const root = join(f.dir, 'key-snapshot'); await createSnapshot(f.old, root);
     await runMigrationAll(root, f.home);
-    const key = join(f.home, 'comms.key');
-    writeFileSync(key, readFileSync(join(root, 'home/comms.key')), { mode: 0o600 });
-    const temp = join(f.home, `.comms.key-import-${randomUUID()}`); linkSync(key, temp);
+    const name = kind === 'cookie-malformed' ? 'ui-cookie.key' : 'comms.key';
+    const key = join(f.home, name);
+    writeFileSync(key, readFileSync(join(root, 'home', name)), { mode: 0o600 });
+    const suffix = kind.endsWith('malformed') ? '-'.repeat(36) : randomUUID();
+    const temp = join(f.home, `.${name}-import-${suffix}`); linkSync(key, temp);
     if (kind === 'external') linkSync(key, join(f.dir, 'outside'));
     if (kind === 'bytes') writeFileSync(key, 'different');
     if (kind === 'receipt') rmSync(join(f.home, '.migration-all.json'));

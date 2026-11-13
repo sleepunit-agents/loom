@@ -1,11 +1,11 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { chmodSync, fstatSync, fsyncSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadKey } from '../pieces/comms/crypto.js';
 import { publishMigrationCommsKey } from './migration-comms-key.js';
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'migration-comms-key-')); dirs.push(dir);
   const source = join(dir, 'snapshot'), home = join(dir, 'new'); mkdirSync(source); mkdirSync(home);
@@ -53,4 +53,24 @@ it('refuses different keys, aliases, broad permissions and overlapping homes wit
     expect(() => publishMigrationCommsKey(input, home), kind).toThrow();
     expect(readFileSync(f.key)).toEqual(before); expect(readdirSync(f.home)).toEqual(entries);
   }
+});
+
+it('refuses missing or multiple source identities before publishing a key', async () => {
+  for (const kind of ['empty', 'multiple']) {
+    const f = await fixture(), identity = readFileSync(f.key, 'utf8');
+    writeFileSync(f.key, kind === 'empty' ? '# no identity\n' : identity + identity);
+    expect(() => publishMigrationCommsKey(f.key, f.home)).toThrow('one X25519 key');
+    expect(readdirSync(f.home)).toEqual([]);
+  }
+});
+it('returns no key and emits no output on success or refusal', async () => {
+  const f = await fixture();
+  const output: unknown[] = [];
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { output.push(chunk); return true; });
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => { output.push(chunk); return true; });
+  expect(publishMigrationCommsKey(f.key, f.home)).toBeUndefined();
+  expect(publishMigrationCommsKey(f.key, f.home)).toBeUndefined();
+  writeFileSync(join(f.home, 'comms.key'), 'different');
+  expect(() => publishMigrationCommsKey(f.key, f.home)).toThrow('differs');
+  expect(output).toEqual([]);
 });
