@@ -44,7 +44,7 @@ it('next reprojects account assignment and clearing over HTTP and live without g
  const home=mkdtempSync(join(tmpdir(),'changes-accounts-next-'));
  const loom=await startLoom({home,next:true,clock:new FakeClock(0),authenticate:req=>({viewer:{kind:'member',id:String(req.headers.authorization)},valid:()=>true})});
  const owner={kind:'member' as const,id:'jonathan'};
- let socket:WebSocket|undefined;
+ let socket:WebSocket|undefined,ownerSocket:WebSocket|undefined;
  try {
   loom.db.transaction(()=>{
    new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art','mark'],members:[{person:'jonathan',role:'owner',agents:'*'},{person:'pollock',role:'member',agents:['art']}]});
@@ -75,13 +75,21 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   expect(assign('art',[])).toMatchObject({ok:true});
   expect(await next()).toMatchObject({kind:'del',id:change().id});
   expect(await list()).toMatchObject({ok:true,value:[]});
+  ownerSocket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'jonathan'}});
+  const ownerMessages:unknown[]=[],ownerWaiters:((v:unknown)=>void)[]=[];
+  ownerSocket.on('message',data=>{const value=JSON.parse(String(data));const waiter=ownerWaiters.shift();if(waiter)waiter(value);else ownerMessages.push(value);});
+  const ownerNext=()=>ownerMessages.length?Promise.resolve(ownerMessages.shift()):new Promise(resolve=>ownerWaiters.push(resolve));
+  await once(ownerSocket,'open');ownerSocket.send(JSON.stringify({kind:'subscribe',type:'change'}));
+  expect(await ownerNext()).toMatchObject({kind:'set',records:[{id:change().id},{id:'github:secret/app#4'}]});
   expect(assign('mark',['art-bot'])).toMatchObject({ok:true});
+  expect(await ownerNext()).toMatchObject({kind:'put',record:{id:change().id,agent:'mark'}});
+  await ownerNext(); // The second stored row is invalidated by the same account edit.
   expect(show()).toMatchObject({ok:true,value:{agent:'mark'}});
   expect(await list()).toMatchObject({ok:true,value:[]});
   loom.db.transaction(()=>new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art'],members:[{person:'jonathan',role:'owner',agents:'*'}]}))();
   expect((show() as {value:{agent?:string}}).value.agent).toBeUndefined();
  } finally {
-  if(socket&&socket.readyState!==WebSocket.CLOSED){const closed=once(socket,'close');socket.terminate();await closed;}
+  for(const ws of [socket,ownerSocket])if(ws&&ws.readyState!==WebSocket.CLOSED){const closed=once(ws,'close');ws.terminate();await closed;}
   await loom.close();rmSync(home,{recursive:true,force:true});
  }
 });

@@ -12,6 +12,9 @@ describe('old Changes contract',()=>{
   expect(attribute(c,settings).agent).toBe('art');
   expect(attribute({...c,author:{login:'stranger'}},settings).agent).toBeUndefined();
   expect(attribute({...c,author:{login:'owner'}},settings).agent).toBe('art');
+  expect(attribute({...c,author:{login:'OwNeR'}},{...settings,ownerLogins:['OWNER']})).toMatchObject({mine:true,agent:'art'});
+  expect(attribute({...c,author:{login:'ART-BOT'}},settings)).toMatchObject({mine:false,agent:'art'});
+  expect(attribute({...c,author:{login:'someone'}},settings)).toMatchObject({mine:false});
  });
  it('uses the first matching wait reason',()=>{
   const cases: [Partial<Change>,string][]=[
