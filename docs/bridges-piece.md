@@ -817,8 +817,8 @@ This reader makes no current-authority or completeness claim for the files.
 
 The inventory retains conflicts between sources and between person/peer account
 claims. The importer must resolve or refuse them, never choose a file-order winner.
-Readers retain their **People** provenance; they are not agent grants. Explicitly
-absent platform sections do not invent a connection. Slack's bundle reference
+Readers retain their **People** provenance; they are not agent grants. Absent, null and empty platform sections do not invent a connection or default
+secret reference; only explicitly supplied references survive. Slack's bundle reference
 cannot supply workspace/bot IDs or separate token/app secret names without reviewed
 mapping. A later importer must require those inputs rather than open the bundle or
 fabricate names. Other source settings are not imported by this reader.

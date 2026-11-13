@@ -76,8 +76,8 @@ export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyB
       if (file.kind === 'shuttle') {
         const v = shuttle.parse(raw);
         result.instances.push({source:file.name,agent:v.agent.slug,
-          ...(v.discord ? {discordSecret:v.discord.token_file ?? 'discord-token'} : {}),
-          ...(v.slack ? {slackBundle:v.slack.secrets_env ?? 'slack.env'} : {}),channelNotes:v.channel_notes ?? {}});
+          ...(v.discord?.token_file === undefined ? {} : {discordSecret:v.discord.token_file}),
+          ...(v.slack?.secrets_env === undefined ? {} : {slackBundle:v.slack.secrets_env}),channelNotes:v.channel_notes ?? {}});
       } else if (file.kind === 'people') {
         const v = people.parse(raw);
         for (const [section,kind] of [['people','person'],['agents','agent']] as const) {

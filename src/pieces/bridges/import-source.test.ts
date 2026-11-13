@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, openSync, readFileSync, readSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,14 +31,14 @@ describe('offline legacy Bridges source inventory',()=>{
     const {file,root}=fixture();
     const secret=join(root,'do-not-open');mkdirSync(secret);
     const sources=[file('agent/shuttle.json','shuttle',{agent:{slug:'art'},secrets:secret,secret_cmd:'exit 99',ext:secret,
-      discord:{},slack:{secrets_env:'art-slack'},channel_notes:{notes_channels:'work'}}),
+      discord:{token_file:'art-discord'},slack:{secrets_env:'art-slack'},channel_notes:{notes_channels:'work'}}),
     file('agent/people.json','people',{people:{jonathan:{name:'ignored private label',tier:3,grants:['ignored'],discord:['123'],slack:{T1:['U1']}}},agents:{peer:{discord:'456'}}}),
     file('agent/routes.json','routes',{guild:'789',bots:{art:'100'},bot_roles:{art:['200','201']},
       channels:{'300':{name:'ignored name',primary:'art',peer:true,pair:'pair-name',guest_venue:true,readers:['jonathan']}},
       threads:{'400':{primary:'peer',parent:'300'}},only:['300'],ignore:{'500':1},webhook_peers:{'600':'peer'},notify:{general:'300'},peer_turns_each:4})];
     const before=sources.map(f=>readFileSync(f.path));
     const v=readBridgeInventory(sources);
-    expect(v.instances).toEqual([{source:'agent/shuttle.json',agent:'art',discordSecret:'discord-token',slackBundle:'art-slack',channelNotes:{notes_channels:'work'}}]);
+    expect(v.instances).toEqual([{source:'agent/shuttle.json',agent:'art',discordSecret:'art-discord',slackBundle:'art-slack',channelNotes:{notes_channels:'work'}}]);
     expect(v.accounts).toEqual([{source:'agent/people.json',owner:'jonathan',kind:'person',platform:'discord',user:'123'},
       {source:'agent/people.json',owner:'jonathan',kind:'person',platform:'slack',workspace:'T1',user:'U1'},
       {source:'agent/people.json',owner:'peer',kind:'agent',platform:'discord',user:'456'}]);
@@ -46,6 +47,13 @@ describe('offline legacy Bridges source inventory',()=>{
         {channel:'400',thread:true,primary:'peer',parent:'300',peer:false,guest:false,readers:[]}],only:['300'],ignore:['500'],webhookPeers:{'600':'peer'},notify:{general:'300'},peerTurnsEach:4});
     expect(JSON.stringify(v)).not.toMatch(/ignored|exit 99|do-not-open|tier|grants/);
     expect(sources.map(f=>readFileSync(f.path))).toEqual(before);
+  });
+  it('retains only supplied platform references, including absent, null and empty sections',()=>{
+    const {file}=fixture();
+    for (const sections of [{}, {discord:null,slack:null}, {discord:{},slack:{}}]) {
+      const inventory=readBridgeInventory([file('shuttle.json','shuttle',{agent:{slug:'art'},...sections})]);
+      expect(inventory.instances).toEqual([{source:'shuttle.json',agent:'art',channelNotes:{}}]);
+    }
   });
   it('opens only selected files and bounds descriptor IO when the source grows after stat',()=>{
     const {file}=fixture();const f=file('people.json','people',{});
@@ -80,6 +88,12 @@ describe('offline legacy Bridges source inventory',()=>{
   it('binds checksum to names, kinds and all bytes including ignored metadata, independent of argument order',()=>{
     const {file}=fixture();const a=file('a/people.json','people',{people:{a:{discord:'1'}}}),b=file('b/routes.json','routes',{});
     const v=readBridgeInventory([a,b]);expect(readBridgeInventory([b,a])).toEqual(v);
+    const expectedSources=[a,b].map(f=>{
+      const bytes=readFileSync(f.path);
+      return {name:f.name,kind:f.kind,sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length};
+    });
+    expect(v.sources).toEqual(expectedSources);
+    expect(v.checksum).toBe(createHash('sha256').update(JSON.stringify(expectedSources)).digest('hex'));
     writeFileSync(a.path,'{"people":{"a":{"discord":"1"}},"_comment":"changed"}');
     expect(readBridgeInventory([a,b]).checksum).not.toBe(v.checksum);
     expect(readBridgeInventory([{...a,name:'c/people.json'},b]).checksum).not.toBe(v.checksum);
