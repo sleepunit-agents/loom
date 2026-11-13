@@ -10,6 +10,8 @@ export interface LiveRecord { id: string; [key: string]: unknown }
 export interface RecordType {
   name: string;
   windowOnly?: boolean;
+  /** Member-private rows of a mixed type are browser-only. */
+  privateWindowOnly?: boolean;
   /** Resolve encrypted fields outside SQLite. read is repeated before sending. */
   resolve?(record: LiveRecord): Promise<LiveRecord>;
   read(id: string, viewer: Viewer): LiveRecord | undefined;
@@ -65,7 +67,7 @@ export class Live {
   private update(c: Subscriber, sub: Subscriber['types'] extends Map<string, infer T> ? T : never, id: string) {
     if (sub.type.resolve) { void this.resolveSet(c, sub.type, sub.scope); return; }
     const r = sub.type.read(id, c.viewer);
-    const visible = r && sub.type.inScope(r, sub.scope, this.clock.now());
+    const visible = r && (!sub.type.privateWindowOnly || r.member===undefined || c.window) && sub.type.inScope(r, sub.scope, this.clock.now());
     const until = visible ? sub.type.expires?.(r, sub.scope) : undefined;
     sub.cancel.get(id)?.(); sub.cancel.delete(id);
     if (visible) {
@@ -79,7 +81,7 @@ export class Live {
     if (!sub) { sub = { type, scope, sent: new Set(), cancel: new Map() }; c.types.set(key, sub); }
     const version = (this.revisions.get(sub) ?? 0) + 1; this.revisions.set(sub, version);
     try {
-      const candidates = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && type.inScope(r, scope, this.clock.now()));
+      const candidates = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && (!type.privateWindowOnly || r.member===undefined || c.window) && type.inScope(r, scope, this.clock.now()));
       const records = await Promise.all(candidates.map(r => type.resolve!(r)));
       if (!this.clients.has(c) || !c.valid() || this.revisions.get(sub) !== version) return;
       // A policy change or row revision during crypto cannot send an old plaintext snapshot.
@@ -94,7 +96,7 @@ export class Live {
     const key = JSON.stringify([type.name, scope]);
     const old = c.types.get(key);
     const sub = { type, scope, sent: new Set<string>(), cancel: new Map<string, () => void>() };
-    const records = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && type.inScope(r, scope, this.clock.now()));
+    const records = type.ids(scope).map(id => type.read(id, c.viewer)).filter((r): r is LiveRecord => !!r && (!type.privateWindowOnly || r.member===undefined || c.window) && type.inScope(r, scope, this.clock.now()));
     const deadlines = records.map(r => ({ record: r, until: type.expires?.(r, scope) }));
     for (const { record: r, until } of deadlines) {
       sub.sent.add(r.id);

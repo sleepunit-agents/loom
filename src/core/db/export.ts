@@ -1,39 +1,37 @@
-import type { Db } from './index.js';
-/** Both export and backup must use this table-by-table snapshot, never copy loom.db.
- * Comms is intentionally unrecoverable from a backup, including its import receipts.
+import { migrate, type Db } from './index.js';
+type ExportRow=Record<string,unknown>;
+type ExportFilter=(table:string,row:ExportRow)=>boolean;
+const filters=new WeakMap<Db,Map<string,ExportFilter>>();
+/** Owning pieces declare exclusions; core knows no piece's tables or record layout. */
+export function registerExportFilter(db:Db,piece:string,filter:ExportFilter) {
+ let held=filters.get(db);if(!held){held=new Map();filters.set(db,held);}held.set(piece,filter);
+ migrate(db,'core_export',[{number:1,sql:'CREATE TABLE core_export_required (piece TEXT PRIMARY KEY)'}]);
+ db.prepare('INSERT OR IGNORE INTO core_export_required VALUES (?)').run(piece);
+}
+/** Includes rendered retry copies and structured private scope, without returning words. */
+export function privateExportCopy(value:unknown,ids:ReadonlySet<string>):boolean {
+ if(typeof value==='string') {
+  if([...ids].some(id=>value.includes(id)))return true;
+  try{return privateExportCopy(JSON.parse(value),ids);}catch{return false;}
+ }
+ if(!value || typeof value!=='object')return false;
+ if(!Array.isArray(value) && Object.hasOwn(value,'member') && (value as {member?:unknown}).member!==undefined)return true;
+ return Object.values(value).some(v=>privateExportCopy(v,ids));
+}
+/** Both export and backup use this snapshot, never copy loom.db. Comms and
+ * private copies declared by owning pieces are intentionally unrecoverable.
  */
 export function exportDatabase(db:Db) {
  return db.transaction(()=>{
-  const tables=db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string;sql:string}[];
-  // Private Clock/Approvals rows can retain words from a Comms thread. Like
-  // Comms they are omitted, including audit, metadata and retry-result copies.
-  const privateIds=new Set<string>();
-  for(const table of ['clock_wakes','clock_schedules','approvals_approvals','approvals_rules']) {
-   if(!tables.some(t=>t.name===table))continue;
-   for(const row of db.prepare(`SELECT id,record FROM ${table}`).all() as {id:string;record:string}[]) {
-    if(JSON.parse(row.record).member!==undefined)privateIds.add(row.id);
-   }
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='core_export_required'").get()) {
+   for(const {piece} of db.prepare('SELECT piece FROM core_export_required').all() as {piece:string}[])
+    if(!filters.get(db)?.has(piece))throw new Error('Export requires the installed privacy filter for '+piece);
   }
-  const privateCopy=(value:unknown):boolean=>{
-   if(typeof value==='string') {
-    if([...privateIds].some(id=>value.includes(id)))return true;
-    try{return privateCopy(JSON.parse(value));}catch{return false;}
-   }
-   if(!value || typeof value!=='object')return false;
-   if(!Array.isArray(value) && Object.hasOwn(value,'member') && (value as {member?:unknown}).member!==undefined)return true;
-   return Object.values(value).some(privateCopy);
-  };
+  const tables=db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string;sql:string}[];
   return tables.filter(t=>!t.name.startsWith('comms_')).map(t=>({
-   ...t,rows:db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all().filter(row=>{
-    if(t.name==='core_migrations')return (row as {piece:string}).piece!=='comms';
-    if(t.name.startsWith('clock_') || t.name.startsWith('approvals_'))return !privateCopy(row);
-    if(t.name==='core_operations') {
-     // Command results are rendered text and can lose structured member scope.
-     const name=(row as {name:string}).name;
-     return !['clock.command','approvals.command'].includes(name) && !privateCopy(row);
-    }
-    return true;
-   }),
+   ...t,rows:db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all().filter(row=>
+    (t.name!=='core_migrations'||(row as {piece:string}).piece!=='comms')
+    && [...filters.get(db)?.values()??[]].every(filter=>filter(t.name,row as ExportRow))),
   }));
  })();
 }

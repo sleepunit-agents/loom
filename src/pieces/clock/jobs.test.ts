@@ -113,7 +113,8 @@ describe('durable daemon clock', () => {
     const access = structuredClone(sharing);
     access.members.helper = { owner: false, agents: ['art'] };
     const app = await loom({}, home(), new FakeClock(), access);
-    const privateWake = app.value('in', { agent: 'art', member: 'jonathan', prompt: 'Private words', note: 'Private note', when: '1m' });
+    const privateResult = await app.operations.callAsync('socket',owner,'clock.in', { agent: 'art', member: 'jonathan', prompt: 'Private words', note: 'Private note', when: '1m' },randomUUID(),true);
+    if(!privateResult.ok)throw Error(JSON.stringify(privateResult));const privateWake=privateResult.value as Wake;
     const publicWake = app.set('2m');
     const helper: Viewer = { kind: 'member', id: 'helper' };
     for (const viewer of [helper, { kind: 'agent', id: 'art' } as Viewer]) {
@@ -121,7 +122,7 @@ describe('durable daemon clock', () => {
       expect(clockRole(app.operations).agentNext(viewer, { agent: 'art' })).toMatchObject({ ok: true, value: { next: { id: publicWake.id } } });
       expect(clockRole(app.operations).jobs(viewer, { agent: 'art' })).toMatchObject({ ok: true, value: [{ id: publicWake.id }] });
     }
-    expect(app.value('agentNext', { agent: 'art' })).toMatchObject({ next: { id: privateWake.id } });
+    expect(await app.operations.callAsync('socket',owner,'clock.agentNext',{agent:'art'},undefined,true)).toMatchObject({ok:true,value:{next:{id:privateWake.id}}});
     expect(JSON.stringify(app.value('jobs', { agent: 'art' }))).not.toContain('Private words');
     for (const verb of ['jobs', 'agentNext']) {
       expect(app.call(verb, { agent: 'art' }, { kind: 'member', id: 'guest' })).toMatchObject({ ok: false, code: 'denied' });
@@ -156,7 +157,7 @@ describe('durable daemon clock', () => {
     access.services.desk = { types: ['wake'], operations: [] };
     const other = await loom({}, home(), new FakeClock(), access);
     other.set();
-    other.value('in', { agent: 'art', member: 'jonathan', prompt: 'Private', note: 'Private', when: '1m' });
+    expect(await other.operations.callAsync('socket',owner,'clock.in',{agent:'art',member:'jonathan',prompt:'Private',note:'Private',when:'1m'},randomUUID(),true)).toMatchObject({ok:true});
     expect(other.value<unknown[]>('jobs', { agent: 'art' }, { kind: 'service', id: 'desk' })).toHaveLength(1);
     for (const viewer of [{ kind: 'service', id: 'unknown' }, { kind: 'runner', id: 'box' }] as Viewer[])
       expect(other.call('agentNext', { agent: 'art' }, viewer)).toMatchObject({ ok: false, code: 'denied' });
@@ -285,7 +286,7 @@ describe('durable daemon clock', () => {
     if (scenario === 'agent scope') { s.agent = 'pond-bot'; occurrence.agent = 'pond-bot'; }
     app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(s), s.id);
     app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(occurrence), occurrence.id);
-    expect(app.value('in', input, viewer).state).toBe('pending');
+    const result=await app.operations.callAsync('socket',viewer,'clock.in',input,randomUUID(),true);expect(result).toMatchObject({ok:true,value:{state:'pending'}});
     expect(wakes(app.db)).toHaveLength(2);
     expect(wake(app.db, occurrence.id)).toEqual(occurrence);
   });

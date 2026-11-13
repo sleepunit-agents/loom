@@ -20,7 +20,7 @@ export function installLocalStanding(db:Db, operations:Operations, sharing:()=>S
     const name=mode==='use'?'approvals.piece-standing-local':'approvals.piece-standing-local-check';
     operations.register(operation({name,input:localStandingInput.extend({mode:z.literal(mode)}),output:z.unknown(),write:mode==='use',recheckPolicy:true,doors:['direct'],
       may(v,i) {
-        return v.kind==='service' && v.id==='clock'
+        return localOwner(i.caller,sharing()) && v.kind==='service' && v.id==='clock'
           && mayAct(v,{type:'approval',agent:i.caller.who.agent,project:i.caller.project},sharing(),'act',name)
           && mayCreate({kind:'agent',id:i.caller.who.agent},{type:'approval',agent:i.caller.who.agent,project:i.caller.project},sharing());
       },

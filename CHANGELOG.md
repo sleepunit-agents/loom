@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
+- Clock local requests from an authenticated owner conversation retain member-private approval, wake and standing scope; signed windows alone read the words, and exports omit private copies.
 - Next runtime accepts stable body-start intents and connects Clock dispatch to runner-confirmed starts, preserving staging holds and uncertain outcomes.
 
 - Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.

@@ -529,7 +529,7 @@ describe('private decision lookups',()=>{
     state.approvals[0].member='pollock';persist(a.db,state,a.clock.now());
     const yes=a.value('grant',{kind:'merge',target,for:'art'},owner);
     expect(yes.id).not.toBe(card.id);
-    a.value('answer',{id:card.id,action:'allow'},pollock);
+    expect(await a.operations.callAsync('socket',pollock,'approvals.answer',{id:card.id,action:'allow'},'private-answer',true)).toMatchObject({ok:true});
     a.value('grant',{kind:'merge',target,for:'art',deny:true},owner);
     expect(load(a.db).approvals.find(r=>r.id===card.id)?.state).toBe('allowed');
     expect(a.role.call('use',{who:{agent:'art',where:'h-1'},for:'owner'},{id:card.id,kind:'merge',target},'private-use')).toMatchObject({ok:false,code:'denied'});

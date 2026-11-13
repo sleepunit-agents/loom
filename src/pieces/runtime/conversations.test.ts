@@ -1,3 +1,4 @@
+import { readApproval } from '../approvals/store.js';
 import * as commsCrypto from '../comms/crypto.js';
 import { runtimeRole } from './role.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
@@ -369,6 +370,7 @@ it('derives Approval caller only from the live authenticated body and database m
   const receipt=value<{id:string}>(await f.post(body,'approvals.request',ask));
   expect(receipt).toMatchObject({id:expect.any(String),state:'pending'});
   expect(JSON.stringify(receipt)).not.toContain('repo:exact');
+  expect(readApproval(f.app.db,receipt.id)).toMatchObject(expected);
   expect(receipt).not.toHaveProperty('project');
   // Shared agent credentials, another job, and a copied Viewer have no principal.
   for(const secret of [f.unbound,f.token('agent:art@another')]){
@@ -398,10 +400,11 @@ it('retains centrally authenticated service-house spend identity and fences stal
  const service=f.token(`agent:art/discord@${job}`),other=f.token(`agent:art/slack@${job}`);
  const ask={kind:'github-write',target:'service:exact',what:'Write a fixture',why:'Exercise exact service binding'};
  const receipt=value<{id:string}>(await f.post(service,'approvals.request',ask));
- expect(receipt).toMatchObject({for:'owner',who:{agent:'art',where:`${job} (discord)`}});
+ expect(readApproval(f.app.db,receipt.id)).toMatchObject({for:'owner',member:'jonathan',who:{agent:'art',where:`${job} (discord)`}});
  expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
  expect(await f.post(other,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
- expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:true,value:{state:'used'}});
+ expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
+ expect(readApproval(f.app.db,receipt.id)?.state).toBe('allowed');
  expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false});
  // An archived thread no longer proves a person, even before asynchronous end work settles.
  await f.socket('comms.change',{thread,action:'archive'});
@@ -444,7 +447,7 @@ it('removes archived conversation authority while staging retains a live job and
  expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
  const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
  const ask={kind:'github-write',target:'before:archive',what:'Check current conversation',why:'Prove archived thread fencing',conversation};
- expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',project:'pond',conversation}});
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{id:expect.any(String),state:'pending'}});
  expect(await f.socket('comms.change',{thread,action:'archive'})).toMatchObject({ok:true});
  expect(runtimeStore(f.app.db).read('job',job)).toMatchObject({state:'running'});
  expect(signin(f.app).token(hash(body))).toBeDefined();

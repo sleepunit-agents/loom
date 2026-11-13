@@ -4,9 +4,9 @@ import { type State, type Approval, type Caller, type Standing, iso, stateOf, ma
 import { invalid, denied, exactTarget, repoOf, hostOf, vouchOf, resetOf, writeoffOf, covered, standingTarget } from './targets.js';
 import { plain, checkPlain, principalWords } from './words.js';
 import { rulesFor, setRule, type Project } from './rules.js';
-export interface DomainContext { caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string; canRead?: (approval:Approval)=>boolean }
+export interface DomainContext { window?: boolean; caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string; canRead?: (approval:Approval)=>boolean }
 export function find(s: State, id: string): Approval { const a = s.approvals.find(a => a.id === id); if (!a) throw new OperationError('not-found', `no approval ${id}`); return a; }
-export function log(s: State, event: string, a: { id: string; kind: string; target: string; who: unknown }, now: number, extra = {}) { s.audit.push({ at: iso(now), event, id: a.id, kind: a.kind, target: a.target, who: a.who, ...extra }); }
+export function log(s: State, event: string, a: { id: string; kind: string; target: string; who: unknown; member?:string }, now: number, extra = {}) { s.audit.push({ at: iso(now), event, id: a.id, kind: a.kind, target: a.target, who: a.who, ...(a.member?{member:a.member}:{}), ...extra }); }
 const newest = (s: State, a: Approval) => s.approvals.filter(b => b.member === a.member && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && b.decided).sort((a,b) => b.decided!.localeCompare(a.decided!))[0];
 function denySiblings(s: State, a: Approval, now: number, by: string) {
   for (const b of s.approvals) if (b.member === a.member && b.id !== a.id && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && (stateOf(b,now) === 'allowed' || stateOf(b,now) === 'pending' && !b.conversation)) {

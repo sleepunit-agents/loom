@@ -17,13 +17,15 @@ export interface Change { type: string; id: string }
  * Sources store this receipt atomically with their effects; it is not an intent.
  */
 export interface WriteReceipt { viewer: string; id: string; name: string; inputHash: string; expires: number }
-export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt> }
+export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt>; window?: boolean }
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
 export interface Operation<I = unknown> {
   /** Sensitive authority results must recheck current policy even on receipt replay. */
   recheckPolicy?: boolean;
+  /** Per-record private reads/writes require a real signed-in browser window. */
+  requiresWindow?(input: I): boolean;
   name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
@@ -88,9 +90,10 @@ export class Operations {
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
-    if (!op.prepare && !op.windowOnly) return this.call(door, viewer, name, input, id);
+    if (!op.prepare && !op.windowOnly && !op.requiresWindow && !window) return this.call(door, viewer, name, input, id);
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
+    if (op.requiresWindow?.(parsed.data) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     try {
       if (op.write) {
@@ -114,6 +117,7 @@ export class Operations {
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
+    if (op.requiresWindow?.(parsed.data) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
     let result: Result | typeof preparationNeeded;
@@ -129,7 +133,7 @@ export class Operations {
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
           if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
         }
-        const ctx: Context = { db: this.db, viewer, now, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
+        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
         let recovered: RecoveredWrite | undefined;
         if (op.write) for (const recover of this.recoveries) {
           recovered = recover(ctx);
