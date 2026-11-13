@@ -25,10 +25,7 @@ function label(group: boolean, user: string, members: SlackPerson[], bot: string
   if (!group) {
     const name = printable(humans.find(m => m.user === user)?.name ?? '');
     const value = name ? `DM with ${name}` : 'DM';
-    // Slice by code point so an astral character is never cut in half.
-    let result = '';
-    for (const char of value) { if (result.length + char.length > 80) break; result += char; }
-    return result;
+    return value.length <= 80 ? value : 'DM';
   }
   const names = humans.map(m => printable(m.name ?? '')).filter(Boolean).sort();
   for (let count = names.length; count > 0; count--) {

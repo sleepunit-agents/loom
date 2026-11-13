@@ -88,7 +88,8 @@ conversation continuity. A root's own thread_ts does not turn it into a reply.
 Text replaces actual mentions and HTTP links before decoding lt/gt/amp once. Encoded
 mentions stay literal; unknown people become @someone, and Slack's supplied mention
 label never supplies a person's name. Labels use resolved human display names, omit
-the receiving bot and fit 80 UTF16 units; groups use whole names and count the rest.
+the receiving bot and fit 80 UTF16 units; groups use whole names and count the rest. A DM name that cannot fit whole falls
+back to DM rather than showing a partial name.
 File names remain textual descriptions only. No credential, URL download or file
 storage is used here. Safe bounded fetch, runtime-bound file access and retention are
 still required before production file support.

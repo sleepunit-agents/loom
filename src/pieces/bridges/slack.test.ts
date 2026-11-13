@@ -63,20 +63,22 @@ describe('Slack intake contract',()=>{
     expect(m.mentions).toEqual([]);
   });
   it('uses human names only, counts unknown people and deduplicates member ids',()=>{
-    const c: SlackConversation={...dm,id:'G1',kind:'group',members:[...dm.members,{user:'U2',name:'Sam'},{user:'U3'}]};
+    const c: SlackConversation={...dm,id:'G1',kind:'group',members:[...dm.members].reverse().concat([{user:'U2',name:'Sam'},{user:'U3'}])};
     expect(convert({channel:'G1'},c)!.label).toBe('group DM with Robin, Sam and 1 more');
     expect(convert({channel:'G1'},{...c,members:[]})!.label).toBe('group DM');
     expect(convert({}, {...dm,members:[{user:'U1',name:'Ro\nbin\t'}]})!.label).toBe('DM with Ro bin');
   });
   it('bounds labels to 80 UTF16 units with whole group names',()=>{
     const names=['Alexandra Whitfield','Bartholomew Ng','Christopher Ruiz','Dominique Park','Evangeline Moss','Fitzgerald Kahananui','Gwendolyn Ortiz'];
-    const members=names.map((name,i)=>({user:`U${i}`,name}));
+    const members=[...names].reverse().map((name,i)=>({user:`U${i}`,name}));
     const c: SlackConversation={id:'G1',workspace:'T1',kind:'group',members};
     const label=convert({channel:'G1'},c)!.label!;
     expect(label.length).toBeLessThanOrEqual(80);
     expect(label).toBe('group DM with Alexandra Whitfield, Bartholomew Ng, Christopher Ruiz and 4 more');
     expect(convert({channel:'G1'},{...c,members:[{user:'U1',name:'😀'.repeat(40)}]})!.label).toBe('group DM with 1 people');
-    expect(convert({}, {...dm,members:[{user:'U1',name:'😀'.repeat(50)}]})!.label).toBe('DM with '+'😀'.repeat(36));
+    expect(convert({}, {...dm,members:[{user:'U1',name:'😀'.repeat(50)}]})!.label).toBe('DM');
+    expect(convert({}, {...dm,members:[{user:'U1',name:'R'.repeat(72)}]})!.label).toBe('DM with '+'R'.repeat(72));
+    expect(convert({}, {...dm,members:[{user:'U1',name:'R'.repeat(73)}]})!.label).toBe('DM');
   });
   it('preserves file descriptions without network/filesystem IO or input mutation',()=>{
     const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(io.attempt);
