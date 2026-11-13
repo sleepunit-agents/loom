@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {mkdtempSync,mkdirSync,rmSync,writeFileSync,readFileSync,chmodSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
+import {format} from 'node:util';
 import {join} from 'node:path';
 import {createHmac,randomUUID} from 'node:crypto';
 import {generateIdentity,Decrypter} from 'age-encryption';
@@ -124,4 +125,40 @@ it('erases actual owned identity and key file buffers on close and partial start
  expect(buffers()).toHaveLength(3);expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
  // A binding refusal also erases every loaded key and identity.
  loader.mockClear();await expect(f.open(2)).rejects.toThrow();expect(buffers()).toHaveLength(2);expect(buffers().every(b=>b.every(n=>n===0))).toBe(true);
+});
+
+it('refuses malformed active and retained age identities or receipt keys without changing storage',async()=>{
+ const f=await setup();const s=await f.open();await s.set(who(),'API',Buffer.from(sentinel),'add');s.close();const before=snapshot(f.directory);
+ for(const target of [0,1]){
+  const previous=target===0?{identities:[f.identities[1]],fingerprintKeys:[f.keys[1]]}:{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]};
+  for(const length of [0,31,33]){
+   const saved=readFileSync(f.keys[1]);writeFileSync(f.keys[1],Buffer.alloc(length,72));
+   try{await expect(f.open(target,previous)).rejects.toThrow(/^Secret holder storage unavailable$/);expect(snapshot(f.directory)).toEqual(before);}finally{writeFileSync(f.keys[1],saved);}
+  }
+  const saved=readFileSync(f.identities[1]);writeFileSync(f.identities[1],'MALFORMED-PRIVATE-AGE-IDENTITY');
+  try{await expect(f.open(target,previous)).rejects.toThrow(/^Secret holder storage unavailable$/);expect(snapshot(f.directory)).toEqual(before);}finally{writeFileSync(f.identities[1],saved);}
+ }
+});
+it('keeps all active and retained key material out of holder/loom records, files, logs and refusal errors',async()=>{
+ const f=await setup(),materials=[...f.keys,...f.identities].map(p=>readFileSync(p));
+ const logs=[vi.spyOn(console,'log'),vi.spyOn(console,'warn'),vi.spyOn(console,'error')],errors:unknown[]=[];
+ let s=await f.open();await s.set(who(),'API',Buffer.from(sentinel),'add');s.close();
+ s=await f.open(1,{identities:[f.identities[0]],fingerprintKeys:[f.keys[0]]});
+ const bytes=await s.read('API');expect(Buffer.from(bytes).toString()).toBe(sentinel);bytes.fill(0);
+ const add=who();await s.set(add,'OTHER',Buffer.from('NEW-SYNTHETIC'),'add');
+ errors.push(await s.set(add,'OTHER',Buffer.from('DIFFERENT'),'add').then(()=>undefined,e=>e));s.close();
+ errors.push(await f.open(2).then(()=>undefined,e=>e));
+ for(const e of errors)expect(e).toBeInstanceOf(Error);
+ const records=JSON.stringify(snapshot(f.directory));
+ const appRecords=(f.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])
+  .map(({name})=>JSON.stringify(f.app.db.prepare(`SELECT * FROM "${name}"`).all())).join('\n');
+ const output=format(logs.flatMap(l=>l.mock.calls),errors);
+ for(const material of [...materials,Buffer.from(sentinel)]){
+  for(const representation of [material.toString('utf8'),material.toString('hex'),material.toString('base64'),JSON.stringify(material),format(material)]){
+   expect(records).not.toContain(representation);expect(appRecords).not.toContain(representation);expect(output).not.toContain(representation);
+  }
+  for(const file of readdirSync(f.directory))expect(readFileSync(join(f.directory,file)).includes(material)).toBe(false);
+ }
+ expect(logs.flatMap(l=>l.mock.calls)).toEqual([]);
+ for(const error of errors)expect((error as Error).message).toBe('Secret holder storage unavailable');
 });
