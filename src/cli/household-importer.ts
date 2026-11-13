@@ -1,4 +1,5 @@
 /** Offline import into a different home. No legacy backend is activated. */
+import { snapshotSprites, spriteRows } from './household-sprites.js';
 import { z } from 'zod';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, linkSync, openSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -26,6 +27,8 @@ function snapshot(home: string): Map<string, Buffer | undefined> {
     const body = optional(join(home, path));
     if (body !== undefined) files.set(path, body);
   }
+  const raw = object(files.get('household.json'));
+  for (const [path, body] of snapshotSprites(home, raw.agents as string[])) files.set(path, body);
   return files;
 }
 const checksumOf = (files: Map<string, Buffer | undefined>) => createHash('sha256').update(JSON.stringify([...files].map(([p,b]) => [p,b?.toString('base64') ?? null]))).digest('hex');
@@ -73,6 +76,7 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
   for (const [id, value] of Object.entries((sessions.passkeys ?? {}) as Record<string,{id:string}>)) if (id !== value.id) throw new Error('Invalid passkey credential id');
   if (sessions.members !== undefined && (!sessions.members || typeof sessions.members !== 'object' || Array.isArray(sessions.members))) throw new Error('Invalid session members');
   const settings = [...files].filter(([p]) => p.startsWith('pieces/')).map(([p,b]) => [p.split('/')[1], object(b)] as const);
+  const sprites = spriteRows(files);
   const key = files.get('ui-cookie.key');
   if (key && key.length !== 32) throw new Error('Invalid source cookie key');
   if (!key && files.get('ui-sessions.json')) throw new Error('Source sessions require their cookie key');
@@ -96,6 +100,8 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     sessionStore.replace(sessions as unknown as SessionFile);
     const pieces = new HouseholdRows(db, 'piece_settings');
     for (const [id, value] of settings) pieces.put(id, value);
+    const artwork = new HouseholdRows(db, 'settings');
+    for (const [id, value] of sprites) artwork.put(id, value);
     options.interrupt?.();
     const assertImportContentEqual = (a: unknown, b: unknown) => { if (!isDeepStrictEqual(a,b)) throw new Error('Household import content comparison failed'); };
     assertImportContentEqual(new HouseholdDatabase(db).document(), raw);
@@ -106,7 +112,7 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     // or other state that does not appear in the reconstructed document.
     const keys = (value: unknown) => Object.keys((value ?? {}) as object).sort();
     const expectedIds: Record<typeof concerns[number], string[]> = {
-      settings: ['household-envelope','session-envelope','token-envelope'],
+      settings: ['household-envelope','session-envelope','token-envelope', ...sprites.map(([id]) => id)].sort(),
       agents: [...new Set(raw.agents as string[])].sort(),
       members: ((raw.members ?? []) as Array<{person:string}>).map(m => m.person).sort(),
       projects: [], tokens: [...new Set(tokens.tokens.map(t => t.sha256))].sort(), token_use: keys(used),
@@ -116,6 +122,7 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
       piece_settings: settings.map(([id]) => id).sort(), imports: [],
     };
     for (const concern of concerns) assertImportContentEqual(new HouseholdRows(db, concern).entries().map(([id]) => id).sort(), expectedIds[concern]);
+    for (const [id, value] of sprites) assertImportContentEqual(artwork.get(id), value);
     for (const digest of expectedIds.tokens) assertImportContentEqual(tokenStore.records(digest), tokens.tokens.filter(t => t.sha256 === digest));
     if (checksumOf(snapshot(from)) !== checksum) throw new Error('Source changed during household import');
     if (key && !previousKey) copyKey(home, key);

@@ -770,8 +770,24 @@ must match the full digest and displayed details, and an existing filing's exact
 prompt and note cannot be replaced. Card creation and filing commit together.
 
 This ports the filing/`remember_filed` portion of legacy `cmd_add` and
-`local_wake_card`/`shown_as_run`. Exact scheduling recovery with `--approval`,
-current receipt/principal checks before spend, capacity-before-spend, standing
-single-target and fire-time rechecks, app/client recovery and authenticated
-runtime composition remain unfinished. Private and steered principals fail closed;
+`local_wake_card`/`shown_as_run`. Private and steered principals fail closed;
 this filing role does not infer owner provenance from an agent token or marker.
+
+### Trusted one-shot local recovery
+
+`clockLocalRecovery(operations).schedule(caller, {approval, mode, when})` recovers
+only a trusted local filing, including its entire original note, after restart.
+Optional prompt and note must match the exact saved bytes. This direct-only role
+requires authenticated runtime Caller and current Clock service and assignee/project
+creation policy. The saved principal, agent, project and service must match.
+Capacity and due-time checks precede consumption. Owning Approvals compares the
+live receipt's full digest, details, principal, agent, service and scope before
+spending its current Allow, including expiry and later Deny checks. Consumption,
+audit, wake and operation receipt commit in one foundation transaction.
+
+Legacy `wake in/at --approval` maps to this recovery role's approval-only input;
+public command/client wiring awaits authenticated runtime composition. Ordinary
+agent tokens cannot call it. The scheduled row keeps the local marker and receipt;
+the runtime bridge continues to hold such work, so this unit grants no host dispatch.
+No legacy stores or installed pieces are read. Standing single-target/fire-time
+rechecks, app/client recovery and final authenticated local dispatch remain unfinished.

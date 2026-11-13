@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
+- Show each Comms thread’s agent letter beside its title in the list.
+
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
 - Show Comms thread activity times in CT and live working state in the thread list.
+- Resolve next-mode Approvals callers from central authenticated body proof and current private Runtime/Comms membership, preserving service-house identity.
 
 - Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
@@ -28,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
+
+- Import registered agents’ pixel sheets with the household, serve them from the new database with current agent visibility, and honor Pixel faces on Home and the rail.
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
 
@@ -52,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
+- Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
 - Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
 - Add next-mode member-private Appearance and Accessibility preference operations and Live records, preserving imported choices across owner changes.
@@ -73,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Clock: recover exact filed local words and notes through a trusted one-shot scheduling role, with current receipt checks and atomic capacity-before-spend scheduling; public runtime/client wiring remains uncomposed.
 - Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
 - Preserve project scope on explicit Clock owner-vouch cards, reject mixed scopes and recheck the card scope before applying owner Allow.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.

@@ -16,15 +16,16 @@ import { runtimeStore } from './store.js';
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
-async function setup(staging=false){
+async function setup(staging=false,member='jonathan'){
  const home=mkdtempSync(join(tmpdir(),'runtime-private-'));fixture(home);cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let app=await startLoom({home,clock,next:true,staging,stdout:()=>{}});cleanups.push(()=>app.close());
  const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();let n=0;
- const token=(role:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
+ if(member!=='jonathan')app.db.transaction(()=>new HouseholdDatabase(app.db).change(home,raw=>{const m=(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person===member)!;m.agents=['art'];}))();
+ const token=(role:string,person?:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,...(person?{member:person}:{}),sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
  const owner=token('owner'),runner=token('runner:a'),unbound=token('agent:art');
  app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'a',active:true},'enable');
- app.db.transaction(()=>{const store=runtimeStore(app.db);store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'a',name:'A',owner:'jonathan',local:true,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
- const cookie=auth.createSession(hash(owner));
+ app.db.transaction(()=>{const store=runtimeStore(app.db);store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'a',name:'A',owner:'jonathan',local:true,mayHost:'*',lentTo:member==='jonathan'?[]:['art'],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
+ const cookie=auth.createSession(hash(member==='jonathan'?owner:token('owner',member)));
  let ws=new WebSocket(app.url.replace('http:','ws:')+'/live',{headers:{cookie:`loom_ui=${cookie}`,origin:app.url}});await once(ws,'open');cleanups.push(()=>ws.terminate());
  const socket=(name:string,input:unknown)=>new Promise<Result>(resolve=>{const request=`socket-${++n}`;const receive=(raw:unknown)=>{const message=JSON.parse(String(raw));if(message.kind==='result'&&message.request===request){ws.off('message',receive);resolve(message.result);}};ws.on('message',receive);ws.send(JSON.stringify({kind:'call',name,input,id:request,request}));});
  const post=async(secret:string,name:string,input:unknown)=>{const [piece,op]=name.split('.');const r=await fetch(`${app.url}/api/${piece}/${op}`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})});return r.json() as Promise<Result>;};
@@ -349,4 +350,121 @@ for(const boundary of ['scope','generation'] as const)it(`fences a runtime failu
  expect(f.app.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE thread=? AND id='start:1'").get(thread)).toEqual({n:0});
  expect(await f.socket('comms.retryStart',{thread,seq:1,generation:boundary==='generation'?1:0})).toMatchObject({ok:false});
  expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
+});
+
+
+it('derives Approval caller only from the live authenticated body and database membership, across restart',async()=>{
+ for(const member of ['jonathan','pollock']){
+  const f=await setup(false,member),thread=await f.open(),job=await f.queued();
+  await f.post(f.runner,'runtime.claimJob',{job});
+  const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+  const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
+  const ask={kind:'github-write',target:'repo:exact',what:'Write this change',why:'A bounded fixture',conversation:cv,
+   principal:'owner',for:'owner',who:{agent:'mark',where:'forged (owner)'},caller:{who:{agent:'art',where:'forged'},for:'owner'},project:'other',people:['jonathan']};
+  const expected={for:member==='jonathan'?'owner':member,people:[member],conversation:cv,who:{agent:'art',where:job}};
+  const receipt=value<{id:string}>(await f.post(body,'approvals.request',ask));
+  expect(receipt).toMatchObject(expected);
+  expect(receipt).not.toHaveProperty('project');
+  // Shared agent credentials, another job, and a copied Viewer have no principal.
+  for(const secret of [f.unbound,f.token('agent:art@another')]){
+   const other=value<{for:string}>(await f.post(secret,'approvals.request',{...ask,target:'unknown:'+secret.slice(0,8)}));
+   expect(other).toMatchObject({for:'?'});expect(other).not.toHaveProperty('conversation');
+  }
+  const original=signin(f.app).token(hash(body))!.viewer;
+  const copied=value<{for:string}>(f.app.operations.call('direct',{...original},'approvals.request',{...ask,target:'copy:viewer'},'copy-viewer'));
+  expect(copied.for).toBe('?');
+  await f.restart();
+  expect(await f.post(body,'approvals.request',{...ask,target:'after:restart'})).toMatchObject({ok:true,value:expected});
+  // Filing propagates scope from the actual current binding; input cannot choose it.
+  expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
+  expect(await f.post(body,'approvals.request',{...ask,target:'after:filing'})).toMatchObject({ok:true,value:{...expected,project:'pond'}});
+  // Authority remains tied to current household membership, never saved request data.
+  f.app.db.transaction(()=>new HouseholdDatabase(f.app.db).change(f.home,raw=>{
+   const members=raw.members as Array<{person:string;role:string;agents:string[]|string}>;const m=members.find(m=>m.person===member)!;m.agents=[];m.role='member';if(member==='jonathan'){const other=members.find(m=>m.person==='pollock')!;other.role='owner';other.agents='*';}
+  }))();
+  expect(await f.post(body,'approvals.request',{...ask,target:'after:removal'})).toMatchObject({ok:true,value:{for:'?',who:{agent:'art'}}});
+  expect(await f.post(body,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false});
+ }
+});
+it('retains centrally authenticated service-house spend identity and fences stale body bindings',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const service=f.token(`agent:art/discord@${job}`),other=f.token(`agent:art/slack@${job}`);
+ const ask={kind:'github-write',target:'service:exact',what:'Write a fixture',why:'Exercise exact service binding'};
+ const receipt=value<{id:string}>(await f.post(service,'approvals.request',ask));
+ expect(receipt).toMatchObject({for:'owner',who:{agent:'art',where:`${job} (discord)`}});
+ expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
+ expect(await f.post(other,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:true,value:{state:'used'}});
+ expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false});
+ // An archived thread no longer proves a person, even before asynchronous end work settles.
+ await f.socket('comms.change',{thread,action:'archive'});
+ expect(await f.post(service,'approvals.request',{...ask,target:'after:archive'})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('keeps service restrictions without a job or after execution loses its binding',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const discord=f.token(`agent:art/discord@${job}`),slack=f.token('agent:art/slack'),same=f.token('agent:art/discord');
+ f.app.db.transaction(()=>{const store=runtimeStore(f.app.db),cv=store.read('job',job)!.conversation!,{changedAt:_,...b}=store.read('binding',cv)!;store.put('binding',{...b,job:'unbound'},f.clock.now());})();
+ const ask={kind:'github-write',target:'unknown:service',what:'A restricted service write',why:'Prove fail closed spending'};
+ const receipt=value<{id:string}>(await f.post(discord,'approvals.request',ask));
+ expect(receipt).toMatchObject({for:'?',who:{where:`${job} (discord)`}});
+ expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true});
+ expect(await f.post(slack,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
+ const unknown=value<{for:string}>(await f.post(slack,'approvals.request',{...ask,target:'unknown:slack',principal:'owner'}));
+ expect(unknown).toMatchObject({for:'?',who:{where:'a body (slack)'}});
+ expect(await f.post(same,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:true,value:{state:'used'}});
+ const viewer=signin(f.app).token(hash(slack))!.viewer;
+ expect(signin(f.app).agent(viewer)).toMatchObject({agent:'art',service:'slack'});
+ expect(signin(f.app).body(viewer)).toBeUndefined();expect(signin(f.app).agent({...viewer})).toBeUndefined();
+ signin(f.app).tokens.change(tokens=>{tokens.find(t=>t.sha256===hash(slack))!.revoked=new Date(f.clock.now()).toISOString();});
+ expect(signin(f.app).agent(viewer)).toBeUndefined();
+ expect(await f.post(slack,'approvals.request',{...ask,target:'revoked:service'})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('removes archived conversation authority while staging retains a live job and credential',async()=>{
+ const f=await setup(true),thread=await f.open();
+ await f.post(f.runner,'runtime.claimableJobs',{});
+ const effect=(prefix:string)=>(f.app.db.prepare('SELECT id FROM core_effects WHERE id LIKE ?').get(prefix+'%') as {id:string}).id;
+ expect(await f.post(f.owner,'core.releaseEffect',{id:effect('comms-deliver:')})).toMatchObject({ok:true});
+ const job=await f.queued();
+ expect(await f.post(f.runner,'runtime.claimJob',{job})).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(f.owner,'core.releaseEffect',{id:`runtime:input:${job}`})).toMatchObject({ok:true});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ expect(await f.post(f.runner,'runtime.reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
+ const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ const ask={kind:'github-write',target:'before:archive',what:'Check current conversation',why:'Prove archived thread fencing',conversation};
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',project:'pond',conversation}});
+ expect(await f.socket('comms.change',{thread,action:'archive'})).toMatchObject({ok:true});
+ expect(runtimeStore(f.app.db).read('job',job)).toMatchObject({state:'running'});
+ expect(signin(f.app).token(hash(body))).toBeDefined();
+ const receipt=value<Record<string,unknown>>(await f.post(body,'approvals.request',{...ask,target:'after:archive',principal:'owner',project:'pond'}));
+ expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
+ for(const field of ['conversation','project','people'])expect(receipt).not.toHaveProperty(field);
+});
+
+it('removes terminal job principal authority even when its credential and private binding remain valid',async()=>{
+ const f=await setup();await f.open();const job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const store=runtimeStore(f.app.db),conversation=store.read('job',job)!.conversation!;
+ const ask={kind:'github-write',target:'running:principal',what:'Check a current job',why:'Test terminal job attribution',conversation};
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',conversation,people:['jonathan']}});
+ for(const state of ['done','failed','stopped','lost','uncertain','queued','starting'] as const){
+  // Model durable state ahead of credential cleanup. Calling finishJob would
+  // revoke the token as well and could conceal a missing resolver state check.
+  f.app.db.transaction(()=>{const {changedAt:_,...record}=store.read('job',job)!;store.put('job',{...record,state},f.clock.now());})();
+  expect(signin(f.app).token(hash(body))).toBeDefined();
+  expect(store.read('binding',conversation)).toMatchObject({job,member:'jonathan'});
+  const receipt=value<Record<string,unknown>>(await f.post(body,'approvals.request',{...ask,target:state+':principal',principal:'owner'}));
+  expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
+  for(const field of ['people','conversation','project'])expect(receipt).not.toHaveProperty(field);
+ }
 });

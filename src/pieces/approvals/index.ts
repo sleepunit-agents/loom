@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
-import { approvalScope as scope, type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
+import { approvalScope as scope, type Caller, type Approval, type State, stateOf, ownerAnswered, iso, serviceOf, maySpend, forOf, type Rule, type Standing } from './model.js';
 import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, alwaysScope, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
@@ -38,7 +38,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   const flush = (s: State, ctx: {now:number;changed(type:string,id:string):void}) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); };
   const register = (verb: string, write: boolean, run: (s:State,input:Record<string,unknown>,c:DomainContext,viewer:Viewer)=>unknown, config: { owner?:boolean; answer?:boolean; piece?:boolean; read?:boolean } = {}) => {
     const name = `approvals.${verb}`;
-    const approvalId = ['check','use','withdraw','answer','open','always','every-time'].includes(verb.replace(/^piece-/,''));
+    const approvalId = ['check','use','use-local','withdraw','answer','open','always','every-time'].includes(verb.replace(/^piece-/,''));
     const payloadSchema = approvalId ? z.object({id:z.string().regex(/^a-[0-9a-f]{8}$/)}).catchall(z.unknown())
       : verb === 'standing-off' ? z.object({id:z.string().regex(/^s-[0-9a-f]{8}$/)}).catchall(z.unknown())
       : z.record(z.string(),z.unknown());
@@ -131,6 +131,20 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('piece-request',true,(s,i,c)=>request(s,i,c),{piece:true});
   register('piece-group-vouch',true,(s,i,c)=>groupVouch(s,i,c),{piece:true});
   register('piece-use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c),{piece:true});
+  // Clock supplies the immutable filing, and this owning boundary compares the
+  // live receipt before use mutates it. The outer Clock transaction owns both.
+  register('piece-use-local',true,(s,i,c)=>{
+    const expected = z.object({target:z.string(),digest:z.string().regex(/^[0-9a-f]{64}$/),details:z.string(),caller:callerSchema.strict()}).strict().parse(i.expected);
+    const a=find(s,String(i.id));
+    if (a.kind!=='local-wake' || a.target!==expected.target || a.digest!==expected.digest || a.details!==expected.details
+      || a.project!==expected.caller.project || a.member!==undefined || a.for!=='owner' || a.people?.length
+      || a.who.agent!==expected.caller.who.agent || serviceOf(a.who)!==serviceOf(expected.caller.who)
+      || c.caller.for!=='owner' || c.caller.people?.length || c.caller.project!==a.project
+      || c.caller.who.agent!==a.who.agent || serviceOf(c.caller.who)!==serviceOf(a.who))
+      denied('The current local receipt differs from its exact filing or caller');
+    return use(s,a.id,'local-wake',expected.target,c);
+  },{piece:true});
+
   register('piece-withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c),{piece:true});
   register('piece-rule',false,readRules,{piece:true});
   register('piece-tell',true,recordNotice,{piece:true});
