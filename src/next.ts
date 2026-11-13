@@ -3,7 +3,6 @@ import { loadKey } from './pieces/comms/crypto.js';
 import { stagingHold } from './pieces/comms/role.js';
 import { attentionRole } from './pieces/attention/role.js';
 import { conversationRuntime } from './pieces/runtime/conversations.js';
-import { HouseholdDatabase as RuntimeHousehold } from './core/household/document.js';
 import { MANIFEST, nextWorker } from './next-pwa.js';
 import { installMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
@@ -170,7 +169,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('comms.open')) {
     const comms=installComms({db:app.db,operations:app.operations,live:app.live,clock:app.operations.clock,sharing,
       key:await loadKey(options.home),runtime:conversations.delivery,hold:stagingHold(effects),attention:attentionRole(app.operations),
-      recipients:()=>{const h=new RuntimeHousehold(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
+      recipients:()=>{const h=new HouseholdDatabase(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
     });
     conversations.connect(comms);
     app.onClose(()=>{conversations.close();void comms.close();});

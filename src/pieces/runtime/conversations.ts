@@ -104,7 +104,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  const confirmed=()=>{
   if(closed||!comms)return;
   const rows=db.prepare('SELECT id,job FROM runtime_deliveries').all() as {id:string;job:string}[];
-  for(const row of rows){const job=store.read('job',row.job);if(!job||!['running','waiting'].includes(job.state))continue;
+  for(const row of rows){const job=store.read('job',row.job);if(!job||!['running','waiting'].includes(job.state)||!controlScope(store,job,sharing()).privateControl)continue;
    const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
    if(available({agent,member,thread,conversation,seq,generation}))comms.confirmStart(agent,thread,seq,generation);
   }
@@ -114,7 +114,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   if(closed)return;
   if(changes.some(c=>c.type==='runtime.job'))confirmed();
   if(!reconciling&&changes.some(c=>c.type==='core.effect')){
-   reconciling=true;void Promise.resolve().then(()=>comms?.reconcileDeliveries()).finally(()=>{reconciling=false;});
+   reconciling=true;void Promise.resolve().then(()=>Promise.all([comms?.reconcileDeliveries(),comms?.reconcileEnds()])).finally(()=>{reconciling=false;});
   }
  });
  return {delivery,privateStart,connect(role:Comms){comms=role;confirmed();void comms.reconcileDeliveries();},
