@@ -149,7 +149,7 @@ it.each(['missing','async'])('rolls back owner answers with a %s central credent
 it('applies reset through next HTTP only after a successful atomic receipt and preserves its exact shown rows across restart',async()=>{
  const f=await resetSetup(),approval=f.ask(),auth=signin(f.app),secret=randomBytes(32).toString('hex');
  const request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
- expect(request.shown.map((r:{key:string})=>r.key)).toEqual(['shown-relay','shown-wake']);
+ expect(request.shown.map((r:{key:string})=>r.key)).toEqual(['shown-relay','shown-wake']);expect(request.card.details).toContain('“room” (cv-123456789abc)');
  f.app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[{role:'owner',sha256:hash(secret),label:'owner',created:new Date(f.clock.now()).toISOString()},{role:'agent:art@covered',sha256:hash('fixture-covered-token'),label:'old-body',created:new Date(f.clock.now()).toISOString()}]},{}))();
  await f.app.close();const app=await f.open(),p=provenanceStore(app.db);
  const post=async(id:string)=>(await fetch(`${app.url}/api/approvals/answer`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input:{id:approval,action:'allow'},id})})).json();

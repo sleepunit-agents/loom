@@ -60,7 +60,8 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
     if(shown.length>=12||used+words.length+2>650)break;
     shown.push({key:row.key,words});used+=words.length+2;
    }
-   const details=`Conversation ${input.conversation}. No other person is named in it. Waiting and counted as yours if allowed: ${shown.length?shown.map(r=>r.words).join('; '):'nothing'}. Later arrivals are noted normally.`;
+   const label=ready.binding.place.normalize('NFKC').replace(/[\p{C}\p{Zl}\p{Zp}]/gu,' ').replace(/[;:"“”]/g,' ').replace(/\s+/g,' ').trim().slice(0,80);
+   const details=`Conversation “${label}” (${input.conversation}). No other person is named in it. Waiting and counted as yours if allowed: ${shown.length?shown.map(r=>r.words).join('; '):'nothing'}. Later arrivals are noted normally.`;
    const r=approvals.call('request',{who:{agent:input.agent,where:"loom's runtime (runtime)"},for:'owner'},{kind:'principal-reset',target,ask:'Count this conversation as your work from now on?',why:'Loom cannot say that the conversation is yours.',if_yes:'The listed waiting work counts as yours and the previous body and session end.',if_no:'Nothing changes.',details},`runtime-reset:${target}:${createHash('sha256').update(ctx.receipt!.id).digest('hex')}`);
    if(!r.ok)throw new OperationError(r.code,r.message);
    const card=r.value as Approval;
