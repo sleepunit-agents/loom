@@ -13,7 +13,7 @@ const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const box = (id: string, extra: Partial<RuntimeRecords['box']> = {}): RuntimeRecords['box'] => ({ id, name: id, owner: 'jonathan', local: false, mayHost: '*', lentTo: [], facts: [], labels: [], alwaysOn: false, reportOnly: false, createdAt: 1, ...extra });
-async function setup(installed = true) {
+async function setup(installed = true, asynchronous = false) {
   const home = mkdtempSync(join(tmpdir(), 'runtime-revoke-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const clock = new FakeClock();
@@ -26,7 +26,10 @@ async function setup(installed = true) {
     for (const id of input.jobs) db.prepare('UPDATE fake_credentials SET revoked=? WHERE target=?').run(input.now, id);
     if (fail) throw new Error('central revocation failed');
   });
-  const credentials: RuntimeCredentials = { revokeBox: revoke };
+  const credentials: RuntimeCredentials = { revokeBox(db, input) {
+    revoke(db, input);
+    if (asynchronous) return Promise.resolve();
+  } };
   const sharing = () => ({ ...fixtureSharing(), services: { keyholder: { types: ['runtime.box'], operations: ['runtime.revokeBox'] } } });
   const app = await startLoom({ home, clock, next: true, sharing, install(app) {
     installRuntime(app.db, app.operations, app.live, sharing, { credentials: installed ? credentials : undefined });
@@ -135,4 +138,17 @@ it('accepts absent and previously revoked credentials and still commits the rema
   expect(store.read('job', 'running')?.state).toBe('lost');
   expect(store.read('settings', 'art')?.boxes).toEqual(['r2', 'local']);
   for (const token of tokens()) expect(token.revoked === null).toBe(['r2', 'other'].includes(token.target));
+});
+
+it('rejects a Promise-returning credential role and rolls back its synchronous writes', async () => {
+  const { app, store, call, tokens, revoke } = await setup(true, true);
+  const changed = vi.spyOn(app.live, 'changed');
+  expect(call()).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(revoke).toHaveBeenCalledOnce();
+  expect(tokens().every(t => t.revoked === null)).toBe(true);
+  expect(store.read('box', 'r1')?.revokedAt).toBeUndefined();
+  expect(store.read('job', 'running')?.state).toBe('running');
+  expect(store.read('settings', 'art')?.boxes).toEqual(['r2', 'r1', 'local']);
+  expect(app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual({ n: 0 });
+  expect(changed).not.toHaveBeenCalled();
 });
