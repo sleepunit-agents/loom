@@ -837,3 +837,44 @@ file-boundary refusals. No real data is used.
 The remaining importer still owes one transaction, receipt/checksum, repeat no-op,
 different-source refusal, interruption rollback, independent IDs/counts/content
 verification, migrate-all discovery/registration, and final move coverage.
+
+### Authoritative store inventory prerequisite
+
+`import-stores.ts` is an unregistered offline evidence reader, alongside the
+JSON-file inventory. It is not the destination importer or a precedence resolver.
+The caller supplies only completed snapshot files, each resolved through
+`snapshotPath`: `home/commons/stores/shuttle.db` and, when present,
+`home/commons/stores/runtime.db`. It opens neither live stores nor the paths or
+commands inside documents. Store inputs have explicit names and kinds. It retains
+all current documents and revisions (including unknown collections, offers,
+pending proposals and moved tombstones), exact JSON strings, row metadata, source
+byte hashes and a combined inventory checksum. These are private migration
+evidence, never grants, executable relay requests or public live records.
+
+Pinned shuttle `c4a188b6` (`shuttle/gates.py`) establishes the source distinction:
+`people/<agent>` replaces that agent's file; Runtime people can supersede shuttle
+people, and a `moved/<agent>` tombstone forbids fallback when Runtime has no answer.
+`routes/household` plus every `channels/<agent>` assemble an agent's route map;
+`route-offers` can still require file fallback when accepted parts are incomplete.
+Offers and proposals are not accepted configuration. Flags/readers come only from
+accepted channel parts; readers name People slugs. Do not pick the first document,
+merge contradictory claims by file order, or import an offer as accepted authority.
+The inventory deliberately preserves conflicting evidence without selecting it.
+
+The reader bounds each input file to 128 MiB and the combined document/metadata
+materialization per store to 8 MiB / 10,000 rows, refusing before selecting words.
+SQLite reads use an injected completed-snapshot opener. Exact store columns and
+both tables are required; unknown tables/columns refuse rather than disappear.
+Unsafe SQLite revision/id integers refuse before numeric coercion; JSON numeric
+lexemes stay in their original strings. Source mutation around the read refuses.
+Failures are sanitized. Parent confinement and completed-backup consistency belong
+to the snapshot caller; this reader is not a live-WAL reader.
+
+Still required before claiming a complete Bridges importer: collect both stores
+and explicit external instance roots; resolve each agent's authoritative sources
+against pinned Runtime/shuttle contracts, preserving/refusing ambiguity and missing
+moved-gates sources; compare every archived document/revision independently from
+the destination; explicitly map Slack bundle metadata and separate secret references
+without opening the bundle; implement the owning import transaction, checksum,
+repeat/different-source guards, rollback, registry, plan discovery/options and both
+verification paths. Neither source inventory is registered with migrate-all yet.

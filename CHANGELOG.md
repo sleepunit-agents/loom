@@ -12,13 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Bind Secrets house request and status to current central body credentials and exact Runtime job/service scope.
+- Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 
 - Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.
 - Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
 - Preserve deleted private Comms bindings only in the Runtime import archive, report their skipped ids, and validate spawned thread ownership.
 
 - Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
+- Bind Secrets house request and status to current central body credentials and exact Runtime job/service scope.
 - Compose explicit authenticated Secrets mutations, retained retry keys and automatic recovery in next startup, with per-write staging holds.
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
 - Persist Runtime owner gates and policy with revision-bound edits and exact archived proposal adoption, refusing unreconciled source restrictions.
