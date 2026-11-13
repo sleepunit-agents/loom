@@ -11,6 +11,9 @@ import { readApprovalsImport } from '../pieces/approvals/importer.js';
 import { ruleId } from '../pieces/approvals/store.js';
 import { readChangesImport } from '../pieces/changes/importer.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
+import { readRuntimeImport } from '../pieces/runtime/import-source.js';
+import { runtimeImportTables } from '../pieces/runtime/import-projection.js';
+import { runtimeMigrationSources } from './migration-runtime.js';
 export type Row = Record<string, unknown>;
 export type Tables = Record<string, Row[]>;
 const json = (value: unknown) => JSON.stringify(value);
@@ -62,6 +65,11 @@ import { createHash } from 'node:crypto';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 export async function expectedTables(piece: string, paths: string[], options: unknown, now: number, householdHome?: string): Promise<Tables> {
   switch (piece) {
+    case 'runtime': {
+      if(!householdHome)throw Error('Source household required');
+      const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
+      return runtimeImportTables(readRuntimeImport(runtimeMigrationSources(paths),options,{agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite),now);
+    }
     case 'household': return householdTables(paths[0],now);
     case 'secrets': {
       if(!householdHome)throw Error('Source household required');

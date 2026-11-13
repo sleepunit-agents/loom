@@ -67,12 +67,12 @@ The full runtime rebuild is in progress. Enrollment (including stranger join,
 proof and owner decision), central credential integration, runner hello/poll/claim/report,
 placement integration and dispatch, houses/services/body hosts, delivery/results/retries,
 model-account metadata and usage, settings, screens, generated command parity,
-background jobs and importer are still to be delivered. No old command is
+background jobs are still to be delivered; the offline importer is described below. No old command is
 retired by these metadata operations. The final mapping must enumerate the old
 runtime's commands, routes and jobs, including any drops and their reasons.
 
 Next mode remains empty until explicit new-side setup or the future importer.
-The importer must read a snapshot of old `state.json` and piece bindings/jobs,
+The importer reads a snapshot of old `state.json` and piece bindings/jobs, and must
 commit once with a checksum, compare ids/counts/content, no-op on the same source,
 refuse another source and roll back interruptions. It must never modify the old
 side. Final cutover requires no live houses and the owner's presence; point the
@@ -888,3 +888,71 @@ the assigned runner reconnects; an ordinary lost/uncertain job does not mean wri
 Uncertain or ordinary lost work returns history:unknown, never a write-off.
 The external runner's stop/history reconciliation remains lifecycle work on
 t-2209. Late reports cannot turn a written-off terminal job back into live work.
+
+
+## Offline Runtime import
+
+`loom migrate runtime --home <stopped-new-home> --from <completed-snapshot>
+--mapping <runtime-mapping.json>` imports Runtime after Household. It uses the
+same registered importer as `loom migrate all`; `loom migrate verify` independently
+projects source rows and compares every destination column, count and id, including
+the private archive. Verification never executes the importer or trusts its no-op
+receipt. Generic import does not discover live paths or run old piece programs.
+
+The coordinator first collects a fresh snapshot with both explicit roots:
+`loom migrate snapshot --from <old-loom-home> --runtime <LOOM_BOX_HOME>
+--runtime-data <LOOM_BOX_DATA> --to <fresh-snapshot>` (alongside the other pieces'
+roots). Defaults in the **old** program were `~/.config/loom-box` and
+`~/.local/share/loom-box`. They are documentation, never importer defaults.
+Discovery of any Runtime input without both inventoried roots refuses; an empty
+data directory is explicitly recorded in the manifest. Snapshots predating this
+inventory require a fresh collection. Real snapshots/imports and rollout remain
+coordinator-only, with the owner's presence at the final move.
+
+Prepare the editable plan, then fill Runtime's `boxes`, `jobs` and `conversations`
+maps. Every source id must appear exactly once, with no extra keys. Initial nulls
+are unresolved and prevent import. Each box maps to an existing household member;
+an explicit old owner must match. Each job/conversation maps to `{member?,project?}`;
+`{}` is a deliberate agent-and-owner audience, while a member makes it private.
+Old Comms (`loom`) conversations require a member. Unknown agents/members/projects
+refuse. The fresh all-imported Household has no projects; project scopes require
+an explicitly configured destination project and are unavailable in fresh-all
+verification. Do not widen a private audience merely to make an import pass.
+The standalone mapping file is the Runtime options object, not the whole plan.
+
+| Old persisted source | Destination / disposition |
+| --- | --- |
+| `commons/stores/runtime.db` `docs` | Every collection/key/revision/update/writer/document in private `runtime_import_documents`, exact backed-up DB bytes also retained |
+| Same DB `revisions`, including deletes | Every revision in private `runtime_import_revisions`; unknown tables refuse rather than disappear |
+| `gates/<agent>`, `gate-proposals/*`, `policy/<agent>` | Complete private archive; later gate/policy/proposal operations must adopt their exact records before external delivery can be called usable |
+| `grants/household` | Complete private archive; legacy per-piece path grants are retired, never reissued as central authority |
+| `LOOM_BOX_HOME/state.json` boxes | `runtime_boxes`: explicit owner, names, hosting/lending, facts/labels, watch/report-only, original timestamps/revocation |
+| `primaries`, `agents` house settings | Ordered box preferences and house/grant references in `runtime_settings`; complete old settings remain archived |
+| `houses` | Same ids and explicit audiences in `runtime_jobs`; terminal states preserved, active/wanted/stopping work becomes uncertain |
+| `services`, `serviceState`, `remotes`, `builds`, `logins` workflow metadata | Exact state archive; lifecycle/enrollment operations must reconcile these before execution |
+| `models`, `modelChoices`, `quotaHolds`, `accountSalt`, box account/usage reports | Exact state archive; account/model operations and migration into their eventual records remain part of the full rebuild |
+| `seq`, `pendingRevokes`, `writeOffAsks`, unknown future state fields | Exact state archive; no reset of sequence, loss of retry metadata, or manufactured owner approval |
+| `delivery/conversations/*.json` | Same conversation/agent/venue/place and explicit audience in `runtime_bindings`; no old body/job/home/run-key pointer is activated |
+| Old conversation principal history / signed reset / queued words | Exact private source archive; imported live provenance is unknown, never a new owner attestation; delivery reconciliation must consume the actual source before release |
+| `delivery/seen/*.json`, `slots/*.age`, `*.home.age`, notices/fallbacks/continuation-policy, discarding/files, principal key/wake handovers | Exact private byte archive; no dedup receipt, sealed session or signed handover becomes executable authority |
+| `bodies/*.json`, native launch admissions and every other regular file in the supplied data roots | Exact private byte archive, including otherwise unknown names and directories called `runs`, `current`, etc.; no automatic native-history adoption |
+| `LOOM_BOX_DATA/logins/` | Runner-owned credential values stay on the runner; the snapshot manifest names this explicit exclusion without reading the values |
+| `.git`, `node_modules`, lock/SQLite coordination files, special files and out-of-root aliases | Existing collector exclusions, recorded in the snapshot manifest; committed SQLite WAL contents use the backup API |
+| `LOOM_RUNTIME_KEYS_DIR` (default `~/.local/state/loom-runtime/keys`), per-house native-history mounts, runner-local harness logins | Separately inventory on the workers before the final move; old bearer keys are not new credentials and host history is not silently adopted |
+
+All imported jobs carry an import fence: assigned runners get `stop:true` and
+`history:unknown`, or `history:discard` for an old written-off job. No fake new
+approval id is attached to the old marker. Claims/reports cannot revive uncertain
+or terminal imported jobs. There is no release operation yet: the full rebuild's
+lifecycle reconciliation must explicitly settle old jobs, services, revocations,
+queued delivery, gates and account state before any replacement body can run.
+This importer does not make general delivery, models/accounts or services usable.
+
+Private `runtime_import_sources` holds exact base64 source bytes, including sealed
+slots, words and inert old keys; it has no live collection or read operation.
+Never put this archive, its contents or raw source errors on the page or in logs.
+CLI login values are refused even by the direct reader. The migration transaction
+includes schema, archive, metadata, provenance and checksum/mapping receipt.
+A simulated interruption rolls all of it back. Same source and mapping are a no-op;
+a changed source/mapping or a nonempty unowned destination refuses. Independent
+verification still catches corruption after a successful receipt/no-op.

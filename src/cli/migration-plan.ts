@@ -9,6 +9,8 @@ import { legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import { z } from 'zod';
 import { secretImportOptions } from '../pieces/secrets/import-source.js';
 import { parseHouseholdDocument } from '../household.js';
+import { readRuntimeInventory, runtimeImportOptions } from '../pieces/runtime/import-source.js';
+import { runtimeMigrationSources } from './migration-runtime.js';
 import { readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
 import { createMigrationRegistry, snapshotPath } from './migration-registry.js';
 
@@ -28,6 +30,7 @@ const options = {
   changes: z.object({ attribution }).strict(),
   comms: z.object({}).strict(),
   secrets: secretImportOptions,
+  runtime: runtimeImportOptions,
 };
 export const supportedMigrationImporters: readonly string[] = Object.keys(options);
 const inputSchema = z.object({ paths: z.array(z.string().min(1)).min(1), options: z.json() }).strict();
@@ -65,7 +68,7 @@ function regularFiles(root: string): string[] {
 function assertInventory(root: string, manifest: SnapshotManifest, regular: string[]): void {
   const schema = z.object({ version: z.literal(1), consistency: z.literal('per-database'), files: z.array(z.object({
     path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative(), kind: z.enum(['sqlite','file']),
-  }).strict()), skipped: z.array(z.object({ path: z.string(), rule: z.string(), bytes: z.number().nonnegative().nullable() }).strict()).optional(), followed: z.array(z.object({ path: z.string(), realPath: z.string() }).strict()).optional() }).strict();
+  }).strict()), skipped: z.array(z.object({ path: z.string(), rule: z.string(), bytes: z.number().nonnegative().nullable() }).strict()).optional(), followed: z.array(z.object({ path: z.string(), realPath: z.string() }).strict()).optional(), runtimeRoots:z.array(z.enum(['runtime','runtime-data'])).refine(values=>new Set(values).size===values.length).optional() }).strict();
   schema.parse(manifest);
   const paths = new Set(manifest.files.map(f => f.path));
   if (paths.has('manifest.json')) throw Error('Manifest cannot inventory itself');
@@ -187,6 +190,20 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     return false;
   }).map(p=>posix.dirname(p)))].sort();
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
+  const runtimePaths = [
+    ...['home/commons/stores/runtime.db'].filter(p=>files.has(p)),
+    ...(['runtime','runtime-data'] as const).filter(root=>manifest.runtimeRoots?.includes(root)||[...files].some(p=>p.startsWith(root+'/'))),
+  ];
+  if(runtimePaths.length) {
+    if(!manifest.runtimeRoots?.includes('runtime')||!manifest.runtimeRoots.includes('runtime-data'))throw Error('Runtime snapshot requires explicit --runtime and --runtime-data roots');
+    const inventory=readRuntimeInventory(runtimeMigrationSources(runtimePaths.map(path)),openSnapshotSqlite);
+    const state=inventory.state??{};
+    discovered.runtime={paths:runtimePaths,options:{
+      boxes:Object.fromEntries(Object.keys((state.boxes??{}) as object).map(id=>[id,null])),
+      jobs:Object.fromEntries(Object.keys((state.houses??{}) as object).map(id=>[id,null])),
+      conversations:Object.fromEntries(inventory.conversations.map(c=>[c.conversation as string,null])),
+    }};
+  }
   if (commsPaths.length) discovered.comms = { paths: commsPaths, options: {} };
   if (files.has('tasks/store.db')) discovered.tasks = { paths: ['tasks/store.db'], options: {
     projects: Object.fromEntries(epics.filter(t => t.project !== undefined).map(t => [t.id, t.project!])), agent: household.default,
@@ -210,15 +227,16 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     if (new Set(input.paths).size !== input.paths.length) throw Error('Duplicate plan input');
     for (const source of input.paths) {
       path(source);
-      if (!files.has(source) && ![...files].some(p => p.startsWith(`${source}/`))) throw Error('Input is not in snapshot inventory');
+      if (!files.has(source) && ![...files].some(p => p.startsWith(`${source}/`)) && !(name==='runtime' && manifest.runtimeRoots?.includes(source as 'runtime'|'runtime-data'))) throw Error('Input is not in snapshot inventory');
     }
     if (Object.hasOwn(options, name)) {
       const schema = options[name as keyof typeof options];
       input.options = schema.parse(input.options);
-      if (name !== 'attention' && name !== 'comms' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
+      if (name !== 'attention' && name !== 'comms' && name !== 'runtime' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
     }
   }
   if (plan.importers.comms && canonicalPlanValue(plan.importers.comms.paths) !== canonicalPlanValue(commsPaths)) throw Error('Comms must include every discovered input in order');
+  if (plan.importers.runtime && canonicalPlanValue(plan.importers.runtime.paths)!==canonicalPlanValue(runtimePaths)) throw Error('Runtime must include every discovered source in order');
   const taskOptions = plan.importers.tasks && options.tasks.parse(plan.importers.tasks.options);
   if (taskOptions) {
     if (plan.importers.tasks.paths[0] !== 'tasks/store.db') throw Error('Tasks must use copied taskstore');

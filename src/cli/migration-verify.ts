@@ -14,7 +14,7 @@ import type { IOStreams } from './io.js';
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
 const optional = (path: string): Buffer | undefined => existsSync(path) ? readFileSync(path) : undefined;
-const verifiers = ['household','tasks','attention','clock','approvals','changes','comms','secrets'];
+const verifiers = ['household','tasks','attention','clock','approvals','changes','comms','secrets','runtime'];
 /** Compare JSON semantically; ordering is retained inside records, table row order is immaterial. */
 function normalize(records: Row[]): string {
   return canonicalPlanValue(records.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key, (key==='body'||key==='record') && typeof value==='string' ? JSON.parse(value) : value]))).map(row=>canonicalPlanValue(row)).sort());
