@@ -1,13 +1,14 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import * as migrationFiles from '../../core/migration-files.js';
 import { openSnapshotSqlite } from '../../cli/migration-sqlite.js';
 import { readBridgeStoreInventory, type BridgeStoreFile } from './import-stores.js';
 const roots:string[]=[];
-afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture(kind:'shuttle'|'runtime'='shuttle') {
   const root=mkdtempSync(join(tmpdir(),'bridges-stores-'));roots.push(root);
   const file:BridgeStoreFile={name:`home/commons/stores/${kind}.db`,path:join(root,`${kind}.db`),kind};
@@ -16,6 +17,14 @@ function fixture(kind:'shuttle'|'runtime'='shuttle') {
     CREATE TABLE revisions(id INTEGER PRIMARY KEY AUTOINCREMENT,collection TEXT NOT NULL,key TEXT NOT NULL,doc TEXT,rev INTEGER NOT NULL,op TEXT NOT NULL,at TEXT NOT NULL,by TEXT NOT NULL);`);
   const add=(collection:string,key:string,doc:string,rev=1)=>db.prepare('INSERT INTO docs VALUES(?,?,?,?,?,?)').run(collection,key,doc,rev,'original time','original writer');
   return {file,db,add};
+}
+
+function observedOpen(observe:()=>void) {
+  return (path:string)=>{
+    const source=openSnapshotSqlite(path),prepare=source.prepare.bind(source);
+    source.prepare=((sql:string)=>{if(sql.startsWith('SELECT collection,key,doc') || sql.startsWith('SELECT id,collection,key,doc'))observe();return prepare(sql);}) as typeof source.prepare;
+    return source;
+  };
 }
 it('retains authoritative documents, unknown collections, proposals, tombstones and exact revision words without applying them',()=>{
   const {file,db,add}=fixture();
@@ -46,7 +55,7 @@ it('keeps shuttle and runtime evidence distinct and hashes names, kinds and ever
 });
 it('refuses missing/duplicate/mislabeled inputs and leaf links before opening SQLite',()=>{
   const {file,db}=fixture();db.close();const open=vi.fn(openSnapshotSqlite);
-  const link=join(file.path,'..','alias.db');symlinkSync(file.path,link);
+  const alias=join(file.path,'..','alias');mkdirSync(alias);const link=join(alias,'shuttle.db');symlinkSync(file.path,link);
   for(const files of [[],[file,file],[{...file,name:'../shuttle.db'}],[{...file,kind:'runtime' as const}],[{...file,path:link}],[{...file,path:join(file.path,'..','missing','shuttle.db')}]] ) {
     expect(()=>readBridgeStoreInventory(files,open)).toThrow(/^Invalid offline Bridges store inventory$/);
   }
@@ -68,7 +77,7 @@ it.each(['bad-json','unsafe-rev','extra-table','extra-column','generated-column'
 it('refuses oversized UTF-8 document bytes before selecting raw words',()=>{
   const {file,db,add}=fixture();add('people','art',JSON.stringify({words:'界'.repeat(3*1024*1024)}));db.close();
   let selected=false;
-  const open=(path:string)=>{const source=openSnapshotSqlite(path),prepare=source.prepare.bind(source);source.prepare=((sql:string)=>{if(sql.startsWith('SELECT collection,key,doc'))selected=true;return prepare(sql);}) as typeof source.prepare;return source;};
+  const open=observedOpen(()=>{selected=true;});
   expect(()=>readBridgeStoreInventory([file],open)).toThrow('Invalid offline');expect(selected).toBe(false);
 });
 it('refuses source mutation around the read snapshot and sanitizes SQLite failures',()=>{
@@ -79,15 +88,23 @@ it('refuses source mutation around the read snapshot and sanitizes SQLite failur
 
 it('refuses an oversized file before hashing or opening SQLite',()=>{
   const {file,db}=fixture();db.close();truncateSync(file.path,128*1024*1024+1);
-  const open=vi.fn(openSnapshotSqlite);
+  const open=vi.fn(openSnapshotSqlite),hash=vi.spyOn(migrationFiles,'fileDigest');
   expect(()=>readBridgeStoreInventory([file],open)).toThrow(/^Invalid offline Bridges store inventory$/);
-  expect(open).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();expect(hash).not.toHaveBeenCalled();
 });
 it.each(['count','metadata'])('bounds %s before selecting document words',kind=>{
   const {file,db,add}=fixture();
   if(kind==='count')db.transaction(()=>{for(let n=0;n<10001;n++)add('people',String(n),'{}');})();
   else {add('people','art','{}');db.prepare('UPDATE docs SET by=?').run('x'.repeat(8*1024*1024));}
   db.close();let selected=false;
-  const open=(path:string)=>{const source=openSnapshotSqlite(path),prepare=source.prepare.bind(source);source.prepare=((sql:string)=>{if(sql.startsWith('SELECT collection,key,doc'))selected=true;return prepare(sql);}) as typeof source.prepare;return source;};
+  const open=observedOpen(()=>{selected=true;});
   expect(()=>readBridgeStoreInventory([file],open)).toThrow(/^Invalid offline Bridges store inventory$/);expect(selected).toBe(false);
+});
+
+it('bounds revisions-only words before selecting either raw-row query',()=>{
+  const {file,db}=fixture();
+  db.prepare('INSERT INTO revisions(collection,key,doc,rev,op,at,by) VALUES(?,?,?,?,?,?,?)').run('people','art',JSON.stringify({words:'界'.repeat(3*1024*1024)}),1,'put','t','owner');
+  db.close();let selected=false;
+  expect(()=>readBridgeStoreInventory([file],observedOpen(()=>{selected=true;}))).toThrow(/^Invalid offline Bridges store inventory$/);
+  expect(selected).toBe(false);
 });
