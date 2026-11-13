@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fixture } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
 import { z } from 'zod';
 import { FakeClock, operation, failure, mayCreate, type RecordType, type Viewer } from '../../core/index.js';
@@ -9,10 +10,11 @@ import { installAttention } from './index.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] } }, projects: {}, services: {} });
-async function setup(install = true) {
+async function setup(install = true, next = false) {
   const types = new Map<string, RecordType>();
   const home = mkdtempSync(join(tmpdir(), 'attention-')); dirs.push(home);
-  const app = await startLoom({ home, clock: new FakeClock(), sharing, install: install ? app => {
+  if (next) fixture(home);
+  const app = await startLoom({ home, next, clock: new FakeClock(), sharing, install: install ? app => {
     const register = app.live.register.bind(app.live);
     app.live.register = type => { types.set(type.name, type); register(type); };
     installAttention(app.db, app.operations, app.live, sharing);
@@ -109,4 +111,25 @@ it('preserves open and resolved identity and every status audience field', async
     expect(mayCreate({ kind: 'member', id: 'alice' }, { type: 'attention.agent', ...status, ...scope }, sharing(), 'attention.reportStatus')).toBe(true);
     expect(call('reportStatus', { ...status, ...scope })).toMatchObject({ code: 'denied' });
   }
+});
+
+it.each([undefined, 'yes-no', 'words'] as const)('records public words for answer mode %s with first-answer and retry semantics', async answers => {
+  const { call } = await setup(true, true);
+  expect(call('raise', { ...ask, ...(answers ? { answers } : {}) })).toMatchObject({ ok: true });
+  const input = { id: ask.id, answer: { kind: 'words', text: '  Continue after the small fix.  ' } };
+  const first = call('answer', input, undefined, 'public-words');
+  expect(first).toMatchObject({ ok: true, value: { state: 'answered', answer: { kind: 'words', text: 'Continue after the small fix.', by: { id: 'alice' } } } });
+  expect(call('answer', input, undefined, 'public-words')).toEqual(first);
+  expect(call('answer', { id: ask.id, answer: { kind: 'no' } }, { kind: 'member', id: 'bob' })).toMatchObject({ code: 'conflict' });
+});
+it.each([undefined, 'yes-no', 'words'] as const)('never persists private reply words in mode %s, even from the private member', async answers => {
+  const { app, call } = await setup(true, true);
+  call('raise', { ...ask, member: 'alice', ...(answers ? { answers } : {}) });
+  const before = app.db.prepare('SELECT * FROM core_operations').all();
+  const changed = vi.spyOn(app.live, 'changed');
+  expect(call('answer', { id: ask.id, answer: { kind: 'words', text: 'private-reply-canary' } })).toMatchObject({ code: 'invalid' });
+  expect(call('get', { id: ask.id })).toMatchObject({ value: { state: 'open' } });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(JSON.stringify(app.db.prepare('SELECT * FROM attention_asks').all())).not.toContain('private-reply-canary');
+  expect(changed).not.toHaveBeenCalled();
 });

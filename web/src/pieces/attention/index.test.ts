@@ -69,13 +69,14 @@ it.each(['gone','denied','offline','changed','unmounted'] as const)('sends nothi
   await fresh.finish(mode==='denied'?{ok:false,code:'denied',message:'Denied'}:{ok:true,value:ask('ask-1',{state:mode==='gone'?'answered':'open'})});
   expect(f.call.mock.calls.filter(([op])=>op==='attention.answer')).toHaveLength(0);
 });
-it('records words only in words mode, keeps the draft on refusal, and disables done/dismiss while words are unsent',async()=>{
-  const wordsAsk=ask('ask-1',{answers:'words'}),shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();
+it.each(['words','yes-no',undefined] as const)('records words in mode %s, keeps the draft on refusal, and guards alternate answers while words are unsent',async(answers)=>{
+  const wordsAsk=ask('ask-1',{answers}),shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();
   f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
   await draw(h(AskReader,{ask:wordsAsk,snapshot:{records:[wordsAsk],status:'live'},go:vi.fn()}));
-  await shown.finish({ok:true,value:wordsAsk}); expect(buttons('Yes')).toHaveLength(0);
+  await shown.finish({ok:true,value:wordsAsk}); expect(buttons('Yes')).toHaveLength(answers==='words'?0:1);
   await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'A considered answer'}}));
   expect(buttons('Mark done')[0].props.disabled).toBe(true);expect(buttons('Dismiss')[0].props.disabled).toBe(true);
+  for(const label of ['Yes','No']) if(buttons(label).length) expect(buttons(label)[0].props.disabled).toBe(true);
   await click('Record answer');await fresh.finish({ok:true,value:wordsAsk});
   expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:'ask-1',answer:{kind:'words',text:'A considered answer'}});
   await write.finish({ok:false,code:'conflict',message:'Already answered'});
