@@ -6,7 +6,7 @@
 // width of the view itself, not the screen's). A card opens the project's hub inside the app.
 import './projects.css';
 import { useEffect, useState } from 'react';
-import { watchProjects, projectsLive } from './tasks-live';
+import { watchProjects, projectsLive } from './legacy-work-live';
 import { projectDirectory } from './project-directory';
 import { NO_PROJECTS } from '../../src/ui/project-cards';
 import { Link, Who, useEnv } from './blocks';

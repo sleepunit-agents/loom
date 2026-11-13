@@ -7,8 +7,8 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useEnv } from './blocks';
-import { watchTasks } from './tasks-live';
-import { taskCardsOf } from './task-ref-cards';
+import { watchTasks } from './legacy-work-live';
+import { taskCardsOf } from './comms-task-cards';
 import type { Rec } from './collections/runtime';
 
 export type RefKind = 'task' | 'pr' | 'approval' | 'conv' | 'note' | 'knowledge' | 'project' | 'person' | 'agent';

@@ -10,17 +10,17 @@ import { apps, appAt } from '../../web/src/apps';
 it('a registered app opens through shell navigation without fetching a page or starting a refresh timer',async()=>{
   vi.stubGlobal('addEventListener',vi.fn());vi.stubGlobal('removeEventListener',vi.fn());
   const timer=vi.spyOn(globalThis,'setInterval');
-  const nav={here:()=> '/_dev/tasks-preview',push:vi.fn(),replace:vi.fn(),top:vi.fn()};
+  const nav={here:()=> '/p/tasks-preview',push:vi.fn(),replace:vi.fn(),top:vi.fn()};
   let page!:PageState;
-  function Probe(){page=usePage('/_dev/tasks-preview',()=>{},nav);return null;}
+  function Probe(){page=usePage('/p/tasks-preview',()=>{},nav);return null;}
   let tree!:ReturnType<typeof create>;
   try {
     await act(async()=>{tree=create(h(Probe));});
-    await act(async()=>{await page.load('/_dev/tasks-preview',false);});
-    expect(page.url).toBe('/_dev/tasks-preview');expect(page.waiting).toBe(false);expect(page.error).toBeNull();
+    await act(async()=>{await page.load('/p/tasks-preview',false);});
+    expect(page.url).toBe('/p/tasks-preview');expect(page.waiting).toBe(false);expect(page.error).toBeNull();
     expect(f.fetch).not.toHaveBeenCalled();expect(timer).not.toHaveBeenCalled();
-    expect(appAt('/p/tasks')).toBeUndefined();
-    expect(nameOf(apps[0].path)).not.toBe(nameOf('/p/tasks'));
-    expect(appAt('/_dev/tasks-preview')).toBe(apps[0]);expect(appAt('/_dev/tasks-preview/t-1')?.fit.ideal).toBe(1040);
+    expect(appAt('/p/tasks')).toBe(apps[0]);
+    expect(nameOf(apps[0].path)).toBe(nameOf('/p/tasks'));
+    expect(appAt('/p/tasks-preview')).toBe(apps[0]);expect(appAt('/p/tasks-preview/t-1')?.fit.ideal).toBe(1040);
   } finally { if(tree) await act(async()=>tree.unmount());timer.mockRestore();vi.unstubAllGlobals(); }
 });

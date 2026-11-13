@@ -1,3 +1,6 @@
+import type { Tasks } from './pieces/tasks/role.js';
+import { taskWork } from './ui/task-work.js';
+import { pieceWithRole } from './needs-resolve.js';
 import { waitForLocks, WRITE_WAIT_MS } from './lock-gate.js';
 /**
  * Work in a Comms thread (docs/specs/comms.md, "Work in this thread"): the refs a thread's messages name, kept as refs
@@ -245,7 +248,7 @@ export function noteItems(refs: Array<{ ref: string; at: string }>): WorkItem[] 
  * conversation and refs (newest first) and `{caller}` on stdin, merged with core's notes. A piece that fails is named
  * in `failed`, by its label; the rest still answer.
  */
-export async function threadWork(h: Household, env: NodeJS.ProcessEnv, t: Thread, member: Member): Promise<{ items: WorkItem[]; failed: string[] }> {
+export async function threadWork(h: Household, env: NodeJS.ProcessEnv, t: Thread, member: Member, tasks?: Tasks): Promise<{ items: WorkItem[]; failed: string[] }> {
   const refs = refsOf(h.home, t.id);
   const args = ['--conversation', t.conversation, ...refs.flatMap((r) => ['--ref', r.ref])];
   const caller: ApiCaller = { kind: 'owner', who: member.person, agents: member.agents };
@@ -257,6 +260,12 @@ export async function threadWork(h: Household, env: NodeJS.ProcessEnv, t: Thread
     pieces = pieces.filter((p) => ok.has(p.piece));
   }
   const failed: string[] = [];
+  const nativeTasks: WorkItem[] = [];
+  if (tasks) {
+    const legacyTasks = pieceWithRole(env,'tasks')?.name ?? 'tasks';
+    pieces = pieces.filter(p => p.piece !== legacyTasks);
+    try { nativeTasks.push(...taskWork(tasks,member.person,t.conversation,refs.map(ref => ref.ref))); } catch { failed.push('Tasks'); }
+  }
   pieces.sort((a, b) => (a.piece < b.piece ? -1 : a.piece > b.piece ? 1 : 0));
   const lists = await Promise.all(pieces.map(async ({ piece, offers }): Promise<WorkItem[]> => {
     const { label, argv } = offers.sections!.thread!;
@@ -273,7 +282,7 @@ export async function threadWork(h: Household, env: NodeJS.ProcessEnv, t: Thread
       return [];
     }
   }));
-  return { items: mergeWork([...lists, noteItems(refs)]), failed: failed.sort() };
+  return { items: mergeWork([...lists, nativeTasks, noteItems(refs)]), failed: failed.sort() };
 }
 
 // ─── From: the other direction ─────────────────────────────────────────────────

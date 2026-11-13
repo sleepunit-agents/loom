@@ -33,7 +33,7 @@ function TaskRow({ task, selected, open, act }: { task: Task; selected: boolean;
     actions={<details><summary aria-label={`Actions for ${task.title}`}>Actions</summary>{actionsFor(task).map(a => <Button variant="outline" size="sm" key={a} onClick={() => act(a,task.id)}>{actionLabel[a]}</Button>)}</details>} />;
 }
 export default function TasksApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
-  const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/_dev/tasks-preview' : location.pathname);
+  const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0];
   const base = path.split('/task/')[0];
   const selected = /\/task\/(t-\d+)$/.exec(path)?.[1];

@@ -234,7 +234,7 @@ export default function App() {
     here: () => (tiledNow.current ? '/' : screenNav.here()), push: (to) => { if (!tiledNow.current) screenNav.push(to); },
     replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
   }), []);
-  const mainPage = usePage(location.pathname + location.search, say, appNav);
+  const mainPage = usePage(location.pathname + location.search, say, appNav, true);
   const { url, error, waiting, pending, savedAt, showing, load } = mainPage;
   // What needs you, live (attention.ts; t-2025): the badges, Home's Needs you and the Inbox read one set once it's in.
   const attention = useAttention(mainPage.data?.chrome?.csrf);
@@ -450,8 +450,8 @@ export default function App() {
   const profileLeads = (data?.view === 'page' && (data.page as Page).sections[0]?.blocks[0]?.type === 'profile')
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
-  const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'activity' ? 'Activity' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
+  const title = appAt(new URL(url,'http://loom').pathname)?.title ?? (error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'activity' ? 'Activity' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home'));
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   // Chat about this page (about.ts): a phone's page-name sheet and More offer it; a desktop's window menu does.

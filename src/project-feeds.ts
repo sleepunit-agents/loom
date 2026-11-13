@@ -1,3 +1,6 @@
+import type { Tasks } from './pieces/tasks/role.js';
+import { projectTasks } from './ui/task-work.js';
+import { pieceWithRole } from './needs-resolve.js';
 /**
  * Project section feeds (docs/specs/projects.md, "Section feeds (the seam)"):
  * every installed managed piece offering `sections.project`, run for one
@@ -52,8 +55,8 @@ export function feedArgs(card: Pick<ProjectCard, 'slug' | 'links'>, since: strin
 
 const byKey = (a: { key: string }, b: { key: string }) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
-async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unfiled: boolean }) => boolean, threadArgs: string[] = []): Promise<FeedSection[]> {
-  const pieces = piecesOffering(env, 'sections').filter((p) => p.offers.sections?.project && (!only || only(p.offers.sections.project)));
+async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unfiled: boolean }) => boolean, threadArgs: string[] = [], skip?: string): Promise<FeedSection[]> {
+  const pieces = piecesOffering(env, 'sections').filter((p) => p.piece !== skip && p.offers.sections?.project && (!only || only(p.offers.sections.project)));
   // runOffer's pool keeps it to 6 at once; never throws.
   const out = await Promise.all(
     pieces.map(async ({ piece, offers }): Promise<FeedSection> => {
@@ -77,10 +80,17 @@ async function runFeeds(env: NodeJS.ProcessEnv, args: string[], only?: (p: { unf
  * The hub's piece sections: a `PieceSectionSource` (src/tools/project.ts) over
  * the managed pieces installed under `env`'s LOOM_HOME.
  */
-export function managedPieceSections(env: NodeJS.ProcessEnv = process.env) {
+export function managedPieceSections(env: NodeJS.ProcessEnv = process.env, native?: {tasks:Tasks;member:string}) {
   // noThreads (a house's hub, t-2118): no feed is asked about the project's Comms threads.
-  return async ({ card, since, nowMs, contextDir, noThreads }: { card: ProjectCard; since: string; nowMs?: number; contextDir?: string; noThreads?: boolean }): Promise<FeedSection[]> =>
-    runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir && !noThreads ? threadFeedArgs(contextDir, card.slug, env) : []);
+  return async ({ card, since, nowMs, contextDir, noThreads }: { card: ProjectCard; since: string; nowMs?: number; contextDir?: string; noThreads?: boolean }): Promise<FeedSection[]> => {
+    const legacyTasks = native ? pieceWithRole(env,'tasks')?.name ?? 'tasks' : undefined;
+    const sections = await runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir && !noThreads ? threadFeedArgs(contextDir, card.slug, env) : [],legacyTasks);
+    if (native) {
+      try { sections.push(projectTasks(native.tasks,native.member,card.slug,card.links?.epic,since)); }
+      catch { sections.push({key:'piece:tasks',error:'Tasks unavailable'}); }
+    }
+    return sections.sort(byKey);
+  };
 }
 
 /** `--conversation <cv>` for each of the project's filed Comms threads (comms.md, "Project hubs"), at most 200. */

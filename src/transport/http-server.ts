@@ -1,3 +1,4 @@
+import { tasksRole } from '../pieces/tasks/role.js';
 import { installHouseholdTasks, registerSessionOperations } from './task-composition.js';
 import { createFoundation, httpDoor, type Foundation } from '../core/app.js';
 import type { Authentication } from '../core/live/index.js';
@@ -1153,6 +1154,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         if (opts.createServer) return sendError(res, 404, 'not-found: this server has no UI');
         return handleUi(req, res, fullPath, {
           contextDir: opts.contextDir,
+          tasks: foundation ? tasksRole(foundation.operations) : undefined,
           auth: uiAuth,
           env: process.env,
           household: live,

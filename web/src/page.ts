@@ -12,7 +12,7 @@ import { appAt } from './apps';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { fetchView, type View } from './loom';
 import { refreshEvery, type Showing } from './refresh';
-import { pulseOf, tasksPageKind } from './tasks-pages';
+import { pulseOf, tasksPageKind } from './legacy-work-pages';
 import type { Note } from './toasts';
 
 /** Where a page's address is kept: what it is now, a new one after it (a link), or this one corrected in place (a
@@ -102,7 +102,7 @@ export function collectionsRuntime(csrf: () => string): NonNullable<typeof colle
  * Each live set says its own views; a view is live if any says so.
  */
 const liveSayers: Array<(view: string) => boolean> = [];
-const readLive = (view: string, url: string): boolean => liveSayers.some((f) => f(view)) || (tasksPageKind(url) === 'live' && !!tasksPulse?.live());
+const readLive = (view: string, _url: string): boolean => liveSayers.some((f) => f(view));
 export function liveViews(f: (view: string) => boolean): void { liveSayers.push(f); }
 /**
  * Views whose own content is live but whose chrome isn't yet (Home, t-2028: its cards and what needs you are, the tiles'
@@ -118,7 +118,7 @@ export function liveOnChange(f: (view: string) => boolean): void { changeSayers.
  * Tasks pages are asked again when the tasks' records move (tasks-live.ts, its own chunk, loaded with the first such page;
  * tasks-pages.ts says which). A `live` one isn't asked again on a bare change or a timer while those are live.
  */
-let tasksPulse: typeof import('./tasks-live').tasksPulse | undefined;
+
 
 /** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
 export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
@@ -169,7 +169,7 @@ export interface PageState {
  * The live stream (src/ui/live.ts) says "something changed" and the page asks again with its fingerprint (a 304 when
  * nothing it shows moved); while it's open the timer (refresh.ts) is only a slow fallback.
  */
-export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: PageNav = screenNav): PageState {
+export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: PageNav = screenNav, bootstrap = false): PageState {
   const [url, setUrl] = useState(start);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -178,6 +178,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [fresh, setFresh] = useState(true);
   const showing = useRef(start);
+  const shellChrome = useRef<View['chrome'] | undefined>(undefined);
   const navNow = useRef(nav);
   navNow.current = nav;
   // Whether there's a page on screen to keep while the next is asked for (not an error's card, not nothing).
@@ -188,9 +189,16 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     const n = navNow.current;
     const app = appAt(new URL(to, 'http://loom').pathname);
     if (app) {
+      // A cold shell still needs its chrome. App data comes only from the app's live records.
+      if (bootstrap && !shellChrome.current) {
+        const answer = await fetchView('/').catch((): Answer => ({status:0}));
+        if (answer.redirect || answer.status === 401) { location.href = answer.redirect ?? '/login'; return; }
+        if (!answer.data) { setError('offline'); return; }
+        shellChrome.current = answer.data.chrome;
+      }
       showing.current = to;
       if (push && to !== n.here()) n.push(to);
-      setUrl(to); setData(previous => previous ? { view: 'sheet', which: 'registered-app', chrome: previous.chrome } : null); setError(null); setWaiting(false); setPending(null); setSavedAt(undefined); setFresh(true);
+      setUrl(to); setData(shellChrome.current ? { view: 'sheet', which: 'registered-app', chrome: shellChrome.current } : null); setError(null); setWaiting(false); setPending(null); setSavedAt(undefined); setFresh(true);
       if (!quiet) n.top();
       return;
     }
@@ -232,12 +240,13 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     if (once) { const u = new URL(to, location.href); u.searchParams.delete('_flash'); to = u.pathname + u.search; if (!push) n.replace(to); }
     if (push && to !== n.here()) n.push(to);
     showing.current = to;
+    shellChrome.current = r.data.chrome;
     setError(null); setData(r.data); setUrl(to); setSavedAt(r.savedAt);
     keep(to, r);
     const flash = r.data.chrome?.flash;
     if (flash) say(flash);
     if (!quiet && !have) n.top();
-  }, [say]);
+  }, [say, bootstrap]);
 
   const [live, setLive] = useState(false);
   const shownView = useRef('');
@@ -272,8 +281,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   useEffect(() => {
     if (!csrf || !pulse) return;
     let off: (() => void) | undefined, done = false;
-    void import('./tasks-live').then((m) => {
-      tasksPulse = m.tasksPulse;
+    void import('./legacy-work-live').then((m) => {
       if (!done) off = m.tasksPulse.watchPage(csrf, () => { if (tasksPageKind(showing.current)) void load(showing.current, false, true); }, pulse);
     }, () => { /* no chunk: asked as before */ });
     return () => { done = true; off?.(); };
