@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { mkdtempSync, rmSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, copyFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFoundation } from '../../foundation.js';
@@ -149,4 +149,46 @@ for(const sameKey of [true,false])it(`preserves conversation steps without plain
  expect((app.db.prepare('SELECT words FROM comms_conversation_steps WHERE seq=17').get() as {words:Buffer|null}).words).not.toBeNull();
  clock.advance(1);
  expect(app.db.prepare('SELECT words,record FROM comms_conversation_steps WHERE seq=17').get()).toEqual({words:null,record:null});
+});
+
+
+it('uses the supplied opener for both completed WAL backups without source mutations',async()=>{
+ const s=await source(),snapshot=home(),to=home();
+ const household=new Database(join(s.from,'household.db'));
+ try {
+  s.db.pragma('journal_mode = WAL');household.pragma('journal_mode = WAL');
+  await s.db.backup(join(snapshot,'comms.db'));await household.backup(join(snapshot,'household.db'));
+ } finally {household.close();}
+ copyFileSync(join(s.from,'comms.key'),join(snapshot,'comms.key'));
+ copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const before=Object.fromEntries(readdirSync(snapshot).map(name=>[name,readFileSync(join(snapshot,name))]));
+ expect(before['comms.db'][18]).toBe(2);expect(before['household.db'][18]).toBe(2);
+ const {openSnapshotSqlite}=await import('../../cli/migration-sqlite.js');
+ const opened:{path:string;db:Database.Database}[]=[];
+ const open=(path:string)=>{const db=openSnapshotSqlite(path);opened.push({path,db});return db;};
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ expect(await importComms(app.db,snapshot,to,{},open)).toMatchObject({imported:true,threads:1,messages:2,asks:1});
+ expect(opened.map(o=>o.path)).toEqual([join(snapshot,'comms.db'),join(snapshot,'household.db')]);
+ expect(opened.every(o=>!o.db.open)).toBe(true);
+ expect((app.db.prepare('SELECT words FROM comms_messages WHERE seq=1').get() as {words:Buffer}).words).toEqual(s.words);
+ expect(Object.fromEntries(readdirSync(snapshot).map(name=>[name,readFileSync(join(snapshot,name))]))).toEqual(before);
+});
+
+it('closes supplied source handles on open and read failures and never falls back',async()=>{
+ const s=await source(),to=home();copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ for(const failOpen of [true,false]) {
+  const opened:Database.Database[]=[];const calls:string[]=[];
+  const open=(path:string)=>{
+   calls.push(path);
+   if(calls.length===2&&failOpen)throw Error('snapshot open failed');
+   const db=new Database(path,{readonly:true,fileMustExist:true});opened.push(db);
+   if(calls.length===2&&!failOpen)db.close();
+   return db;
+  };
+  await expect(importComms(app.db,s.from,to,{},open)).rejects.toThrow();
+  expect(calls).toEqual([join(s.from,'comms.db'),join(s.from,'household.db')]);
+  expect(opened.every(db=>!db.open)).toBe(true);
+  expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
+ }
 });
