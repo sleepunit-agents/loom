@@ -14,6 +14,8 @@ import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
+import { installChanges } from './pieces/changes/index.js';
+import { householdProjects } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
@@ -30,6 +32,13 @@ export function installNext(app: Foundation, options: NextOptions) {
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
+    projects: householdProjects(new SharingDatabase(app.db, options.home)),
+    // No legacy attribution or invented caller. The trusted runtime/Secrets
+    // composition will supply attribution, approval answers and the read job.
+    attribution: () => ({ agents: {}, ownerLogins: [] }),
+    knownAgents: () => [],
+  });
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

@@ -29,6 +29,9 @@ export function installMindKnowledge(operations: Operations, live: Live, options
   }));
   live.register({ name: 'knowledge', ids: scope => scope === undefined ? view().pages.map(p => p.slug) : [scope], read,
     inScope: (r, scope) => scope === undefined || r.id === scope,
+    // A referring page can have lost its link or disappeared entirely. Refresh
+    // subscribed pages rather than relying on its current body or a cached graph.
+    refreshOn: change => change.type === 'knowledge',
     // Freshness and Recently verified change at their exact boundary without polling.
     expires(record) {
       const page = record as unknown as KnowledgeOpen;

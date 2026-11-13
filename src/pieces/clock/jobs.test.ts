@@ -106,6 +106,133 @@ describe('durable daemon clock', () => {
     expect(wakes(app.db).filter(w => w.schedule === schedule.id && w.state === 'pending')).toHaveLength(1);
     expect(app.call('in', { agent: 'pond-bot', project: 'pond', prompt: 'Other', note: 'other', when: '2h' }, { kind: 'agent', id: 'pond-bot' }).ok).toBe(true);
   });
+  it('counts lane run-now against the shared one-off budget while retaining its lane link', async () => {
+    const app = await loom();
+    const lane = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const run = app.value('scheduleRun', { id: lane.id });
+    expect(run.schedule).toBe(lane.id);
+    const before = wakes(app.db);
+    expect(app.call('scheduleRun', { id: lane.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(app.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(wakes(app.db)).toEqual(before);
+    app.value('cancel', { id: run.id });
+    expect(app.call('scheduleRun', { id: lane.id }).ok).toBe(true);
+    expect(wakes(app.db).filter(w => w.schedule === lane.id && w.state === 'pending')).toHaveLength(2);
+    expect(app.call('now', { agent: 'art' }).ok).toBe(true); // fresh owner wake keeps its exemption at full capacity
+  });
+  it('counts persisted lane run-now from before the marker was introduced', async () => {
+    const dir = home(), clock = new FakeClock(), app = await loom({}, dir, clock);
+    const lane = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const run = app.value('scheduleRun', { id: lane.id });
+    // Construct the previous on-disk format, retaining its lane link and pause bypass.
+    delete run.runNow;
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(run), run.id);
+    await app.close();
+    const restarted = await loom({}, dir, clock);
+    expect(restarted.call('scheduleRun', { id: lane.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(restarted.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(restarted.call('now', { agent: 'art' }).ok).toBe(true);
+  });
+  it.each(['ordinary', 'lane'] as const)('does not count an accelerated %s recurring occurrence as a new one-off', async kind => {
+    const app = await loom();
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const s = kind === 'lane'
+      ? app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' })
+      : app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', prompt: 'Daily', note: 'daily' });
+    const occurrence = wakes(app.db).find(w => w.schedule === s.id)!;
+    app.value('now', { id: occurrence.id });
+    expect(app.call('in', { agent: 'art', prompt: 'Last', note: 'last', when: '2h' }).ok).toBe(true);
+    expect(app.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
+    app.clock.advance(0); await settled(); // held recurring rows still do not consume one-off capacity
+    const last = wakes(app.db).find(w => w.note === 'last')!;
+    app.value('cancel', { id: last.id });
+    expect(app.call('in', { agent: 'art', prompt: 'Last', note: 'last', when: '2h' }).ok).toBe(true);
+  });
+  it('waits for quota reset plus a minute without using the job failure budget, including after restart', async () => {
+    const dir = home(), clock = new FakeClock(Date.parse('2026-11-13T10:00:00Z'));
+    const retryAfter = '2026-11-13T22:01:00Z';
+    const firstStart = vi.fn(async () => ({ state: 'not-started', code: 'quota', reason: 'No model room', retryAfter } as const));
+    const app = await loom({ runtime: { startBody: firstStart } }, dir, clock);
+    const w = app.set();
+    clock.advance(60_000); await settled();
+    const due = Date.parse(retryAfter) + 60_000;
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'pending', due, failures: 0, outcome: 'No model room' });
+    expect(app.value<{ kind: string }[]>('log').at(-1)?.kind).toBe('quota-wait');
+    await app.close();
+    const startBody = vi.fn(async () => ({ state: 'started', body: 'resumed' } as const));
+    const restarted = await loom({ runtime: { startBody } }, dir, clock);
+    clock.advance(due - clock.now() - 1); await settled(); expect(startBody).not.toHaveBeenCalled();
+    clock.advance(1); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    const firstInput = firstStart.mock.calls[0] as unknown as [{ wake: Wake; intent: string }];
+    const nextInput = startBody.mock.calls[0] as unknown as [{ wake: Wake; intent: string }];
+    expect(firstInput[0].wake.id).toBe(w.id); expect(nextInput[0].wake.id).toBe(w.id);
+    expect(nextInput[0].intent).not.toBe(firstInput[0].intent);
+    expect(wake(restarted.db, w.id)).toMatchObject({ state: 'fired', failures: 0 });
+  });
+  it.each([
+    [undefined, 61], ['bad', 61], [60, 61], ['2030-01-01', 61], ['2027-02-30T00:00:00Z', 61],
+    ['2000-01-01T00:00:00Z', 15], ['9999-12-31T23:59:59Z', 8 * 24 * 60],
+    ['2026-11-13T12:01:00+02:00', 15],
+  ])('bounds quota reset %j with no hot loop', async (retryAfter, minutes) => {
+    const clock = new FakeClock(Date.parse('2026-11-13T10:00:00Z'));
+    const app = await loom({ runtime: { async startBody() { return { state: 'not-started', code: 'quota', reason: 'quota', retryAfter, retryAt: 1 }; } } }, home(), clock);
+    const w = app.set(); clock.advance(60_000); await settled();
+    expect(wake(app.db, w.id)).toMatchObject({ state: 'pending', failures: 0, due: clock.now() + minutes! * 60_000 });
+  });
+  it('retains existing failures over repeated quota waits and suppresses only quota-notice triage', async () => {
+    let quota = false;
+    const app = await loom({ runtime: { async startBody() { return quota
+      ? { state: 'not-started', code: 'quota', reason: 'No room' }
+      : { state: 'not-started', reason: 'offline' }; } } });
+    const w = app.set(); app.clock.advance(60_000); await settled();
+    quota = true;
+    for (let n = 0; n < 7; n++) {
+      app.clock.advance(wake(app.db, w.id)!.due - app.clock.now()); await settled();
+      expect(wake(app.db, w.id)).toMatchObject({ state: 'pending', failures: 1, due: app.clock.now() + 61 * 60_000 });
+    }
+    const notice = app.value('in', { agent: 'art', prompt: 'Triage quota', note: 'quota', place: 'alert:runtime-quota', when: '1m' });
+    const other = app.value('in', { agent: 'art', prompt: 'Triage disk', note: 'disk', place: 'alert:disk', when: '1m' });
+    app.clock.advance(60_000); await settled();
+    expect(wake(app.db, notice.id)).toMatchObject({ state: 'cancelled', failures: 0, outcome: 'No room' });
+    expect(wake(app.db, other.id)).toMatchObject({ state: 'pending', failures: 0 });
+    expect(app.value<{ kind: string; note: string }[]>('log').filter(e => e.note === 'quota').at(-1)?.kind).toBe('quota-notice');
+  });
+  it('does not revive a removed lane on a quota result from an in-flight start', async () => {
+    const result = deferred<StartResult>(), invoked = deferred<void>();
+    const app = await loom({ runtime: { startBody() { invoked.resolve(); return result.promise; } } });
+    const lane = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    const run = app.value('scheduleRun', { id: lane.id }); app.clock.advance(0); await invoked.promise;
+    app.value('laneRemove', { name: 'upkeep' });
+    result.resolve({ state: 'not-started', code: 'quota', reason: 'No room' }); await settled();
+    expect(wake(app.db, run.id)).toMatchObject({ state: 'cancelled', failures: 0 });
+  });
+  it('backs off ordinary failures through six attempts even when the reason mentions quota', async () => {
+    const startBody = vi.fn(async () => ({ state: 'not-started', reason: 'quota: no model has room' } as const));
+    const app = await loom({ runtime: { startBody } });
+    const w = app.set();
+    for (let failure = 1; failure <= 6; failure++) {
+      app.clock.advance(wake(app.db, w.id)!.due - app.clock.now()); await settled();
+      expect(wake(app.db, w.id)).toMatchObject({ failures: failure, state: failure === 6 ? 'failed' : 'pending' });
+      expect(startBody).toHaveBeenCalledTimes(failure);
+      if (failure < 6) expect(wake(app.db, w.id)!.due - app.clock.now()).toBe(15 * 60_000 * 2 ** (failure - 1));
+    }
+    app.clock.advance(8 * 86400_000); await settled(); expect(startBody).toHaveBeenCalledTimes(6);
+  });
+  it.each(['replace', 'remove'] as const)('does not revive an ordinary schedule on quota after %s', async action => {
+    const result = deferred<StartResult>(), invoked = deferred<void>();
+    const clock = new FakeClock(Date.parse('2026-11-13T09:00:00Z'));
+    const app = await loom({ runtime: { startBody() { invoked.resolve(); return result.promise; } } }, home(), clock);
+    const input = { id: 'daily', agent: 'art', at: '03:31', prompt: 'Old words', note: 'daily' };
+    app.value('scheduleSet', input); clock.advance(31 * 60_000); await invoked.promise;
+    const firing = wakes(app.db).find(w => w.state === 'firing')!;
+    if (action === 'replace') app.value('scheduleSet', { ...input, prompt: 'New words' });
+    else app.value('scheduleRemove', { id: input.id });
+    result.resolve({ state: 'not-started', code: 'quota', reason: 'No room' }); await settled();
+    expect(wake(app.db, firing.id)).toMatchObject({ state: 'cancelled', failures: 0 });
+  });
   it('fires an overdue wake once after downtime and records intent before runtime', async () => {
     const dir = home(), clock = new FakeClock(), started = vi.fn(async ({ wake: w }: { wake: Wake }) => {
       expect(wake(second.db, w.id)?.state).toBe('firing');
