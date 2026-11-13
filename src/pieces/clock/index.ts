@@ -86,10 +86,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const row: Wake = { ...w, id: `w-${randomUUID()}`, due, state: 'pending', createdAt: ctx.now, changedAt: ctx.now, by: ctx.viewer, failures: 0, ...extra };
     saveWake(ctx, row); event(ctx, row, 'set'); return row;
   }
+  const nonempty = (agent: string) => wakes(db).some(w => w.agent === agent && active(w));
   function ensureDeadman(ctx: Context, agent: string) {
     const viewer: Viewer = { kind: 'agent', id: agent };
     const input = { agent, prompt: deadmanPrompt, note: deadmanNote };
-    if (!create(viewer, input) || wakes(db).some(w => w.agent === agent && active(w))) return null;
+    if (!create(viewer, input) || nonempty(agent)) return null;
     return make({ ...ctx, viewer }, input, ctx.now + day, { deadman: true });
   }
   function next(ctx: Context, s: Schedule, after: number) {
@@ -306,7 +307,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (closed) return;
     disarm();
     const checkAnswers = parksChanged; parksChanged = false;
-    for (const agent of deadmanAgents) if (!wakes(db).some(w => w.agent === agent && active(w)))
+    for (const agent of deadmanAgents) if (!nonempty(agent))
       operations.call('direct', { kind: 'agent', id: agent }, 'clock.deadman', { agent }, randomUUID());
     for (const w of wakes(db).filter(w => (w.state === 'pending' || w.state === 'parked') && (w.due <= clock.now() || w.state === 'parked' && checkAnswers))) {
       if (w.state === 'parked') { const checked = call(w, 'checkPark', { id: w.id }); if (!checked.ok) holdDenied(w); continue; }

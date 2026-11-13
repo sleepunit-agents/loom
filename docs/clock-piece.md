@@ -574,3 +574,5 @@ and guard legacy file access and subprocesses during creation/restart/dispatch.
 The required prompt and note are asserted as literals independently of constants.
 A deferred runtime fixture inserts real work while a default is firing, compares
 its unchanged intent, then restarts and confirms the held intent is never replayed.
+Capacity coverage retains an uncertain default alongside 49 ordinary requests:
+the 50th request succeeds and the 51st is refused, without altering the default.

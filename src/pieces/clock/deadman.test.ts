@@ -225,3 +225,15 @@ it('preserves a firing default while real work arrives and holds its intent acro
   expect(wakes(restarted.db).filter(active)).toEqual([held]);
   expect(replay).not.toHaveBeenCalled(); expect(startBody).toHaveBeenCalledTimes(1);
 });
+it('does not charge an uncertain safety wake against the 50 ordinary one-off request slots', async () => {
+  const app = await loom({ deadmanAgents: ['art'], runtime: { async startBody() { return { state: 'uncertain', reason: 'No confirmation' }; } } });
+  app.clock.advance(0); const safety = wakes(app.db)[0]; app.clock.advance(day); await settle();
+  expect(wake(app.db, safety.id)).toMatchObject({ state: 'held', hold: 'uncertain', deadman: true });
+  const input = { agent: 'art', prompt: 'Real request', note: '', when: '2d' };
+  for (let n = 0; n < 49; n++) expect(app.call('in', input)).toMatchObject({ ok: true });
+  expect(wakes(app.db).filter(active)).toHaveLength(50);
+  expect(app.call('in', input)).toMatchObject({ ok: true });
+  expect(wakes(app.db).filter(active)).toHaveLength(51);
+  expect(app.call('in', input)).toMatchObject({ ok: false, code: 'invalid', message: 'At most 50 pending one-off wakes' });
+  expect(wake(app.db, safety.id)).toMatchObject({ state: 'held', hold: 'uncertain' });
+});
