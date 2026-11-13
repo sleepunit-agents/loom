@@ -22,11 +22,16 @@ export function askable(w: Wake): boolean {
   return vouchable(w) && w.member === undefined && w.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
     && !['steered', 'other-agent'].includes(String(w.legacy?.for_why));
 }
+/** Archived ownership hints only restrict automatic selection. */
+export function automaticVouch(w: Wake): boolean {
+  return askable(w) && w.legacy?.origin === `agent:${w.agent}` && w.legacy?.for_why === 'none';
+}
 /** Every id and due time survives the owning card's 1000-character details cap.
  * Reserve room for executable words even when the saved note is very long.
+ * Automatic candidates use twelve slots before Approvals selects its group.
  */
-export function vouchDetails(rows: Wake[]): string {
-  const room = Math.floor(1000 / rows.length) - 1;
+export function vouchDetails(rows: Wake[], slots = rows.length): string {
+  const room = Math.floor(1000 / slots) - 1;
   const plain = (words: string) => words.normalize('NFKC').replace(/[\p{C}]/gu, ' ');
   const clip = (words: string, size: number) => words.length <= size ? words : size >= 3 ? words.slice(0, size - 3) + '...' : words.slice(0, size);
   return rows.map(w => {

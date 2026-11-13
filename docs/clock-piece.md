@@ -18,7 +18,7 @@ the latter. Queue acceptance is not a confirmed body start. Next mode therefore
 keeps Clock's default held runtime. Task t-2201 explicitly depends on t-2209 for
 executable dispatch and authenticated conversation/continuation resolution.
 
-Independent work remains: automatic ask-vouch grouping; exact local-approval filing/recovery,
+Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
 mutation/join, original schedule principal narrowing, API 40/conversation 20 and
@@ -698,3 +698,29 @@ retry receipt; feedback names the card and its returned state. Work stays held
 until owner Allow. The viewer-specific `canAskVouch` display hint grants no
 authority; the operation rechecks eligibility and policy. Ineligible scoped,
 steered, capability-bearing and malformed imports do not offer the action.
+
+## Automatic owner-vouch grouping
+
+The daemon checks held unknown imports on startup, after Clock writes, and every
+minute while vouchable imports remain. Automatic candidates additionally require
+archived `origin: agent:<assignee>` and `for_why: none`, with no people, member or
+project scope. These hints only restrict selection; they never authenticate a
+Viewer. Current executable validation and central agent see/create policy still
+apply. Explicit asking remains available for eligible missing/unverified reasons.
+
+Clock passes current eligible rows to the owning direct-only
+`approvals.piece-group-vouch` operation through its composed filing role. Approvals
+filters its permanent Deny history, keeps allowed cards intact, and atomically
+replaces unanswered Clock cards when a new selected candidate appears. Previously
+explicitly asked ids remain candidates while eligible. A partially stale card is
+kept while some listed work remains and no new selected id enters; an empty card
+is withdrawn. Other filers' pending/allowed cards remain intact and their ids are
+excluded. No Clock-side card or denial ledger exists.
+
+Sorted groups hold up to twelve ids within the existing 200-character target cap
+(fewer UUID ids fit); overflow waits for a later pass after the current card is
+answered. Every candidate line budgets one twelfth of the details cap, retaining
+id, saved due and executable excerpt even on smaller cards. A missing role or
+service access fails closed and is retried by the next daemon check. Filing never
+changes the held work; only the existing owner Allow application adopts it. No
+old stores, polling subprocesses or systemd jobs are involved.
