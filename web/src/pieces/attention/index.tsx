@@ -70,8 +70,8 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{const request=startCheck(guard,ask.id);if(request){setMessage('');setConfirmation({records:snapshot.records,request});}}}>Check again</Button>}
       {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid min-w-0 gap-3">
         <legend>Record your answer</legend>
-        {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" onClick={()=>void answer({kind:'no'})}>No</Button></div>}
-        {ask.answers === 'words' && <><label className="grid gap-1">Your answer<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
+        {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'no'})}>No</Button></div>}
+        {(!ask.sourceManaged || ask.answers === 'words') && <><label className="grid gap-1">{ask.answers === 'words' ? 'Your answer' : 'Or answer in your own words'}<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
         <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'done'})}>Mark done</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'dismiss'})}>Dismiss</Button></div>
       </fieldset>}
       <p>Answers are recorded here. Delivery to the agent is not connected in this preview.</p>
