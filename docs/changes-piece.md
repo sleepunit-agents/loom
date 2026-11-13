@@ -94,7 +94,10 @@ agent account assignments grant no project membership or service authority.
 The next root composes the real Approvals role: owner rule lookup uses `for=agent`,
 and answers retain the authenticated member Viewer for grant and project-rule operations.
 No Caller is supplied or invented by Changes. Yes and Not yet apply only to the
-current head and selected principal; Always sets `project:<slug>` to `do` and grants
+current head and selected principal, retaining Approvals’ existing denial semantics:
+a newer denial revokes earlier unspent allowances across principals and denies
+pending sibling requests without a conversation. Conversation asks keep their
+existing handling. Always sets `project:<slug>` to `do` and grants
 that head in the same outer operation transaction. Refresh records a durable request
 but does not start a forge read in this composition.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,

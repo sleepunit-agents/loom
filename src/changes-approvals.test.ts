@@ -43,6 +43,12 @@ it('next Changes answers through real owner Approvals and keeps exact-head and c
   // A new head cannot inherit a previous grant.
   loom.db.transaction(()=>replaceChanges(loom.db,[change({head:{id:'b'.repeat(40),ref:'art/new'}})]))();
   expect(show()).toMatchObject({ok:true,value:{group:'you'}});
+  // Fail the actual grant write after the project rule write, inside the real outer operation.
+  loom.db.exec("CREATE TRIGGER fail_changes_grant BEFORE INSERT ON approvals_approvals BEGIN SELECT RAISE(ABORT, 'test grant failure'); END");
+  expect(await answer('always','b'.repeat(40))).toMatchObject({ok:false,code:'unavailable'});
+  expect(call('approvals.rules')).toMatchObject({ok:true,value:{rules:[]}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:[{target},{target}]}});
+  loom.db.exec('DROP TRIGGER fail_changes_grant');
   expect(await answer('always','b'.repeat(40))).toMatchObject({ok:true,value:{state:'allowed',target:`${change().id}@${'b'.repeat(40)}`}});
   expect(call('approvals.rules')).toMatchObject({ok:true,value:{rules:[{scope:'project:pond',tier:'do'}]}});
   expect(show()).toMatchObject({ok:true,value:{group:'agent',rule:{tier:'do'}}});
@@ -54,8 +60,9 @@ it('next Changes answers through real owner Approvals and keeps exact-head and c
 
 it('real person-specific pending requests are answered without becoming owner grants',async()=>{
  const home=mkdtempSync(join(tmpdir(),'changes-person-'));
+ let principal='pollock';
  // Runtime authentication supplies the Caller to Approvals, never to Changes.
- const loom=await startLoom({home,next:true,sharing:fixtureSharing,stdout:()=>{},clock:new FakeClock(Date.parse('2026-11-13T00:00:00Z')),install:app=>installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:viewer=>viewer.kind==='agent'?{who:{agent:viewer.id,where:'authenticated runtime'},for:'pollock'}:undefined})});
+ const loom=await startLoom({home,next:true,sharing:fixtureSharing,stdout:()=>{},clock:new FakeClock(Date.parse('2026-11-13T00:00:00Z')),install:app=>installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:viewer=>viewer.kind==='agent'?{who:{agent:viewer.id,where:'authenticated runtime'},for:principal}:undefined})});
  const owner={kind:'member' as const,id:'jonathan'};
  let serial=0;
  const call=(name:string,input:object={},viewer:import('./core/index.js').Viewer=owner)=>loom.operations.call('direct',viewer,name,input,`person-${++serial}`);
@@ -67,12 +74,17 @@ it('real person-specific pending requests are answered without becoming owner gr
   expect(call('household.setAgentAccounts',{agent:'art',accounts:{github:['art-bot']}})).toMatchObject({ok:true});
   const request=call('approvals.request',{kind:'merge',target:`${change().id}@${change().head.id}`,what:'merge the change',why:'ready',ask:'Merge this change?',if_yes:'I merge it.',if_no:'I leave it open.'},{kind:'agent',id:'art'});
   expect(request).toMatchObject({ok:true});
+  principal='loren';
+  expect(call('approvals.request',{kind:'merge',target:`${change().id}@${change().head.id}`,what:'merge the change',why:'ready',ask:'Merge this change?',if_yes:'I merge it.',if_no:'I leave it open.'},{kind:'agent',id:'art'})).toMatchObject({ok:true});
   expect(call('changes.show',{id:change().id})).toMatchObject({ok:true,value:{rule:{for:{slug:'pollock',state:'pending'}}}});
   const input={id:change().id,head:change().head.id,action:'yes'};
   expect(call('changes.answer',input)).toMatchObject({ok:false,code:'conflict'});
   expect(call('changes.answer',{...input,person:'pollock',action:'always'})).toMatchObject({ok:false,code:'conflict'});
   expect(call('changes.answer',{...input,person:'pollock'})).toMatchObject({ok:true,value:{for:'pollock',state:'allowed'}});
-  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:[{for:'pollock',state:'allowed'}]}});
-  expect(call('changes.show',{id:change().id})).toMatchObject({ok:true,value:{group:'agent',rule:{for:{slug:'pollock',state:'allowed'}}}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({for:'pollock',state:'allowed'}),expect.objectContaining({for:'loren',state:'pending'})])}});
+  expect(call('changes.show',{id:change().id})).toMatchObject({ok:true,value:{group:'you',rule:{for:{slug:'loren',state:'pending'}}}});
+  // Existing Approvals contract: a newer denial revokes sibling answers across principals.
+  expect(call('changes.answer',{...input,person:'loren',action:'not-yet'})).toMatchObject({ok:true,value:{for:'loren',state:'denied'}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:expect.arrayContaining([expect.objectContaining({for:'loren',state:'denied'}),expect.objectContaining({for:'pollock',state:'denied'})])}});
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
