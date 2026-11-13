@@ -137,11 +137,17 @@ export function standingMatch(s: State, kind: string, target: string, digest: st
   const j = s.standing.find(j => !j.off && j.agent === c.caller.who.agent && j.target === target && j.digest === digest && maySpend(j.who,c.caller.who) && samePrincipal(j,c.caller));
   if (j) { j.uses++; j.used = iso(c.now); log(s,'standing-use',j,c.now,{asked_from: c.caller.who}); } return j;
 }
-export function always(s: State, id: string, by: string, c: DomainContext) {
+export function alwaysScope(a: Approval, projects?: Project[]) {
+  const repo=repoOf(a.target);
+  if(a.kind!=='merge'||!repo||forOf(a)==='?') return;
+  const project=projects?.find(p=>p.repos.includes(repo.repo));
+  return project?`project:${project.slug}`:repo.repo;
+}
+export function always(s: State, id: string, by: string, c: DomainContext, expectedScope?:string) {
   const a = find(s,id), repo = repoOf(a.target);
   if (a.kind !== 'merge' || !repo || forOf(a) === '?') invalid('Always is for a merge of one repo, for you or for one person');
-  const project = c.projects?.find(p => p.repos.includes(repo!.repo));
-  const scope = project ? `project:${project.slug}` : repo!.repo;
+  const scope = alwaysScope(a,c.projects)!;
+  if(expectedScope!==undefined&&expectedScope!==scope) throw new OperationError('conflict','The standing scope changed; open this question again');
   const r = setRule(s,'merge',scope,'do',by,c.now,forOf(a) === 'owner' ? undefined : forOf(a));
   answer(s,id,'allow',by,c.now); return r;
 }

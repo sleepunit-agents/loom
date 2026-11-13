@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { once } from 'node:events';
 import { Readable } from 'node:stream';
-import { runApprovalsClient } from './client.js';
+import { runApprovalsClient } from '../../cli/approvals-client.js';
 import { WebSocket } from 'ws';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -442,5 +442,41 @@ describe('host answer authority',()=>{
     const card=a.value('request',{...ask,conversation});
     expect(card).toMatchObject({id:yes.id,state:'allowed'});expect(card).not.toHaveProperty('conversation');
     expect(load(a.db).approvals).toHaveLength(1);
+  });
+});
+
+describe('standing scope confirmation',()=>{
+  it('refuses to set a scope different from the one the owner confirmed',async()=>{
+    const a=await setup(),card=a.value('request',ask);
+    expect(a.value('open',{id:card.id},owner)).toMatchObject({mayAlways:true,alwaysScope:'project:pond'});
+    expect(a.call('always',{id:card.id,scope:'github:acme/app'},owner)).toMatchObject({ok:false,code:'conflict'});
+    expect(load(a.db).rules).toEqual([]);expect(load(a.db).approvals[0].state).toBe('pending');
+    expect(a.value('always',{id:card.id,scope:'project:pond'},owner)).toMatchObject({scope:'project:pond'});
+  });
+});
+
+describe('final cold review scope regressions',()=>{
+  it('checks delegated agent creation scope for service requests as well as service grants',async()=>{
+    const a=await setup();
+    const caller:Caller={who:{agent:'art',where:'h-1'},for:'owner',project:'missing-project'};
+    expect(a.role.call('request',caller,ask,'missing-project')).toMatchObject({ok:false,code:'denied'});
+    expect(a.role.call('request',{...caller,who:{agent:'pond-bot',where:'h-1'},project:'other'},ask,'wrong-project')).toMatchObject({ok:false,code:'denied'});
+    expect(load(a.db).approvals).toEqual([]);
+    expect(a.role.call('request',{...caller,project:'pond'},ask,'valid-project')).toMatchObject({ok:true,value:{project:'pond',agent:'art'}});
+  });
+  it('selects only pending cards for the person a pregrant names',async()=>{
+    const a=await setup();a.identity({for:'loren'});const card=a.value('request',ask);
+    const dan=a.value('grant',{kind:'merge',target,for:'art',person:'dan'},owner);
+    expect(dan.id).not.toBe(card.id);expect(load(a.db).approvals.find(r=>r.id===card.id)?.state).toBe('pending');
+    const loren=a.value('grant',{kind:'merge',target,for:'art',person:'loren'},owner);
+    expect(loren).toMatchObject({id:card.id,for:'loren',state:'allowed'});
+  });
+  it('never reuses a person pregrant for the owner or another person, or an owner grant for a person',async()=>{
+    const a=await setup(),loren=a.value('grant',{kind:'merge',target,for:'art',person:'loren'},owner);
+    const mine=a.value('request',ask);expect(mine.id).not.toBe(loren.id);expect(mine.state).toBe('pending');
+    a.identity({for:'dan'});const dan=a.value('request',ask);expect(dan.id).not.toBe(loren.id);expect(dan.state).toBe('pending');
+    a.identity({for:'loren'});expect(a.value('request',ask)).toMatchObject({id:loren.id,state:'allowed'});
+    const otherTarget=target.replace('#12@','#99@'),own=a.value('grant',{kind:'merge',target:otherTarget,for:'art'},owner);
+    expect(a.value('request',{...ask,target:otherTarget})).not.toMatchObject({id:own.id});
   });
 });

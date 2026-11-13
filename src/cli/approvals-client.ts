@@ -1,10 +1,10 @@
 /** Metadata generated command surface; transport only, with no store, parser or approval decisions. */
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { IOStreams } from '../../cli/io.js';
-import type { ClientRuntime } from '../../cli/api-client.js';
-import { approvalCommands } from './commands.js';
-import type { CommandAnswer } from './binding.js';
+import type { IOStreams } from './io.js';
+import type { ClientRuntime } from './api-client.js';
+import { approvalCommands } from '../pieces/approvals/commands.js';
+import type { CommandAnswer } from '../pieces/approvals/binding.js';
 export async function runApprovalsClient(argv:string[],io:IOStreams,runtime:ClientRuntime={request:fetch,retry:ms=>new Promise(r=>setTimeout(r,ms))}):Promise<number>{
   if(argv[0]==='--help'||argv[0]==='-h'){io.stdout(`usage: approvals <${approvalCommands.map(c=>c.name).join('|')}> ...\n`);return 0;}
   const fail=(message:string)=>{io.stderr(`approvals: ${message}\n`);return 1;};

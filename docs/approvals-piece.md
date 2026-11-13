@@ -86,6 +86,6 @@ untouched stores until the owner retires those stores.
 - Complete old contract cases and independent CLI output/exit oracle fixtures.
 - Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
 - Complete overlap denial and owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
-- Cold review of spend/grant paths and migration (at most three rounds).
+- Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. Persistence/importer/client review remains to run (at most three rounds for that separate unit).
 - One two-window app test; screenshots at 390, 1280, 1920 in Neon Noir and
   Daylight as CI artifacts; no browser suite on loom's machine.

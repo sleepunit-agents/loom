@@ -3,7 +3,7 @@ import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Vie
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
 import { type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
-import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
+import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, alwaysScope, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
 import { plain, headline, cardWords } from './words.js';
@@ -57,6 +57,12 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
         }
         if (config.piece) {
           if(viewer.kind!=='service'||!mayAct(viewer,{type:'approval'},sharing(),'act',name)) return false;
+          if(verb === 'piece-request') {
+            const caller=context(viewer,input,operations.clock.now(),true).caller;
+            // The service may file for its authenticated agent, whose attached
+            // project must also pass the central creation rule.
+            return mayCreate({kind:'agent',id:caller.who.agent},{type:'approval',agent:caller.who.agent,...(caller.project?{project:caller.project}:{})},sharing(),name);
+          }
           if(!approvalId) return true;
           const approval=readApproval(db,String(input.id));
           return !approval||mayAct(viewer,scope(approval),sharing(),'act',name);
@@ -84,13 +90,14 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c));
   register('withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c));
   register('answer',true,(s,i,c,v)=>answerAndApply(s,String(i.id),String(i.action),v.id,c,options.applications ?? {}),{answer:true});
-  register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer'),mayEveryTime:owner(v,'approvals.every-time')&&everyTimeOk(a,c),mayAlways:owner(v,'approvals.always')&&stateOf(a,c.now)==='pending'&&a.kind==='merge'&&forOf(a)!=='?'};},{read:true});
+  register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer'),mayEveryTime:owner(v,'approvals.every-time')&&everyTimeOk(a,c),mayAlways:owner(v,'approvals.always')&&stateOf(a,c.now)==='pending'&&a.kind==='merge'&&forOf(a)!=='?',alwaysScope:alwaysScope(a,c.projects)};},{read:true});
   register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing]:[],mayEdit:owner(v,'approvals.set-rule')}));
-  register('rule',false,(s,i,c,v)=>rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now));
+  const readRules = (s:State,i:Record<string,unknown>,c:DomainContext,v:Viewer) => rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now);
+  register('rule',false,readRules);
   register('set-rule',true,(s,i,c,v)=>setRule(s,String(i.kind),String(i.scope),String(i.tier),v.id,c.now,typeof i.person==='string'?i.person:undefined),{owner:true});
-  register('always',true,(s,i,c,v)=>always(s,String(i.id),v.id,c),{owner:true});
+  register('always',true,(s,i,c,v)=>always(s,String(i.id),v.id,c,typeof i.scope==='string'?i.scope:undefined),{owner:true});
   register('every-time',true,(s,i,c,v)=>allowEveryTime(s,String(i.id),v.id,c),{owner:true});
   register('standing-off',true,(s,i,c,v)=>{ const j=s.standing.find(j=>j.id===i.id); if(!j) throw new OperationError('not-found','no such standing job'); j.off ??= {at:iso(c.now),by:v.id}; return j; },{owner:true});
   register('grant',true,(s,i,c,v)=>{const principal=typeof i.person==='string'?i.person:'owner'; if(i.person==='owner'||!person.test(principal)) invalid('--person is the slug of whom it is for; leave it out for owner');return grant(s,String(i.kind),String(i.target),String(i.for),v.id,!!i.deny,principal,c.now);},{owner:true});
@@ -101,7 +108,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('piece-request',true,(s,i,c)=>request(s,i,c),{piece:true});
   register('piece-use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c),{piece:true});
   register('piece-withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c),{piece:true});
-  register('piece-rule',false,(s,i,c,v)=>rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now),{piece:true});
+  register('piece-rule',false,readRules,{piece:true});
   register('piece-tell',true,recordNotice,{piece:true});
   register('standing',true,(s,i,c)=>{
     if(i.check) {const j=s.standing.find(j=>j.id===i.check&&j.agent===c.caller.who.agent);return {state:j?j.off?'off':'on':'none'};}

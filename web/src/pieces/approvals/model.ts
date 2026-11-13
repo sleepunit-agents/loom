@@ -8,6 +8,6 @@ export interface Approval extends LiveRecord {
 export interface Rule extends LiveRecord {
   kind: string; scope?: string; tier?: string; person?: string; target?: string; off?: unknown;
 }
-export interface Open { open: boolean; mayAnswer: boolean; mayEveryTime: boolean; mayAlways: boolean }
+export interface Open { open: boolean; mayAnswer: boolean; mayEveryTime: boolean; mayAlways: boolean; alwaysScope?: string }
 export const matches = (a: Approval, query: string) => query.toLowerCase().trim().split(/\s+/).every(word =>
   [a.title,a.ask,a.why,a.kind,a.target,a.who.agent,a.for].join(' ').toLowerCase().includes(word));

@@ -40,7 +40,8 @@ function Reader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot
       return;
     }
     if (action === 'every-time' && !check.value.mayEveryTime || action === 'always' && !check.value.mayAlways) return;
-    setRequest(action === 'every-time' || action === 'always' ? call(`approvals.${action}`,{id:approval.id}) : call('approvals.answer',{id:approval.id,action}));
+    if (action === 'always' && state.result?.ok && state.result.value.alwaysScope !== check.value.alwaysScope) { setConfirmation(undefined); return; }
+    setRequest(action === 'every-time' || action === 'always' ? call(`approvals.${action}`,{id:approval.id,...(action === 'always' ? {scope:check.value.alwaysScope} : {})}) : call('approvals.answer',{id:approval.id,action}));
     setConfirmation(undefined);
   }
   return <article className="grid gap-5 p-5">
@@ -49,11 +50,12 @@ function Reader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot
     {approval.if_yes && <section><h3>If you allow</h3><p>{approval.if_yes}</p></section>}
     {approval.if_no && <section><h3>If you deny</h3><p>{approval.if_no}</p></section>}
     {confirmed && state.result?.ok && state.result.value.mayEveryTime && <p>Allow every time: these exact words run as you until you turn the job off under Rules.</p>}
-    {confirmed && state.result?.ok && state.result.value.mayAlways && <p>Always allow also sets a standing merge rule for this project or repository, for this same person.</p>}
+    {confirmed && state.result?.ok && state.result.value.mayAlways && <p>Always allows future merges across {state.result.value.alwaysScope?.replace('project:','the entire project ')}, for this same person, without asking.</p>}
     {approval.details && <section><h3>Details</h3><p className="whitespace-pre-wrap break-words">{approval.details}</p></section>}
     <section><h3>Exactly what this allows</h3><p className="break-words">{approval.kind}: {approval.target}</p></section>
-    {confirmed && <div role="group" aria-label="Answer approval" className="flex gap-2"><Button disabled={checking || saving.pending} onClick={() => void answer('allow')}>Allow</Button>{state.result?.ok && state.result.value.mayEveryTime && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('every-time')}>Allow every time</Button>}{state.result?.ok && state.result.value.mayAlways && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('always')}>Always allow this scope</Button>}<Button variant="outline" disabled={checking || saving.pending} onClick={() => void answer('deny')}>Deny</Button></div>}
+    {confirmed && <div role="group" aria-label="Answer approval" className="flex gap-2"><Button disabled={checking || saving.pending} onClick={() => void answer('allow')}>Allow</Button>{state.result?.ok && state.result.value.mayEveryTime && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('every-time')}>Allow every time</Button>}{state.result?.ok && state.result.value.mayAlways && <Button variant="outline" disabled={checking || saving.pending} onClick={()=>void answer('always')}>Always for {state.result.value.alwaysScope?.replace('project:','project ')}</Button>}<Button variant="outline" disabled={checking || saving.pending} onClick={() => void answer('deny')}>Deny</Button></div>}
     {approval.state === 'pending' && !confirmed && <p>{state.result?.ok && !state.result.value.mayAnswer ? 'You cannot answer this question.' : state.result?.ok === false ? state.result.message : 'Checking whether this question is still open…'}</p>}
+    {approval.state==='pending' && !confirmed && !checking && !saving.pending && <Button variant="outline" onClick={()=>setConfirmation({records:snapshot.records,request:call<Open>('approvals.open',{id:approval.id})})}>Check again</Button>}
     <Result request={request} />
     {approval.by && <p>Answered by {approval.by}</p>}
   </article>;
@@ -72,7 +74,7 @@ function Rules() {
     setRequest(call('approvals.set-rule',input));
   }
   return <div className="grid gap-5 p-5"><h1>Household rules</h1>
-    {status !== 'live' ? <Loading label="Opening rules…" /> : <List label="Standing rules">{records.map(r => <Row key={r.id} title={r.scope ?? r.target ?? r.id} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier ?? (r.off ? 'Turned off' : 'Every time')} actions={enabled && !r.scope && !r.off ? <Button variant="outline" disabled={saving.pending} onClick={()=>setRequest(call('approvals.standing-off',{id:r.id}))}>Turn off</Button> : undefined} />)}</List>}
+    {status !== 'live' ? status==='loading' ? <Loading label="Opening rules…" /> : <Error text={status==='denied'?'Sign in to see rules.':'Waiting for connection.'} /> : <List label="Standing rules">{records.map(r => <Row key={r.id} title={r.scope ?? r.target ?? r.id} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier ?? (r.off ? 'Turned off' : 'Every time')} actions={enabled && !r.scope && !r.off ? <Button variant="outline" disabled={saving.pending} onClick={()=>setRequest(call('approvals.standing-off',{id:r.id}))}>Turn off</Button> : undefined} />)}</List>}
     {enabled && <form aria-label="Set standing rule" onSubmit={submit} className="grid gap-3"><h3>Set a rule</h3><fieldset disabled={saving.pending} className="grid gap-3">
       <label>Action <select name="kind"><option value="merge">Merge</option><option value="host">Step on loom’s machine</option></select></label>
       <label>Scope<Input name="scope" required /></label><label>For someone else (optional)<Input name="person" /></label>
