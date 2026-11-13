@@ -460,12 +460,13 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   live.changed(stale.map(t=>({type:'thread',id:t.id})));
   const rows=db.prepare('SELECT thread,seq FROM comms_messages WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {thread:string;seq:number}[];
   db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher','$.privateCipher') WHERE at <= ?").run(clock.now()-days*day);
+  db.prepare('UPDATE comms_conversation_steps SET words=NULL,record=NULL WHERE at <= ?').run(clock.now()-days*day);
   live.changed(rows.map(r=>({type:'message',id:messageId(r.thread,r.seq)})));
   armSweep();
  }
  function armSweep() {
   cancel();
-  const next=db.prepare('SELECT min(at) AS at FROM comms_messages WHERE words IS NOT NULL').get() as {at:number|null};
+  const next=db.prepare('SELECT min(at) AS at FROM (SELECT at FROM comms_messages WHERE words IS NOT NULL UNION ALL SELECT at FROM comms_conversation_steps WHERE words IS NOT NULL)').get() as {at:number|null};
   cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day,workingThreads().reduce((at,t)=>Math.min(at,workingDeadline(t)),Infinity)),sweep);
  }
  sweep();

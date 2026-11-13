@@ -95,3 +95,36 @@ for(const sameKey of [true,false])it(`seals imported work and answer metadata an
  for(const secret of ['private tool','private card','private run','private answer','private output','Private ask?','step label'])expect(expired).not.toContain(secret);
  for(const row of app.db.prepare('SELECT words,record FROM comms_messages').all() as {words:Buffer|null;record:string}[]){expect(row.words).toBeNull();expect(row.record).not.toContain('Cipher');}
 });
+
+for(const sameKey of [true,false])it(`preserves conversation steps without plaintext work metadata (${sameKey?'same key':'rekey'})`,async()=>{
+ const s=await source(),to=home();
+ if(sameKey)copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const key=await loadKey(to),clock=new FakeClock(Date.parse('2026-11-12T02:00:00Z'));
+ const app=createFoundation({home:to,clock});cleanup.push(()=>app.close());
+ s.db.exec('CREATE TABLE conversation_steps(seq INTEGER PRIMARY KEY,conversation,run,id,at,tool,state,words,UNIQUE(conversation,run,id))');
+ const words=await s.key.seal('private bridge step');
+ s.db.prepare('INSERT INTO conversation_steps VALUES (?,?,?,?,?,?,?,?)').run(17,'cv-bridge','private-run','step-1','2026-11-12T01:03:00Z','private-tool','done',words);
+ s.db.prepare('INSERT INTO conversation_steps VALUES (?,?,?,?,?,?,?,?)').run(23,'cv-other','private-run','step-1','2026-11-12T01:04:00Z','private-tool','failed',null);
+ await expect(importComms(app.db,s.from,to,{interrupt:()=>{throw new Error('power loss');}})).rejects.toThrow('power loss');
+ expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
+ await expect(importComms(app.db,s.from,to,{interrupt:()=>{app.db.prepare('UPDATE comms_conversation_steps SET conversation=? WHERE seq=17').run('replacement');}})).rejects.toThrow('comparison');
+ expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
+ expect(await importComms(app.db,s.from,to)).toMatchObject({imported:true,steps:2});
+ const rows=app.db.prepare('SELECT * FROM comms_conversation_steps ORDER BY seq').all() as {seq:number;conversation:string;at:number;words:Buffer|null;record:Buffer|null}[];
+ expect(rows.map(r=>[r.seq,r.conversation,r.at])).toEqual([[17,'cv-bridge',Date.parse('2026-11-12T01:03:00Z')],[23,'cv-other',Date.parse('2026-11-12T01:04:00Z')]]);
+ expect(await key.open(rows[0].words!)).toBe('private bridge step');
+ expect(JSON.parse(await key.open(rows[0].record!))).toEqual({run:'private-run',id:'step-1',tool:'private-tool',state:'done'});
+ if(sameKey)expect(rows[0].words).toEqual(words);else expect(rows[0].words).not.toEqual(words);
+ expect(rows[1].words).toBeNull();expect(rows[1].record).toBeNull();
+ for(const secret of ['private bridge step','private-run','private-tool','step-1'])expect(JSON.stringify(rows)).not.toContain(secret);
+ expect((s.db.prepare('SELECT words FROM conversation_steps WHERE seq=17').get() as {words:Buffer}).words).toEqual(words);
+ expect(await importComms(app.db,s.from,to)).toMatchObject({imported:false,steps:2});
+ s.db.prepare("UPDATE conversation_steps SET state='failed' WHERE seq=17").run();
+ await expect(importComms(app.db,s.from,to)).rejects.toThrow('different');
+ const comms=installComms({...app,clock,key,days:1,sharing:()=>({members:{},projects:{},services:{}}),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),attention:{answer:()=>({ok:true,value:{}})}});
+ cleanup.push(()=>{void comms.close();});
+ clock.advance(Date.parse('2026-11-13T01:03:00Z')-clock.now()-1);
+ expect((app.db.prepare('SELECT words FROM comms_conversation_steps WHERE seq=17').get() as {words:Buffer|null}).words).not.toBeNull();
+ clock.advance(1);
+ expect(app.db.prepare('SELECT words,record FROM comms_conversation_steps WHERE seq=17').get()).toEqual({words:null,record:null});
+});

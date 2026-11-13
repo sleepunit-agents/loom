@@ -108,7 +108,7 @@ rolls back its schema as well as its rows.
 
 The app maps imported nested card tool/state and step details, ask question/reason/outcome
 lines, and kept answer verdicts. Answered, expired, freeform and unreferenced asks do not
-offer boolean answer buttons. Conversation steps still need importing before release. Imported metadata encryption and same-key ciphertext preservation now have
+offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their new writer, authorized reader and page binding remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
 focused tests for both matching and different destination keys.
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
@@ -305,3 +305,25 @@ work, asserts the page still has the server's exact time after loading, and
 checks presence at deadline minus one millisecond before crossing the deadline.
 The 245 focused tests pass; the browser proof remains CI-only and must pass on
 the updated head. This changes the fixture clock, not retention behavior.
+
+
+Conversation-step import now preserves source sequence, conversation and timestamp
+in `comms_conversation_steps` (migration 2). Same-key label ciphertext is copied
+byte for byte; a different key rekeys it only in memory. Run, card id, tool and
+state use a separate encrypted envelope. Rows whose source words are already
+absent retain only routing facts. The shared deadline sweep clears both blobs
+at the configured retention deadline, including when no thread messages exist.
+This adds storage and offline preservation only: runtime writes, authorized
+conversation-page reads, and UI remain unfinished.
+
+Two regression cases first failed because the importer returned no step count
+and silently omitted these rows. They now cover both key paths, separate
+conversations with the same card id, exact routing and content comparison,
+interruption and corrupt-destination rollback, changed-step checksum refusal,
+repeat import, source preservation and exact expiry. Sources with no legacy
+step table still import. The checksum now includes conversation steps; a home
+imported by the earlier draft importer must be rebuilt from its unchanged
+source rather than treated as a completed import. No real home was imported.
+All 247 focused tests, TypeScript checking and diff checks pass. No web
+code changed and no local browser ran. The browser clock correction passed CI on `03e906e`; that result does not
+validate subsequent heads.
