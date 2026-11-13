@@ -187,7 +187,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     openMode='pass';await b.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
     const exactDetails=load(loom.db).approvals.find(card=>card.id===localCards[0])!.details;
-    await expect.poll(()=>b.locator('section').filter({has:b.getByRole('heading',{name:'Details',exact:true})}).locator('p').textContent()).toBe(exactDetails);
+    await expect.poll(()=>b.getByRole('heading',{name:'Details',exact:true}).locator('..').locator('p').textContent()).toBe(exactDetails);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
