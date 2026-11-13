@@ -706,7 +706,8 @@ steered, capability-bearing and malformed imports do not offer the action.
 The daemon checks held unknown imports on startup, after Clock writes, and every
 minute while vouchable imports remain. Automatic candidates additionally require
 archived `origin: agent:<assignee>` and `for_why: none`, with no people, member or
-project scope. These hints only restrict selection; they never authenticate a
+project scope in either current fields or archived metadata. Unsupported imported
+ids stay held and are excluded from automatic batches. These hints only restrict selection; they never authenticate a
 Viewer. Current executable validation and central agent see/create policy still
 apply. Explicit asking remains available for eligible missing/unverified reasons.
 

@@ -361,7 +361,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (options.vouchFiling?.group) {
       const rows = wakes(db).filter(w => {
         const viewer: Viewer = {kind:'agent',id:w.agent};
-        if (!askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
+        if (!vouchOf(`${w.agent}:${w.id}`) || !askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
         try { newWork(w); return true; }
         catch (e) { if (e instanceof OperationError && e.code === 'invalid') return false; throw e; }
       });

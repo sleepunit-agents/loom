@@ -424,6 +424,8 @@ it('automatic selection excludes unverified, steered, other-origin, people, priv
     {legacy:{...original.legacy,for_why:'steered'}},
     {legacy:{...original.legacy,for_why:'none',origin:'agent:mark'}},
     {legacy:{...original.legacy,for_why:'none',for_people:['someone']}},
+    {legacy:{...original.legacy,for_why:'none',member:'someone'}},
+    {legacy:{...original.legacy,for_why:'none',project:'private'}},
     {legacy:{...original.legacy,for_why:'none'},member:'jonathan'},
     {legacy:{...original.legacy,for_why:'none'},project:'pond'},
     {legacy:{...original.legacy,for_why:'none'},prompt:undefined,file:'../escape'},
@@ -479,4 +481,22 @@ it('fails closed when the automatic filing operation lacks service access and re
   s.access.services.approvals.operations.push('approvals.piece-group-vouch');
   expect(s.call('approvals.piece-group-vouch',{caller:{who:{agent:'art',where:"loom's clock"},for:'owner'},candidates:[]},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'denied'});
   expect(cards(s)).toEqual([]); expect(wakes(s.app.db)).toEqual(before);
+});
+
+it('skips unsupported imported ids without blocking valid automatic candidates', async () => {
+  const s = await setup(); automatic(s,ids[0]);
+  const base = wake(s.app.db,ids[0])!;
+  const bad={...base,id:'w-legacy'};
+  s.app.db.prepare('INSERT INTO clock_wakes(id,record,changed_at) VALUES (?,?,?)').run(bad.id,JSON.stringify(bad),s.clock.now());
+  s.clock.advance(0); await settle();
+  expect(cards(s).map(a=>a.target)).toEqual([`art:${ids[0]}`]);
+  expect(wake(s.app.db,bad.id)).toEqual(bad);
+});
+it('keeps grouping direct-only even for an otherwise authorized service', async () => {
+  const s=await setup(), input={caller:{who:{agent:'art',where:"loom's clock"},for:'owner'},candidates:[]};
+  const viewer: Viewer={kind:'service',id:'approvals'};
+  expect(s.app.operations.call('direct',viewer,'approvals.piece-group-vouch',input,randomUUID())).toMatchObject({ok:true,value:null});
+  for(const door of ['http','socket','mcp'] as const)
+    expect(s.app.operations.call(door,viewer,'approvals.piece-group-vouch',input,randomUUID())).toMatchObject({ok:false});
+  expect(cards(s)).toEqual([]);
 });

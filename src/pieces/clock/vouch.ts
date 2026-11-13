@@ -20,7 +20,8 @@ export function vouchable(w: Wake): boolean {
 
 /** Archived strings can exclude a request, never authenticate its asker. */
 export function askable(w: Wake): boolean {
-  return vouchable(w) && w.member === undefined && w.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
+  return vouchable(w) && w.member === undefined && w.project === undefined
+    && w.legacy?.member === undefined && w.legacy?.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
     && !['steered', 'other-agent'].includes(String(w.legacy?.for_why));
 }
 /** Archived ownership hints only restrict automatic selection. */
