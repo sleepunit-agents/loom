@@ -116,12 +116,13 @@ it('erases the client snapshot and refuses holder-controlled acknowledgement bod
   expect(received).toHaveLength(0);
 });
 it('client deadline also bounds an already started mutation and erases both copies after late completion',async()=>{
-  const {client,server,authority,who}=setup();let finish!:()=>void;let provider:Uint8Array|undefined;
+  const {client,server,authority,who}=setup();const snapshots=clientSnapshots();let finish!:()=>void;let provider:Uint8Array|undefined;
   const set=vi.fn(async(_who:unknown,_name:string,bytes:Uint8Array)=>{provider=bytes;await new Promise<void>(resolve=>{finish=resolve;});});
   const holder=await listenHolderMutations(server,{set,remove:()=>{}},authority);closes.push(holder.close);
   vi.useFakeTimers();try{
     const pending=expect(localHolderMutations(client).set(who,'github',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
     await vi.waitFor(()=>expect(set).toHaveBeenCalledOnce());await vi.advanceTimersByTimeAsync(5000);await pending;
+    expect(snapshots).toHaveLength(1);expect(snapshots[0].every(v=>v===0)).toBe(true);
     // Storage owns an in-flight copy until the awaited operation has settled.
     expect(Buffer.from(provider!).toString()).toBe('LATE-VALUE');
     finish();await vi.waitFor(()=>expect(provider!.every(v=>v===0)).toBe(true));
@@ -163,4 +164,27 @@ it('bounds connections before TLS completion or complete HTTP headers arrive',as
       await vi.waitFor(()=>expect(closed).toBe(true));expect(authority).not.toHaveBeenCalled();expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
     } finally {peer.destroy();vi.useRealTimers();}
   }
+});
+
+function clientSnapshots(){
+  const sent:Buffer[]=[],real=https.request;
+  vi.spyOn(https,'request').mockImplementation(((options:https.RequestOptions,callback:(r:IncomingMessage)=>void)=>{
+    const request=real(options,callback),end=request.end.bind(request);
+    request.end=((bytes:Buffer)=>{if(bytes)sent.push(bytes);return end(bytes);}) as typeof request.end;
+    return request;
+  }) as typeof https.request);
+  return sent;
+}
+it('independently bounds the client against a trusted peer with no server deadline',async()=>{
+  const {client,server,who}=setup();const snapshots=clientSnapshots();let received=false;
+  const peer=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,_res)=>{
+    req.resume();req.on('end',()=>{received=true;}); // Deliberately never acknowledge or close.
+  });
+  await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
+  closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
+  vi.useFakeTimers();try{
+    const pending=expect(localHolderMutations(client).set(who,'github',Buffer.from('TIMEOUT-SNAPSHOT'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
+    await vi.waitFor(()=>expect(received).toBe(true));expect(snapshots).toHaveLength(1);expect(snapshots[0].toString()).toBe('TIMEOUT-SNAPSHOT');
+    await vi.advanceTimersByTimeAsync(5000);await pending;expect(snapshots[0].every(v=>v===0)).toBe(true);
+  }finally{vi.useRealTimers();}
 });
