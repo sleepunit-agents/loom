@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
 - Next Clock files local approval requests and recovers their exact saved words through authenticated Runtime body proof; `wake --approval` no longer requires retyping private words.
 
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
@@ -45,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
+
+- Next desk: show loom's server minute/timezone and live connection/working-agent status glyphs on desktop; retain compact phone chrome.
 
 - Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
 

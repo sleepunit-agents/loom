@@ -1,5 +1,6 @@
 import { bootstrapInput, bootstrapHouseholdAgent } from './bootstrap.js';
 import { z } from 'zod';
+import { installHouseholdTime } from './time.js';
 import { installHouseholdDisplay } from './display.js';
 import { installHouseholdPreferences } from './preferences.js';
 import { HouseholdDatabase } from './document.js';
@@ -16,6 +17,7 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 /** Explicit installation only until importer and all production callers cut over together. */
 export function installHouseholdProjects(app: Foundation, home: string): void {
   installHouseholdPreferences(app, home);
+  installHouseholdTime(app, home);
   installHouseholdDisplay(app, home);
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');

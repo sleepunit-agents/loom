@@ -11,6 +11,7 @@ import Bar from './bar';
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
 beforeEach(()=>{f.snapshots={
+ 'household.time':live([{id:'owner',at:Date.parse('2026-11-13T18:41:00Z'),timezone:'America/Chicago'}]),
  'attention.ownedAgent':live([{id:'art',name:'Art'}]),
  person:live([{id:'commons:art',slug:'art',kind:'agent',name:'Art E Fish'}]),
  'attention.agent':live([{id:'report',agent:'art',state:'working',work:'Checking a pull request',changedAt:1}]),
@@ -32,4 +33,22 @@ it.each(['offline','denied','loading'] as const)('drops stale work, identity and
  expect(tree.root.findByType('ticker-test').props.parts).toEqual([{text:'Your agents are unavailable'}]);
  expect(tree.root.findByType('ticker-test').props.live).toBe(false);
  expect(tree.root.findByProps({'aria-label':'Needs you: unavailable'}).children).toEqual(['?']);
+});
+
+it('shows server time and status on desktop and clears stale time',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ expect(tree.root.findByProps({title:'12:41 PM, America/Chicago time'})).toBeTruthy();
+ expect(tree.root.findByProps({'aria-label':'1 of 1 agents at work'})).toBeTruthy();
+ f.snapshots['household.time']={...f.snapshots['household.time'],status:'offline'};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tree.root.findAllByProps({title:'12:41 PM, America/Chicago time'})).toHaveLength(0);
+ expect(tree.root.findByProps({title:'Loom time unavailable'})).toBeTruthy();
+});
+
+it('clears working-agent count when just the roster becomes unavailable',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.snapshots['attention.ownedAgent']={...f.snapshots['attention.ownedAgent'],status:'offline'};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tree.root.findAllByProps({'aria-label':'1 of 1 agents at work'})).toHaveLength(0);
+ expect(tree.root.findByProps({'aria-label':'Agent status unavailable'})).toBeTruthy();
 });
