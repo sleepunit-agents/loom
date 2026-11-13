@@ -1,9 +1,12 @@
 import { it, expect } from 'vitest';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { createConnection } from 'node:net';
+import { resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from './foundation.js';
@@ -119,5 +122,21 @@ it('multiple next addresses share one foundation and failed later binds release 
     try{await expect(startLoom({home,next:true,host:['127.0.0.1','127.0.0.2'],port})).rejects.toThrow();}
     finally{await new Promise<void>(ok=>blocker.close(()=>ok()));}
     loom=await startLoom({home,next:true,host:'127.0.0.1',port});expect((await fetch(loom.url+'/health')).status).toBe(200);
+  }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+
+it.runIf(process.platform==='linux')('an ownership probe cannot hold shutdown open with a withheld FIN',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-next-owner-probe-'));let loom=await startLoom({home,next:true});
+  const key=createHash('sha256').update(realpathSync(home)).digest('hex').slice(0,32);
+  const probe=createConnection({path:'\0loom-next-'+key,allowHalfOpen:true});probe.on('error',()=>{});
+  try{await once(probe,'connect');await loom.close();loom=await startLoom({home,next:true});expect((await fetch(loom.url+'/health')).status).toBe(200);}
+  finally{probe.destroy();await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+it.runIf(existsSync(resolve(import.meta.dirname,'../dist/web/next.html')))('default web root serves the built next shell and every initial script',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'loom-next-built-'));const loom=await startLoom({home,next:true});
+  try{const root=await fetch(loom.url);expect(root.status).toBe(200);const html=await root.text();
+    expect(html).toContain('id="root"');const assets=[...html.matchAll(/(?:src|href)="(\/app\/[^"]+)"/g)].map(m=>m[1]);expect(assets.length).toBeGreaterThan(0);
+    for(const asset of assets){const res=await fetch(loom.url+asset);expect(res.status).toBe(200);expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0);}
   }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
 });

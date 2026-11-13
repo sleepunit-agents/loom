@@ -31,7 +31,7 @@ export function installNext(app: Foundation, options: NextOptions) {
 export async function listenNext(app: Foundation, options: NextOptions) {
   const auth = options.authenticate ?? nextSessionResolver(app);
   const api = httpDoor(app, auth);
-  const root = resolve(options.webRoot ?? resolve(import.meta.dirname, 'web'));
+  const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
   const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {

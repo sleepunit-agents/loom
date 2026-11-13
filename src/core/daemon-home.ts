@@ -8,7 +8,7 @@ export async function ownHome(home: string): Promise<() => Promise<void>> {
   mkdirSync(home,{recursive:true,mode:0o700});
   const key=createHash('sha256').update(realpathSync(home)).digest('hex').slice(0,32);
   const path=process.platform==='linux'?`\0loom-next-${key}`:process.platform==='win32'?`\\\\.\\pipe\\loom-next-${key}`:join(tmpdir(),`loom-next-${key}.sock`);
-  const server=createServer(socket=>socket.end());
+  const server=createServer(socket=>socket.destroy());
   const listen=()=>new Promise<void>((ok,no)=>{const fail=(e:Error)=>{server.off('listening',ready);no(e);};const ready=()=>{server.off('error',fail);ok();};server.once('error',fail);server.once('listening',ready);server.listen(path);});
   try { await listen(); }
   catch (error) {

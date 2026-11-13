@@ -24,3 +24,17 @@ it('staging cannot silently affect old mode',async()=>{
   expect(await run(['--staging'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:s=>error.push(s)})).toBe(2);
   expect(error.join('')).toContain('require --next');
 });
+
+it.each([
+  {args:[],env:undefined,expected:'default'},
+  {args:[],env:'/fixture/env-next',expected:'/fixture/env-next'},
+  {args:['--home','/fixture/explicit-next'],env:'/fixture/env-next',expected:'/fixture/explicit-next'},
+])('next home uses explicit flag, then environment, then the separate default: $expected',async({args,env,expected})=>{
+  const {homedir}=await import('node:os');const {resolve}=await import('node:path');
+  vi.stubEnv('LOOM_HOME',env);
+  const start=vi.spyOn(foundation,'startLoom').mockResolvedValue({url:'http://127.0.0.1:8788',close:async()=>{}} as never);
+  let ready!:()=>void;const listening=new Promise<void>(ok=>{ready=ok;});
+  const running=run(['--next',...args],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:()=>ready()});
+  try{await listening;expect(start.mock.calls[0][0].home).toBe(expected==='default'?resolve(homedir(),'.config/loom-next'):expected);}
+  finally{process.emit('SIGTERM');await running;start.mockRestore();vi.unstubAllEnvs();}
+});
