@@ -151,7 +151,7 @@ it('startup failure awaits pending authentication before SQLite closes',async()=
     await vi.waitFor(()=>expect(source.read).toHaveBeenCalledOnce());await new Promise<void>(r=>setImmediate(r));
     expect(ended).toBe(false);expect(db.open).toBe(true);
   } finally {held.resolve(Buffer.from('PRIVATE'));expect(await outcome).toBe('next mode needs a bind host');rmSync(home,{recursive:true,force:true});}
-  expect(db.open).toBe(false);
+  expect(db.open).toBe(false);expect(request).not.toHaveBeenCalled();
 });
 it.each(['secret.name','secret.grant','secret.policy','core.access'])('invalidates pending authentication on %s',async type=>{
   const f=await setup();await until(()=>f.sockets.length===1);
@@ -183,4 +183,20 @@ it('holds a replacement staging identity even if its setup is restored',async()=
   put(f.app.db,'venues',venue);f.app.live.changed([{type:'bridges.venue',id:'slack'}]);await settle();
   expect(f.sockets).toHaveLength(1);expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
   expect(f.app.db.prepare("SELECT count(*) n FROM core_effects WHERE state='due'").get()).toEqual({n:1});
+});
+it('suppresses metadata HTTP after shutdown during holder acquisition',async()=>{
+  const f=await setup();await until(()=>f.sockets.length===1);const held=deferred<Uint8Array>();f.source.read.mockImplementationOnce(()=>held.promise);
+  f.sockets[0].hello();f.sockets[0].frame({type:'events_api',envelope_id:'env',payload});await until(()=>f.source.read.mock.results.at(-1)?.value===held.promise);
+  const calls=f.request.mock.calls.length;const closing=f.app.close();
+  try {await vi.waitFor(()=>expect(f.sockets[0].terminate).toHaveBeenCalledOnce());expect(f.app.db.open).toBe(true);}
+  finally {held.resolve(Buffer.from('PRIVATE'));await closing;}
+  expect(f.request).toHaveBeenCalledTimes(calls);
+});
+it('retains a staging release through temporary authentication failure',async()=>{
+  const f=await setup({staging:true});await settle();
+  f.request.mockImplementationOnce(async()=>Response.json({ok:false,error:'temporarily_unavailable'}));
+  const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due'").get() as {id:string};
+  f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'release-auth-retry');f.clock.advance(0);await settle();
+  expect(f.sockets).toHaveLength(0);f.clock.advance(5000);await until(()=>f.sockets.length===1);
+  expect(f.app.db.prepare("SELECT id,state FROM core_effects WHERE kind='bridge-send'").all()).toEqual([{id:row.id,state:'started'}]);
 });

@@ -58,6 +58,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
     const next = key();
     if (signature !== next) {
       generation++; await retire();
+      for (const attempt of attempts.values()) effects.finish(attempt.id);
       attempts.clear();
       if (closed) return;
       signature = key();
@@ -73,19 +74,26 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
       // A released connection permits its own reads and reconnects for this lifetime.
       // On restart a new lifetime is held again; no released lease is inherited.
       const permitted = () => current() && (effects.status(lease.id) === 'started' || effects.beforeOutside(lease));
-      const api = slackApi(options.secrets, permitted, options.request);
+      const secrets: SecretUse = {
+        withValue(name,use) {
+          if (!permitted()) return Promise.reject(Error('Slack lifetime ended'));
+          return options.secrets.withValue(name,token=> {
+            // Holder acquisition is asynchronous: authorization can end meanwhile.
+            if (!permitted()) throw Error('Slack lifetime ended');
+            return use(token);
+          });
+        },
+      };
+      const api = slackApi(secrets, permitted, options.request);
       const auth = await api.authenticate(venue);
       if (!current()) { effects.finish(effect.id); return; }
-      if (auth === 'wait') {
-        if (effects.status(lease.id) === 'started') { effects.finish(lease.id); attempts.delete(venue.id); }
-        continue;
-      }
+      if (auth === 'wait') continue; // Transient failure does not end this released lifetime.
       let stopped = false;
       const valid = () => !stopped && current();
       const inbox = slackInbox(app.db, clock, {venue,app:auth.app});
       const drain = slackDrain({db:app.db,clock,binding:{venue,app:auth.app},inspect:api.inspect,
         name:user=>options.name(venue,user), receive:options.receive,current:valid,beforeRead:()=>valid() && permitted()});
-      const socket = slackSocket({appSecret:venue.appSecret!,secrets:options.secrets,clock,
+      const socket = slackSocket({appSecret:venue.appSecret!,secrets,clock,
         beforeConnect:()=>valid() && permitted(),request:options.request,socket:options.socket,
         async receive(payload) {
           if (!valid()) throw Error('Slack binding ended');
