@@ -31,12 +31,14 @@ export function parseLegacySecretRequestLinks(bytes: Buffer): LegacySecretReques
         if (target) pair(row, target);
       }
       if (row.carriedFrom) {
-        if (carried.has(row.carriedFrom)) throw new Error();
+        if (carried.has(row.carriedFrom) || Date.parse(row.at) >= Date.parse(row.expires!)) throw new Error();
         carried.add(row.carriedFrom);
         const source = byId.get(row.carriedFrom);
         if (source) pair(source, row);
       }
     }
+    // A pruned row cannot itself be both carried and claimed: only one move.
+    for (const id of claimed) if (carried.has(id)) throw new Error();
     return rows;
   } catch { throw new Error('Invalid legacy secret request links'); }
 }

@@ -1,4 +1,8 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import subprocess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+vi.mock('../../core/index.js', () => { throw new Error('Forbidden core dependency'); });
 import { parseLegacySecretRequestLinks } from './request-links.js';
 const at = '2020-01-01T00:00:00.000Z';
 const later = '2020-01-01T00:30:00.000Z';
@@ -52,4 +56,29 @@ it('redacts malformed input including source-parser failures', () => {
   for (const text of ['PRIVATE-VALUE', '{"v":1,"requests":{},"requests":{"value":"PRIVATE-VALUE"}}']) {
     expect(() => parseLegacySecretRequestLinks(Buffer.from(text))).toThrow(/^Invalid legacy secret request links$/);
   }
+});
+
+it('refuses a second carry hidden by a pruned middle partner', () => {
+  invalid({ ...original, claimedBy: 'q-abcdef01' }, { ...carried, carriedFrom: 'q-abcdef01' });
+});
+it('refuses carry creation at or after its inherited expiry, also after revocation', () => {
+  for (const at of [expires, '2020-01-01T02:00:00.000Z']) {
+    invalid(original, { ...carried, at, decided: at });
+    invalid({ ...original, state: 'revoked', decided: expires }, { ...carried, state: 'revoked', at, decided: expires });
+    invalid({ ...carried, at, decided: at }); // Missing source is no exception.
+  }
+});
+it('uses no filesystem, subprocess, current clock or database capability', () => {
+  const bytes = Buffer.from(JSON.stringify({ v: 1, requests: { [original.id]: original, [carried.id]: carried } }));
+  const forbidden = () => { throw new Error('Forbidden parser side effect'); };
+  const reads = (['readFileSync', 'writeFileSync', 'openSync', 'appendFileSync', 'readdirSync', 'statSync'] as const)
+    .map(name => vi.spyOn(fs, name).mockImplementation(forbidden));
+  const processes = (['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'] as const)
+    .map(name => vi.spyOn(subprocess, name).mockImplementation(forbidden));
+  const now = vi.spyOn(Date, 'now').mockImplementation(forbidden);
+  syncBuiltinESMExports();
+  try {
+    expect(parseLegacySecretRequestLinks(bytes)).toHaveLength(2);
+    for (const call of [...reads, ...processes, now]) expect(call).not.toHaveBeenCalled();
+  } finally { vi.restoreAllMocks(); syncBuiltinESMExports(); }
 });

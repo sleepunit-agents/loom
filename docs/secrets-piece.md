@@ -165,7 +165,9 @@ request source parser. Surviving partners must be reciprocal, keep the same
 agent, secret, exact service and expiry, move to a different house, and represent
 a plain owner Allow moved only once. Paired revocations must agree in state and
 revocation time. Multiple rows cannot claim the same partner, even if retention
-pruned that partner. Contradictions refuse with a fixed value-free error.
+pruned that partner. A pruned middle row cannot hide a second carry, and carry
+creation must precede the inherited expiry even for a later-revoked row.
+Contradictions refuse with a fixed value-free error.
 
 The function returns the original metadata, including expired stored grants and
 missing historical partners, without inventing member attribution. It performs
