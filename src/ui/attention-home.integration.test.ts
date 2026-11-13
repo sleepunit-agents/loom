@@ -42,6 +42,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       // Shell choice is made at boot: open at each size so 390 exercises the actual phone shell.
       await b.goto(loom.url);await expect.poll(()=>cards(b).count()).toBe(2);
       await b.getByRole('button',{name:'Check again',exact:true}).click();await expect.poll(()=>yes(b).isEnabled()).toBe(true);
+      await b.locator('[data-attention-home]').evaluate(node=>{node.scrollTop=0;});
       await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       const dimensions=await b.locator('[data-attention-home]').evaluate(node=>({
         home:[node.clientWidth,node.scrollWidth],page:[innerWidth,document.documentElement.scrollWidth],
