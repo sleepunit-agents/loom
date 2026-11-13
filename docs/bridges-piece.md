@@ -315,3 +315,10 @@ upstream response words or credentials. This client is not yet registered: Socke
 Mode, the engine's legacy credential seam, runtime admission and daemon lifecycle
 composition remain required before production activation. Fake HTTP tests do not
 claim live connectivity or end-to-end adapter readiness.
+
+A definite denial means the channel or requested user is unavailable to this bot
+(`channel_not_found`, `not_in_channel`, `user_not_found`, `user_not_visible`). Bot
+credential/configuration failures such as `missing_scope` and `account_inactive`
+wait for owner repair, as the legacy Slack check failures did; they do not prove
+that the sender is permanently ineligible. Malformed envelopes never imply a
+definite denial. The durable engine's transient intake budget still applies.

@@ -195,3 +195,18 @@ it.each(['workspace','bot','channel','user'])('waits on malformed %s input befor
   expect(await f.api.inspect(v,m)).toBe('wait');
   expect(f.read).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
 });
+it.each(['missing_scope','account_inactive'])('waits for repair of bot credential/configuration failure %s', async error => {
+  const f=fixture(); f.request.mockResolvedValueOnce(Response.json({ok:false,error}));
+  expect(await f.api.inspect(venue,message)).toBe('wait');
+});
+it.each(['membership','eligibility'])('refreshes %s even when channel remains an allowed MPIM', async change => {
+  const f=fixture(); expect(await f.api.inspect(venue,message)).toEqual({kind:'allow',members:['U999','U111','U222']});
+  const last=change==='membership'?'U333':'U222';
+  f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}}));
+  f.request.mockResolvedValueOnce(Response.json({ok:true,members:['U999','U111',last],response_metadata:{next_cursor:''}}));
+  f.request.mockResolvedValueOnce(Response.json({ok:true,user:human('U111')}));
+  f.request.mockResolvedValueOnce(Response.json({ok:true,user:{...human(last),is_restricted:change==='eligibility'}}));
+  expect(await f.api.inspect(venue,message)).toEqual(change==='membership'?{kind:'allow',members:['U999','U111','U333']}:'drop');
+  expect(f.request).toHaveBeenCalledTimes(9);
+  expect((f.request.mock.calls[8][1]?.body as URLSearchParams).get('user')).toBe(last);
+});
