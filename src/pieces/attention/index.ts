@@ -4,6 +4,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus, AttentionSources } from './role.js';
+import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
@@ -29,13 +30,14 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 // from persisted data or a request's source label.
 const installedSources = new WeakMap<Operations, AttentionSources>();
 export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
-export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
+export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}, waits: AttentionWaits = {}) {
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
+  installWaitChecks(db, operations, sharing, waits);
   const readAsk = (key: string): Ask | undefined => {
     const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(key) as { record: string } | undefined;
     return row && JSON.parse(row.record) as Ask;

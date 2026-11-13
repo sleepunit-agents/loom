@@ -539,3 +539,40 @@ bypass the command grammar. A plain prompt continuation remains accepted as
 opaque data; issuer authentication, handle/deadline inspection and dispatch-time
 validation remain unfinished and runtime dispatch remains held by default.
 This change does not validate or adopt imported capabilities.
+
+## Fixed 24-hour safety wake
+
+`installClock({deadmanAgents: ['art']})` is a trusted composition opt-in;
+`startLoom`/next mode forwards `clockDeadmanAgents`. The default is an empty list.
+Neither a request nor the presence of an owner, imported metadata, an agent row,
+or a legacy setting enables it. Each named agent supplies only that agent's
+central-policy authority. No owner Viewer is synthesized. The normal runtime
+hold remains in force; this configuration does not enable executable dispatch.
+
+For each configured agent, an empty clock gets one fixed-word, agent-scoped wake
+exactly 24 elapsed hours later, including across a DST boundary. Its durable row
+and deadline survive restart. Pending, parked, firing and held work all make a
+clock nonempty. Other agents' clocks are independent. On mutation, replacement
+and insertion commit together: real work cancels pending or definitely-held
+safety wakes, while firing and uncertain intents retain their existing safety
+rules. The safety wake does not consume a one-off request slot. Terminal work
+is history, so cancellation, schedule removal or confirmed completion can plant
+a fresh default. Pause/resume, bounded retry/quota waits and staging apply as for
+ordinary work. Removing the configuration prevents an existing default from
+being dispatched; it becomes permission-held when due. Re-enabling does not
+silently release that held row.
+
+This replaces legacy `ensure_deadman` with the same fixed prompt/note and 24-hour
+interval, using daemon jobs and durable records. Deliberate authority difference:
+the old clock stamped its own default as owner work; the new clock acts as an
+explicitly configured agent. It never reads old configuration or discovers an
+owner to impersonate. No live configuration or installed command changes here.
+
+Safety-wake fixtures inject a replacement-insert abort and compare the original
+row and events, run quota deferral plus all six definite failures across restart,
+and guard legacy file access and subprocesses during creation/restart/dispatch.
+The required prompt and note are asserted as literals independently of constants.
+A deferred runtime fixture inserts real work while a default is firing, compares
+its unchanged intent, then restarts and confirms the held intent is never replayed.
+Capacity coverage retains an uncertain default alongside 49 ordinary requests:
+the 50th request succeeds and the 51st is refused, without altering the default.
