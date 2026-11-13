@@ -434,13 +434,13 @@ even if the app is docked or navigated away from in that window.
 | Person directory creation | Open People |
 
 This is not complete agent bootstrap or complete Setup: first token/harness
-snippet, credential/session administration, read-only identity, health/backup,
+snippet, read-only identity, health/backup,
 profile and artwork still require their replacements. Registration explicitly
 does not create an identity or token. No legacy editor or detached program is
 called. The one Setup browser test uses two windows and captures this actual
 screen in Neon Noir/Daylight at 390, 1280 and 1920 pixels under
 `artifacts/household-setup/` in CI; these images document the implemented controls,
-not the remaining agent-bootstrap/credential screens. No live move is performed.
+not the remaining agent-bootstrap screens. No live move is performed.
 
 ### Token and session administration clients
 
@@ -484,3 +484,19 @@ screen or Setup's first-token/bootstrap UI; those remain in the inventory.
 The generated clients deliberately use JSON instead of maintaining a second
 legacy flag/parser/formatter contract. Existing unflagged CLI behavior stays on
 the old side until the coordinated move.
+
+### Setup tokens and sessions
+
+The owner’s `/p/setup-preview` shows the safe `signin.admin` Live snapshot and
+creates member, agent or already active runner/service tokens through the shared
+browser socket. The same operation/policy is used by the generated clients.
+Creation uses a single-send data-layer call: it refuses offline, never queues or
+replays after connection loss, and offers no retry. A lost reply may have committed;
+check the list and revoke its label before deliberately creating a replacement.
+The bearer is held only by the creating mounted screen, hidden on connection or
+access loss, navigation, or Hide token. It is never a Live record or retry receipt.
+Other windows see only metadata. Token revocation confirms the label and optional
+passkey/device cascade; session revocation confirms a safe unique session ref.
+Those revocations retain the shared same-id retry handle across navigation.
+No clipboard or local-storage copy is made. Last-use recording, first-token
+bootstrap and own-person Account controls remain separate inventory entries.

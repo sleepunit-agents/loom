@@ -1049,6 +1049,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - New-side household token/session administration and generated `loom-token`/`loom-sessions` clients: safe lists, one-time minting, scoped session revocation and atomic passkey/device compromise cascades.
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
+- Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

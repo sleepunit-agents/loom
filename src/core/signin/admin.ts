@@ -32,7 +32,7 @@ export function installAccessAdmin(app:Foundation) {
   register('token',{name:'token.list',input:z.object({}).strict(),run:listTokens});
   register('sessions',{name:'sessions.list',input:z.object({}).strict(),run:listSessions});
   // Ephemeral, like signin.link: never journal or retry a returned bearer.
-  register('token',{name:'token.create',doors:['http','direct'],input:z.object({label,role:z.enum(['owner','agent','runner','service']),member:slug.optional(),agent:slug.optional(),service:slug.optional(),house:slug.optional(),principal:slug.optional(),expires:z.string().datetime().optional()}).strict(),run:(ctx,i)=>{
+  register('token',{name:'token.create',doors:['http','direct','socket'],input:z.object({label,role:z.enum(['owner','agent','runner','service']),member:slug.optional(),agent:slug.optional(),service:slug.optional(),house:slug.optional(),principal:slug.optional(),expires:z.string().datetime().optional()}).strict(),run:(ctx,i)=>{
     const h=s.household();if(!h)throw new OperationError('unavailable','Household is not initialized');
     let role:string,member:string|undefined;
     if(i.role==='owner') {

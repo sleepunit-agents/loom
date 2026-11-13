@@ -178,3 +178,20 @@ it('requires explicit safe client connection settings and a readable nonempty to
   }
   writeFileSync(f.file,' \n');expect(await f.client('sessions',['list','{}'],request,base)).toMatchObject({code:1,stdout:'',calls:0});expect(requests).toBe(0);
 });
+
+it('creates a token over the authenticated browser socket without a credential receipt or Live secret', async () => {
+  const f = await setup(), cookie = f.s.createSession(hash('operator-bearer'));
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { cookie: `loom_ui=${cookie}`, origin: f.app.url } });
+  cleanup.push(() => { ws.terminate(); }); await once(ws, 'open');
+  const messages: unknown[] = []; ws.on('message', raw => messages.push(JSON.parse(String(raw))));
+  const answer = new Promise<{ ok: boolean; value: { token: string } }>(resolve => {
+    ws.on('message', raw => { const m = JSON.parse(String(raw)); if (m.kind === 'result' && m.request === 'mint') resolve(m.result); });
+  });
+  ws.send(JSON.stringify({ kind: 'subscribe', type: 'signin.admin' }));
+  ws.send(JSON.stringify({ kind: 'call', request: 'mint', name: 'token.create', input: { label: 'browser-mint', role: 'owner', member: 'pollock' }, id: 'mint' }));
+  const result = await answer; expect(result.ok).toBe(true);
+  expect(f.s.token(hash(result.value.token))?.viewer).toEqual({ kind: 'member', id: 'pollock' });
+  expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='mint'").all()).toEqual([]);
+  const metadata = JSON.stringify(messages.filter(m => (m as { kind: string }).kind !== 'result'));
+  expect(metadata).toContain('browser-mint'); expect(metadata).not.toContain(result.value.token); expect(metadata).not.toContain(hash(result.value.token));
+});

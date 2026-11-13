@@ -54,14 +54,14 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | --- | --- |
 | `member-set`, `member-remove` | `household.setMember`, `household.removeMember`; owner operations and Setup member controls are implemented |
 | `add-agent` | `household.addAgent` covers registration only; **pending** context bootstrap, creed/rules, appearance, first token and harness snippet |
-| `create-token`, `revoke-token` on agent Setup | **Pending** complete token administration and Setup; plain revocation exists as above |
+| `create-token`, `revoke-token` on agent Setup | `token.create` / `token.revoke` in `/p/setup-preview`; single-send mint and confirmed optional passkey/device cascade; first-token bootstrap still pending |
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
 | `about-set`, `about-ask` | **Pending** household profile editing and regeneration request. Explicit offline `describe_self` refuses app access |
 | `identity-set`, `identity-section-set`, `identity-section-add` | **Pending** Setup/identity behavior reconciliation; no next page editor. The household spec describes Setup identity as read-only |
 | `backup-set`, Setup health/backup status | **Pending** next backup settings/status integration; no new-side invocation of the old backup program |
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
-| GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; **pending** read-only identity, health, token/session and full bootstrap coverage |
+| GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |
 | GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; **pending** fresh context bootstrap |
 | GET `/account`, GET `/passkeys` | **Pending** complete Account administration screen; the new sign-in shell is not that screen |
 | `passkey-remove` (including descendants), `session-revoke` | **Pending** Account administration operations/records; passkey login/registration and own-session logout already exist |

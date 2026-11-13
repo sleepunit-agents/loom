@@ -45,6 +45,30 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     const remove = a.getByRole('form', { name: 'Remove jonathan', exact: true });
     await remove.getByRole('checkbox').check(); await remove.getByRole('button').click();
     await expect.poll(() => a.getByText('invalid: A household owner must remain', { exact: true }).count()).toBe(1);
+    const mint = a.getByRole('form', { name: 'Create token', exact: true });
+    await mint.getByRole('textbox', { name: 'Token label', exact: true }).fill('setup-browser-token');
+    await mint.getByRole('button', { name: 'Create token', exact: true }).click();
+    await expect.poll(() => a.getByLabel('Token value', { exact: true }).textContent()).toMatch(/^loom_/);
+    // Only the initiating window sees the bearer; both see authoritative safe metadata.
+    const revokeToken = b.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true });
+    await expect.poll(() => revokeToken.count()).toBe(1);
+    expect(await b.getByLabel('Token value', { exact: true }).count()).toBe(0);
+    await a.getByRole('button', { name: 'Hide token', exact: true }).click();
+    expect(await a.getByLabel('Token value', { exact: true }).count()).toBe(0);
+    // A separately seeded browser session is revoked through the real screen.
+    const session = loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {});
+    if (!session.ok) throw new Error('Fixture session list failed');
+    const active = (session.value as { ref: string }[])[0].ref;
+    const { signin, hash } = await import('../core/signin/index.js');
+    const auth = signin(loom);
+    const temporary = auth.createSession(auth.sessions.read().sessions[Object.keys(auth.sessions.read().sessions)[0]].secret, { label: 'temporary-browser' });
+    loom.live.changed([{ type: 'signin.admin', id: 'household' }]);
+    const revokeSession = a.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true });
+    await expect.poll(() => revokeSession.count()).toBe(1);
+    await revokeSession.getByRole('checkbox').check(); await revokeSession.getByRole('button').click();
+    await expect.poll(() => b.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true }).count()).toBe(0);
+    expect(auth.session(temporary)).toBeUndefined();
+    expect((loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {}) as { value: { ref: string }[] }).value.some(x => x.ref === active)).toBe(true);
     const shots = resolve('artifacts/household-setup'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       expect(loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'household.setPreferences', { look }, `look-${look}-${width}`).ok).toBe(true);
@@ -52,8 +76,12 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
       await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
       await expect.poll(() => b.locator('html').getAttribute('data-look')).toBe(look);
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await b.getByRole('heading', { name: 'Tokens and sessions', exact: true }).scrollIntoViewIfNeeded();
       await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
+    await revokeToken.getByRole('checkbox', { name: 'I confirm revoking setup-browser-token', exact: true }).check();
+    await revokeToken.getByRole('button').click();
+    await expect.poll(() => a.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true }).count()).toBe(0);
     expect(errors).toEqual([]); await context.close();
   } finally { await browser.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
 }, 60_000);
