@@ -425,3 +425,26 @@ it('keeps service restrictions without a job or after execution loses its bindin
  expect(signin(f.app).agent(viewer)).toBeUndefined();
  expect(await f.post(slack,'approvals.request',{...ask,target:'revoked:service'})).toMatchObject({ok:false,code:'denied'});
 });
+
+it('removes archived conversation authority while staging retains a live job and credential',async()=>{
+ const f=await setup(true),thread=await f.open();
+ await f.post(f.runner,'runtime.claimableJobs',{});
+ const effect=(prefix:string)=>(f.app.db.prepare('SELECT id FROM core_effects WHERE id LIKE ?').get(prefix+'%') as {id:string}).id;
+ expect(await f.post(f.owner,'core.releaseEffect',{id:effect('comms-deliver:')})).toMatchObject({ok:true});
+ const job=await f.queued();
+ expect(await f.post(f.runner,'runtime.claimJob',{job})).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(f.owner,'core.releaseEffect',{id:`runtime:input:${job}`})).toMatchObject({ok:true});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ expect(await f.post(f.runner,'runtime.reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
+ const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
+ const ask={kind:'github-write',target:'before:archive',what:'Check current conversation',why:'Prove archived thread fencing',conversation};
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',project:'pond',conversation}});
+ expect(await f.socket('comms.change',{thread,action:'archive'})).toMatchObject({ok:true});
+ expect(runtimeStore(f.app.db).read('job',job)).toMatchObject({state:'running'});
+ expect(signin(f.app).token(hash(body))).toBeDefined();
+ const receipt=value<Record<string,unknown>>(await f.post(body,'approvals.request',{...ask,target:'after:archive',principal:'owner',project:'pond'}));
+ expect(receipt).toMatchObject({for:'?',who:{agent:'art',where:job}});
+ for(const field of ['conversation','project','people'])expect(receipt).not.toHaveProperty(field);
+});
