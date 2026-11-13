@@ -90,3 +90,10 @@ First hosted People browser run at 7a6ce9e failed before browser launch:
 PeopleStore requires existing parent directories. Fixed disposable fixture setup
 to create commons and the two agent directories. This is an author-owned failure,
 not a blindly rerun job; a new head will run the corrected test. No local browser.
+
+Third rebase: GitHub reported CONFLICTING at 26d956f after main 012f55d
+registered Bridges. Retained Bridges, Inbox and People, with People appended
+additively to avoid rewriting the shared registration list. All 101 affected
+tests (including the current workflow inventory), root TypeScript and full web
+build passed. Prior-head CI/evidence are not claimed for this new head; fresh
+checks and screenshots are required.
