@@ -46,13 +46,14 @@ it('preserves raw unknown fields, order, legacy ownership and omitted defaults a
 
 it('keeps explicit members field-for-field and atomically changes keyed rows without touching JSON', () => {
   const raw = { v: 1, agents: ['art', 'mark'], default: 'art', members: [
-    { person: 'jonathan', role: 'owner', agents: '*', projects: ['pond'], future: null },
+    { person: 'zoe', role: 'owner', agents: '*', projects: ['pond'], future: null },
     { person: 'mark', role: 'owner', agents: ['mark', 'mark'] },
   ], icons: { art: 'fish' } };
   const f = fixture(raw);
   try {
     f.import();
     expect(f.store.document()).toEqual(raw);
+    expect(f.store.household(f.home)?.members.map(m => m.person)).toEqual(['zoe', 'mark']);
     expect(new HouseholdRows(f.db, 'members').get('mark')).toEqual(raw.members[1]);
     expect(f.store.household(f.home)?.members[1].agents).toEqual(['mark']);
     const result = f.store.change(f.home, r => {
@@ -117,5 +118,8 @@ it('fails closed if a referenced metadata row is missing', () => {
     f.import();
     new HouseholdRows(f.db, 'members').remove('jonathan');
     expect(() => f.store.document()).toThrow('missing household row: jonathan');
+    f.import();
+    new HouseholdRows(f.db, 'agents').remove('art');
+    expect(() => f.store.document()).toThrow('missing household row: art');
   } finally { f.close(); }
 });
