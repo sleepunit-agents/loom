@@ -32,7 +32,17 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
-  if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
+    projects: () => {
+      try {
+        const store = new SharingDatabase(app.db, options.home);
+        return store.projectIds().map(id => {
+          const project = store.project(id)!;
+          return { slug: project.slug, repos: project.repositories };
+        });
+      } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
+    },
+  });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
