@@ -32,7 +32,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
-  setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
+  show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
   addAgent: { agent: 'new-agent' }, setMemberProjects: { person: 'pollock', projects: ['other'] },
   setOwnedAgents: { person: 'pollock', agents: ['mark'] }, setAgentAccounts: { agent: 'art', accounts: { github: ['art-e-fish'] } },
   createProject: { slug: 'new-project', name: 'New project', members: [], agents: [], repositories: [] },
@@ -157,4 +157,19 @@ it('cancels a stalled request at 1.5 seconds before retrying the same write', as
   await vi.advanceTimersByTimeAsync(1);
   expect(await result).toBe(0); expect(calls).toBe(2); expect(caps).toEqual([1500, 1500]);
   expect(new Set(bodies).size).toBe(1); expect(JSON.parse(stdout)).toEqual(['new-agent']);
+});
+
+it('shows only legacy summary fields from the daemon, without a write receipt', async () => {
+  const { app, home, run } = await setup();
+  const household = new HouseholdDatabase(app.db);
+  app.db.transaction(() => household.change(home, raw => { raw.default = 'mark'; raw.extra = { private: 'do not expose' }; }))();
+  writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['wrong'], default: 'wrong', owner: 'wrong' }));
+  const before = app.db.prepare('SELECT * FROM core_operations').all();
+  const result = await run(['show', '{}']);
+  expect(result).toMatchObject({ code: 0, stderr: '' });
+  const h = household.household(home)!;
+  expect(JSON.parse(result.stdout)).toEqual({ home, agents: h.agents, default: 'mark', ...(h.owner ? { owner: h.owner } : {}) });
+  expect(JSON.parse(result.bodies[0])).toEqual({ input: {} });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(await run(['show', '{"actor":"jonathan"}'])).toMatchObject({ code: 1, stdout: '' });
 });
