@@ -1,7 +1,7 @@
 /** Async mutation protocol. Installed only with an explicitly composed holder and
  * persistent independent daemon retry key. Normal next mode keeps values disabled.
  * No plaintext is retained in the journal, operation receipts or diagnostics. */
-import {createHmac, createSecretKey, randomUUID} from 'node:crypto';
+import {createHmac, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {mayAct, operation, OperationError, RecoveredWrite, type Context, type Db, type Operations, type Sharing, type WriteReceipt} from '../../core/index.js';
 import {secretName} from './input.js';
@@ -9,7 +9,7 @@ import {recordSecretChange} from './history.js';
 import {removeSecretMetadata} from './removal.js';
 import type {GrantAttention} from './index.js';
 import type {HolderWrite} from './holder-store.js';
-import {bindSecretRetryKey} from './retry-key.js';
+import {bindSecretRetryKey, type SecretRetryKeyMaterial} from './retry-key.js';
 
 export interface AsyncSecretMutations {
   set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add'|'replace'): Promise<void>;
@@ -26,11 +26,15 @@ const conflict = () => new OperationError('conflict','Secret write identity alre
 const ack = (r: Intent) => r.action === 'removed' ? {removed:true as const} : {saved:true as const};
 
 export function installAsyncSecretValues(db: Db, operations: Operations, sharing: () => Sharing,
-  holder: AsyncSecretMutations, fingerprintKey: Uint8Array, attention?: GrantAttention) {
-  if (!(fingerprintKey instanceof Uint8Array) || fingerprintKey.byteLength !== 32) throw new Error('Invalid secret retry key');
-  bindSecretRetryKey(db,fingerprintKey);
-  const key = createSecretKey(fingerprintKey);
-  const inputHash = (text: string) => createHmac('sha256',key).update('loom-secrets-operation-v1\0').update(text).digest('hex');
+  holder: AsyncSecretMutations, fingerprintKey: SecretRetryKeyMaterial, attention?: GrantAttention) {
+  const keys = bindSecretRetryKey(db,fingerprintKey);
+  const inputHash = (text: string, identity: Readonly<{viewer:string;id?:string;name:string}>) => {
+    const hashes = keys.map(key=>createHmac('sha256',key).update('loom-secrets-operation-v1\0').update(text).digest('hex'));
+    const prior = db.prepare('SELECT input_hash FROM secrets_write_intents WHERE viewer=? AND id=?').get(identity.viewer,identity.id) as {input_hash:string}|undefined;
+    // Only this exact viewer/core-id may choose its original hash. Matching a
+    // different caller's identical input must never select an obsolete key.
+    return prior && hashes.includes(prior.input_hash) ? prior.input_hash : hashes[0];
+  };
   const lookup = (r: Readonly<WriteReceipt>) => db.prepare('SELECT * FROM secrets_write_intents WHERE viewer=? AND id=?').get(r.viewer,r.id) as Intent|undefined;
   function exact(r: Readonly<WriteReceipt>, row: Intent) {
     if (row.operation !== r.name || row.input_hash !== r.inputHash) throw conflict();
