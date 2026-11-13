@@ -507,3 +507,38 @@ for(const change of ['archive','ownership','receipt'] as const)it(`coalesces rec
  if(change==='receipt')s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'delivered'}),place);
  released=true;lookup!('not-accepted');await Promise.all([first,second]);expect(s.deliveries).toEqual([]);
 });
+it('describes a private runtime thread with only its original reader and bounded source, ask and title guidance',async()=>{
+ let opens=0;const s=await setup({key:key=>({...key,open:async words=>{opens++;return key.open(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);const before=opens;
+ const conversation=s.deliveries[0].conversation;
+ const description=s.comms.describe('art',place);
+ expect(description.readers).toEqual(['jonathan']);
+ expect(description.brief).toEqual([
+  `A private thread in loom's app with your owner, Jonathan. Only they read it. They can see your tool use as you work. Work you record here can name this conversation as its source: conversation:${conversation}.`,
+  "When you need Jonathan's OK, ask it as you always do (a needs_owner, or an approval request): it shows right here in the thread as a card with its buttons, as well as in their Inbox, and their answer comes back to you.",
+  "The thread is filed under the project pond. Give the thread a short title once you know what it's about: call comms_title.",
+ ]);
+ expect(description.brief.every(line=>line.length<=300&&!/[\r\n\x00-\x1f\x7f]/.test(line))).toBe(true);
+ expect(opens).toBe(before);expect(JSON.stringify(description)).not.toContain('secret member words');
+ await s.call('change',{thread:place,action:'title',title:'Private title'});
+ expect(s.comms.describe('art',place).brief[2]).toBe('The thread is filed under the project pond.');
+ await s.call('change',{thread:place,action:'project',project:null});
+ expect(s.comms.describe('art',place).brief).toHaveLength(2);
+ expect(s.app.operations.has('comms.describe')).toBe(false);
+});
+it('refuses runtime description for another agent, inactive threads, revoked owners and unsafe brief fields',async()=>{
+ const s=await setup();const place=await s.open();
+ for(const [agent,target] of [['other',place],['art','missing']])expect(()=>s.comms.describe(agent,target)).toThrow('Thread unavailable');
+ const original=(s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record;
+ for(const conversation of ['cv\nforged','cv\u2028forged','c'.repeat(301)]){
+  s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(original),conversation}),place);
+  expect(()=>s.comms.describe('art',place)).toThrow('Thread description unavailable');
+ }
+ s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(original,place);
+ const sharing=s.getSharing();sharing.members.jonathan.agents=[];s.setSharing(sharing);
+ expect(()=>s.comms.describe('art',place)).toThrow('Thread unavailable');
+ sharing.members.jonathan.agents=['art'];s.setSharing(sharing);
+ await s.call('change',{thread:place,action:'archive'});expect(()=>s.comms.describe('art',place)).toThrow('Thread unavailable');
+ await s.call('change',{thread:place,action:'delete'});expect(()=>s.comms.describe('art',place)).toThrow('Thread unavailable');
+ const live=await s.open();await s.comms.close();expect(()=>s.comms.describe('art',live)).toThrow('Thread unavailable');
+});

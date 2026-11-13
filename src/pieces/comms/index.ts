@@ -317,6 +317,20 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  void reconcileEnds();
  void reconcileDeliveries();
  return {post,deliver,reconcileEnds,reconcileDeliveries,
+  describe(agent,place) {
+   const t=requireAgent(agent,place);
+   if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   const name=t.member.charAt(0).toUpperCase()+t.member.slice(1);
+   const brief=[
+    `A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work. Work you record here can name this conversation as its source: conversation:${t.conversation}.`,
+    `When you need ${name}'s OK, ask it as you always do (a needs_owner, or an approval request): it shows right here in the thread as a card with its buttons, as well as in their Inbox, and their answer comes back to you.`,
+   ];
+   const last=[t.project?`The thread is filed under the project ${t.project}.`:'',t.title?'':"Give the thread a short title once you know what it's about: call comms_title."].filter(Boolean).join(' ');
+   if(last)brief.push(last);
+   // Refuse malformed/imported routing facts rather than truncate a source identity.
+   if(brief.some(line=>line.length>300||/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(line)))return fail('unavailable','Thread description unavailable');
+   return {brief,readers:[t.member]};
+  },
   trace(agent,place) {
    const t=requireAgent(agent,place);
    const messages=messageRows(db,place,undefined,100).map(r=>{

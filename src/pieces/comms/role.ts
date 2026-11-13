@@ -26,6 +26,8 @@ export interface DeliveryTrace {
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
 export interface Comms {
+ /** Private startup brief for the trusted runtime; no window/token operation. */
+ describe(agent: string, thread: string): {brief: string[]; readers: string[]};
  /** Retry durable end jobs at startup or after staging release; no private words. */
  reconcileEnds(): Promise<void>;
  /** Resume staging-held sends; settle ineligible sends without replaying uncertain runtime calls. */
