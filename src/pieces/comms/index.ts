@@ -211,6 +211,26 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }
  sweep();
  return {post,deliver,
+  reader(binding) {
+   // Snapshot trusted routing facts so later caller mutation cannot widen this capability.
+   const {agent,conversation,valid}=binding;
+   const allowed=binding.houseConversations===undefined?undefined:[...binding.houseConversations];
+   return {async read(input={}) {
+    const parsed=z.object({thread:id.optional(),before:z.number().int().positive().optional(),limit:z.number().int().positive().optional()}).parse(input);
+    const lookup=()=>parsed.thread?thread(db,parsed.thread):(db.prepare('SELECT record FROM comms_threads WHERE agent=?').all(agent) as {record:string}[]).map(r=>JSON.parse(r.record) as Thread).find(t=>conversation!==undefined&&t.conversation===conversation);
+    const permitted=(t:Thread|undefined):t is Thread=>!closed&&valid()&&!!t&&t.agent===agent&&(allowed===undefined||allowed.includes(t.conversation))&&mayUseThread({kind:'member',id:t.member},t,o.sharing());
+    const t=lookup();if(!permitted(t))return fail('denied','Thread unavailable');
+    const limit=Math.min(parsed.limit??30,100);
+    const rows=messageRows(db,t.id,parsed.before,limit);
+    const records=await Promise.all(rows.map(decode));
+    const current=lookup();
+    if(!permitted(current)||current.id!==t.id||current.member!==t.member||current.conversation!==t.conversation)return fail('denied','Thread unavailable');
+    if(JSON.stringify(messageRows(db,t.id,parsed.before,limit))!==JSON.stringify(rows))return fail('conflict','Thread changed; load this page again');
+    // An earlier row may expire while a later row is still decrypting.
+    const messages=records.map((record,n)=>rows[n].at+days*day>clock.now()?record:{id:record.id,thread:t.id,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
+    return {thread:{id:current.id,title:current.title,archived:current.archived,working:current.working},messages};
+   }};
+  },
   title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
   status(agent,place) {const t=requireAgent(agent,place);const stop=t.stop;t.stop=false;saveThread(db,t);return {stop,archived:t.archived!==null};},
   async close(){closed=true;cancel();await Promise.all(pending.values());},

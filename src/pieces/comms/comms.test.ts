@@ -204,3 +204,29 @@ it('accepts the base32 alphabet and deduplicates first sends and later sends',as
  expect(await s.call('send',{...next,text:'changed'})).toMatchObject({code:'conflict'});
  expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:2});
 });
+it('binds runtime readers to trusted agent and house conversations with bounded read-only pages',async()=>{
+ const s=await setup();const place=await s.open();const other=await s.open();
+ const cv=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
+ const reader=s.comms.reader({agent:'art',conversation:cv,houseConversations:[cv],valid:()=>true});
+ await s.comms.post('art',place,{id:'r1',kind:'reply',text:'first'});
+ await s.comms.post('art',place,{id:'r2',kind:'reply',text:'second'});
+ expect((await reader.read({limit:2})).messages.map(m=>m.text)).toEqual(['first','second']);
+ expect((await reader.read({before:3,limit:1})).messages.map(m=>m.text)).toEqual(['first']);
+ await expect(reader.read({thread:other})).rejects.toMatchObject({code:'denied'});
+ for(const binding of [{agent:'pond-bot',valid:()=>true},{agent:'art',houseConversations:[],valid:()=>true},{agent:'art',valid:()=>false}])await expect(s.comms.reader(binding).read({thread:place})).rejects.toMatchObject({code:'denied'});
+ expect((await s.comms.reader({agent:'art',valid:()=>true}).read({thread:other})).messages).toHaveLength(1);
+ s.clock.advance(14*86400_000);
+ expect((await reader.read()).messages.every(m=>m.text===null)).toBe(true);
+ await s.call('change',{thread:place,action:'delete'});
+ await expect(reader.read()).rejects.toMatchObject({code:'denied'});
+});
+it('revokes a bound runtime read while decryption is suspended',async()=>{
+ let pause=false;let resume:()=>void=()=>{};let started:()=>void=()=>{};
+ const began=new Promise<void>(r=>{started=r;});const waiting=new Promise<void>(r=>{resume=r;});
+ const s=await setup({key:k=>({...k,open:async words=>{if(pause){started();await waiting;}return k.open(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ let valid=true;const binding={agent:'art',valid:()=>valid,houseConversations:undefined as string[]|undefined};
+ const reader=s.comms.reader(binding);binding.agent='pond-bot';pause=true;
+ const read=reader.read({thread:place});await began;valid=false;resume();
+ await expect(read).rejects.toMatchObject({code:'denied'});
+});

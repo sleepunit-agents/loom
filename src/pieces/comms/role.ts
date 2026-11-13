@@ -17,10 +17,21 @@ export interface AgentPost {
  ref?: string; step?: Record<string, unknown>;
 }
 export interface Comms {
+ /** Only the trusted runtime constructs this binding; never derive it from tool arguments. */
+ reader(binding: ReadBinding): ThreadReader;
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;
  deliver(agent: string, thread: string, seq: number): Promise<void>;
  title(agent: string, thread: string, title: string): void;
  status(agent: string, thread: string): { stop: boolean; archived: boolean };
+}
+export interface ReadBinding {
+ agent: string; conversation?: string;
+ /** undefined means a local body; an empty list means a service/unbound house. */
+ houseConversations?: readonly string[];
+ valid(): boolean;
+}
+export interface ThreadReader {
+ read(input?: {thread?: string; before?: number; limit?: number}): Promise<{thread: {id:string;title:string|null;archived:number|null;working:boolean};messages: import('../../core/index.js').LiveRecord[]}>;
 }
 /** Frame supplies its beforeOutside/finish gate; facts carry routing metadata, never words. */
 export interface EffectFacts { id: string; kind: 'body-start'; title: string }
