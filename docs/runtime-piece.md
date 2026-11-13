@@ -228,7 +228,7 @@ job or set timestamps through this API. Reports use server `changedAt` and only
 publish when metadata changes. Registry receipts make lost-response retries
 safe without making a fresh claim of a starting job succeed.
 
-This is a metadata handshake, not permission to start a container. It returns
+This is a metadata handshake, not permission to start a container. Its acknowledgement returns
 no credentials, input words or results, calls no runner and performs no outside
 effect, including in staging. Input fetch, credential issuance and terminal
 reports with credential revocation remain required on this task before a real
@@ -258,7 +258,7 @@ transaction; a failure or asynchronous credential role rolls everything back.
 An after-commit `core.access` change invalidates existing authentication handles.
 An installer without central credentials fails unavailable before changing data.
 
-This is completion metadata only. Exit codes, log/result words, builds, native
+Completion now also accepts the bounded exit/log fields described below. Native
 history collection, cooperative stop, written-off jobs and service restarts
 remain to be implemented with their owning lifecycle operations. `stopped` and
 `lost` are not accepted here: there is no stop-intent or write-off protocol yet.
@@ -482,3 +482,96 @@ hosts, warm-host upgrades, repository credential release and daemon execution
 remain outstanding. This metadata is neither execution authorization nor proof
 that an image exists on a box; an eventual execution consumer must revalidate
 current central authority/configuration/grants after commit before release.
+
+
+## Bounded job output
+
+The exit/log portion of old `report` maps to optional `exit` and `log` fields
+on `runtime.reportJob` and `runtime.finishJob`. The assigned authenticated runner,
+box and state checks remain the same; completion still revokes the exact job's
+central credentials in the same transaction. Output, metadata and retry receipt
+commit together. A failed build report or later write rolls output back too.
+Retries return the original metadata acknowledgement without restoring old output.
+Omitted fields preserve earlier values; an explicit empty log clears the log.
+Exit codes must be safe integers, including negative runner failure codes.
+Malformed structured fields are refused rather than silently ignored as before.
+
+Logs retain the last 4,000 JavaScript characters, preserving the first line when
+it starts `the box couldn't start it: ` and is shorter than 300 characters, then
+filling the remainder with the tail (the old refusal diagnostic rule). Input
+logs are bounded to 1,000,000 characters before storage, within the API's existing
+transport cap. Reports replace the stored tail, rather than append to it.
+
+The additive third runtime migration stores output separately in
+`runtime_results`, keyed by job. It is not a collection or live type. Logs and
+exit codes never enter `runtime.job` or acknowledgement/receipt results. A changed
+output notifies the job id after commit; consumers refetch explicitly. Identical
+output and progress preserve job timestamps and produce no runtime notification.
+No output record is created when both fields are omitted.
+
+`runtime.jobResult {job}` returns `{job,result:{exit?,log?}|null}`. Each call
+uses the job's **current** central `mayAct` scope. Private/member, project and
+agent visibility follow the central rule. Services require both the
+`runtime.job` type grant and the exact `runtime.jobResult` operation grant.
+Runners cannot use this read operation under the central `act` rule; they already
+supply their own diagnostics. Unknown and hidden jobs both deny. The read writes
+no receipt or notification. Output persists across restart and is not a source
+of conversation words or body membership proof.
+
+| Old report behavior | New operation / remaining obligation |
+| --- | --- |
+| Progress exit/log | `runtime.reportJob {job,state,exit?,log?}` |
+| Completion exit/log + credential revoke | `runtime.finishJob {job,state,exit?,log?}` |
+| `houseView` diagnostics | Explicit scoped `runtime.jobResult`; list/live stays metadata only |
+| Short box refusal headline survives long logs | Same 4,000-character tail rule |
+| Native history, service crash/restart decisions, cooperative stop | Still required with their owning lifecycle operations |
+
+This does not release executable inputs, issue credentials, run repositories or
+containers, dispatch bodies or resolve `startBody`. Account results, native
+history collection, output retention/deletion and the screens/client/importer
+remain required before the final move. No old endpoint is retired here and no
+outside effect occurs, including in staging.
+
+## Structured quota refusal parsing
+
+`refusals.ts` ports the pure `claudeRefusal`, `codexRefusal`, `lastRefusal`
+and `refusedUntil` portions of old `logins.mjs`. Only structured quota/billing
+codes count; authentication failures and prose do not. JSONL bookkeeping and
+uncoded failure wrappers preserve a refusal, while later work, a new prompt or
+an explicit nonquota error clears it. Malformed lines are ignored. Reset
+selection takes the latest future reset among full windows, otherwise the
+nearest future reset; missing resets use `nextQuotaHold`'s blind backoff.
+Nonfinite readings/resets are ignored. Time is explicit, in seconds.
+
+These are internal helpers, with no operation or daemon consumer yet. They
+open no transcript, login or file and change no state. Authenticated account/job
+report binding, account grouping, usage report validation and transactional
+hold persistence still belong to the future account layer. Parsing a supplied
+harness event grants no authority and is not trusted body or account proof.
+
+
+## Repository snapshot build inspection
+
+`inspectBuild` in `build-inspection.ts` ports old `box.mjs`'s `buildTagAt`
+and the build-reading portion of `buildNow` behind an asynchronous snapshot
+reader. It reads the house file and resolves the context, Containerfile and
+watched paths at one immutable commit supplied by the caller. With no watches,
+tags retain the old context-id prefix plus Containerfile-id prefix; with watches,
+they retain the old SHA-256 of the ids and sorted, deduplicated path/id pairs.
+Unrelated commits therefore preserve an image name. Watch renames or content
+changes rotate it. SHA-1 and SHA-256 Git object ids are accepted.
+
+The helper validates only the build declaration: relative paths without dot,
+parent or empty segments, a tree context, a blob Containerfile, up to 64 watch
+paths, and a house file of at most 4 MiB. Other house fields are deliberately
+not interpreted. Full executable house validation remains required before a
+runner builds or launches anything. Missing paths, malformed JSON or object
+ids, unknown build keys and reader failures reject the inspection.
+
+This is an internal, uncalled helper, not an operation or a concrete Git reader.
+It starts no process, fetches no repository, reads no old store or credential,
+changes no record and announces no current build. The separate runner must
+supply the immutable snapshot after fetching. Fetch scheduling, repository
+credential access, trusted body-host build-check/report, daemon staging gates,
+current grant revalidation and actual build/launch still remain. A computed tag
+alone proves neither image availability nor execution authority.

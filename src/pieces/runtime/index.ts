@@ -6,6 +6,7 @@ import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
 import { installHouseConfiguration } from './houses.js';
 import { installHouseGrants } from './grants.js';
+import { installJobResults } from './results.js';
 import { installBuildStatus } from './build-status.js';
 import { installQueueBody } from './queue.js';
 import { installBoxOperations } from './boxes.js';
@@ -24,6 +25,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   installHouseConfiguration(db, operations, sharing);
   installHouseGrants(db, operations, sharing);
   installBuildStatus(db, operations, sharing);
+  installJobResults(db, operations, sharing);
 
   installRunnerReports(db, operations, sharing);
   installRunnerJobs(db, operations, sharing, options.credentials);

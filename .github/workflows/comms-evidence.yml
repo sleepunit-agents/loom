@@ -1,0 +1,41 @@
+name: Comms evidence
+on:
+  pull_request:
+    paths:
+      - 'src/pieces/comms/**'
+      - 'web/src/pieces/comms/**'
+      - 'src/core/**'
+      - 'web/src/data/**'
+      - 'src/ui/comms-piece.integration.test.ts'
+      - '.github/workflows/comms-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: comms-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Build the fixture app
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Two windows and six screenshots
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_TEST_SHOTS="$PWD/artifacts/comms-app"
+          nice -n 19 npx vitest run src/ui/comms-piece.integration.test.ts --maxWorkers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: comms-${{ github.event.pull_request.head.sha }}
+          path: artifacts/comms-app/
+          if-no-files-found: error

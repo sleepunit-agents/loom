@@ -192,13 +192,32 @@ is clamped by the job. Without configuration the daemon still runs; an unmapped
 repository fails before any value acquisition or forge request and preserves its
 previous snapshot. Staging holds both acquisition and forge calls even with a grant.
 
-The production authenticated holder transport is still being built by Secrets
-(t-2208). Neither `loom serve --next` nor this unit invents one: the CLI currently
-starts with no credential configuration. Only trusted embedding code can supply
-`source` and public owner/name bindings; neither is accepted through an operation,
-HTTP input, environment token, old token file or runtime identity guess. Completing
-that transport and its final CLI configuration remains required before live reads
-can be activated. This unit exercises real grants with an explicit fixture source,
-not production credential delivery. `src/changes-startup.test.ts` covers automatic
-startup, HTTP refresh, denied agent grants, real service grant/revoke, staging,
-unconfigured startup, revocation during acquisition and close during acquisition.
+The production read source is the authenticated local holder described in
+[Secrets’ holder contract](secrets-piece.md#authenticated-local-holder-reads).
+`loom serve --next --secret-holder /absolute/private/config.json` loads that
+explicit private configuration and supplies its `SecretValueSource` and public
+GitHub owner/name bindings to the next root. The config contains `socket`, `ca`,
+`cert`, `key`, `servername` and `github`; it contains no GitHub token. The standalone
+`loom-secret-holder` owns the age ciphertext and decryption identity and serves
+reads over a private Unix socket with mutual TLS 1.3. No configuration is discovered
+from old stores, environment tokens or runtime identities.
+
+At the final move, provision the holder and daemon identities according to the
+Secrets contract, describe the destination secret name, and obtain the owner's
+explicit Changes service grant. Start the holder before the configured next daemon.
+Missing configuration, an unavailable holder or a missing/expired/revoked service
+grant preserves the last successful snapshot and reports a generic read failure.
+Staging holds both holder acquisition and GitHub reads. These are cutover steps;
+this implementation does not provision credentials, grant access or activate a live home.
+
+`src/pieces/secrets/local-holder.test.ts` proves persistent age reads across holder
+restart, authenticated delivery, root scheduled Changes reads, staging holds and
+CLI configuration. `src/changes-startup.test.ts` covers automatic startup, HTTP
+refresh, denied agent grants, real service grant/revoke, unconfigured startup,
+revocation during acquisition and close during acquisition. Holder write/remove
+and runtime credential sinks belong to Secrets and are not required for Changes’
+read-only GitHub reader.
+
+The importer is also registered as `changes` in `loom migrate all`, after
+`household`; its per-source attribution and verification contract is the same as
+the standalone command above. Importing records never imports credentials or grants.

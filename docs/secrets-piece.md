@@ -1,10 +1,11 @@
 # Secrets and grants on the new side
 
-This piece is under construction for t-2208. It is not installed by next mode.
-`installSecrets` owns names, requests, policy and core grants in loom.db;
-`installSecretValues` needs an injected key holder. No value read operation is
-exposed. The production separate authenticated holder and runtime/attention
-composition are still required before activation.
+This piece is under construction for t-2208. Next mode installs metadata and
+grant operations independently of holder configuration. `installSecrets` owns
+names, requests, policy and core grants in loom.db; `installSecretValues` still
+needs an injected mutation holder. No public value read operation is exposed.
+Authenticated holder reads are explicitly configured for Changes; runtime sinks
+and authenticated write/remove/rotation composition remain required.
 
 ## Removal increment
 
@@ -319,3 +320,46 @@ runtime sinks, bridge composition, remaining importer/CLI/Settings work and fina
 move verification remain on t-2208. Existing synchronous `KeyHolder` mutation
 operations are not connected to this asynchronous read transport. No real secret,
 installed home, process, unit or deployment is changed by these tests or this PR.
+
+## Next-mode household grant asks
+
+The normal next composition root binds `secretGrantAttention` to the installed
+Attention source registry before installing Secrets, even without a Changes
+credential source. Requests raise managed household asks; the source capability
+never crosses a registry door. Only a current household owner may answer. Yes
+grants the exact requested temporary scope and duration; No, Done and Dismiss
+deny. None of these Attention answers enables Always. The actual answering
+member is retained in the ask, request and grant. Direct `secrets.answer` also
+resolves its managed ask in the same transaction.
+
+On restart the root registers the source again, so persisted managed obligations
+can be answered. If applying the grant fails, the ask, request, grant and nested
+operation receipts roll back together, with no Live notification; retrying the
+same answer can then succeed. An intentionally preinstalled Secrets instance
+keeps its supplied dependencies; custom installers remain responsible for their
+Attention connector and retain the existing fail-closed managed-request checks.
+This adds no holder mutation, runtime job authentication, automatic grant or
+real-data import. Those obligations remain on t-2208.
+
+## Synchronous holder acknowledgement
+
+The existing `KeyHolder` write and runtime-handoff seam requires completed,
+synchronous acknowledgement. Set, remove and handoff reject both native Promises
+and thenables, consume rejected asynchronous output, and discard synchronous
+output. A rejected save/removal commits no metadata, operation receipt or Live
+notification; a rejected handoff records a failed attempt and no confirmed use.
+The same operation can retry with a compliant holder.
+
+This check cannot cancel work already started by an invalid asynchronous holder.
+The asynchronous read channel must not be connected to the synchronous mutation
+seam. Persistent write/remove/rotation, full-input and authenticated-member durable
+receipts, and their production composition remain required on t-2208.
+
+`KeyHolder` implementations are trusted in-process code. This check handles
+accidentally async adapters with ordinary native Promises (including a shadowed
+`then`) and thenables. It does not sandbox adapter code or native Promises whose
+`constructor`/`Symbol.species` have been sabotaged: JavaScript consults those
+properties before allowing a native rejection handler to attach. Production
+adapters must not return such objects or independently log credential material.
+The persistent production adapter and its regression tests must satisfy this
+constraint when that adapter is composed.

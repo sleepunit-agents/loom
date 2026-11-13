@@ -272,6 +272,7 @@ its retry receipt and live sharing/access notifications commit together.
 
 | Old command or route | New operation |
 | --- | --- |
+| `loom household show` | `loom-household show '{}'` (the same home/agents/default/optional owner summary, as JSON instead of aligned text) |
 | `loom household add <agent>` | `household.addAgent({agent})` |
 | Page `add-agent`: register its newly bootstrapped context | `household.addAgent({agent})` |
 | Page `add-agent`: bootstrap identity/rules, choose appearance, create first token | Separate setup and credential operations; not part of registration |
@@ -313,3 +314,45 @@ use the sign-in revoke operation when credentials must stay disabled.
 Both operations emit sharing and access changes after commit, refreshing open
 windows synchronously. No membership job, People-directory write, session mint or
 legacy-file write is added. Setup and generated clients remain in the full task.
+
+### Generated household API client
+
+`loom-household <operation> '<json-object>'` is an opt-in client for next mode.
+The operation registry and client share the command list and response schemas in
+`src/core/household/commands.ts`. Set `LOOM_URL` to the daemon's HTTP(S) origin
+and `LOOM_TOKEN_FILE` to a file holding the caller's token. The client never
+selects a home, opens a database, discovers JSON or repeats policy decisions.
+
+```
+loom-household addAgent '{"agent":"new-agent"}'
+loom-household setMember '{"person":"guest","agents":["art"]}'
+loom-household setMemberProjects '{"person":"guest","projects":["pond"]}'
+```
+
+The commands are `show`, `setMember`, `removeMember`, `addAgent`, `setMemberProjects`,
+`setOwnedAgents`, `setAgentAccounts`, `createProject`, `setProjectMembers` and
+`setProjectAgents`. Each calls the operation of the same name in `household`.
+Success prints the operation's JSON value and exits 0; daemon refusal or transport
+failure prints a fixed diagnostic and exits 1; malformed invocation exits 2.
+Help works offline. An elapsed four-second retry budget spans brief daemon
+restarts; individual requests are capped at 1.5 seconds. Retries reuse the exact request body and operation id, so a
+lost response cannot repeat the write. Redirects are refused.
+
+| Existing action | Client replacement |
+| --- | --- |
+| `loom household show` | `loom-household show '{}'` (the same home/agents/default/optional owner summary, as JSON instead of aligned text) |
+| `loom household add <agent>` | `loom-household addAgent '{"agent":"…"}'` (success is the JSON agent list instead of `Agents: …`) |
+| Page member add/change/remove | `loom-household setMember` / `removeMember` with operation JSON |
+| Page scoped ownership, project assignments and account metadata | Corresponding `setOwnedAgents`, `setMemberProjects`, `setAgentAccounts` operations |
+| Project creation and membership | `createProject`, `setProjectMembers`, `setProjectAgents` |
+
+The JSON command spelling is the operation name; there is no second command
+parser in the daemon. No old invocation is replaced automatically. Token and
+session clients, remaining household commands (init/commons/sprite/icons),
+agent bootstrap/setup and the Setup screen remain work under t-2203. This client
+adds no job and performs no installation, import or host rollout.
+
+`show` is read-only and restricted by the central household-owner policy. It
+projects only the legacy summary fields; arbitrary imported metadata, membership,
+settings and credentials are never part of its response. The home is the daemon
+home, independent of the client environment. No retry receipt is written.

@@ -21,10 +21,15 @@ export interface CliCommand { name: string; write?: boolean; positional?: string
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
 export interface Operation<I = unknown> {
-  name: string; cli?: CliCommand; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
+  name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
-  run(ctx: Context, input: I): unknown;
+  /** Private pieces key retry fingerprints so exported receipts cannot test guessed words. */
+  inputHash?(canonicalInput: string): string;
+  /** Async crypto is prepared outside the synchronous transaction, never persisted by core. */
+  prepare?(input: I, context: { readonly viewer: Viewer }): Promise<unknown>;
+  after?(input: I, result: Result): void;
+  run(ctx: Context, input: I, prepared?: unknown): unknown;
   /** Read an already-committed external receipt by the shared viewer/id key.
    * Registered hooks run before may for EVERY write, not only this operation.
    * A mismatched name/hash must conflict. Must not apply an effect; may announce
@@ -71,10 +76,30 @@ export class Operations {
   registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
   }
-  call(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
+  async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+    if (!valid()) return failure('denied', 'Authentication ended');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
-    if (op.doors && !op.doors.includes(door)) return failure('denied', 'Operation is not offered on this door');
+    if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
+    if (!op.prepare && !op.windowOnly) return this.call(door, viewer, name, input, id);
+    const parsed = op.input.safeParse(input);
+    if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
+    if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
+    if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+    try {
+      const prepared = await op.prepare?.(parsed.data, {viewer});
+      if (!valid()) return failure('denied', 'Authentication ended');
+      return this.execute(door, viewer, name, input, id, prepared, window);
+    } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
+  }
+  call(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
+    if (this.ops.get(name)?.prepare) return failure('unavailable', 'Operation requires asynchronous dispatch');
+    return this.execute(door, viewer, name, input, id);
+  }
+  private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window = false): Result {
+    const op = this.ops.get(name);
+    if (!op) return failure('not-found', 'Unknown operation');
+    if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
@@ -85,7 +110,8 @@ export class Operations {
     try {
       result = this.db.transaction((): Result => {
         const now = this.clock.now();
-        const who = canonical(viewer), body = createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        if (op.windowOnly && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+        const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data)) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
           this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
@@ -98,7 +124,7 @@ export class Operations {
           if (recovered) break;
         }
         if (!recovered && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const outcome = recovered ?? op.run(ctx, parsed.data);
+        const outcome = recovered ?? op.run(ctx, parsed.data, prepared);
         const replay = outcome instanceof RecoveredWrite ? outcome : undefined;
         if (replay && (!op.write || !Number.isFinite(replay.expires) || replay.expires <= now || replay.expires > ctx.receipt!.expires)) throw new Error('Invalid recovered receipt expiry');
         const value = replay ? replay.value : outcome;
@@ -123,6 +149,7 @@ export class Operations {
       else { try { this.committed(changes); } catch { /* committed writes remain successful; failed subscribers reconnect */ } }
     }
     if (result.ok && !this.frames.length && op.write) this.expire();
+    if (result.ok) { try { op.after?.(parsed.data, result); } catch { /* durable jobs resume on restart */ } }
     return result;
   }
 }
