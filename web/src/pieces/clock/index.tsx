@@ -40,11 +40,13 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
     <p>{wake.state === 'parked' ? 'Answer check' : 'Due'}: {time(wake.due)}</p>
     {wake.wait && <p>Waiting on {wake.wait.id} until {time(wake.wait.until)}</p>}
     {wake.outcome && <p className="whitespace-pre-wrap break-words">{wake.outcome}</p>}
+    {wake.hold === 'provenance' && <p>This imported work has no verified authority. Eligible unknown wakes can be counted as the household owner’s work after review; other imports need their own recovery.</p>}
     {wake.hold === 'uncertain' && <p>A body may have started. Reconcile with runtime before trying again.</p>}
     {wake.project && <p>Project: {wake.project}</p>}{wake.member && <p>Private to: {wake.member}</p>}
     <p>{wake.id}{wake.schedule && ` · Schedule: ${wake.schedule}`}</p>
     <div className="flex flex-wrap gap-2">
-      {['pending','held','parked','failed'].includes(wake.state) && wake.hold !== 'uncertain' && action('now',{id:wake.id},'Run now','Run this wake immediately, including while paused?')}
+      {wake.canVouch && action('vouch',{target:`${wake.agent}:${wake.id}`},'Count as my work','Count this imported wake as your work? It keeps these words and its saved due time. Overdue work becomes due immediately; pause and dispatch checks still apply.')}
+      {['pending','held','parked','failed'].includes(wake.state) && wake.hold !== 'uncertain' && wake.hold !== 'provenance' && action('now',{id:wake.id},'Run now','Run this wake immediately, including while paused?')}
       {active(wake) && wake.hold !== 'uncertain' && action('cancel',{id:wake.id},'Cancel wake',wake.state === 'firing' ? 'Dispatch is in progress. Cancellation may leave a body running and will require reconciliation.' : wake.schedule ? 'Skip this occurrence. Its schedule will keep running.' : 'Cancel this wake?')}
     </div>
     <section><h2>{wake.file ? 'Repository file' : 'Prompt'}</h2><p className="whitespace-pre-wrap break-words">{wake.file ?? wake.prompt}</p></section>
@@ -63,10 +65,10 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
     <section><h2>{schedule.file ? 'Repository file' : 'Text'}</h2><p className="whitespace-pre-wrap break-words">{schedule.laneDetails?.text ?? schedule.file ?? schedule.prompt}</p></section>
   </article>;
   else if (id) reader = <Empty title="This work is no longer in view" text="It may have aged out, been removed or become unavailable." />;
-  const saved = receipt?.result?.ok ? receipt.result.value as { alreadyScheduled?: boolean; schedule?: string; due?: number } : undefined;
+  const saved = receipt?.result?.ok ? receipt.result.value as { alreadyScheduled?: boolean; schedule?: string; due?: number; done?: string[]; gone?: string[] } : undefined;
   const feedback = <div className="grid gap-2">
       {receipt?.pending && <Loading label={receipt.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} />}
-      {receipt?.result && (receipt.result.ok ? <p role="status">{saved?.alreadyScheduled && typeof saved.due === 'number' ? `Already scheduled: ${saved.schedule}, next at ${time(saved.due)} (nothing armed)` : 'Saved'}</p> : <Error title="Couldn’t save" text={`${receipt.result.code}: ${receipt.result.message}`} />)}
+      {receipt?.result && (receipt.result.ok ? <p role="status">{saved?.alreadyScheduled && typeof saved.due === 'number' ? `Already scheduled: ${saved.schedule}, next at ${time(saved.due)} (nothing armed)` : saved?.done ? `Counted ${saved.done.length} as your work; ${saved.gone?.length ?? 0} unchanged` : 'Saved'}</p> : <Error title="Couldn’t save" text={`${receipt.result.code}: ${receipt.result.message}`} />)}
       {confirm && <section aria-label="Confirm clock action" className="grid gap-2"><p>{confirm.why}</p><Button variant="outline" disabled={!enabled} onClick={() => {if(enabled){send(confirm.operation,confirm.input);setConfirm(undefined);}}}>{confirm.label}</Button><Button variant="outline" onClick={() => setConfirm(undefined)}>Keep unchanged</Button></section>}
   </div>;
   return <Split label="Clock" className="h-full" folders={[{id:'wakes',label:'Wakes'},{id:'schedules',label:'Schedules'},{id:'lanes',label:'Household lanes'},{id:'history',label:'Recent history'}]} folder={folder} onFolder={f => {setFolder(f);back();}}

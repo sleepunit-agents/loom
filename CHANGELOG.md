@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Let the owner review and count eligible unknown imported wakes as their work in the Clock app, retaining saved words, due times and current authority checks.
+
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
 
 - Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
