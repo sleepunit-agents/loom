@@ -13,8 +13,9 @@ This first slice is an injectable engine, not yet a production adapter installat
 connections, `receive` durably accepts a venue message, and `reply` queues one reply
 under runtime's operation id. The daemon composition root must call sync after a
 committed setup change, await engine.close before closing its database. Core staging releases notify
-the engine after commit through the effects role; no new venue traffic is needed. Production Discord/Slack transports, importer, generated commands,
-app and composition are subsequent work on t-2210; the old side is untouched.
+the engine after commit through the effects role; no new venue traffic is needed. Next mode now installs the setup operations and metadata records for the preview,
+but does not start an engine or connect to either platform. Production Discord/Slack transports, importer, generated commands
+and engine composition remain subsequent work on t-2210; the old side is untouched.
 
 | Old behavior | New owner / replacement |
 | --- | --- |
@@ -165,6 +166,41 @@ platform membership checks remain required integration work.
 | Part posted then failure | Fake postReply adapter + durable engine uncertainty/restart tests |
 | Thread reply address and staging release | Fake postReply adapter + engine tests for both venues |
 | Slack first outbound DM, fresh group checks for each post | Pending real adapter; no production support claimed |
+
+## Bridges preview
+
+The registered `/p/bridges-preview` app uses Kit `Split`, `List`, `Row` and state
+components. It reads `bridges.venue`, `bridges.route`, `bridges.send` and `core.effect`
+through the shared `useRecords` socket. Connections show saved status and receipt,
+delivery and hold counts for the last 24 hours. Routes show primary, parent, peer,
+guest and reader metadata. Sends show receipt ids and state, never message words.
+The preview does not fetch credentials or expose their values.
+
+A due bridge effect with a matching pending send can be released by calling the
+existing `core.releaseEffect` operation. The server applies its existing household
+permission check. A release allows one attempt; uncertain/held sends have no resend
+control, even when a stale effect still says due. Non-bridge effects are excluded.
+Offline or denied subscriptions clear detail and release controls. Completed or
+evicted effects leave the reader instead of retaining an actionable snapshot.
+
+This slice intentionally presents existing setup rather than inventing editing or
+repair operations. Connection/route editing, uncertain-send disposition and held
+intake repair remain required work before the full rebuild is complete. No live
+connections start merely by opening this app or installing next-mode metadata.
+
+The CI-only `bridges-preview.integration.test.ts` uses two windows and fake venue IO
+on a disposable staged `startLoom --next` home. It verifies shared status, route and
+send reads, reload/deep-link selection, one release reaching one uncertain attempt,
+and both windows losing the release action afterward. Its six screenshots cover
+390/1280/1920 widths in Neon Noir and Daylight. The dedicated Bridges preview
+evidence workflow uploads them with the exact PR head in the artifact name.
+
+| Existing surface | Preview replacement / remaining work |
+| --- | --- |
+| Bridge connection and traffic metadata | Connections folder, saved state and daily counts |
+| Channel/thread route configuration | Routes reader; editing remains pending |
+| Staging-held reply | Pending sends and staged effects, one-item release |
+| Partial or interrupted send | Uncertain state, review guidance and no replay control; explicit disposition pending |
 
 ## Final move
 

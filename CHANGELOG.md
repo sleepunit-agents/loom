@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
+
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
 - Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
