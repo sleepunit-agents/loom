@@ -26,16 +26,19 @@ const startResult = z.discriminatedUnion('state', [
 ]);
 const invalid = (message: string): never => { throw new OperationError('invalid', message); };
 function work(input: Work): Work {
+  if (!!input.prompt === !!input.file) invalid('Give exactly one prompt or lane file');
+  if (input.prompt && /^(?:\/|\.\.?\/|routines\/)/.test(input.prompt)) invalid('Use --file for a lane path');
+  if (input.file && (/^(?:\/|[A-Za-z]:)/.test(input.file) || input.file.split('/').includes('..'))) invalid('Lane files must be relative repository paths');
+  return input;
+}
+function newWork(input: Work): Work {
   if (input.continuation) {
     if (input.approval || input.prompt?.includes('<!-- house: local -->'))
       invalid("A continuation can't ride a standing job, an approval or a local wake");
     if (input.file || input.slot || input.place)
       invalid('A continuation needs its own delivered conversation, without a lane file, slot or place');
   }
-  if (!!input.prompt === !!input.file) invalid('Give exactly one prompt or lane file');
-  if (input.prompt && /^(?:\/|\.\.?\/|routines\/)/.test(input.prompt)) invalid('Use --file for a lane path');
-  if (input.file && (/^(?:\/|[A-Za-z]:)/.test(input.file) || input.file.split('/').includes('..'))) invalid('Lane files must be relative repository paths');
-  return input;
+  return work(input);
 }
 function calendar<T>(f: () => T): T { try { return f(); } catch (e) { return invalid(e instanceof Error ? e.message : 'Invalid time'); } }
 function quotaDue(reset: unknown, now: number): number {
@@ -78,7 +81,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
-    work(i);
+    newWork(i);
     const due = calendar(() => name === 'at' ? parseAt(i.when, ctx.now) : parseIn(i.when, ctx.now));
     if (due <= ctx.now) invalid('Wake must be in the future');
     // Only a currently owner-authored schedule can stand in for a self-chain.
@@ -101,6 +104,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return make(ctx, i, due);
   });
   register('park', workInput.extend({ on: text }), true, (v, i) => create(v, i) && !!options.approvals?.check(i.on, v), (ctx, i) => {
+    newWork(i);
     if (!/^[aq]-[\w-]+$/.test(i.on)) invalid('Park on an approval or question');
     oneOffRoom(i.agent);
     const a = options.approvals!.check(i.on, ctx.viewer)!;
@@ -145,7 +149,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
   register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, i) => {
-    work(i); calendar(() => daysOf(i.days));
+    newWork(i); calendar(() => daysOf(i.days));
     const old = schedule(db, i.id);
     if (old?.laneDetails) invalid('Edit household lanes with laneSet');
     if (old && (old.agent !== i.agent || old.project !== i.project || old.member !== i.member)) invalid('Remove a schedule before changing its scope');

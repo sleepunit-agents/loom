@@ -51,6 +51,20 @@ describe('durable daemon clock', () => {
     expect(wakes(app.db)).toHaveLength(1);
   });
 
+  it('preserves dispatch of an existing schedule with historical conflicting continuation fields', async () => {
+    const startBody = vi.fn(async (): Promise<StartResult> => ({ state: 'started', body: 'body-existing' }));
+    const app = await loom({ runtime: { startBody } });
+    const s = app.value<Schedule>('scheduleSet', { id: 'existing', agent: 'art', at: '12:31', prompt: 'Existing', note: 'existing' });
+    const occurrence = wakes(app.db)[0];
+    s.continuation = 'opaque-historical'; s.slot = 'existing';
+    app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(s), s.id);
+    occurrence.continuation = s.continuation; occurrence.slot = s.slot;
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(occurrence), occurrence.id);
+    app.clock.advance(occurrence.due - app.clock.now()); await settled();
+    expect(startBody).toHaveBeenCalledTimes(1);
+    expect(wake(app.db, occurrence.id)?.state).toBe('fired');
+    expect(wakes(app.db).find(w => w.id !== occurrence.id)).toMatchObject({ schedule: s.id, state: 'pending', continuation: s.continuation, slot: s.slot });
+  });
   it('retains the original schedule and occurrence when a conflicting replacement is refused', async () => {
     const app = await loom();
     const input = { id: 'report', agent: 'art', at: '12:31', prompt: 'Original', note: 'report' };
