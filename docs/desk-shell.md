@@ -11,7 +11,7 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Needs you and owned compact agent cards beside work | Registered Attention Rail surface; roster, directory names, status, open asks and private thread metadata from existing live records |
 | Clicking a rail agent | First unread open thread, else latest open thread, else Comms; asks open the exact Inbox reader |
 | Reply counts and first reply words | Current thread feed offers unread **flags**; show unread thread counts explicitly. Reply-word previews await an owning metadata role; do not decrypt whole message feeds for a rail |
-| Per-agent face sheets / colours | Monogram until shared display metadata supplies a face; no old file lookup or invented sprite |
+| Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Pixel-sheet assets remain a separate slice; no old file lookup or invented sprite |
 | Per-device dock/rail hide modes, rail accordion and Comms companion portal | Follow-up desk slice; the existing 64px rail reservation under 1280 remains a compact agent strip |
 | Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |

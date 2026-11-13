@@ -1,3 +1,4 @@
+import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { useRecords, type LiveRecord } from '../../data';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
 import type { Ask } from './model';
@@ -7,6 +8,7 @@ interface Thread extends LiveRecord { id: string; agent: string; title: string |
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const displays = useAgentDisplays();
   const people = useRecords<AgentPerson>('person');
   const statuses = useRecords<AgentStatus>('attention.agent');
   const asks = useRecords<Ask>('attention.ask');
@@ -28,7 +30,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const word = status?.state==='offline'?'Unavailable':ask?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
       return <section key={agent.id} className="desk-rail-card" data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={status?.state}>
         <button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
-          <span className="desk-rail-mark" aria-hidden="true">{agent.name.slice(0,1)}</span>
+          <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!ask)} size={40} />
           <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
         </button>
         <p className="desk-rail-work">{statuses.status==='live'?(status?.work||'Nothing right now'):'Agent status unavailable'}</p>

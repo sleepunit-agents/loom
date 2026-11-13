@@ -13,6 +13,7 @@ const text=()=>JSON.stringify(tree.toJSON());
 async function publish(type:string,status:Snapshot['status'],records=f.snapshots[type].records){await act(async()=>{f.snapshots[type]={status,records};f.listeners.forEach(fn=>fn());});}
 beforeEach(()=>{f.listeners.clear();f.snapshots={
  'attention.ownedAgent':live([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),
+ 'household.agentDisplay':live([]),
  'person':live([]),'attention.ask':live([{id:'first',ask:'Proceed with backup?',agent:'art',state:'open',createdAt:1}]),
  'attention.agent':live([{id:'report',agent:'art',state:'working',work:'Checking the backup',changedAt:1}]),
  'thread':live([{id:'th:abc',agent:'art',title:'Unread conversation',unread:true,last:1,archived:null},{id:'th:recent',agent:'art',title:'Newest read thread',unread:false,last:2,archived:null}]),

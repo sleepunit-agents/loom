@@ -1,0 +1,35 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startLoom } from '../../foundation.js';
+import { fixture, installFixture } from '../../fixture.js';
+import { FakeClock, type RecordType, type Viewer } from '../index.js';
+import { HouseholdDatabase } from './document.js';
+import { installHouseholdDisplay, agentDisplay } from './display.js';
+const closes: (()=>Promise<void>)[] = [];
+afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
+it('preserves palette and face choices, defaults by roster order and projects no unknown data',()=>{
+ const raw={agents:['art','mark'],marks:{art:{bg:'#2F6B5A',fg:'private'}},faces:{art:{shape:'drop',eyes:'oval',secret:'private'}},secret:'private'};
+ expect(agentDisplay(raw,'art')).toEqual({id:'art',agent:'art',mark:{bg:'#2F6B5A',fg:'#E2F5EE'},face:{shape:'drop',eyes:'oval'}});
+ expect(agentDisplay(raw,'mark')).toMatchObject({mark:{bg:'#7A2E4F'},face:{shape:'trefoil',eyes:'oval'}});
+ expect(agentDisplay(raw,'absent')).toBeUndefined();
+ expect(agentDisplay({agents:['art'],marks:{art:{bg:'url(secret)'}},faces:{art:{shape:'script'}}},'art')).toMatchObject({mark:{bg:'#B8A6FF'},face:{shape:'pebble',eyes:'dot'}});
+});
+it('reads only database metadata and rechecks central visibility after ownership is removed',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'display-'));fixture(home);
+ const types=new Map<string,RecordType>();
+ const app=await startLoom({home,next:true,clock:new FakeClock(),install:installFixture});
+ installHouseholdDisplay({db:app.db,live:{register:(type:RecordType)=>types.set(type.name,type)}} as unknown as Parameters<typeof installHouseholdDisplay>[0],home);closes.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
+ const db=new HouseholdDatabase(app.db);
+ db.change(home,raw=>{raw.faces={art:{shape:'drop',eyes:'oval'}};raw.private='never published';});
+ writeFileSync(join(home,'household.json'),JSON.stringify({agents:['alien'],faces:{art:{shape:'clover'}}}));
+ const type=types.get('household.agentDisplay')!;
+ expect(type.read('art',{kind:'member',id:'jonathan'})).toMatchObject({face:{shape:'drop'}});
+ expect(type.read('art',{kind:'agent',id:'art'})).toMatchObject({id:'art'});
+ for(const v of [{kind:'member',id:'pollock'},{kind:'member',id:'absent'},{kind:'agent',id:'mark'},{kind:'runner',id:'box'},{kind:'service',id:'display'}] as Viewer[])expect(type.read('art',v)).toBeUndefined();
+ expect(type.read('pond-bot',{kind:'member',id:'pollock'})).toMatchObject({id:'pond-bot'});
+ db.change(home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
+ expect(type.read('pond-bot',{kind:'member',id:'pollock'})).toBeUndefined();
+ expect(type.read('alien',{kind:'member',id:'jonathan'})).toBeUndefined();
+});

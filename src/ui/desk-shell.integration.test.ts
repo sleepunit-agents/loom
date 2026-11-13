@@ -77,6 +77,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(() => page.locator('.next-shell').count()).toBe(1);
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
         for (const surface of ['home','work','launcher']) {
