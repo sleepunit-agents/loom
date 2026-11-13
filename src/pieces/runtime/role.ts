@@ -6,6 +6,21 @@ import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { Operations, Result, Scope, Viewer } from '../../core/index.js';
 import { attentionRole, type AgentStatus } from '../attention/role.js';
 
+/** Trusted in-process provenance, never a public read or a permission grant.
+ * Consumers must preserve member/project and still check central policy. The
+ * conversation is issued only for an exact authenticated, currently bound body;
+ * it must not be reconstructed from a job's public conversation argument.
+ */
+export interface ClockProvenance {
+  agent: string;
+  conversation: string;
+  member: string;
+  project?: string;
+  service?: string;
+  principal: { for: string; people: string[] };
+}
+export type ClockProvenanceReader = (viewer: Viewer) => ClockProvenance | undefined;
+
 /** Stable source ids let callers retry a scheduled wake or incoming message. */
 export interface StartBody extends Scope {
   agent: string;
