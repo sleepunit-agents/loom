@@ -39,6 +39,7 @@ it('decrypts persistent age ciphertext through real mutual TLS and current servi
   closes.push(()=>holder.close());
   const configFile=join(home,'config.json');writeFileSync(configFile,JSON.stringify({...client,github:{acme:'github'}}),{mode:0o600});
   const changes=configuredSecretHolder(configFile);
+  await expect(changes.source.generation()).rejects.toThrow(/^Local secret holder unavailable$/);
   const appHome=join(home,'next');mkdirSync(appHome,{mode:0o700});fixture(appHome);
   const clock=new FakeClock();
   const app=await startLoom({home:appHome,next:true,staging:true,clock,changes,stdout:()=>{}});closes.push(app.close);
@@ -300,4 +301,35 @@ it('reads only a bounded public generation through the authenticated holder, wit
 it.each(['X'.repeat(37),'a'.repeat(36),'00000000-0000-4000-8000-00000000000\u00b0'])('rejects malformed holder generation responses without reflecting them',async body=>{
   const {client}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end(body);});
   await expect(localSecretSource(client).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+});
+
+it('rejects invalid generation method, path and body framing before the provider runs',async()=>{
+  const {client,server}=setup();const {randomUUID}=await import('node:crypto');
+  const generation=vi.fn(()=>randomUUID()),read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  for(const [method,path,headers,body] of [
+    ['POST','/v1/generation',{},''],
+    ['GET','/v1/generation',{'content-length':'1'},'X'],
+    ['GET','/v1/generation',{'transfer-encoding':'chunked'},'X'],
+    ['GET','/v1/generation?extra=1',{},''],
+    ['GET','/v1/generation/extra',{},''],
+  ] as const) {
+    const status=await new Promise<number>((resolve,reject)=>{
+      const req=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),
+        minVersion:'TLSv1.3',agent:false,method,path,headers},res=>{res.resume();res.once('end',()=>resolve(res.statusCode!));});
+      req.on('error',reject);req.end(body);
+    });
+    expect(status).toBe(503);expect(generation).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();
+  }
+  expect(await localSecretSource(client).generation()).toMatch(/^[0-9a-f-]{36}$/);expect(generation).toHaveBeenCalledOnce();
+});
+
+it('refuses an overlong provider UUID before publishing generation bytes',async()=>{
+  const {client,server}=setup();
+  const holder=await listenLocalHolder(server,{read:async()=>Buffer.from('MUST-NOT-READ'),generation:()=> '12345678-1234-4234-8234-123456789abc\n'});closes.push(holder.close);
+  const result=await new Promise<{status:number;body:string}>((resolve,reject)=>{
+    const req=https.request({socketPath:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),
+      minVersion:'TLSv1.3',agent:false,path:'/v1/generation'},res=>{let body='';res.on('data',b=>{body+=b;});res.once('end',()=>resolve({status:res.statusCode!,body}));});
+    req.on('error',reject);req.end();
+  });expect(result).toEqual({status:503,body:''});
 });

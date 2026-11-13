@@ -7,6 +7,10 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { generateIdentity, Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
 import { openHolderStore, type HolderStore } from './holder-store.js';
 
+vi.mock('node:crypto', async importOriginal => {
+  const actual=await importOriginal<typeof import('node:crypto')>();
+  return {...actual,randomUUID:vi.fn(actual.randomUUID)};
+});
 const homes: string[] = [], stores: HolderStore[] = [];
 afterEach(() => { for (const s of stores.splice(0)) s.close(); for (const h of homes.splice(0)) rmSync(h, {recursive:true, force:true}); vi.restoreAllMocks(); });
 const who = (member = 'jonathan') => ({member, writeId:randomUUID()});
@@ -252,4 +256,26 @@ it('initializes generation for an existing holder without rewriting values or re
     expect(verify.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts);
   } finally {verify.close();}
   expect(await text(s)).toBe(value().toString());
+});
+
+it('rolls back values and receipts when generation publication fails', async () => {
+  const f=await setup();await f.s.set(who(),'api-key',value(),'add');
+  const marker=f.s.generation(), db=new Database(join(f.home,'holder.db'));
+  const values=db.prepare('SELECT * FROM holder_values').all(),receipts=db.prepare('SELECT * FROM holder_receipts').all();
+  try {
+    db.exec("CREATE TRIGGER fail_generation BEFORE UPDATE ON holder_generation BEGIN SELECT RAISE(ABORT, 'PRIVATE'); END");
+    await expect(f.s.set(who(),'api-key',value('new'),'replace')).rejects.toThrow();
+    await expect(f.s.set(who(),'other',value(),'add')).rejects.toThrow();
+    expect(()=>f.s.remove(who(),'api-key')).toThrow();
+    expect(f.s.generation()).toBe(marker);
+    expect(db.prepare('SELECT * FROM holder_values').all()).toEqual(values);
+    expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts);
+  } finally {db.close();}
+});
+it('stores the independently generated random UUID rather than a value-derived marker', async () => {
+  const first='12345678-1234-4234-8234-123456789abc',second='87654321-4321-4321-8321-cba987654321';
+  const random=vi.mocked(randomUUID).mockReturnValueOnce(first);
+  const f=await setup();expect(f.s.generation()).toBe(first);
+  const id=who();random.mockReturnValueOnce(second);
+  await f.s.set(id,'api-key',value(),'add');expect(f.s.generation()).toBe(second);
 });

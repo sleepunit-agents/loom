@@ -126,7 +126,7 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
       if (req.method !== 'GET' || (!match && !generation) || req.headers['transfer-encoding'] || (req.headers['content-length'] && req.headers['content-length'] !== '0')) throw failed();
       if (generation) {
         const marker = await source.generation?.();
-        if (typeof marker !== 'string' || !generationPattern.test(marker)) throw failed();
+        if (typeof marker !== 'string' || marker.length !== 36 || !generationPattern.test(marker)) throw failed();
         bytes = Buffer.from(marker);
       } else bytes = await source.read(match![1]);
       if (res.destroyed || !bytes.length || bytes.length > LIMIT) throw failed();
