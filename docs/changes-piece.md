@@ -65,6 +65,9 @@ the importer holds the same home lock until its database closes. It validates th
 whole snapshot and explicit attribution before a transaction commits, remaps
 projects from destination household rows, refuses unknown household identities,
 and records a repeat-import marker. Repeating the same import is a no-op.
+The marker identifies snapshot bytes; later household or attribution edits do
+not rewrite or reject an already imported source. Different source bytes are
+refused. Content comparison uses the same binary identifier order as SQLite.
 
 The attribution document has `agents` (agent id → `{logins: [], branches: []}`),
 `ownerLogins` (array), and optional `taskOwner` (known agent or member). Source

@@ -13,19 +13,19 @@ export function projectFor(repo: string, projects: Project[]) {
 export function importChanges(db: Db, from: string, options: { projects: Project[]; attribution: Attribution; interrupt?: () => void }) {
  const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
  if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
+ const checksum=createHash('sha256').update(bytes).digest('hex');
+ return db.transaction(()=>{
+  migrate(db,'changes',schema);
+  const old=db.prepare("SELECT value FROM changes_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
+  if(old) {if(old.value!==checksum) throw new Error('A different Changes source was already imported');return {ok:true,imported:false,checksum,changes:source.changes.length};}
  // Preserve the source's normalized fields exactly; never trust its project attribution or task cache.
  const expected:Change[]=source.changes.map(raw=>{
   const c=changeSchema.parse(raw), repo=repoId(c.repo);
   if(c.repo!==repo || c.id!==`${repo}#${c.number}`) throw new Error('Invalid change identity');
   const project=projectFor(repo,options.projects);
   return {...attribute(c,options.attribution),...(project ? {project} : {})};
- }).sort((a,b)=>a.id.localeCompare(b.id));
+ }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
  if(new Set(expected.map(c=>c.id)).size!==expected.length) throw new Error('Duplicate source change ids');
- const checksum=createHash('sha256').update(bytes).update(canonical({projects:options.projects,attribution:options.attribution})).digest('hex');
- return db.transaction(()=>{
-  migrate(db,'changes',schema);
-  const old=db.prepare("SELECT value FROM changes_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
-  if(old) {if(old.value!==checksum) throw new Error('A different Changes source was already imported');return {ok:true,imported:false,checksum,changes:expected.length};}
   if(loadChanges(db).length) throw new Error('Changes destination must be empty before import');
   replaceChanges(db,expected); options.interrupt?.();
   if(canonical(loadChanges(db))!==canonical(expected)) throw new Error('Changes import comparison failed: ids, counts or content differ');
