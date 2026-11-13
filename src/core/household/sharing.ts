@@ -12,7 +12,7 @@ export const projectSchema = z.object({
   repositories: z.array(z.string().min(1).max(500)).max(100),
   members: z.array(projectSlug).max(100),
   agents: z.array(z.string()).max(100),
-}).strict();
+}).passthrough();
 export type HouseholdProject = z.infer<typeof projectSchema>;
 
 /** Supplied daemon/importer connection only. No filesystem IO or backend selection. */

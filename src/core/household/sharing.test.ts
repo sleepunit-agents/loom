@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
-import { createFoundation, type Foundation } from '../app.js';
+import type { Foundation } from '../app.js';
 import { FakeClock } from '../clock.js';
 import { HouseholdDatabase } from './document.js';
 import { migrateHouseholdTables } from './schema.js';
@@ -39,9 +39,11 @@ function seed(app: Foundation, h: string) {
   installHouseholdProjects(app, h);
   return store;
 }
-function fixture() {
-  const h = home(), app = createFoundation({ home: h, clock: new FakeClock() }); closes.push(app.close);
-  return { h, app, store: seed(app, h) };
+async function fixture() {
+  const h = home();
+  let store!: SharingDatabase;
+  const app = await startLoom({ home: h, clock: new FakeClock(), install(app) { store = seed(app, h); } }); closes.push(app.close);
+  return { h, app, store };
 }
 
 it('keeps legacy scoped ownership, supports members with no owned agents, and forbids member wildcard authority', () => {
@@ -58,8 +60,8 @@ it('keeps legacy scoped ownership, supports members with no owned agents, and fo
   expect(() => parseHouseholdDocument(h, { ...raw(), members: [raw().members[1]] })).toThrow('at least one');
 });
 
-it('reads persisted sharing, preserves raw fields, and applies the owner example with central policy', () => {
-  const { app, store, h } = fixture();
+it('reads persisted sharing, preserves raw fields, and applies the owner example with central policy', async () => {
+  const { app, store, h } = await fixture();
   const doc = { ...raw(), custom: { untouched: true } };
   app.db.transaction(() => {
     new HouseholdDatabase(app.db).replace(h, doc);
@@ -85,8 +87,8 @@ it('reads persisted sharing, preserves raw fields, and applies the owner example
   expect(readdirSync(h).filter(n => n.endsWith('.json'))).toEqual([]);
 });
 
-it('keeps absent metadata empty and fails closed on corrupt project content or a mismatched key', () => {
-  const h = home(), app = createFoundation({ home: h }); closes.push(app.close); migrateHouseholdTables(app.db);
+it('keeps absent metadata empty and fails closed on corrupt project content or a mismatched key', async () => {
+  const h = home(), app = await startLoom({ home: h, clock: new FakeClock(), install: app => migrateHouseholdTables(app.db) }); closes.push(app.close);
   const store = new SharingDatabase(app.db, h);
   expect(store.sharing()).toEqual({ members: {}, projects: {}, services: {} });
   expect(() => store.create(pond)).toThrow('transaction');
@@ -99,8 +101,8 @@ it('keeps absent metadata empty and fails closed on corrupt project content or a
   expect(() => store.sharing()).toThrow();
 });
 
-it('requires an owner on every door, validates references, and rolls back project writes with the enclosing operation', () => {
-  const { app, store } = fixture();
+it('requires an owner on every door, validates references, and rolls back project writes with the enclosing operation', async () => {
+  const { app, store } = await fixture();
   for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
     for (const viewer of [pollock, bot, { kind: 'member', id: 'missing' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'keyholder' }] as Viewer[]) {
       expect(app.operations.call(door, viewer, 'household.createProject', pond, `${door}:${viewer.id}`)).toMatchObject({ code: 'denied' });
@@ -128,8 +130,8 @@ it('requires an owner on every door, validates references, and rolls back projec
   expect(app.operations.call('socket', owner, 'household.createProject', pond, 'create')).toMatchObject({ code: 'conflict' });
 });
 
-it('drops stale removed member and agent references and preserves legacy scoped owner limits', () => {
-  const { app, h, store } = fixture();
+it('drops stale removed member and agent references and preserves legacy scoped owner limits', async () => {
+  const { app, h, store } = await fixture();
   app.db.transaction(() => store.create(pond))();
   const doc = raw(); doc.members[1].role = 'owner';
   app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, doc))();
@@ -141,32 +143,50 @@ it('drops stale removed member and agent references and preserves legacy scoped 
   expect(maySee(pollock, { project: 'pond' }, store.sharing())).toBe(false);
 });
 
-it('persists project changes across restart and rolls back retry state and notifications on a failed write', () => {
+it('preserves unknown project metadata through both list changes and operation retries', async () => {
+  const { app, store } = await fixture();
+  const project = { ...pond, extra: { color: 'blue', nested: [1, { label: 'unchanged' }] } };
+  const create = app.operations.call('direct', owner, 'household.createProject', project, 'with-metadata');
+  expect(create).toEqual({ ok: true, value: project });
+  expect(app.operations.call('http', owner, 'household.setProjectMembers', { slug: 'pond', members: ['guest'] }, 'members')).toEqual({ ok: true, value: { ...project, members: ['guest'] } });
+  expect(app.operations.call('socket', owner, 'household.setProjectAgents', { slug: 'pond', agents: ['mark'] }, 'agents')).toEqual({ ok: true, value: { ...project, members: ['guest'], agents: ['mark'] } });
+  expect(store.project('pond')).toEqual({ ...project, members: ['guest'], agents: ['mark'] });
+  expect(store.sharing().projects.pond).toEqual({ members: ['guest'], agents: ['mark'] });
+  expect(app.operations.call('mcp', owner, 'household.createProject', project, 'with-metadata')).toEqual(create);
+});
+
+it('persists project changes across restart and rolls back retry state and notifications on a failed write', async () => {
   const h = home(), clock = new FakeClock();
-  const first = createFoundation({ home: h, clock });
-  const store = seed(first, h);
+  let store!: SharingDatabase;
+  const first = await startLoom({ home: h, clock, install(app) { store = seed(app, h); } });
   const result = first.operations.call('direct', owner, 'household.createProject', pond, 'create');
   expect(result.ok).toBe(true);
   expect(() => store.setAgents('pond', [])).toThrow('transaction');
   expect(() => store.setMembers('pond', [])).toThrow('transaction');
-  first.close();
-  const app = createFoundation({ home: h, clock }); closes.push(app.close);
-  installHouseholdProjects(app, h);
+  await first.close();
+  const app = await startLoom({ home: h, clock, install: app => installHouseholdProjects(app, h) }); closes.push(app.close);
   const reopened = new SharingDatabase(app.db, h);
   expect(reopened.project('pond')).toEqual(pond);
   expect(app.operations.call('http', owner, 'household.createProject', pond, 'create')).toEqual(result);
   const changes: unknown[] = [];
   const changed = app.live.changed.bind(app.live);
-  app.live.changed = events => { changes.push(events); changed(events); };
+  app.live.changed = events => { changes.push({ inTransaction: app.db.inTransaction, events }); changed(events); };
   app.db.exec(`CREATE TRIGGER fail_project AFTER UPDATE ON household_projects BEGIN SELECT RAISE(ABORT, 'failed project'); END`);
   expect(app.operations.call('direct', owner, 'household.setProjectMembers', { slug: 'pond', members: [] }, 'fail')).toMatchObject({ code: 'unavailable' });
   expect(reopened.project('pond')).toEqual(pond);
   expect(changes).toEqual([]);
   expect(app.db.prepare("SELECT * FROM core_operations WHERE id='fail'").get()).toBeUndefined();
   app.db.exec('DROP TRIGGER fail_project');
+  // This fails after the operation has queued both notifications, during retry-result insertion.
+  app.db.exec(`CREATE TRIGGER fail_retry BEFORE INSERT ON core_operations WHEN NEW.id='fail-after-change' BEGIN SELECT RAISE(ABORT, 'failed retry'); END`);
+  expect(app.operations.call('direct', owner, 'household.setProjectMembers', { slug: 'pond', members: [] }, 'fail-after-change')).toMatchObject({ code: 'unavailable' });
+  expect(reopened.project('pond')).toEqual(pond);
+  expect(changes).toEqual([]);
+  expect(app.db.prepare("SELECT * FROM core_operations WHERE id='fail-after-change'").get()).toBeUndefined();
+  app.db.exec('DROP TRIGGER fail_retry');
   expect(app.operations.call('direct', owner, 'household.setProjectMembers', { slug: 'pond', members: [] }, 'fail')).toMatchObject({ ok: true });
   expect(reopened.project('pond')?.members).toEqual([]);
-  expect(changes).toEqual([[{ type: 'household.project', id: 'pond' }, { type: 'core.access', id: 'household' }]]);
+  expect(changes).toEqual([{ inTransaction: false, events: [{ type: 'household.project', id: 'pond' }, { type: 'core.access', id: 'household' }] }]);
   clock.advance(30 * 86400_000);
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual([]);
 });
