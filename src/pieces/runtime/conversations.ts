@@ -12,6 +12,10 @@ const id=z.string().min(1).max(200);
 const routing=z.object({thread:id,agent:id,member:id,conversation:id,seq:z.number().int().positive(),generation:z.number().int().min(0).max(1000).optional(),project:id.optional()}).strict();
 type Routing=z.infer<typeof routing>;
 const key=(m:DeliveryReceipt)=>JSON.stringify([m.agent,m.member,m.thread,m.conversation,m.seq,m.generation??0]);
+const deliveryRoute=(id:string)=>{
+ const [agent,member,thread,conversation,seq,generation]=JSON.parse(id) as [string,string,string,string,number,number];
+ return {agent,member,thread,conversation,seq,generation};
+};
 const active=new Set(['queued','starting','running','waiting','uncertain','lost']);
 interface Proof {agent:string;job:string;valid():boolean}
 export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(viewer:Viewer)=>Proof|undefined) {
@@ -69,7 +73,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    // with its next generation can replace an authoritatively fenced claim.
    const retry=previous?.state==='failed'&&previous.startFailed&&
     (db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(previous.id) as {id:string}[]).some(row=>{
-     const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
+     const {agent,member,thread,conversation,seq,generation}=deliveryRoute(row.id);
      return agent===m.agent&&member===m.member&&thread===m.thread&&conversation===m.conversation&&seq===m.seq&&(m.generation??0)===generation+1;
     });
    let job=previous&&(active.has(previous.state)||(previous.state==='failed'&&!retry))?previous.id:undefined;
@@ -126,7 +130,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   if(closed||!comms)return;
   const rows=db.prepare('SELECT id,job FROM runtime_deliveries').all() as {id:string;job:string}[];
   for(const row of rows){const job=store.read('job',row.job);if(!job||!['running','waiting'].includes(job.state)||!controlScope(store,job,sharing()).privateControl)continue;
-   const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
+   const {agent,member,thread,conversation,seq,generation}=deliveryRoute(row.id);
    if(available({agent,member,thread,conversation,seq,generation,project:job.project}))comms.confirmStart(agent,thread,seq,generation);
   }
  };
@@ -145,7 +149,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
      if(closed)return;
      const job=store.read('job',row.job);
      if(!job?.startFailed||job.state!=='failed')continue;
-     const [agent,member,thread,conversation,seq,generation]=JSON.parse(row.id) as [string,string,string,string,number,number];
+     const {agent,member,thread,conversation,seq,generation}=deliveryRoute(row.id);
      if(job.agent!==agent||job.member!==member||job.conversation!==conversation||!available({agent,member,thread,conversation,seq,generation,project:job.project}))continue;
      try {await comms.startNotice(agent,thread,{kind:'start-failed',seq,generation,attempt:1,run:job.id});}
      catch { /* Concurrent crypto/scope changes remain durable for next reconciliation. */ }
