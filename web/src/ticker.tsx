@@ -65,4 +65,3 @@ export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; 
     </div>
   );
 }
-
