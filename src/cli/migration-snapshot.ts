@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
@@ -11,6 +11,15 @@ export interface SnapshotManifest {
   files: { path: string; sha256: string; bytes: number; kind: 'sqlite' | 'file' }[];
 }
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+function isSqlite(input: string): boolean {
+  if (!lstatSync(input).isFile()) return false;
+  const fd = openSync(input, 'r');
+  try {
+    const header = Buffer.alloc(16);
+    readSync(fd, header, 0, 16, 0);
+    return header.toString() === 'SQLite format 3\0';
+  } finally { closeSync(fd); }
+}
 const excluded = new Set(['node_modules', '.git']);
 export function canonicalSnapshotPath(path: string): string {
   if (existsSync(path)) return realpathSync(path);
@@ -40,8 +49,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
         // Only omit actual SQLite sidecars belonging to a database file.
         const base = name.replace(/(?:-wal|-shm|-journal)$/, '');
         if (base !== name && existsSync(join(input, base))) {
-          const bytes = readFileSync(join(input, base)).subarray(0, 16);
-          if (bytes.toString() === 'SQLite format 3\0') continue;
+          if (isSqlite(join(input, base))) continue;
         }
         await copy(join(input, name), join(path, name));
       }
@@ -50,15 +58,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     if (!stat.isFile()) return; // Unix sockets and other live handles are not data.
     const output = join(staging, path);
     mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
-    const fd = openSync(input, 'r');
-    let sqlite: boolean;
-    try {
-      // Reading a header never changes the source, including files without .db suffixes.
-      const { readSync } = await import('node:fs');
-      const header = Buffer.alloc(16);
-      readSync(fd, header, 0, 16, 0);
-      sqlite = header.toString() === 'SQLite format 3\0';
-    } finally { closeSync(fd); }
+    const sqlite = isSqlite(input);
     if (sqlite) {
       const db = new Database(input, { readonly: true, fileMustExist: true });
       try { await db.backup(output); } finally { db.close(); }

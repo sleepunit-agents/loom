@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { Readable } from 'node:stream';
+import { run } from './migrate.js';
 import { canonicalSnapshotPath, migrateSnapshot, createSnapshot, readSnapshot } from './migration-snapshot.js';
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -135,4 +136,15 @@ test('refuses a reserved directory with missing or interrupted completion manife
   expect(() => readSnapshot(to)).toThrow();
   writeFileSync(join(to, 'manifest.json'), '{"version":1,"files":[');
   expect(() => readSnapshot(to)).toThrow();
+});
+
+test('copies sidecar-like files when the base is a directory, through the public command', async () => {
+  const { home, to } = fixture();
+  mkdirSync(join(home, 'credentials'));
+  writeFileSync(join(home, 'credentials-journal'), 'keep');
+  const output: string[] = [];
+  const io = { stdout: (s: string) => output.push(s), stderr: (s: string) => output.push(s), stdin: Readable.from([]), stdinIsTTY: false, env: {} };
+  expect(await run(['snapshot', '--from', home, '--to', to], io)).toBe(0);
+  expect(readFileSync(join(to, 'home/credentials-journal'), 'utf8')).toBe('keep');
+  expect(readSnapshot(to).files.map(f => f.path)).toContain('home/credentials-journal');
 });
