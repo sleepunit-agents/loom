@@ -287,6 +287,11 @@ A registry retry returns the original acknowledgement without re-placement,
 even after the selected box is revoked; a changed request with the same id
 conflicts. Independent request ids create independent jobs.
 
+The caller-supplied `title` is visible job metadata, like the existing
+`runtime.job.title`; use a nonprivate summary, never a copy of sensitive brief
+content. Central scope controls who receives that metadata. The full `brief`
+and capability needs are private inputs.
+
 `runtime_inputs` stores the brief and capability needs separately from live
 job metadata. It is not a registry collection; no input-read operation is
 provided yet. Job, input and retry receipt commit together, and only committed

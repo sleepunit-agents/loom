@@ -68,6 +68,7 @@ it('keeps request words out of acknowledgements, live/registry collections and r
   const f = await setup(true), result = f.call(), job = f.jobOf(result);
   expect(result).toEqual({ ok: true, value: { job, state: 'queued' } });
   const collection = f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.listJobs', {});
+  expect(collection).toMatchObject({ ok: true, value: { records: [{ id: job, title: f.input.title }] } });
   expect(JSON.stringify(collection)).not.toContain(f.input.brief);
   expect(JSON.stringify(f.app.db.prepare("SELECT result FROM core_operations WHERE name='runtime.queueBody'").all())).not.toContain(f.input.brief);
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
