@@ -56,6 +56,9 @@ it('runs private conversation input/reply/status through actual next auth, socke
  expect(await f.post(f.runner,'runtime.reportJob',{job,state:'running'})).toMatchObject({ok:true});
  expect(await f.socket('comms.messages',{thread})).toMatchObject({ok:true});
  for(const secret of [f.runner,f.owner,f.unbound,f.token('agent:art@another')])expect(await f.post(secret,'runtime.readConversation',{})).toMatchObject({ok:false});
+ const wrongAgent=f.token(`agent:mark@${job}`);
+ expect(await f.post(wrongAgent,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(wrongAgent,'runtime.reply',{id:'wrong-agent-reply',conversation:runtimeStore(f.app.db).read('job',job)!.conversation,text:'forged Mark reply'})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true,value:{thread:{working:true},messages:[expect.objectContaining({text:'PRIVATE inbound sentinel'})]}});
  expect(await f.post(body,'runtime.reply',{id:'reply-1',text:'PRIVATE outbound sentinel'})).toMatchObject({ok:true});
  expect(await f.post(body,'runtime.reply',{id:'reply-1',text:'PRIVATE outbound sentinel'})).toMatchObject({ok:true});
