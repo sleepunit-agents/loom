@@ -1,6 +1,6 @@
 /** One Home browser proof, run in CI; fixtures never read a live home. */
 import { it, expect } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
@@ -36,16 +36,22 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await a.getByRole('button',{name:'Check again',exact:true}).click();await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     const shots=resolve('artifacts/attention-home');mkdirSync(shots,{recursive:true});
+    const overflows:unknown[]=[];
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});
       // Shell choice is made at boot: open at each size so 390 exercises the actual phone shell.
       await b.goto(loom.url);await expect.poll(()=>cards(b).count()).toBe(2);
       await b.getByRole('button',{name:'Check again',exact:true}).click();await expect.poll(()=>yes(b).isEnabled()).toBe(true);
       await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      expect(await b.locator('[data-attention-home]').evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
+      const dimensions=await b.locator('[data-attention-home]').evaluate(node=>({
+        home:[node.clientWidth,node.scrollWidth],page:[innerWidth,document.documentElement.scrollWidth],
+        wide:[...node.querySelectorAll('*')].filter(el=>el.scrollWidth>el.clientWidth).map(el=>({tag:el.tagName,classes:el.className,width:el.clientWidth,scroll:el.scrollWidth})),
+      }));
+      writeFileSync(join(shots,`home-${look}-${width}-layout.json`),JSON.stringify(dimensions,null,2));
+      if(dimensions.home[1]>dimensions.home[0] || dimensions.page[1]>dimensions.page[0])overflows.push({look,width,...dimensions});
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    expect(overflows).toEqual([]);
     await yes(a).click();await expect.poll(()=>yes(b).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);

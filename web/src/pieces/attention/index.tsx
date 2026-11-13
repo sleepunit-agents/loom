@@ -68,7 +68,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {ask.state === 'open' && !link && !ask.member && <>
       {!confirmed && <p role="status">{message || (checked.result?.ok === false ? `Couldn’t check this ask: ${checked.result.message}` : checked.result?.ok && checked.result.value.state !== 'open' ? 'This ask is no longer open.' : 'Checking whether this ask is still open…')}</p>}
       {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{const request=startCheck(guard,ask.id);if(request){setMessage('');setConfirmation({records:snapshot.records,request});}}}>Check again</Button>}
-      {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid gap-3">
+      {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid min-w-0 gap-3">
         <legend>Record your answer</legend>
         {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" onClick={()=>void answer({kind:'no'})}>No</Button></div>}
         {ask.answers === 'words' && <><label className="grid gap-1">Your answer<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
