@@ -117,3 +117,12 @@ During the remaining memory cutover, explicit knowledge isolation checks both
 An override cannot hide a hard link between local memory and selected knowledge;
 the active legacy store also remains protected. Memory tools still need explicit
 routing before the new stdio entry point can ship.
+
+Project hubs accept the same explicit People and conversation selections. Their
+People section uses the selected commons and private relationships; their
+conversation section reads local digest-backed records with core venue labels.
+With an explicit conversation selection (including standalone `null`), the MCP
+hub does not discover installed-piece feeds or open the legacy Comms app for
+filed threads. A caller may supply its own `pieceSections` source explicitly.
+Omitted selections retain the existing app-backed behavior. This is another
+reader prerequisite; the stdio entry point remains unchanged.
