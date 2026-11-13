@@ -23,6 +23,8 @@ export interface Wake extends Work {
   vouched?: { by: string; at: number };
 }
 export interface Schedule extends Work {
+  /** Authenticated agent that created this revision; capacity accounting only, never authority. */
+  apiOrigin?: string;
   id: string; at: string[]; days: string; by: Viewer; changedAt: number;
   lane?: string; enabled: boolean;
   laneDetails?: { text: string; source?: string; local: boolean };
