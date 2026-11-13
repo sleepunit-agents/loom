@@ -201,3 +201,55 @@ it('only household owners can administer machine principals or revoke tokens thr
   for(const token of callers){const headers={authorization:`Bearer ${token}`};expect((await f.post('/api/signin/setPrincipal',{id:'try-principal',input:{kind:'runner',id:'box',active:false}},headers)).status).toBe(403);expect((await f.post('/api/signin/revokeToken',{id:'try-revoke',input:{label:'owner'}},headers)).status).toBe(403);}
   expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer.id).toBe('jonathan');
 });
+it('records accepted bearer and browser use with persisted throttles and safe admin metadata',async()=>{
+  const f=await setup(), bearer={authorization:`Bearer ${f.agent}`}, cookie={cookie:`loom_ui=${f.cookie}`};
+  const used=()=>f.s.tokens.used(), seen=()=>f.s.sessions.get('sessions',hash(f.cookie))?.seenAt;
+  expect(used()).toEqual({});expect(seen()).toBeUndefined();
+  expect((await f.post('/api/tasks/list',{input:{}},bearer)).status).toBe(200);
+  const first=new Date(f.clock.now()).toISOString();expect(used()).toEqual({[hash(f.agent)]:first});expect(seen()).toBeUndefined();
+  const session=await(await f.get('/auth/session',cookie)).json();expect(session.viewer.id).toBe('jonathan');
+  expect(used()[hash(f.owner)]).toBe(first);expect(seen()).toBe(f.clock.now()/1000);
+  const start=f.clock.now();f.clock.advance(59_999);
+  await f.post('/api/tasks/list',{input:{}},bearer);await f.get('/auth/session',cookie);
+  expect(used()[hash(f.agent)]).toBe(first);expect(used()[hash(f.owner)]).toBe(first);expect(seen()).toBe(start/1000);
+  f.clock.advance(1);await f.post('/api/tasks/list',{input:{}},bearer);await f.get('/auth/session',cookie);
+  expect(used()[hash(f.agent)]).toBe(new Date(f.clock.now()).toISOString());expect(used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(seen()).toBe(start/1000);
+  f.clock.advance(240_000);await f.get('/auth/session',cookie);expect(seen()).toBe(f.clock.now()/1000);
+  const result=f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'token.list',{});expect(result).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({label:'agent',last_used:new Date(start+60_000).toISOString()})])});
+  const sessions=f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'sessions.list',{});expect(sessions).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ref:hash(f.cookie).slice(0,16),seenAt:f.clock.now()/1000})])});
+  // Pure reads, including the admin projection and validity probes, never report activity.
+  const before=used(),beforeSeen=seen();f.clock.advance(300_000);
+  f.s.token(hash(f.owner));f.s.session(f.cookie);f.loom.live.changed([{type:'core.access',id:'credentials'}]);
+  expect(used()).toEqual(before);expect(seen()).toBe(beforeSeen);
+});
+it('never records rejected credentials, cookie CSRF failures or invalid cookie upgrades',async()=>{
+  const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`};
+  expect((await f.post('/api/tasks/list',{input:{}},cookie)).status).toBe(401);
+  expect(f.s.resolve({headers:{...cookie,upgrade:'websocket',origin:'https://evil.invalid'},socket:{},method:'GET'} as unknown as import('node:http').IncomingMessage)).toBeUndefined();
+  expect((await f.post('/api/tasks/list',{input:{}},{authorization:'Bearer invalid'})).status).toBe(401);
+  expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
+  f.s.tokens.change(tokens=>{tokens.find(t=>t.label==='agent')!.revoked=new Date(f.clock.now()).toISOString();tokens.find(t=>t.label==='owner')!.expires=new Date(f.clock.now()).toISOString();});
+  expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${f.agent}`})).status).toBe(401);
+  expect((await(await f.get('/auth/session',cookie)).json()).viewer).toBeNull();expect(f.s.tokens.used()).toEqual({});
+});
+it('tracks incoming open-socket activity and publishes usage without passive validity refreshes',async()=>{
+  const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`,origin:f.loom.url};
+  const ws=await f.open(cookie),admin=await f.open({authorization:`Bearer ${f.owner}`});
+  admin.send(JSON.stringify({kind:'subscribe',type:'signin.admin'}));const snapshot=JSON.parse((await once(admin,'message'))[0].toString());expect(snapshot.kind).toBe('set');
+  const before=f.s.sessions.get('sessions',hash(f.cookie))!.seenAt;
+  f.clock.advance(300_000);const reset=once(admin,'message');f.loom.live.changed([{type:'core.access',id:'credentials'}]);await reset;
+  expect(f.s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(before);
+  const update=once(admin,'message');ws.send(JSON.stringify({kind:'subscribe',type:'task'}));
+  expect(JSON.parse((await once(ws,'message'))[0].toString()).kind).toBe('set');
+  const message=JSON.parse((await update)[0].toString());expect(message).toMatchObject({kind:'put',type:'signin.admin',record:{sessions:expect.arrayContaining([expect.objectContaining({ref:hash(f.cookie).slice(0,16),seenAt:f.clock.now()/1000})])}});
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());
+});
+it('does not turn diagnostic write failures into authentication failures or partial session usage',async()=>{
+  const f=await setup();
+  f.loom.db.exec("CREATE TRIGGER refuse_usage BEFORE INSERT ON household_token_use BEGIN SELECT RAISE(ABORT, 'fixture usage unavailable'); END");
+  expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${f.agent}`})).status).toBe(200);
+  expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer.id).toBe('jonathan');
+  expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
+  f.loom.db.exec('DROP TRIGGER refuse_usage');
+  await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+});

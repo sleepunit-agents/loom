@@ -26,7 +26,8 @@ export interface RecordType {
 const subscribe = z.object({ kind: z.literal('subscribe'), type: z.string(), scope: z.string().optional() });
 const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional() });
 interface Subscriber { window: boolean; valid(): boolean; viewer: Viewer; send(value: unknown): void; close(): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
-export interface Authentication { window?: boolean; viewer: Viewer; valid(): boolean; expiresAt?: number }
+/** activity records incoming authenticated use; valid stays a side-effect-free authority check. */
+export interface Authentication { activity?(): void; window?: boolean; viewer: Viewer; valid(): boolean; expiresAt?: number }
 export class Live {
   private types = new Map<string, RecordType>();
   private revisions = new WeakMap<object, number>();
@@ -130,6 +131,7 @@ export class Live {
           if (data && typeof data === 'object' && 'kind' in data && data.kind === 'unsubscribe') {
             const unsub = subscribe.extend({kind:z.literal('unsubscribe')}).safeParse(data);
             if (!unsub.success) return;
+            auth.activity?.();
             const key = JSON.stringify([unsub.data.type, unsub.data.scope]);
             const sub = c.types.get(key); sub?.cancel.forEach(cancel=>cancel());
             if(sub)this.revisions.set(sub,(this.revisions.get(sub)??0)+1);
@@ -137,6 +139,7 @@ export class Live {
           }
           const s = subscribe.safeParse(data);
           if (s.success) {
+            auth.activity?.();
             const type = this.types.get(s.data.type);
             if (type) { try { this.set(c, type, s.data.scope); } catch { this.failed(c); } }
             else c.send({ ok: false, code: 'not-found', message: 'Unknown record type' });
@@ -144,6 +147,7 @@ export class Live {
           }
           const op = call.safeParse(data);
           if (!op.success) { c.send({ ok: false, code: 'invalid', message: 'Invalid socket message' }); return; }
+          auth.activity?.();
           c.send({ kind: 'pending', request: op.data.request });
           const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }

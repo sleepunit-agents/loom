@@ -17,7 +17,7 @@ export function signinRoutes(app: Foundation) {
     return c.json(result,result.ok?200:result.code==='denied'?403:400);
   });
   routes.get('/auth/session',c=>{
-    const id=cookieId(c.env.incoming), current=id?s.session(id):undefined;
+    const id=cookieId(c.env.incoming), current=id?s.session(id,true):undefined;
     return current?c.json({viewer:current.viewer,csrf:s.csrf(id!)}):c.json({viewer:null});
   });
   routes.get('/login/:code',c=>{
