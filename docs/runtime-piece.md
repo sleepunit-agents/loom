@@ -996,7 +996,9 @@ house, recovery/import fence or unavailable placement holds the chain. No owner
 approval is fabricated and there is no release/revival operation in this unit.
 A held or exhausted chain remains inspectable and cannot silently restart.
 The exact original model, brief, title, explicit box and project remain the
-accepted intent. Owner setup changes do not create different work under that intent.
+accepted intent. An explicit box is pinned to the initially resolved id; a
+revoked id never falls back to another box with the same display name. A renamed
+original box keeps its identity. Owner setup changes do not create different work under that intent.
 
 `runtime.startProgress {job: <original job>}` returns only the root/current ids,
 attempt number, state and optional deadline, filtered by central job scope.

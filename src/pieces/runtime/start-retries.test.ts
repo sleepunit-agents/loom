@@ -133,3 +133,17 @@ it('pins the retry house across the queued-to-claimed interval and settles a suc
  expect(await f.post('finishJob',{job,state:'done'})).toMatchObject({ok:true});
  expect(f.progress(root)).toMatchObject({state:'settled',current:job,attempt:2});f.clock.advance(1_000_000);expect(f.store.ids('job')).toHaveLength(2);
 });
+it.each(['a','A'])('holds revoked explicit %s identity even when its name resolves to another eligible box',async(box)=>{
+ const f=await setup(),root=f.start({box});await f.fail(root);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...a}=f.store.read('box','a')!;
+  f.store.put('box',{...a,id:'b',name:box},f.clock.now());f.store.put('box',{...a,revokedAt:f.clock.now()},f.clock.now());
+ })();expect(canHost(f.store.read('box','b')!,'art',f.sharing)).toBe(true);
+ f.clock.advance(60_000);expect(f.progress(root).state).toBe('held');expect(f.store.ids('job')).toEqual([root]);
+});
+it('retains the initially resolved explicit identity across renaming and a new name collision',async()=>{
+ const f=await setup(),root=f.start({box:'A'});await f.fail(root);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...a}=f.store.read('box','a')!;f.store.put('box',{...a,name:'Renamed'},f.clock.now());f.store.put('box',{...a,id:'b',name:'A'},f.clock.now());
+ })();f.clock.advance(60_000);expect(f.store.read('job',f.progress(root).current)).toMatchObject({box:'a'});
+});

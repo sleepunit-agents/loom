@@ -60,11 +60,13 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
         const row=read(db,root)!;if(row.state!=='due'||row.due===undefined||row.due>clock.now())continue;
         const previous=store.read('job',row.current),original=store.read('job',root),input=startInput.parse(row.input);
         const scope={type:'runtime.job',agent:input.agent,project:input.project};
+        const explicit=input.box===undefined?undefined:original&&store.read('box',original.box);
         const access=sharing(),house=configuredHouse(store.read('settings',input.agent));
         // Revalidate the entire original intent: administration never authorizes
         // execution, and no imported/unknown/private/service work is eligible.
         if(!previous||!original||previous.state!=='failed'||!previous.startFailed||previous.imported||previous.writtenOff||previous.principalReset
           ||previous.member!==undefined||previous.service!==undefined||previous.conversation!==undefined
+          ||(input.box!==undefined&&(!explicit||explicit.revokedAt!==undefined))
           ||input.member!==undefined||input.conversation!==undefined||!house||!sameHouse(previous.made,house)
           ||!mayStart(row.by,scope,access)) {
           put(db,root,{...row,state:'held',due:undefined});changes.push({type:'runtime.job',id:root});continue;
@@ -74,7 +76,7 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
         const ctx:Context={db,viewer:row.by,now:clock.now(),changed:(type,id)=>changes.push({type,id})};
         try {
           // Selection rechecks current ownership, host policy, facts and lending.
-          enqueueBody(ctx,access,{id:job,agent:input.agent,project:input.project,title:input.title,model:input.model,account:input.account,startRequest:{box:input.box,house}},input);
+          enqueueBody(ctx,access,{id:job,agent:input.agent,project:input.project,title:input.title,model:input.model,account:input.account,startRequest:{box:input.box,house}},{...input,...(explicit?{box:explicit.id}:{})});
         } catch(error) {
           if(!(error instanceof OperationError))throw error;
           put(db,root,{...row,state:'held',due:undefined});changes.push({type:'runtime.job',id:root});continue;
