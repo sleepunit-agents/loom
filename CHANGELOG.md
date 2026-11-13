@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
+
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
 
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
+- Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
@@ -45,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add `loom serve --next --staging`: the separate new shell, registered app tiles and phone pane, one address router, and individually released outside work. Existing serve behavior is unchanged.
 
 - Keep agent-created unscoped foundation tasks in their own queue; let the offline tasks importer assign projectless tasks with `--agent`.
+
+- Next-mode local operators can create audited, single-use sign-in links without a bearer token; first start prints an owner link once.
 
 - Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.
 

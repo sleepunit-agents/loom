@@ -1,10 +1,12 @@
+import { resolveGrantAttention } from './attention-resolution.js';
+import type { GrantAttention } from './index.js';
 import type { Context } from '../../core/index.js';
 import { readSecretPolicy } from './policy.js';
 import type { GrantRequest } from './role.js';
 
 /** Metadata half of removal, inside the value operation's transaction. Existing
  * bodies cannot have their copies recalled; subsequent uses must ask again. */
-export function removeSecretMetadata(ctx: Context, name: string) {
+export function removeSecretMetadata(ctx: Context, name: string, attention?: GrantAttention) {
   const { db } = ctx;
   const grants = db.prepare("SELECT id FROM secrets_grants WHERE kind='secret' AND target=?").all(name) as { id: string }[];
   for (const { id } of grants) {
@@ -17,6 +19,7 @@ export function removeSecretMetadata(ctx: Context, name: string) {
     if (request.kind !== 'secret' || request.target !== name || !['pending', 'allowed'].includes(request.state)) continue;
     request.state = request.state === 'pending' ? 'cancelled' : 'revoked';
     db.prepare('UPDATE secrets_requests SET record=? WHERE id=?').run(JSON.stringify(request), request.id);
+    resolveGrantAttention(attention, request, ctx);
     ctx.changed('secret.request', request.id);
   }
   const policy = readSecretPolicy(db);
