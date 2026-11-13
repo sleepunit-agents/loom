@@ -291,3 +291,24 @@ async function receiptSetup(){
   const app=await startLoom({home:appHome,next:true,staging:true,clock:new FakeClock(),stdout:()=>{}});
   closes.push(app.close);return s;
 }
+
+it('closes a raw receipt caller at the server deadline without disclosing late evidence',async()=>{
+  const {client,server,authority,who}=await receiptSetup();let finish!:(member:string)=>void;
+  authority.mockResolvedValueOnce('actual-owner').mockResolvedValueOnce('actual-owner').mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const hasReceipt=vi.fn(()=>true),set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove,hasReceipt},authority);closes.push(holder.close);
+  vi.useFakeTimers();let closed=false;const responses:Buffer[]=[];
+  const peer=tlsConnect({path:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),minVersion:'TLSv1.3'},()=>{
+    peer.write(['POST /v1/receipt HTTP/1.1','Host: holder.test','Connection: close','Content-Type: application/octet-stream','Content-Length: 0',
+      `X-Holder-Member: ${Buffer.from(who.member).toString('base64url')}`,`X-Holder-Write-Id: ${who.writeId}`,'',''].join('\r\n'));
+  });
+  peer.on('data',bytes=>responses.push(bytes));peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+  try{
+    await vi.waitFor(()=>expect(authority).toHaveBeenCalledTimes(3));expect(hasReceipt).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));
+    expect(Buffer.concat(responses).length).toBe(0);
+    finish('actual-owner');await Promise.resolve();await Promise.resolve();
+    expect(Buffer.concat(responses).length).toBe(0);expect(hasReceipt).toHaveBeenCalledOnce();
+    expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+  }finally{peer.destroy();vi.useRealTimers();}
+});
