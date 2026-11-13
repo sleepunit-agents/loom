@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { startLoom, createFoundation } from '../../foundation.js';
 import { FakeClock } from '../clock.js';
 import { migrateHouseholdTables } from '../household/schema.js';
+import { HouseholdRows } from '../household/rows.js';
 import { HouseholdDatabase } from '../household/document.js';
 import { importHousehold } from '../../cli/household-importer.js';
 import { runSigninLink } from './client.js';
@@ -28,7 +29,8 @@ function home() { const path = mkdtempSync(join(tmpdir(), 'local-signin-')); cle
 async function setup() {
   const path = home(), clock = new FakeClock();
   const seed = createFoundation({ home: path, clock }); migrateHouseholdTables(seed.db);
-  seed.db.transaction(() => new HouseholdDatabase(seed.db).replace(path, { v: 1, agents: ['art'], owner: 'jonathan', members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'guest', role: 'member', agents: ['art'] }] }))(); seed.close();
+  seed.db.transaction(() => new HouseholdDatabase(seed.db).replace(path, { v: 1, agents: ['art'], owner: 'jonathan', members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'guest', role: 'member', agents: ['art'] }] }))();
+  new HouseholdRows(seed.db, 'settings').put('signin-first-link-printed', true); seed.close();
   const app = await startLoom({ home: path, next: true, clock, stdout: () => {} }); cleanup.push(() => app.close());
   return { path, clock, app };
 }
@@ -119,6 +121,8 @@ it('first start creates a household and prints one owner link, with no second pr
   const path = home(), clock = new FakeClock(); let output = '';
   const first = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } });
   const member = signin(first).household()!.members[0].person;
+  expect(first.db.prepare('SELECT member, label, expires FROM signin_audit').all()).toEqual([{ member, label: 'First sign-in', expires: clock.now() / 1000 + 300 }]);
+  expect(JSON.stringify(first.db.prepare('SELECT * FROM signin_audit').all())).not.toContain(new URL(output.trim()).pathname.slice('/login/'.length));
   expect(output.trim()).toMatch(/^http:\/\/127.0.0.1:\d+\/login\/[0-9a-f]{64}$/);
   expect(existsSync(join(path, 'household.json'))).toBe(false);
   const linkPath = new URL(output.trim()).pathname; await first.close();
@@ -164,4 +168,12 @@ it('a lost local response is never retried and prints no credential', async () =
     const result = await cli(['--home', path, '--member', 'guest']); expect(result.code).toBe(1); expect(result.output).toBe('');
     expect(requests).toBe(1); expect(connections).toBe(1);
   } finally { await new Promise<void>(ok => server.close(() => ok())); }
+});
+
+it('the CLI and daemon startup refuse a home owned by a different OS user', async () => {
+  const f = await setup(); fault.wrongOwner = f.path;
+  expect((await cli(['--home', f.path, '--member', 'guest'])).code).toBe(1);
+  const path = home(); fault.wrongOwner = path;
+  await expect(startLoom({ home: path, next: true, stdout: () => {} })).rejects.toThrow('Operator home must belong');
+  expect(existsSync(join(path, 'loom.db'))).toBe(false); expect(existsSync(join(path, 'operator.sock'))).toBe(false);
 });

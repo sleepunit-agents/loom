@@ -109,7 +109,7 @@ export function firstSignin(app: Foundation, home: string, url: string, stdout: 
     if (settings.get('signin-first-link-printed')) return;
     if (Object.keys(s.sessions.read().sessions).length) { settings.put('signin-first-link-printed', true); return; }
     const member = s.household()!.members.find(m => m.agents === '*')!.person;
-    const path = s.link(member, 'First sign-in');
+    const path = localLink(app, { request: 'link', member, label: 'First sign-in', ttl: 300 });
     settings.put('signin-first-link-printed', true);
     return path;
   }).immediate();
