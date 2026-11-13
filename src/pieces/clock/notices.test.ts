@@ -160,7 +160,9 @@ it('does not reopen an acknowledged quota notice when the pending wake retries a
 
 it('omits file and private scope metadata from household notices', async () => {
   const a = await setup();
-  const w = a.outcome(a.set({ prompt: undefined, file: 'PRIVATE-FILE.md', project: 'PRIVATE-PROJECT', member: 'jonathan' }), { state: 'not-started', code: 'quota', reason: 'PRIVATE-ERROR' });
+  const made=await a.app.operations.callAsync('socket',owner,'clock.in',{agent:'art',file:'PRIVATE-FILE.md',project:'PRIVATE-PROJECT',member:'jonathan',note:'PRIVATE NOTE',when:'1m'},randomUUID(),true);
+  if(!made.ok)throw Error(JSON.stringify(made));
+  const w = a.outcome(made.value as Wake, { state: 'not-started', code: 'quota', reason: 'PRIVATE-ERROR' });
   expect(a.notices()).toMatchObject([{ id: `clock:${w.id}:quota`, refs: [w.id] }]);
   expect(JSON.stringify(a.notices())).not.toMatch(/PRIVATE|jonathan/);
 });
