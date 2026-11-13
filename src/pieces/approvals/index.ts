@@ -24,24 +24,28 @@ export interface ApprovalOptions {
 export function installApprovals(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ApprovalOptions = {}) {
   migrate(db,'approvals',schema);
   const context = (viewer: Viewer, input: Record<string,unknown>, now: number, piece = false): DomainContext => {
-    const resolved = options.caller?.(viewer,typeof input.principal === 'string' ? input.principal : undefined);
+    const resolved = piece ? input.caller as Caller : options.caller?.(viewer,typeof input.principal === 'string' ? input.principal : undefined);
     const caller: Caller = resolved ?? { who:{agent:viewer.id,where:'a body'},for:'?' };
     if (!callerSchema.safeParse(caller).success) denied('Invalid authenticated caller context');
     // A resolver cannot authenticate another agent under this viewer.
     if (viewer.kind === 'agent' && caller.who.agent !== viewer.id) denied('Caller agent does not match viewer');
-    return { caller,now,piece,localAgent:options.localAgent ?? 'agent',projects:options.projects?.() };
+    return { caller,now,piece,localAgent:options.localAgent ?? 'agent',projects:options.projects?.(),canRead:a=>visible(viewer,a) };
   };
   const visible = (viewer: Viewer, a: Approval) => maySee(viewer,scope(a),sharing());
   const owner = (v: Viewer, name: string) => mayAct(v,{type:'approval-rule'},sharing(),'household',name);
   const flush = (s: State, ctx: {now:number;changed(type:string,id:string):void}) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); };
   const register = (verb: string, write: boolean, run: (s:State,input:Record<string,unknown>,c:DomainContext,viewer:Viewer)=>unknown, config: { owner?:boolean; answer?:boolean; piece?:boolean; read?:boolean } = {}) => {
     const name = `approvals.${verb}`;
-    const approvalId = ['check','use','withdraw','answer','open','always','every-time'].includes(verb);
-    const inputSchema = approvalId ? z.object({id:z.string().regex(/^a-[0-9a-f]{8}$/)}).catchall(z.unknown())
+    const approvalId = ['check','use','withdraw','answer','open','always','every-time'].includes(verb.replace(/^piece-/,''));
+    const payloadSchema = approvalId ? z.object({id:z.string().regex(/^a-[0-9a-f]{8}$/)}).catchall(z.unknown())
       : verb === 'standing-off' ? z.object({id:z.string().regex(/^s-[0-9a-f]{8}$/)}).catchall(z.unknown())
       : z.record(z.string(),z.unknown());
+    const inputSchema = config.piece ? payloadSchema.and(z.object({caller:callerSchema}).catchall(z.unknown())) : payloadSchema;
     operations.register(operation({ name,write,input:inputSchema,output:z.unknown(),cli:approvalCommands.find(c=>c.name===verb),...(config.piece ? {doors:['direct'] as ['direct']} : {}),
-      ...(verb === 'use' ? { rejected(viewer:Viewer,input:Record<string,unknown>,_failure:unknown,now:number) { auditRefusedUse(db,input,context(viewer,input,now).caller,now); } } : {}),
+      ...(['use','piece-use'].includes(verb) ? { rejected(viewer:Viewer,input:Record<string,unknown>,_failure:unknown,now:number) {
+        if(config.piece && (viewer.kind!=='service'||!mayAct(viewer,{type:'approval'},sharing(),'act',name))) return;
+        auditRefusedUse(db,input,context(viewer,input,now,!!config.piece).caller,now,!!config.piece);
+      } } : {}),
       may(viewer,input) {
         if (config.owner) {
           if (!owner(viewer,name)) return false;
@@ -51,7 +55,12 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
           }
           return true;
         }
-        if (config.piece) return viewer.kind === 'service' && mayAct(viewer,{type:'approval'},sharing(),'act',name);
+        if (config.piece) {
+          if(viewer.kind!=='service'||!mayAct(viewer,{type:'approval'},sharing(),'act',name)) return false;
+          if(!approvalId) return true;
+          const approval=readApproval(db,String(input.id));
+          return !approval||mayAct(viewer,scope(approval),sharing(),'act',name);
+        }
         if (approvalId) {
           const a = readApproval(db,String(input.id)); if (!a) return maySee(viewer,{type:'approval',agent:viewer.id},sharing());
           if (config.answer) return mayAct(viewer,scope(a),sharing(),ownerAnswered.has(a.kind) ? 'household' : 'answer-person',name);
@@ -65,8 +74,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
         return viewer.kind === 'agent' || owner(viewer,name);
       },
       run(ctx,input) {
-        const s = load(db), c = config.piece ? { caller: input.caller as Caller, now: ctx.now, piece: true, localAgent: options.localAgent ?? 'agent', projects: options.projects?.() } : context(ctx.viewer,input,ctx.now);
-        if (!callerSchema.safeParse(c.caller).success) invalid('A piece call needs its authenticated caller context');
+        const s = load(db), c = context(ctx.viewer,input,ctx.now,!!config.piece);
         const result = run(s,input,c,ctx.viewer); if (write) flush(s,ctx); return result;
       },
     }));
@@ -80,7 +88,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing]:[],mayEdit:owner(v,'approvals.set-rule')}));
-  register('rule',false,(s,i,c)=>rulesFor(s,c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now));
+  register('rule',false,(s,i,c,v)=>rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now));
   register('set-rule',true,(s,i,c,v)=>setRule(s,String(i.kind),String(i.scope),String(i.tier),v.id,c.now,typeof i.person==='string'?i.person:undefined),{owner:true});
   register('always',true,(s,i,c,v)=>always(s,String(i.id),v.id,c),{owner:true});
   register('every-time',true,(s,i,c,v)=>allowEveryTime(s,String(i.id),v.id,c),{owner:true});
@@ -89,24 +97,12 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('tell',true,recordNotice);
   register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>maySee(v,{type:'approval',agent:n.agent},sharing()))}));
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&visible(v,a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
-  // Direct-only roles are authenticated as a service with explicit central grants. No user-controlled --as exists.
-  for (const verb of ['request','use','withdraw','rule','tell'] as const) {
-    const name=`approvals.piece-${verb}`;
-    operations.register(operation({name,write:verb!=='rule',doors:['direct'],input:z.record(z.string(),z.unknown()),output:z.unknown(),
-      ...(verb === 'use' ? { rejected(viewer:Viewer,input:Record<string,unknown>,_failure:unknown,now:number) { if(viewer.kind==='service'&&mayAct(viewer,{type:'approval'},sharing(),'act',name)&&callerSchema.safeParse(input.caller).success) auditRefusedUse(db,input,input.caller as Caller,now,true); } } : {}),
-      may:(v)=>v.kind==='service'&&mayAct(v,{type:'approval'},sharing(),'act',name),run(ctx,input){
-      const caller=input.caller as Caller;
-      if(!callerSchema.safeParse(caller).success) invalid('A piece call needs its authenticated caller context');
-      const c:DomainContext={caller,now:ctx.now,piece:true,localAgent:options.localAgent??'agent',projects:options.projects?.()},s=load(db);
-      let result:unknown;
-      if(verb==='request') result=request(s,input,c);
-      else if(verb==='use') result=use(s,String(input.id),String(input.kind),String(input.target),c);
-      else if(verb==='withdraw') result=withdraw(s,String(input.id),c);
-      else if(verb==='rule') result=rulesFor(s,caller,String(input.kind),Array.isArray(input.targets)?input.targets.map(String):[],c.projects,c.now);
-      else result=recordNotice(s,input,c);
-      if(verb!=='rule')flush(s,ctx);return result;
-    }}));
-  }
+  // Services share the same registration, validation and scope checks as body operations.
+  register('piece-request',true,(s,i,c)=>request(s,i,c),{piece:true});
+  register('piece-use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c),{piece:true});
+  register('piece-withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c),{piece:true});
+  register('piece-rule',false,(s,i,c,v)=>rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now),{piece:true});
+  register('piece-tell',true,recordNotice,{piece:true});
   register('standing',true,(s,i,c)=>{
     if(i.check) {const j=s.standing.find(j=>j.id===i.check&&j.agent===c.caller.who.agent);return {state:j?j.off?'off':'on':'none'};}
     const j=standingMatch(s,String(i.kind),String(i.target),String(i.digest),c);if(!j)throw new OperationError('not-found',`no standing job for ${i.kind} ${i.target}: it asks`);return j;

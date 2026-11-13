@@ -4,12 +4,12 @@ import { type State, type Approval, type Caller, type Standing, iso, stateOf, ma
 import { invalid, denied, exactTarget, repoOf, hostOf, grantOf, vouchOf, resetOf, writeoffOf, covered, standingTarget } from './targets.js';
 import { plain, checkPlain } from './words.js';
 import { rulesFor, setRule, type Project } from './rules.js';
-export interface DomainContext { caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string }
+export interface DomainContext { caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string; canRead?: (approval:Approval)=>boolean }
 export function find(s: State, id: string): Approval { const a = s.approvals.find(a => a.id === id); if (!a) throw new OperationError('not-found', `no approval ${id}`); return a; }
 export function log(s: State, event: string, a: { id: string; kind: string; target: string; who: unknown }, now: number, extra = {}) { s.audit.push({ at: iso(now), event, id: a.id, kind: a.kind, target: a.target, who: a.who, ...extra }); }
 const newest = (s: State, a: Approval) => s.approvals.filter(b => b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && b.decided).sort((a,b) => b.decided!.localeCompare(a.decided!))[0];
 function denySiblings(s: State, a: Approval, now: number, by: string) {
-  for (const b of s.approvals) if (b.id !== a.id && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && (stateOf(b,now) === 'allowed' || stateOf(b,now) === 'pending' && !b.conversation)) {
+  for (const b of s.approvals) if (b.member === a.member && b.id !== a.id && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && (stateOf(b,now) === 'allowed' || stateOf(b,now) === 'pending' && !b.conversation)) {
     Object.assign(b,{ state: 'denied', decided: iso(now), superseded_by: a.id, by }); delete b.expires; log(s,'deny-superseded',b,now,{ by_deny: a.id });
   }
 }
@@ -62,11 +62,12 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
       if (a.kind !== kind || a.who.agent !== caller.who.agent || a.target === target && ['pending','allowed'].includes(stateOf(a,now))) continue;
       const both = covered(a).filter(id => covered({kind,target}).includes(id));
       if (!both.length) continue;
+      if (c.canRead && !c.canRead(a)) denied('An existing decision prevents this request');
       if (a.state === 'denied') denied(`the owner said no for ${both.join(' ')} already (${a.id}): not asked again`);
       if (['pending','allowed'].includes(stateOf(a,now))) denied(`${a.id} already covers ${both.join(' ')}: withdraw or apply it first`);
     }
   }
-  for (const a of s.approvals) if (a.kind === kind && a.target === target && maySpend(a.who,caller.who) && samePrincipal(a,caller) && ['pending','allowed'].includes(stateOf(a,now))) {
+  for (const a of s.approvals) if ((!c.canRead || c.canRead(a)) && a.kind === kind && a.target === target && maySpend(a.who,caller.who) && samePrincipal(a,caller) && ['pending','allowed'].includes(stateOf(a,now))) {
     const last = newest(s,a);
     if (stateOf(a,now) === 'allowed' && last?.state === 'denied' && last.decided! > (a.decided ?? '')) continue;
     if (stateOf(a,now) === 'pending') {
@@ -75,7 +76,7 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
     }
     return a;
   }
-  const granted = s.approvals.filter(a => a.granted && a.kind === kind && a.target === target && a.who.agent === caller.who.agent && samePrincipal(a,caller) && ['allowed','denied'].includes(stateOf(a,now))).sort((a,b) => b.at.localeCompare(a.at))[0];
+  const granted = s.approvals.filter(a => (!c.canRead || c.canRead(a)) && a.granted && a.kind === kind && a.target === target && a.who.agent === caller.who.agent && samePrincipal(a,caller) && ['allowed','denied'].includes(stateOf(a,now))).sort((a,b) => b.at.localeCompare(a.at))[0];
   if (granted) return { ...granted,state: stateOf(granted,now) };
   const a: Approval = { id: `a-${c.id?.() ?? randomBytes(4).toString('hex')}`, kind,target,what,why,who: caller.who, for: caller.for, ...(caller.people?.length ? { people: caller.people } : {}), ...(conversation ? { conversation } : {}), ...(digest ? { digest } : {}), ...words, minutes: Math.max(1,Math.min(Number(input.minutes) || 60,480)), at: iso(now),state: 'pending',agent: caller.who.agent, ...(caller.project ? { project: caller.project } : {}) };
   s.approvals.push(a); log(s,'request',a,now,{what,why}); return a;
@@ -90,9 +91,9 @@ export function use(s: State, id: string, kind: string, target: string, c: Domai
   if (a.kind !== kind || a.target !== target) denied(`${id} allows ${a.kind} for ${a.target}, not ${kind} for ${target}`);
   if (!(c.piece && kind === 'grant') && !samePrincipal(a,caller)) denied(`${id} was asked for ${forOf(a)}; this body acts for ${caller.for}`);
   const last = newest(s,a);
-  if (last?.id !== id && last?.state === 'denied' && last.decided! > (a.decided ?? '')) denied(`${id} was overruled: the owner said no to ${target} after (${last.id})`);
+  if (last?.id !== id && last?.state === 'denied' && last.decided! > (a.decided ?? '')) { if(c.canRead && !c.canRead(last)) denied('A later decision prevents this spend'); denied(`${id} was overruled: the owner said no to ${target} after (${last.id})`); }
   const no = s.approvals.find(b => b.id !== id && b.kind === kind && b.state === 'denied' && b.who.agent === a.who.agent && (b.decided ?? '') > (a.decided ?? '') && covered(b).some(id => covered(a).includes(id)));
-  if (no) denied(`${id} was overruled: the owner said no to some of it after (${no.id})`);
+  if (no) { if(c.canRead && !c.canRead(no)) denied('A later decision prevents this spend'); denied(`${id} was overruled: the owner said no to some of it after (${no.id})`); }
   a.state = 'used'; a.used = iso(now); log(s,'use',a,now); return a;
 }
 export function answer(s: State, id: string, action: string, by: string, now: number, minutes?: number) {
@@ -112,7 +113,7 @@ export function withdraw(s: State, id: string, c: DomainContext) {
 export function grant(s: State, kind: string, target: string, agent: string, by: string, deny: boolean, principal: string, now: number) {
   if (kind !== 'merge' || !repoOf(target)) invalid('grant is for a merge approval: --kind merge --target <forge>:<locator>#<n>@<head>');
   if (!/^[a-z][a-z0-9-]{0,39}$/.test(agent)) invalid('--for is the agent whose change it is');
-  const pending = s.approvals.filter(a => a.kind === kind && a.target === target && a.who.agent === agent && forOf(a) === principal && stateOf(a,now) === 'pending' && !a.conversation).sort((a,b) => b.at.localeCompare(a.at))[0];
+  const pending = s.approvals.filter(a => a.kind === kind && a.target === target && a.who.agent === agent && forOf(a) === principal && stateOf(a,now) === 'pending' && !a.conversation && !a.member).sort((a,b) => b.at.localeCompare(a.at))[0];
   if (pending) return answer(s,pending.id,deny ? 'deny' : 'allow',by,now,1440);
   const a: Approval = { id: `a-${randomBytes(4).toString('hex')}`,kind,target,what: `merge ${target.split('@')[0]}`,why: `the owner said ${deny ? 'not yet' : 'yes, merge it'}`,who: { agent,where: 'any' },agent,for: principal,granted: true,minutes: 1440,at: iso(now),state: deny ? 'denied' : 'allowed',decided: iso(now),by,...(!deny ? { expires: iso(now+86400_000) } : {}) };
   if (deny) denySiblings(s,a,now,by); s.approvals.push(a); log(s,deny ? 'grant-deny' : 'grant',a,now); return a;

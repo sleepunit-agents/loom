@@ -199,7 +199,7 @@ describe('standing local jobs',()=>{
     a.value('every-time',{id:card.id},owner);
     expect(a.value('check',{id:card.id})).toEqual({state:'allowed'});
     const input={kind:'local-wake',target:localTarget,digest};
-    expect(a.call('standing',input)).toMatchObject({code:'denied'});
+    expect(a.call('standing',input)).toMatchObject({ok:false});
     const first=a.role.standing(caller,input,'standing-1');
     expect(first).toMatchObject({ok:true,value:{uses:1}});
     expect(a.role.standing(caller,input,'standing-1')).toEqual(first);
@@ -401,5 +401,46 @@ describe('service notices',()=>{
     const a=await setup();a.value('set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell',person:'loren'},owner);
     expect(a.role.call('tell',{who:{agent:'art',where:'h-1'},for:'loren'},{kind:'merge',target,what:'Fixed the page.'},'notice')).toMatchObject({ok:true,value:{for:'loren'}});
     expect(load(a.db).notices).toHaveLength(1);
+  });
+});
+
+describe('private decision lookups',()=>{
+  it('does not disclose private receipts through rule or request deduplication',async()=>{
+    const a=await setup(),card=a.value('request',ask),state=load(a.db);
+    state.approvals[0].member='pollock';persist(a.db,state,a.clock.now());
+    expect(a.value('rule',{kind:'merge',targets:[target]})[target]).not.toHaveProperty('approval');
+    expect(a.role.call('rule',{who:{agent:'art',where:'h-1'},for:'owner'},{kind:'merge',targets:[target]},'private-rule')).toMatchObject({ok:true,value:{[target]:{tier:'ask'}}});
+    const duplicate=a.value('request',ask);expect(duplicate.id).not.toBe(card.id);
+    expect(load(a.db).approvals).toHaveLength(2);
+    expect(a.role.call('withdraw',{who:{agent:'art',where:'h-1'},for:'owner'},{id:card.id},'private-withdraw')).toMatchObject({ok:false,code:'denied'});
+  });
+  it('owner pregrants leave private pending and allowed cards untouched',async()=>{
+    const a=await setup(),card=a.value('request',ask),state=load(a.db);
+    state.approvals[0].member='pollock';persist(a.db,state,a.clock.now());
+    const yes=a.value('grant',{kind:'merge',target,for:'art'},owner);
+    expect(yes.id).not.toBe(card.id);
+    a.value('answer',{id:card.id,action:'allow'},pollock);
+    a.value('grant',{kind:'merge',target,for:'art',deny:true},owner);
+    expect(load(a.db).approvals.find(r=>r.id===card.id)?.state).toBe('allowed');
+    expect(a.role.call('use',{who:{agent:'art',where:'h-1'},for:'owner'},{id:card.id,kind:'merge',target},'private-use')).toMatchObject({ok:false,code:'denied'});
+  });
+});
+
+describe('host answer authority',()=>{
+  it('a sharing member sees a host question but only the household owner answers, and only the service spends',async()=>{
+    const a=await setup();a.identity({project:'pond'});
+    const target='restart:loom-http.service',card=a.value('request',{...ask,kind:'host',target});
+    expect(a.value('check',{id:card.id},pollock)).toEqual({state:'pending'});
+    expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({ok:false,code:'denied'});
+    a.value('answer',{id:card.id,action:'allow'},owner);
+    expect(a.call('use',{id:card.id,kind:'host',target})).toMatchObject({ok:false,code:'denied'});
+    expect(a.role.call('use',{who:{agent:'art',where:'h-1'},for:'owner'},{id:card.id,kind:'host',target},'host-spend')).toMatchObject({ok:true,value:{state:'used'}});
+  });
+  it('an existing allowed pregrant satisfies an identical owner-principal request without rewriting its provenance',async()=>{
+    const a=await setup(),yes=a.value('grant',{kind:'merge',target,for:'art'},owner),conversation='cv-0123456789ab';
+    a.identity({conversation});
+    const card=a.value('request',{...ask,conversation});
+    expect(card).toMatchObject({id:yes.id,state:'allowed'});expect(card).not.toHaveProperty('conversation');
+    expect(load(a.db).approvals).toHaveLength(1);
   });
 });

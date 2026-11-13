@@ -57,7 +57,10 @@ explicitly granted service viewer, for their authenticated caller context.
 Spending remains exact-kind, exact raw target, same agent, service constraint,
 same principal/unknown people set, before expiry, once. New denials revoke
 older unspent allows, including overlaps for wake vouches. The registry's retry
-receipt makes retries of the same spend return its prior result.
+receipt makes retries of the same spend return its prior result. A pregrant never
+answers an existing conversation card. An already allowed pregrant can satisfy a
+later identical request for its same authenticated principal; its provenance is
+kept, rather than rewritten to claim it was asked in that conversation.
 
 ## Import and final move
 
