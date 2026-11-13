@@ -4,7 +4,7 @@ import { boxRecord } from './records.js';
 import { runtimeStore } from './store.js';
 
 const localIdentity = boxRecord.pick({ id: true, name: true, owner: true }).strict();
-const report = z.object({
+export const boxReport = z.object({
   facts: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,31}(:[A-Za-z0-9._ +-]{1,64})?$/)).max(32).optional(),
 }).strict();
 const time = z.number().int().safe();
@@ -37,14 +37,14 @@ export function initializeLocalBox(db: Db, input: z.infer<typeof localIdentity>,
   return { box: identity.id, changed };
 }
 
-/** Internal metadata update, NOT runner authentication. A future operation must
+/** Internal metadata update, NOT runner authentication. The calling operation must
  * obtain boxId from a centrally authenticated runner principal, never body input
  * or a display name, before calling. No credential issuance, dispatch or report
  * forwarding here. Caller owns the transaction and committed notification.
  */
-export function hearBox(db: Db, boxId: string, input: z.infer<typeof report>, now: number) {
+export function hearBox(db: Db, boxId: string, input: z.infer<typeof boxReport>, now: number) {
   requireTransaction(db);
-  const checked = report.parse(input);
+  const checked = boxReport.parse(input);
   time.parse(now);
   const store = runtimeStore(db);
   const before = store.read('box', boxId);

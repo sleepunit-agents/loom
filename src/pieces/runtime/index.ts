@@ -5,6 +5,7 @@ import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
 import { installBoxOperations } from './boxes.js';
 import { installRevokeBox } from './revoke.js';
+import { installRunnerReports } from './runner.js';
 import type { RuntimeCredentials } from './credentials.js';
 const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
 /** Control metadata. Execution is installed separately with its runner implementation. */
@@ -12,6 +13,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);
+  installRunnerReports(db, operations, sharing);
   installRevokeBox(db, operations, sharing, options.credentials);
   const names = { box: 'listBoxes', job: 'listJobs', settings: 'listSettings', binding: 'listBindings' };
   for (const kind of Object.keys(records) as RecordKind[]) {

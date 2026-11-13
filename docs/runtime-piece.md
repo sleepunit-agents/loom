@@ -173,3 +173,31 @@ Account grouping, metadata schemas/storage, retention, owner-only keys versus
 labels, account operations and UI, `usageOf`, resolver/model settings and provider
 refusal parsing are unfinished. No legacy account command or runner behavior is
 changed by this calculation module.
+
+## Authenticated runner heartbeat
+
+`POST /api/runtime/hearBox` accepts `{input: {facts?: string[]}, id}` through
+next mode's central bearer authentication. Only a `runner:<box-id>` token whose
+central principal is active may report. The exact authenticated id must name a
+live enrolled box; a display name, missing record or revoked box is refused.
+The new central `report-box` action permits this write without permitting box
+registry reads. Members, agents and services cannot report, even with service
+type and operation grants. The operation returns only `{box: id}`.
+
+This replaces the facts/lastSeen portion of old `hello` and `pollState`, using
+`hearBox` in the registry transaction. Facts are validated with the existing
+32-entry grammar, deduplicated, preserved when omitted and cleared by `[]`.
+Only facts and server `lastSeen` change. Owner metadata, labels, configuration,
+report-only status and hosting permissions remain untouched. A changed report
+publishes `runtime.box` after commit; an identical report at the same server
+time publishes nothing. A retry with the same operation id returns its original
+acknowledgement without refreshing `lastSeen`; every new heartbeat needs a fresh
+id. A later database failure rolls back the report, receipt and notification.
+
+This endpoint does not enroll or issue credentials, choose local identity,
+return jobs or account/harness reports, dispatch work or replace the full old
+hello/poll response. Those interfaces and central runtime credential lifecycle
+remain required before the final move. No runner installation or live host
+change accompanies this endpoint. Earlier lifecycle helper descriptions of a
+future runner operation now refer to this facts-only endpoint; the broader
+runner API remains unfinished.
