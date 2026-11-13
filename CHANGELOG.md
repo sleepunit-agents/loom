@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
+
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
 
 - Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.
