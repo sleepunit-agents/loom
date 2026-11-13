@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useRecords, call, type Call } from '../../data';
-import { Split, List, Row, Empty, Loading, Error, Input, Button, type SplitFolder } from '../../kit';
-import { prose } from '../../../../src/ui/prose';
+import { Split, List, Row, Empty, Loading, Error, Input, Button, prose, type SplitFolder } from '../../kit';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};

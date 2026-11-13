@@ -45,3 +45,26 @@ Raw verdict BLOCKING, three critical, four major, one nit.
   from the former, desktop images from the latter.
 
 No known findings left standing after these folds. Round 2 pending.
+
+## Round 2
+
+Frozen commit 54880ed0cfbe276f60ce0649a931707de6a457a6 (before the
+GitHub-conflict-only rebase to 59be3f85e151b4cde22efa51331f59c43dea63cd;
+only CHANGELOG needed resolution, preserving both entries).
+TREE sha256:3772b3af500d49cb506795399212041d7b9af354853656832dc52976ae24fd78.
+Raw verdict BLOCKING: one critical, two major, one nit.
+
+- Major / valid actionable: screen reached the shared renderer outside kit.
+  Exported the existing pure safe markdown renderer through kit and changed the
+  screen to consume that public interface. Web build/kit checks cover the import.
+- Critical / valid actionable: post-bind chmod failure leaked the current source
+  listener because the group had not yet received its stop function. The binder
+  now owns cleanup until it returns successfully. An injected second-source
+  chmod failure asserts both endpoints disappear and the group can bind again.
+- Major / valid actionable: source markup lacked a discriminating browser check.
+  Added citation claim and destination assertions.
+- Nit / valid actionable: Due assertion could pass if the filter showed every
+  page. Assert Clock tempo is absent before FakeClock advance and present after.
+
+All actionable findings folded with checks; no finding left standing. Third and
+final review pending; no fourth round.

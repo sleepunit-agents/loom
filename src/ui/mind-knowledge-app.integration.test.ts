@@ -36,6 +36,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
     await row(a,'Six voices').click();await row(b,'Six voices').click();
     await expect.poll(()=>b.locator('article strong').textContent()).toBe('six voices');
+    await expect.poll(()=>b.locator('article a').filter({hasText:'https://example.com/voices'}).getAttribute('href')).toBe('https://example.com/voices');
+    expect(await b.locator('article dd').textContent()).toContain('Six voices');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
@@ -60,6 +62,9 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(b,'Six voices').count()).toBe(0);expect(await row(b,'Nightly backup').count()).toBe(1);
     await source.archivePage({slug:'six-voices'});
     await expect.poll(()=>a.getByText('This page is no longer available',{exact:true}).count()).toBe(1);
+    await b.getByRole('textbox',{name:'Search knowledge',exact:true}).fill('');
+    await b.getByRole('button',{name:/Due a check/}).first().click();
+    await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
     clock.advance(31*86400_000);
     await b.getByRole('textbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
