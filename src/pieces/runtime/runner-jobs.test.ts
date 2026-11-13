@@ -89,6 +89,16 @@ it('refuses revoked/missing boxes, divergent job runner, report-only and withdra
 });
 it('never reports unclaimed/terminal work or accepts state, identity and timestamp injection', async () => {
   const f = await setup();
+  f.app.db.transaction(() => {
+    for (const state of ['failed', 'stopped', 'lost', 'uncertain'] as const)
+      f.store.put('job', { id: state, agent: 'art', box: 'a', runner: 'a', title: state, state, createdAt: 1, endedAt: 2 }, 1);
+  })();
+  for (const job of ['failed', 'stopped', 'lost', 'uncertain']) {
+    const before = f.store.read('job', job);
+    expect(f.call('claimJob', { job })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(f.call('reportJob', { job, state: 'running' })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(f.store.read('job', job)).toEqual(before);
+  }
   for (const job of ['j', 'terminal']) expect(f.call('reportJob', { job, state: 'running' })).toMatchObject({ ok: false, code: 'conflict' });
   for (const input of [{ job: 'j', runner: 'b' }, { job: 'j', createdAt: 1 }]) expect(f.call('claimJob', input)).toMatchObject({ ok: false, code: 'invalid' });
   for (const state of ['queued', 'starting', 'done', 'failed', 'stopped', 'lost', 'uncertain']) expect(f.call('reportJob', { job: 'j', state })).toMatchObject({ ok: false, code: 'invalid' });
