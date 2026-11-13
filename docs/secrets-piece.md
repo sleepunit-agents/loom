@@ -236,3 +236,31 @@ existing request plan. It performs no IO or registration. Names, actual member
 attribution mapping, pending attention, moved-original revocation storage, audit,
 atomic persistence/receipts and independent content verification remain the final
 importer's work. This plan does not activate a runtime permission or import data.
+
+## Offline destination request/grant records
+
+`planLegacySecretRecords` builds on the combined policy/request plan without IO,
+DB writes or implicit time. It supplies runtime `GrantRequest` and `Grant` shapes,
+retaining the full validated original metadata separately. Grant IDs use the same
+pure helper as runtime writes. A live carried grant includes a moved-original
+record at the original scope: it never authorizes use, but lets revocation from
+either scope revoke the pair. An independent grant colliding with that record
+refuses rather than being overwritten. Exact service absence and original expiry
+are retained; expired, revoked, denied and pruned claimed originals create no
+usable grants. Policy decisions remain policy decisions; Always remains temporary.
+
+All surviving `who` fields require explicit injective bindings to registered
+household members, including historical decisions. No same-name or first-owner
+fallback exists. An unattributed historical request remains unattributed. A live
+owner grant without surviving mapped attribution refuses this composition; a live
+carry derives grant attribution from its surviving original while preserving its
+own absent `who`. This conservative unsupported-composition refusal avoids naming
+an invented answering member. The final importer must supply registered agents,
+members and actual stored secret names from its destination, not caller assertions.
+
+Pending requests refuse until the final importer can create trusted household
+Attention asks in the same transaction. Unsupported service IDs and active grants
+for absent names also refuse. This helper is unregistered and does not persist or
+activate anything. Atomic names/policy/requests/grants/audit import, source receipts,
+independent destination verification, pending Attention composition and migration
+registry/CLI wiring remain required by t-2208.
