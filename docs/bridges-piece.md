@@ -584,3 +584,37 @@ read and no running home is changed.
 | Memory-only Gateway cursor | Atomic private SQLite session and raw message commit |
 | Replay after reconnect | Permanent platform message-id tombstone per receiving identity/generation |
 | Process-local message queue | Bounded pending receipt reads; normalization and root registration remain required |
+
+## Discord fresh REST evidence
+
+`discordApi` is an unregistered service client for the next normalization/lifecycle
+slice. `authenticate` calls [Get Current User](https://docs.discord.com/developers/resources/user#get-current-user)
+and [Get Guild](https://docs.discord.com/developers/resources/guild#get-guild),
+requiring the configured bot user (`bot: true`) and configured guild. This is
+point-in-time identity/access evidence, never an admission or credential lease.
+Composition must bind the same service credential and invalidate on setup or
+public holder-generation changes before using it for a Gateway/store lifetime.
+
+`channel` uses fresh [Get Channel](https://docs.discord.com/developers/resources/channel#get-channel)
+metadata: text/announcement channels must match the configured guild; threads
+require a fresh supported parent in that same guild. Thread names are never
+returned; only the parent name supplies a label. DMs require one recipient matching
+the event sender and no guild; group DMs are unsupported and drop. Missing or
+malformed evidence waits. Definite 403/404 channel/parent denials drop; 401,
+rate limits, network/server failures and all authentication failures wait.
+Runtime still owns linked-person, peer, webhook and route admission.
+
+Each request uses the service `SecretUse` callback, checks the lifetime/staging
+gate before acquisition and after the holder responds, and checks again before
+returning evidence. No credentials are retained or returned. Requests use only
+Discord's fixed HTTPS v10 origin with canonical uint64 path IDs, reject redirects,
+time out after 15 seconds, and bound streamed replies to 1 MiB. No upstream error
+text escapes. There is no cache or automatic HTTP retry: the durable drain owns
+retry and expiry. Raw drain, authenticated root/store/Gateway binding and daemon
+registration remain required. Nothing starts a socket or reads an old store here.
+
+| Legacy metadata behavior | New building block / remaining work |
+| --- | --- |
+| Bot-token identity/configuration | `discordApi.authenticate`; root lifetime binding still required |
+| Channel/thread-parent lookup | Fresh `discordApi.channel`, safe parent label; raw drain still required |
+| DM sender/place inference | Fresh one-recipient DM match; runtime admission still required |
