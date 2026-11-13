@@ -38,17 +38,18 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
   // Metadata-only fixture worker: these operations never start a process.
   const runtime=runtimeStore(loom.db);
   loom.db.transaction(()=>{
-    runtime.put('box',{id:'fixture-worker',name:'Fixture worker',owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:1},1);
+    runtime.put('box',{id:'fixture-worker',name:'Fixture worker',owner:'jonathan',local:false,mayHost:'*',lentTo:['pond-bot'],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:1},1);
     for(const agent of ['art','pond-bot'])runtime.put('settings',{id:agent,agent,boxes:['fixture-worker']},1);
   })();
-  const queue=(agent:string,title:string,scope:object={})=>{
-    const result=loom.operations.call('direct',owner,'runtime.queueBody',{agent,title,brief:'Private Runtime input must never appear on Home',...scope},`home-queue:${++serial}`);
+  const queue=(agent:string,title:string,scope:object={},viewer=owner)=>{
+    const result=loom.operations.call('direct',viewer,'runtime.queueBody',{agent,title,brief:'Private Runtime input must never appear on Home',...scope},`home-queue:${++serial}`);
     expect(result.ok).toBe(true);if(!result.ok)throw Error('Runtime queue fixture failed');return (result.value as {job:string}).job;
   };
   const current=queue('art','Inspect the rebuilt household Runtime');
   queue('art','Inspect the rebuilt household Runtime'); // Concurrent work with the same title stays separate.
-  queue('pond-bot','Visible Pond Runtime work',{project:'pond'});
-  queue('pond-bot','Owner-private Runtime work',{project:'pond',member:'jonathan'});
+  queue('pond-bot','Visible Pond Runtime work',{project:'pond'},{kind:'member',id:'pollock'});
+  // A retained job from earlier ownership remains member-private under current sharing.
+  loom.db.transaction(()=>runtime.put('job',{id:'old-owner-job',agent:'pond-bot',title:'Owner-private Runtime work',project:'pond',member:'jonathan',runner:'fixture-worker',box:'fixture-worker',state:'waiting',createdAt:1},1))();
   expect(loom.operations.call('direct',owner,'runtime.configureHouse',{agent:'art',house:{repo:'/fixture/art'}},'home-runtime-house').ok).toBe(true);
   const runner={kind:'runner' as const,id:'fixture-worker'};
   expect(loom.operations.call('direct',runner,'runtime.claimJob',{job:current},'home-runtime-claim').ok).toBe(true);
