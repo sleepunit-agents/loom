@@ -1,3 +1,4 @@
+import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
@@ -86,7 +87,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
     work(w);
     const filing=w.approval && filedLocal(db,w.approval);
-    if(filing) localTargetRoom(filing.target,false);
+    if(filing) localTargetRoom(filing.target,false,undefined,w.member);
     if (!extra.deadman) for (const old of wakes(db).filter(row => row.agent === w.agent && row.deadman && active(row)
       && row.state !== 'firing' && row.hold !== 'uncertain')) {
       old.state = 'cancelled'; old.outcome = 'Replaced by real work'; saveWake(ctx, old); event(ctx, old, 'deadman-cleared');
@@ -110,13 +111,13 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
-  function localTargetRoom(target:string,standing:boolean,except?:string) {
-    if(wakes(db).some(w=>w.id!==except && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
+  function localTargetRoom(target:string,standing:boolean,except?:string,member?:string) {
+    if(wakes(db).some(w=>w.id!==except && w.member===member && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
       && (standing || standingBinding(db,w.id)))) invalid('A standing local target already has outstanding work');
   }
   function existingLocalTargetRoom(w:Wake) {
     const filing=w.approval && filedLocal(db,w.approval);
-    if(filing) localTargetRoom(filing.target,!!standingBinding(db,w.id),w.id);
+    if(filing) localTargetRoom(filing.target,!!standingBinding(db,w.id),w.id,w.member);
   }
   // Only authenticated runtime composition may recover an approval's words.
   // No public input can claim Caller. Public client wiring waits for that seam.
@@ -147,7 +148,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const receipt=ctx.receipt!, receiptKey=`local-standing-receipt:${receipt.viewer}:${receipt.id}`;
       const filing=filedLocal(db,i.approval);
       if(!filing) throw new OperationError('not-found','No trusted local filing');
-      if(i.caller.for!=='owner' || i.caller.people?.length || filing.caller.for!=='owner' || filing.caller.people?.length
+      if(!localOwner(i.caller,sharing()) || !localOwner(filing.caller,sharing()) || !sameLocalCaller(i.caller,filing.caller)
         || i.caller.project!==filing.caller.project || i.caller.who.agent!==filing.caller.who.agent
         || serviceOf(i.caller.who)!==serviceOf(filing.caller.who)
         || i.prompt!==undefined && i.prompt!==filing.prompt || i.note!==undefined && i.note!==filing.note)
@@ -156,14 +157,14 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const due=calendar(()=>i.mode==='at'?parseAt(i.when,ctx.now):parseIn(i.when,ctx.now));
       if(due<=ctx.now) invalid('Wake must be in the future');
       oneOffRoom(i.caller.who.agent);
-      localTargetRoom(filing.target,standing);
+      localTargetRoom(filing.target,standing,undefined,i.caller.member);
       const owning=approvalsRole(operations,'clock');
       const expected={target:filing.target,digest:words.digest,details:words.details,caller:{...filing.caller,who:{...filing.caller.who}}};
       const result=standing ? owning.localStanding(i.caller,{approval:i.approval,mode:'use',expected},randomUUID()) : approvalsRole(operations,'clock').call('use-local',i.caller,{id:i.approval,
         expected:{target:filing.target,digest:words.digest,details:words.details,caller:filing.caller}},randomUUID());
       if(!result.ok) throw new OperationError(result.code,result.message);
       const row=make({...ctx,viewer:{kind:'agent',id:i.caller.who.agent}},
-        {agent:i.caller.who.agent,project:i.caller.project,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
+        {agent:i.caller.who.agent,project:i.caller.project,member:i.caller.member,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
       if(standing) {
         bindStandingWake(db,row,filing,i.caller);
         db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(receiptKey,JSON.stringify({name:receipt.name,hash:receipt.inputHash,result:row}));

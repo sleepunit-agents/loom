@@ -7,7 +7,7 @@ import { rulesFor, setRule, type Project } from './rules.js';
 export interface DomainContext { caller: Caller; now: number; piece?: boolean; localAgent: string; projects?: Project[]; id?: () => string; canRead?: (approval:Approval)=>boolean }
 export function find(s: State, id: string): Approval { const a = s.approvals.find(a => a.id === id); if (!a) throw new OperationError('not-found', `no approval ${id}`); return a; }
 export function log(s: State, event: string, a: { id: string; kind: string; target: string; who: unknown }, now: number, extra = {}) { s.audit.push({ at: iso(now), event, id: a.id, kind: a.kind, target: a.target, who: a.who, ...extra }); }
-const newest = (s: State, a: Approval) => s.approvals.filter(b => b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && b.decided).sort((a,b) => b.decided!.localeCompare(a.decided!))[0];
+const newest = (s: State, a: Approval) => s.approvals.filter(b => b.member === a.member && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && b.decided).sort((a,b) => b.decided!.localeCompare(a.decided!))[0];
 function denySiblings(s: State, a: Approval, now: number, by: string) {
   for (const b of s.approvals) if (b.member === a.member && b.id !== a.id && b.kind === a.kind && b.target === a.target && b.who.agent === a.who.agent && (stateOf(b,now) === 'allowed' || stateOf(b,now) === 'pending' && !b.conversation)) {
     Object.assign(b,{ state: 'denied', decided: iso(now), superseded_by: a.id, by }); delete b.expires; log(s,'deny-superseded',b,now,{ by_deny: a.id });
@@ -87,7 +87,7 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
   }
   const granted = s.approvals.filter(a => (!c.canRead || c.canRead(a)) && a.granted && a.kind === kind && a.target === target && a.who.agent === caller.who.agent && samePrincipal(a,caller) && ['allowed','denied'].includes(stateOf(a,now))).sort((a,b) => b.at.localeCompare(a.at))[0];
   if (granted) return { ...granted,state: stateOf(granted,now) };
-  const a: Approval = { id: `a-${c.id?.() ?? randomBytes(4).toString('hex')}`, kind,target,what,why,who: caller.who, for: caller.for, ...(caller.people?.length ? { people: caller.people } : {}), ...(conversation ? { conversation } : {}), ...(digest ? { digest } : {}), ...words, minutes: Math.max(1,Math.min(Number(input.minutes) || 60,480)), at: iso(now),state: 'pending',agent: caller.who.agent, ...(caller.project ? { project: caller.project } : {}) };
+  const a: Approval = { id: `a-${c.id?.() ?? randomBytes(4).toString('hex')}`, kind,target,what,why,who: caller.who, for: caller.for, ...(caller.people?.length ? { people: caller.people } : {}), ...(conversation ? { conversation } : {}), ...(digest ? { digest } : {}), ...words, minutes: Math.max(1,Math.min(Number(input.minutes) || 60,480)), at: iso(now),state: 'pending',agent: caller.who.agent, ...(caller.project ? { project: caller.project } : {}), ...(caller.member ? {member:caller.member} : {}) };
   s.approvals.push(a); log(s,'request',a,now,{what,why}); return a;
 }
 export function use(s: State, id: string, kind: string, target: string, c: DomainContext) {
@@ -102,7 +102,7 @@ export function use(s: State, id: string, kind: string, target: string, c: Domai
   if (!(c.piece && kind === 'grant') && !samePrincipal(a,caller)) denied(`${id} was asked for ${principalWords(a)}; this body acts for ${principalWords(caller,'you')}`);
   const last = newest(s,a);
   if (last?.id !== id && last?.state === 'denied' && last.decided! > (a.decided ?? '')) { if(c.canRead && !c.canRead(last)) denied('A later decision prevents this spend'); denied(`${id} was overruled: the owner said no to ${target} after (${last.id})`); }
-  const no = s.approvals.find(b => b.id !== id && b.kind === kind && b.state === 'denied' && b.who.agent === a.who.agent && (b.decided ?? '') > (a.decided ?? '') && covered(b).some(id => covered(a).includes(id)));
+  const no = s.approvals.find(b => b.member === a.member && b.id !== id && b.kind === kind && b.state === 'denied' && b.who.agent === a.who.agent && (b.decided ?? '') > (a.decided ?? '') && covered(b).some(id => covered(a).includes(id)));
   if (no) { if(c.canRead && !c.canRead(no)) denied('A later decision prevents this spend'); denied(`${id} was overruled: the owner said no to some of it after (${no.id})`); }
   a.state = 'used'; a.used = iso(now); log(s,'use',a,now); return a;
 }
@@ -137,7 +137,7 @@ export function allowEveryTime(s: State, id: string, by: string, c: DomainContex
   let same = s.standing.find(j => !j.off && j.agent === a.who.agent && j.digest === a.digest && JSON.stringify(j.who) === JSON.stringify(a.who) && samePrincipal(j,a));
   if (!same) {
     const on = s.standing.filter(j => !j.off); if (on.length >= 50) invalid('50 standing jobs at most: turn one off first');
-    same = { id: `s-${randomBytes(4).toString('hex')}`,kind: 'local-wake',agent: a.who.agent,target: a.target,digest: a.digest!,who: a.who,for: forOf(a),...(a.people ? { people: a.people } : {}),from: id,what: a.what,...(a.details ? { details: a.details } : {}),at: iso(c.now),uses: 0,by };
+    same = { id: `s-${randomBytes(4).toString('hex')}`,kind: 'local-wake',agent: a.who.agent,target: a.target,digest: a.digest!,who: a.who,for: forOf(a),...(a.people ? { people: a.people } : {}),...(a.member ? {member:a.member} : {}),...(a.project ? {project:a.project} : {}),from: id,what: a.what,...(a.details ? { details: a.details } : {}),at: iso(c.now),uses: 0,by };
     s.standing = [...on,same,...s.standing.filter(j => j.off).slice(0,100-on.length-1)];
   }
   answer(s,id,'allow',by,c.now); return same;

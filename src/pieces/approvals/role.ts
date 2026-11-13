@@ -53,3 +53,5 @@ export { callerSchema } from './validation.js';
 export type { Caller } from './model.js';
 
 export { serviceOf } from './model.js';
+
+export { localOwner, sameLocalCaller } from './local-authority.js';

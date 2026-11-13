@@ -4,7 +4,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, mayAct, mayCreate, type Db, type Operations, type Sharing } from '../../core/index.js';
-import { approvalsRole, callerSchema, type Caller } from '../approvals/role.js';
+import { approvalsRole, callerSchema, localOwner, type Caller } from '../approvals/role.js';
 export const localMarker = '<!-- house: local -->';
 const invalid = (message: string): never => { throw new OperationError('invalid', message); };
 const denied = (message: string): never => { throw new OperationError('denied', message); };
@@ -47,7 +47,7 @@ export function installLocalFiling(db: Db, operations: Operations, sharing: () =
     run(_ctx,i) {
       // Private/principal-scoped cards need an owning private-scope contract.
       // Do not let this first owner-only slice expose someone else's words.
-      if (i.caller.for !== 'owner' || i.caller.people?.length) denied('Local filing currently requires authenticated owner work without private people');
+      if (!localOwner(i.caller,sharing())) denied('Local work requires a household owner’s authenticated conversation');
       const words = localWords(i.prompt,i.note), target = `${i.caller.who.agent}:${words.digest.slice(0,16)}`;
       const result = role.call('request',i.caller,{kind:'local-wake',target,digest:words.digest,
         ask:'Run the job below on loom’s machine itself?',
@@ -60,12 +60,12 @@ export function installLocalFiling(db: Db, operations: Operations, sharing: () =
       const card = result.value as {id:string;state:string;digest?:string;project?:string;details?:string};
       // Approvals may deduplicate an exact short target. Never overwrite the
       // words/note/principal behind an existing card, even on a hash collision.
-      if (card.digest !== words.digest || card.project !== i.caller.project || card.details !== words.details) denied('An existing local decision covers different words or scope');
+      if (card.digest !== words.digest || card.project !== i.caller.project || card.details !== words.details || (card as {member?:string}).member !== i.caller.member) denied('An existing local decision covers different words or scope');
       const filing: LocalFiling = {id:card.id,target,digest:words.digest,prompt:i.prompt,note:i.note,caller:i.caller};
       const old = filedLocal(db,card.id);
       if (old) {
         if (old.prompt !== filing.prompt || old.note !== filing.note || old.target !== target || old.digest !== words.digest
-          || old.caller.project !== i.caller.project || old.caller.for !== i.caller.for || JSON.stringify(old.caller.people ?? []) !== JSON.stringify(i.caller.people ?? []))
+          || old.caller.member !== i.caller.member || old.caller.project !== i.caller.project || old.caller.for !== i.caller.for || JSON.stringify(old.caller.people ?? []) !== JSON.stringify(i.caller.people ?? []))
           denied('The existing local card keeps its original exact words and note');
       } else db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(key(card.id),JSON.stringify(filing));
       return {id:card.id,state:card.state,target};

@@ -184,7 +184,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   if(!b)return {who,for:'?'};
   const member=b.job.member!,access=sharing().members[member];
   if(!access)return {who,for:'?'};
-  return {who,for:access.owner?'owner':member,people:[member],conversation:b.binding.id,...(b.binding.project?{project:b.binding.project}:{})};
+  return {who,for:access.owner?'owner':member,people:[member],member,conversation:b.binding.id,...(b.binding.project?{project:b.binding.project}:{})};
  };
  return {delivery,privateStart,refile,approvalCaller,connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},

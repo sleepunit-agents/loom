@@ -1,3 +1,4 @@
+import { localOwner, sameLocalCaller } from './local-authority.js';
 import { groupVouch } from './group-vouch.js';
 import { installLocalStanding } from './local-standing.js';
 import { registerBuiltinService } from '../../core/services.js';
@@ -33,7 +34,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     if (!callerSchema.safeParse(caller).success) denied('Invalid authenticated caller context');
     // A resolver cannot authenticate another agent under this viewer.
     if (viewer.kind === 'agent' && caller.who.agent !== viewer.id) denied('Caller agent does not match viewer');
-    return { caller,now,piece,localAgent:options.localAgent ?? 'agent',projects:options.projects?.(),canRead:a=>visible(viewer,a) };
+    return { caller,now,piece,localAgent:options.localAgent ?? 'agent',projects:options.projects?.(),canRead:a=>visible(piece && caller.member ? {kind:'member',id:caller.member} : viewer,a) };
   };
   const visible = (viewer: Viewer, a: Approval) => maySee(viewer,scope(a),sharing());
   const owner = (v: Viewer, name: string) => mayAct(v,{type:'approval-rule'},sharing(),'household',name);
@@ -53,6 +54,10 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
       may(viewer,input) {
         if (config.owner) {
           if (!owner(viewer,name)) return false;
+          if (verb === 'standing-off') {
+            const j=load(db).standing.find(j=>j.id===input.id);
+            return !!j && maySee(viewer,{type:'approval-rule',member:j.member,agent:j.agent,project:j.project},sharing());
+          }
           if (verb === 'always' || verb === 'every-time') {
             const approval = readApproval(db,String(input.id));
             return !!approval && visible(viewer,approval);
@@ -69,6 +74,10 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
           }
           if(!approvalId) return true;
           const approval=readApproval(db,String(input.id));
+          if(verb==='piece-use-local' && approval?.member) {
+            const caller=context(viewer,input,operations.clock.now(),true).caller;
+            return viewer.id==='clock' && caller.member===approval.member && localOwner(caller,sharing());
+          }
           return !approval||mayAct(viewer,scope(approval),sharing(),'act',name);
         }
         if (approvalId) {
@@ -89,7 +98,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
       },
     }));
   };
-  register('request',true,(s,i,c)=>request(s,i,c));
+  register('request',true,(s,i,c)=>{const a=request(s,i,c);return a.member?{id:a.id,state:stateOf(a,c.now)}:a;});
   register('check',false,(s,i,c,v)=>{ const a=find(s,String(i.id)); if (i.json) { if (!maySpend(a.who,c.caller.who)) denied(`${a.id} isn't ${c.caller.who.agent}'s to read here; check ${a.id} gives its state`); return {id:a.id,agent:a.who.agent,for:forOf(a),state:stateOf(a,c.now),kind:a.kind,target:a.target,expires:stateOf(a,c.now)==='allowed'?a.expires:null}; } return {state:stateOf(a,c.now)}; },{read:true});
   register('use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c));
   register('withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c));
@@ -97,7 +106,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer'),mayEveryTime:owner(v,'approvals.every-time')&&everyTimeOk(a,c),mayAlways:owner(v,'approvals.always')&&stateOf(a,c.now)==='pending'&&a.kind==='merge'&&forOf(a)!=='?',alwaysScope:alwaysScope(a,c.projects)};},{read:true});
   register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
-  register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing]:[],mayEdit:owner(v,'approvals.set-rule')}));
+  register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing.filter(j=>maySee(v,{type:'approval-rule',agent:j.agent,project:j.project,member:j.member},sharing()))]:[],mayEdit:owner(v,'approvals.set-rule')}));
   const readRules = (s:State,i:Record<string,unknown>,c:DomainContext,v:Viewer) => {
     const approvals = s.approvals.filter(a=>visible(v,a));
     let caller = c.caller;
@@ -130,7 +139,10 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>maySee(v,{type:'approval',agent:n.agent},sharing()))}));
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&visible(v,a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
   // Services share the same registration, validation and scope checks as body operations.
-  register('piece-request',true,(s,i,c)=>request(s,i,c),{piece:true});
+  register('piece-request',true,(s,i,c)=>{
+    if(i.kind==='local-wake' && c.caller.member!==undefined && !localOwner(c.caller,sharing())) denied('Local work requires a household owner’s authenticated conversation');
+    return request(s,i,c);
+  },{piece:true});
   register('piece-group-vouch',true,(s,i,c)=>groupVouch(s,i,c),{piece:true});
   register('piece-use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c),{piece:true});
   // Clock supplies the immutable filing, and this owning boundary compares the
@@ -139,9 +151,10 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     const expected = z.object({target:z.string(),digest:z.string().regex(/^[0-9a-f]{64}$/),details:z.string(),caller:callerSchema.strict()}).strict().parse(i.expected);
     const a=find(s,String(i.id));
     if (a.kind!=='local-wake' || a.target!==expected.target || a.digest!==expected.digest || a.details!==expected.details
-      || a.project!==expected.caller.project || a.member!==undefined || a.for!=='owner' || a.people?.length
+      || !localOwner(c.caller,sharing()) || !localOwner(expected.caller,sharing())
+      || !sameLocalCaller({...a,who:a.who},expected.caller) || !sameLocalCaller(c.caller,expected.caller)
       || a.who.agent!==expected.caller.who.agent || serviceOf(a.who)!==serviceOf(expected.caller.who)
-      || c.caller.for!=='owner' || c.caller.people?.length || c.caller.project!==a.project
+      || c.caller.project!==a.project
       || c.caller.who.agent!==a.who.agent || serviceOf(c.caller.who)!==serviceOf(a.who))
       denied('The current local receipt differs from its exact filing or caller');
     return use(s,a.id,'local-wake',expected.target,c);
@@ -156,5 +169,5 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   },{piece:true});
   operations.register(operation({name:'approvals.command',write:true,input:z.object({argv:z.array(z.string()).max(100)}),output:z.object({exit:z.number(),stdout:z.string(),stderr:z.string()}),may:v=>v.kind==='agent'||v.kind==='member',run:(ctx,input)=>command(operations,ctx.viewer,input.argv)}));
   live.register({name:'approval',ids:()=>load(db).approvals.map(a=>a.id),read(id,viewer){const a=readApproval(db,id);if(!a||!visible(viewer,a))return;const row=db.prepare('SELECT changed_at FROM approvals_approvals WHERE id=?').get(id) as {changed_at:number};return {...a,...cardWords(a),state:stateOf(a,operations.clock.now()),changedAt:row.changed_at} as unknown as LiveRecord;},inScope:(r,parent,now)=>parent===undefined&&(r.state==='pending'||Number(r.changedAt)+week>now),expires:r=>r.state==='pending'?undefined:r.state==='allowed'&&typeof r.expires==='string'?Math.min(Date.parse(r.expires),Number(r.changedAt)+week):Number(r.changedAt)+week});
-  live.register({name:'approval-rule',ids:()=>[...load(db).rules,...load(db).grants,...load(db).standing].map(ruleId),read(id,v){if(!owner(v,'approvals.rules'))return;const row=db.prepare('SELECT record FROM approvals_rules WHERE id=?').get(id) as {record:string}|undefined;return row?{...JSON.parse(row.record),id}:undefined;},inScope:()=>true});
+  live.register({name:'approval-rule',ids:()=>[...load(db).rules,...load(db).grants,...load(db).standing].map(ruleId),read(id,v){if(!owner(v,'approvals.rules'))return;const row=db.prepare('SELECT record FROM approvals_rules WHERE id=?').get(id) as {record:string}|undefined;if(!row)return;const record=JSON.parse(row.record);return maySee(v,{type:'approval-rule',agent:record.agent,member:record.member,project:record.project},sharing())?{...record,id}:undefined;},inScope:()=>true});
 }
