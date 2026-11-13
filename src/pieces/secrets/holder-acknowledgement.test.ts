@@ -39,6 +39,9 @@ const asynchronous = [
   ['resolved Promise', () => Promise.resolve(sentinel)],
   ['rejected Promise', () => Promise.reject(Error(sentinel))],
   ['native Promise with shadowed then', () => Object.defineProperty(Promise.reject(Error(sentinel)), 'then', {value: undefined})],
+  ['async then method rejection', () => ({async then() {throw Error(sentinel);}})],
+  ['thenable resolving to a rejected Promise', () => ({then(resolve: (v: unknown) => void) {resolve(Promise.reject(Error(sentinel)));}})],
+  ['cyclic thenable output', () => {const value = {then(resolve: (v: unknown) => void) {resolve(value); return value;}}; return value;}],
   ['resolved thenable', () => ({then(resolve: (v: string) => void) {resolve(sentinel);}})],
   ['rejected thenable', () => ({then(_resolve: unknown, reject: (e: Error) => void) {reject(Error(sentinel));}})],
 ] as const;
