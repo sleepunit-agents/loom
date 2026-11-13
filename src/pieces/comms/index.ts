@@ -68,7 +68,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null}),keepUntil:r.at+days*day});
  };
  const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?settleStart(rows[n],record):{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
- const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
+ const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r,retained:r.words!==null&&r.at+days*day>clock.now()});
  const bodyAlive = (t:Thread) => t.working && typeof t.aliveAt==='number' && t.aliveAt >= (t.workingSince??t.last)-60_000 && t.aliveAt <= clock.now()+60_000
   ? {at:t.aliveAt,...(typeof t.aliveTokens==='number'?{tokens:t.aliveTokens}:{})} : undefined;
  const jobState = (t:Thread) => {
@@ -274,7 +274,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
- operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,
+ operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
   prepare:async i=>{const text=attachedText(i.text,i.about,clock.now());return {words:await key.seal(JSON.stringify({text})),hash:hashText(text),...(i.about?{aboutHash:key.hash(aboutIdentity(i.about))}:{})};},
@@ -292,7 +292,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    ctx.changed('thread',place);ctx.changed('message',messageId(place,seq));return {thread:place,seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
- operations.register(operation({name:'comms.send',doors:['socket'],windowOnly:true,write:true,
+ operations.register(operation({name:'comms.send',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:target.extend({id:clientId,text}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async i=>({words:await key.seal(JSON.stringify({text:i.text})),hash:hashText(i.text)}),
   run(ctx,i,raw) {
@@ -308,7 +308,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   run(ctx,i,raw) { const p=raw as {rows:MessageRow[];records:LiveRecord[]}; if(JSON.stringify(messageRows(db,i.thread,i.before))!==JSON.stringify(p.rows))return fail('conflict','Thread changed; load this page again');return retainedPage(p.rows,p.records); },
  }));
  const changeInput=target.extend({action:z.enum(['title','project','pin','unpin','archive','unarchive','read','stop','delete']),title:title.optional(),project:id.nullable().optional(),seq:z.number().int().nonnegative().optional()});
- operations.register(operation({name:'comms.change',doors:['socket'],windowOnly:true,write:true,input:changeInput,output:ack,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.change',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),input:changeInput,output:ack,may:(v,i)=>writable(v,i),
   run(ctx,i) {
    const t=thread(db,i.thread)!;
    switch(i.action) {
@@ -346,7 +346,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    void end(i.thread,value.endGeneration);
   },
  }));
- operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,input:target.extend({seq:z.number().int().positive()}),output:ack,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.resend',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),input:target.extend({seq:z.number().int().positive()}),output:ack,may:(v,i)=>writable(v,i),
   run(ctx,i) {const t=thread(db,i.thread)!;const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(t.id,i.seq) as MessageRow|undefined;
    if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    if(!row?.words)return fail('conflict','Message words are no longer kept');
@@ -355,7 +355,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   // Only an authoritative runtime fence may authorize another delivery.
   after:(_i,r)=>{if(r.ok&&!closed)void reconcileDeliveries();},
  }));
- operations.register(operation({name:'comms.retryStart',doors:['socket'],windowOnly:true,write:true,
+ operations.register(operation({name:'comms.retryStart',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:target.extend({seq:z.number().int().positive(),generation:z.number().int().min(0).max(999)}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async(i)=>{
    const source=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(i.thread,i.seq) as MessageRow|undefined;
@@ -383,7 +383,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return {thread:i.thread,seq:i.seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
- operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async (i,ctx)=>{
    const original=thread(db,i.thread);
    const ask=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL AND at > ?").get(i.thread,i.ref,i.ref,clock.now()-days*day) as MessageRow|undefined;

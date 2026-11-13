@@ -24,6 +24,8 @@ export interface Operation<I = unknown> {
   name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
+  /** Private pieces key retry fingerprints so exported receipts cannot test guessed words. */
+  inputHash?(canonicalInput: string): string;
   /** Async crypto is prepared outside the synchronous transaction, never persisted by core. */
   prepare?(input: I, context: { readonly viewer: Viewer }): Promise<unknown>;
   after?(input: I, result: Result): void;
@@ -109,7 +111,7 @@ export class Operations {
       result = this.db.transaction((): Result => {
         const now = this.clock.now();
         if (op.windowOnly && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const who = canonical(viewer), body = createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data)) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
           this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;

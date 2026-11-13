@@ -817,3 +817,17 @@ non-window/non-member calls, private storage and hidden Live hashes. All 359
 affected tests and root TypeScript checks pass. No web code or browser fixture
 changed in this unit. The shell attachment sheet remains required; this adds
 its backend routing and matching operations only. Review budgets are unchanged.
+
+## Takeover privacy corrections
+
+Comms write receipts use a domain-separated HMAC with the Comms key instead of
+the registry's default unkeyed input digest. Exported receipt fingerprints
+therefore cannot validate guesses of short message words without that key.
+The key is never part of database exports. Retry identity and conflicts remain
+stable across restart. This applies to every Comms write.
+
+Live ciphertext snapshots include current retention eligibility. The shared
+dispatcher's post-decryption snapshot check therefore reloads a set if any row
+expires while another decrypts, even before the sweep timer runs. A socket
+regression suspends the later row across the exact earlier deadline and checks
+that earlier words and private work fields never arrive.

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
@@ -658,6 +659,21 @@ it('encrypts rows with age; only acknowledgements enter retry storage, and runti
  const r=await s.call('messages',{thread:place});expect(JSON.stringify(r)).toContain('secret member words');
  expect(readFileSync(join(s.home,'loom.db')).includes(Buffer.from('secret member words'))).toBe(false);
 });
+it('keys exported retry fingerprints against offline message guesses and preserves retry conflicts',async()=>{
+ const s=await setup();const input={agent:'art',id:'kkkkkkkkkkkkkkkk',text:'yes'};
+ const call=(words:string)=>s.app.operations.callAsync('socket',member,'comms.open',{...input,text:words},'private-retry',true);
+ const result=await call('yes');expect(result.ok).toBe(true);
+ const receipt=s.app.db.prepare("SELECT input_hash FROM core_operations WHERE name='comms.open'").get() as {input_hash:string};
+ const canonical=JSON.stringify({agent:input.agent,id:input.id,text:input.text});
+ expect(receipt.input_hash).not.toBe(createHash('sha256').update(canonical).digest('hex'));
+ const {exportDatabase}=await import('../../core/index.js');
+ const exported=JSON.stringify(exportDatabase(s.app.db));
+ expect(exported).not.toContain(createHash('sha256').update(canonical).digest('hex'));
+ const another=await setup();await another.call('open',input);
+ expect((another.app.db.prepare("SELECT input_hash FROM core_operations WHERE name='comms.open'").get() as {input_hash:string}).input_hash).not.toBe(receipt.input_hash);
+ await s.restart();expect(await call('yes')).toEqual(result);
+ expect(await call('no')).toMatchObject({ok:false,code:'conflict'});
+});
 it('refuses every token door and a member socket without trusted window authentication',async()=>{
  const s=await setup();const place=await s.open();
  for(const v of [{kind:'agent',id:'art'},{kind:'service',id:'runtime'},{kind:'runner',id:'runner'},member] as Viewer[]) {
@@ -1036,6 +1052,32 @@ it('removes expired words and work fields when a later page row finishes decrypt
  expect(JSON.stringify(result)).not.toContain('private tool');
  expect(JSON.stringify(result)).not.toContain('private output');
  expect(JSON.stringify(result)).toContain('later private');
+});
+it('rechecks every live message retention deadline after the whole set decrypts',async()=>{
+ let reading=false,release:()=>void=()=>{},started:()=>void=()=>{},firstDone:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;}),decoded=new Promise<void>(r=>{firstDone=r;});
+ const s=await setup({key:k=>({...k,open:async blob=>{
+  const words=await k.open(blob);
+  if(reading&&words.includes('earlier live private'))firstDone();
+  if(reading&&words.includes('later live private')){await decoded;started();await waiting;}
+  return words;
+ }})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.post('art',place,{id:'earlier-live',kind:'card',text:'earlier live private',tool:'live private tool',step:{body:'live private output'}});
+ s.clock.advance(1000);
+ await s.comms.post('art',place,{id:'later-live',kind:'reply',text:'later live private'});
+ s.clock.advance(14*86400_000-1001);
+ const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-window':'yes'}});await once(ws,'open');
+ try {
+  reading=true;const response=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'message',scope:place}));await began;
+  // Wall time crosses a deadline before its sweep callback runs.
+  const now=s.clock.now();s.clock.now=()=>now+1;release();
+  const result=JSON.parse(String((await response)[0]));expect(result.kind).toBe('set');
+  expect(JSON.stringify(result)).not.toContain('earlier live private');
+  expect(JSON.stringify(result)).not.toContain('live private tool');
+  expect(JSON.stringify(result)).not.toContain('live private output');
+  expect(JSON.stringify(result)).toContain('later live private');
+ }finally{release();ws.close();}
 });
 it('refuses an ask that expires while answer encryption waits, before calling attention',async()=>{
  let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};let answers=0;
