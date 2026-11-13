@@ -27,11 +27,15 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const touched = (t: Thread, seq?: number) => { armSweep(); live.changed([{type:'thread',id:t.id}, ...(seq === undefined ? [] : [{type:'message',id:messageId(t.id,seq)}])]); };
  const requireAgent = (agent: string, place: string) => { const t = thread(db,place); if (!t || t.agent !== agent) return fail('denied','Thread unavailable'); return t; };
  const decode = async (r: MessageRow): Promise<LiveRecord> => {
-  const {encoding,stepCipher,legacyHash,...metadata}=JSON.parse(r.record);
-  const decrypted=r.words ? await key.open(r.words) : null;
-  const plain=r.at + days*day <= clock.now() ? null : decrypted;
-  const words=plain===null?{text:null}:encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
-  return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...words,...(r.words && stepCipher?{step:JSON.parse(await key.open(Buffer.from(stepCipher,'base64')))}:{})};
+  const {encoding,stepCipher,privateCipher,legacyHash,...metadata}=JSON.parse(r.record);
+  const alive=()=>r.words!==null && r.at + days*day > clock.now();
+  if(!alive())return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,text:null};
+  const plain=await key.open(r.words!);
+  const privateMetadata=privateCipher?JSON.parse(await key.open(Buffer.from(privateCipher,'base64'))):{};
+  const step=stepCipher?JSON.parse(await key.open(Buffer.from(stepCipher,'base64'))):undefined;
+  // Crypto can cross the retention deadline. Never return any private field after it.
+  const words=encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
+  return {id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null})};
  };
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
  const visibleThread = (t: Thread) => {
@@ -196,7 +200,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  let cancel:()=>void=()=>{};
  function sweep() {
   const rows=db.prepare('SELECT thread,seq FROM comms_messages WHERE words IS NOT NULL AND at <= ?').all(clock.now()-days*day) as {thread:string;seq:number}[];
-  db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher') WHERE at <= ?").run(clock.now()-days*day);
+  db.prepare("UPDATE comms_messages SET words=NULL, record=json_remove(record,'$.stepCipher','$.privateCipher') WHERE at <= ?").run(clock.now()-days*day);
   live.changed(rows.map(r=>({type:'message',id:messageId(r.thread,r.seq)})));
   armSweep();
  }

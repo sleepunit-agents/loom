@@ -90,13 +90,16 @@ data does not remove the behavior it delivered.
 new home's daemon lock, opens both source databases read-only and imports
 threads, messages, asks and tombstones into one destination transaction. It
 preserves source ids, hashes, read marks and the old dedupe salt. With matching
-keys it copies message ciphertext; otherwise it rekeys in memory. Comparison
+keys it copies message, ask and step ciphertext byte for byte; otherwise it rekeys
+in memory. Legacy card/run and answer metadata use a separate destination-key
+envelope, resolved only for authorized readers and removed with words at retention. Comparison
 words never enter returned diagnostics. A checksum makes exact repeats a no-op;
 a changed source or populated destination is refused. A failed first import
 rolls back its schema as well as its rows.
 
-Before release, verify imported card/answer metadata under the new encryption
-rule, map old card/step/ask shapes into the app, and import conversation steps.
+Before release, map old card/step/ask shapes into the app and import conversation
+steps. Imported metadata encryption and same-key ciphertext preservation now have
+focused tests for both matching and different destination keys.
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
 

@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { createFoundation } from '../../foundation.js';
 import { loadKey } from './crypto.js';
 import { importComms } from './importer.js';
+import { installComms } from './index.js';
+import { FakeClock } from '../../core/index.js';
 const cleanup:(()=>void)[]=[];afterEach(()=>{for(const f of cleanup.splice(0).reverse())f();});
 function home(){const path=mkdtempSync(join(tmpdir(),'comms-import-'));cleanup.push(()=>rmSync(path,{recursive:true,force:true}));return path;}
 async function source(){
@@ -55,4 +57,34 @@ it('the real CLI refuses a held daemon lock before creating a key and its result
  const s=await source(),to=home(),release=acquireHttpLock(to);let output='',error='';const io={stdout:(v:string)=>{output+=v;},stderr:(v:string)=>{error+=v;},stdin:Readable.from([]),stdinIsTTY:false,env:{}};
  expect(await migrateComms(['--home',to,'--from',s.from],io)).toBe(1);expect(existsSync(join(to,'comms.key'))).toBe(false);release();
  expect(await migrateComms(['--home',to,'--from',s.from],io)).toBe(0);expect(output).toContain('checksum');expect(output+error).not.toContain('older private words');expect(output+error).not.toContain('private output');
+});
+
+for(const sameKey of [true,false])it(`seals imported work and answer metadata and expires it with words (${sameKey?'same key':'rekey'})`,async()=>{
+ const s=await source(),to=home();
+ if(sameKey)copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));
+ const key=await loadKey(to),clock=new FakeClock(Date.parse('2026-11-12T02:00:00Z'));
+ const app=createFoundation({home:to,clock});cleanup.push(()=>app.close());
+ s.db.prepare('UPDATE comms_messages SET card_json=?,run=? WHERE seq=2').run(JSON.stringify({tool:'private tool',state:'done',label:'private card'}),'private run');
+ s.db.prepare('UPDATE comms_asks SET answer_json=?').run(JSON.stringify({text:'private answer'}));
+ await importComms(app.db,s.from,to);
+ const stored=app.db.prepare('SELECT * FROM comms_messages ORDER BY seq').all() as {words:Buffer;record:string}[];
+ const serialized=JSON.stringify(stored);
+ for(const secret of ['private tool','private card','private run','private answer','private output'])expect(serialized).not.toContain(secret);
+ for(let n=0;n<2;n++){
+  const old=s.db.prepare('SELECT text,step FROM comms_messages WHERE seq=?').get(n+1) as {text:Buffer;step:Buffer|null};
+  if(sameKey){expect(stored[n].words).toEqual(old.text);if(old.step)expect(Buffer.from(JSON.parse(stored[n].record).stepCipher,'base64')).toEqual(old.step);}
+ }
+ const comms=installComms({...app,clock,key,sharing:()=>({members:{jonathan:{agents:['art']}},projects:{},services:{}}),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),attention:{answer:()=>({ok:true,value:{}})}});
+ cleanup.push(()=>{void comms.close();});
+ const messages=()=>app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.messages',{thread:'th:old'},undefined,true);
+ expect(await app.operations.callAsync('socket',{kind:'member',id:'other'},'comms.messages',{thread:'th:old'},undefined,true)).toMatchObject({code:'denied'});
+ const result=await messages();expect(result.ok).toBe(true);
+ if(!result.ok)throw new Error('read failed');
+ expect((result.value as unknown[])[1]).toMatchObject({text:'step label',card:{tool:'private tool',label:'private card'},run:'private run',step:{body:'private output'}});
+ expect((result.value as unknown[])[2]).toMatchObject({ask:{ask:'Private ask?'},answer:{text:'private answer'}});
+ expect(JSON.stringify(result)).not.toContain('Cipher');
+ clock.advance(14*86400_000);
+ const expired=JSON.stringify(await messages());
+ for(const secret of ['private tool','private card','private run','private answer','private output','Private ask?','step label'])expect(expired).not.toContain(secret);
+ for(const row of app.db.prepare('SELECT words,record FROM comms_messages').all() as {words:Buffer|null;record:string}[]){expect(row.words).toBeNull();expect(row.record).not.toContain('Cipher');}
 });
