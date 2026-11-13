@@ -8,7 +8,7 @@ import { installConversationSteps, type StepConversation } from './conversation-
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
-import { HeldEffect } from './role.js';
+import { HeldEffect, registerCommsMetadata } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
 const workingStale = 90_000;
@@ -33,6 +33,15 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  migrate(db,'comms',schema); db.pragma('secure_delete = ON');
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
+ registerCommsMetadata(operations, {
+  threadProject(viewer, conversation) {
+   if (closed || !conversation.member) return null;
+   const rows = db.prepare('SELECT record FROM comms_threads WHERE agent=? AND member=?').all(conversation.agent, conversation.member) as {record:string}[];
+   const matches = rows.map(row => JSON.parse(row.record) as Thread).filter(t => t.conversation === conversation.id && see(viewer,t));
+   // A damaged or ambiguous binding must not choose an arbitrary thread.
+   return matches.length === 1 ? matches[0].project ?? null : null;
+  },
+ });
  const touched = (t: Thread, seq?: number) => { armSweep(); live.changed([{type:'thread',id:t.id}, ...(seq === undefined ? [] : [{type:'message',id:messageId(t.id,seq)}])]); };
  const requireAgent = (agent: string, place: string) => { const t = thread(db,place); if (!t || t.agent !== agent) return fail('denied','Thread unavailable'); return t; };
  // Settlement is derived from durable routing progress: no async rewrite of private rows.

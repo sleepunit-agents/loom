@@ -7,6 +7,37 @@ needs an injected mutation holder. No public value read operation is exposed.
 Authenticated holder reads are explicitly configured for Changes; runtime sinks
 and authenticated write/remove/rotation composition remain required.
 
+## Holder storage prerequisite
+
+`openHolderStore(directory, identityFile, fingerprintKeyFile)` is holder-process
+storage, currently unconnected to the executable, socket and registry. It opens
+only its own `holder.db`, containing age ciphertext and durable mutation receipts.
+Its explicit directory, identity and independent 32-byte random fingerprint key
+must be private, owned by the process user; database files must not be symlinks or
+hardlinks. Keep the fingerprint key separately from ciphertext database backups.
+Changing either key or identity is refused; rotation still requires implementation.
+
+The trusted authenticated caller supplies the **actual member ID** and UUID
+writeId after checking current household permission. This storage API does not
+authenticate or authorize a supplied member string. Never expose it directly as
+an HTTP/registry endpoint. Names, add/replace mode, action, member, writeId and
+every value byte enter a keyed full-input fingerprint. Reuse of a member's writeId
+with different input fails; identical retries succeed across restarts without
+reapplying the mutation, including after a later replacement or re-addition.
+Different members have independent writeId namespaces. Receipts are retained.
+
+Ciphertext and receipt commit in one SQLite transaction with FULL synchronous
+durability; encryption finishes before that transaction and replay/mode checks
+repeat inside it. Failed receipt writes roll back the value change. Concurrent
+writers may fail busy and retry. The store copies input before awaiting encryption,
+erases its copy on every completion, and returns only fixed errors. Reads return
+owned bytes for a trusted caller to erase; no public value read is added.
+
+This asynchronous API must be awaited outside the synchronous `KeyHolder` registry
+seam. Authenticated transport, current permission checks, metadata reconciliation
+after holder-success/loom-DB rollback, runtime sinks, rotation, importer and final
+composition remain required. Existing read-only directory sources are unchanged.
+
 ## Removal increment
 
 | Old behavior | New behavior |

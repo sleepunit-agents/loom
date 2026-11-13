@@ -49,7 +49,16 @@ for retry; malformed/unknown outcomes hold for the life of the engine. On daemon
 and event metadata. Delivery repeats current setup, credential and admission checks;
 a still-malformed result holds again. Venue-removal, identity and invalid-event-time
 holds stay held. Delivered/dropped receipts and all outbox states are unaffected.
-The legacy one-hour transient retry limit remains a separate pending port.
+Transient failures (credential/inspection/admission waits, setup changes, runtime retries
+and exceptions) persist their first wait time. Pending intake expires only after more
+than one hour, before another attempt; expiry retains the receipt id for deduplication,
+erases the payload and publishes venue metadata. Duplicate receipts and restarts do not
+renew the hour. Event and receipt time do not start a new receipt's wait budget: the
+first transient result does. An attempt begun within the budget may complete successfully.
+A held outcome clears the transient clock; recovery after restart gets a fresh hour if
+it becomes transient again. Other held reasons stay held without expiry. Upgrade of
+already pending foundation rows uses their receipt time conservatively, since no first
+wait time was recorded. Outgoing sends have no transient intake expiry.
 Production composition must map the runtime registry Result into these outcomes and
 must preserve authenticated caller identity; that integration remains on t-2210.
 

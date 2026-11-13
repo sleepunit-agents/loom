@@ -30,7 +30,7 @@ export interface MigrationImporter<Options = unknown> {
   reads: readonly string[];
   /** Machine-readable file globs relative to the old home (tasks is external). */
   sourceReads?: readonly string[];
-  /** Caller holds stopped-home lock. Importer owns its transaction and comparisons. */
+  /** Caller holds stopped-home lock through settlement. Importer owns its transaction and comparisons. */
   run(context: MigrationContext, input: MigrationInput<Options>): unknown;
 }
 

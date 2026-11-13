@@ -52,6 +52,7 @@ import { prepareTouchSources } from './core/touched/prepare.js';
 import { installAttentionMaintenance } from './pieces/attention/daemon.js';
 import { attentionWaits } from './pieces/attention/wait-roles.js';
 import { approvalAnswers } from './pieces/approvals/role.js';
+import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
@@ -80,7 +81,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
-  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)), threadProject: attentionThreadProject(app.operations) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
   if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing,
     attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
