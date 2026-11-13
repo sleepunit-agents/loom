@@ -8,8 +8,10 @@ vi.mock('../pieces/attention/importer.js', () => ({ importAttention: vi.fn(() =>
 vi.mock('../pieces/clock/importer.js', () => ({ importClock: vi.fn(() => 'clock-result') }));
 vi.mock('../pieces/approvals/importer.js', () => ({ importApprovals: vi.fn(() => 'approvals-result') }));
 vi.mock('../pieces/changes/importer.js', () => ({ importChanges: vi.fn(() => 'changes-result') }));
+vi.mock('../pieces/secrets/importer.js', () => ({ importSecrets: vi.fn(() => 'secrets-result') }));
 vi.mock('../pieces/comms/importer.js', () => ({ importComms: vi.fn(async () => 'comms-result') }));
 vi.mock('./migration-comms-key.js', () => ({ publishMigrationCommsKey: vi.fn() }));
+import { importSecrets } from '../pieces/secrets/importer.js';
 import { importComms } from '../pieces/comms/importer.js';
 import { publishMigrationCommsKey } from './migration-comms-key.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
@@ -22,7 +24,7 @@ import { importChanges } from '../pieces/changes/importer.js';
 import { createMigrationRegistry, type MigrationContext } from './migration-registry.js';
 let root: string;
 afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); vi.clearAllMocks(); });
-it('forwards destination, resolved inputs, options and results to all seven import functions', async () => {
+it('forwards destination, resolved inputs, options and results to all eight import functions', async () => {
   root = mkdtempSync(join(tmpdir(), 'migration-adapters-'));
   mkdirSync(join(root, 'input')); mkdirSync(join(root, 'second'));
   // Sentinel database is never opened: mocks distinguish each direct function and its arguments.
@@ -40,6 +42,7 @@ it('forwards destination, resolved inputs, options and results to all seven impo
   expect(importHousehold).toHaveBeenCalledExactlyOnceWith(db, context.home, input, 123);
   expect(importTasks).toHaveBeenCalledExactlyOnceWith(db, input, 123, options, openSnapshotSqlite);
   expect(importAttention).toHaveBeenCalledExactlyOnceWith(db, [input, join(root, 'second')], options, {}, openSnapshotSqlite);
+  expect(importSecrets).toHaveBeenCalledExactlyOnceWith(db, context.home, input, 123, options);
   expect(importClock).toHaveBeenCalledExactlyOnceWith(db, input, 123);
   expect(importApprovals).toHaveBeenCalledExactlyOnceWith(db, input, 123, options);
   expect(importChanges).toHaveBeenCalledExactlyOnceWith(db, input, options);

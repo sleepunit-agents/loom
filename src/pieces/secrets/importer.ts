@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { migrate, type Db } from '../../core/index.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { schema } from './schema/001.js';
-import { schema as attentionSchema } from '../attention/schema/001.js';
+import { prepareAttentionImport } from '../attention/role.js';
 import { assertSeparateSecretPaths, canonicalSecretImport, readSecretImport, type SecretImportOptions } from './import-source.js';
 export { readSecretImport } from './import-source.js';
 
@@ -19,7 +19,7 @@ export function importSecrets(db: Db, home: string, from: string, now: number, o
     const h=new HouseholdDatabase(db).household(home);
     if(!h)throw Error();
     const expected=readSecretImport(from,now,options,{agents:h.agents,members:h.members.map(m=>m.person)});
-    migrate(db,'secrets',schema); migrate(db,'attention',attentionSchema);
+    migrate(db,'secrets',schema); prepareAttentionImport(db);
     const get=(key:string)=>(db.prepare('SELECT value FROM secrets_meta WHERE key=?').get(key) as {value:string}|undefined)?.value;
     if(get('source-checksum')) {
       if(get('source-checksum')!==expected.checksum || get('source-options')!==expected.options)throw Error();
