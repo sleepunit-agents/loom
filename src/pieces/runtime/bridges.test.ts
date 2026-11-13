@@ -186,11 +186,11 @@ it('denies retained body viewers at root shutdown while SQLite is still open',as
   expect(await f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'closed',text:'NO'})).toMatchObject({ok:false,code:'denied'});
  }finally{snapshot.mockRestore();}
 });
-it('upgrades version-seven storage atomically without altering existing runtime metadata',async()=>{
+it('upgrades version-eight storage atomically without altering existing runtime metadata',async()=>{
  const {createFoundation}=await import('../../core/app.js');const {migrate}=await import('../../core/index.js');const {schema}=await import('./schema/001.js');
  const home=mkdtempSync(join(tmpdir(),'runtime-bridge-upgrade-')),app=createFoundation({home});cleanups.push(async()=>{app.close();rmSync(home,{recursive:true,force:true});});
- migrate(app.db,'runtime',schema.filter(m=>m.number<8));app.db.transaction(()=>runtimeStore(app.db).put('settings',{id:'art',agent:'art',boxes:['a']},123))();
- const before=app.db.prepare('SELECT * FROM runtime_settings').all();app.db.exec("CREATE TRIGGER fail_bridge_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' AND NEW.number=8 BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ migrate(app.db,'runtime',schema.filter(m=>m.number<9));app.db.transaction(()=>runtimeStore(app.db).put('settings',{id:'art',agent:'art',boxes:['a']},123))();
+ const before=app.db.prepare('SELECT * FROM runtime_settings').all();app.db.exec("CREATE TRIGGER fail_bridge_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' AND NEW.number=9 BEGIN SELECT RAISE(ABORT,'interrupted'); END");
  expect(()=>migrate(app.db,'runtime',schema)).toThrow('interrupted');expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_bridge_%'").all()).toEqual([]);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
  app.db.exec('DROP TRIGGER fail_bridge_migration');migrate(app.db,'runtime',schema);expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name IN ('runtime_bridge_turns','runtime_bridge_stops')").all()).toHaveLength(2);expect(app.db.prepare('SELECT * FROM runtime_settings').all()).toEqual(before);
 });

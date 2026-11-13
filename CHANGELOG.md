@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
+- Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
+
 
 - Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
 
@@ -24,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
 
 ### Fixed
+
+- Stream offline migration files and Runtime archives in bounded chunks, including independent physical-byte verification of files larger than 600 MiB.
 
 - Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
 - Next Clock files local approval requests and recovers their exact saved words through authenticated Runtime body proof; `wake --approval` no longer requires retyping private words.
