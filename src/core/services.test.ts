@@ -118,3 +118,14 @@ it('registers the own types and exact namespace operations for every in-repo ins
     }
   }
 });
+
+it('supports multiple operation registries leasing one database and removes only closed installations', () => {
+  const first = fixture(), second = fixture(first.home);
+  expect(second.app.db).toBe(first.app.db);
+  installChanges(first.app.db, first.app.operations, first.app.live, () => first.store.sharing());
+  installChanges(second.app.db, second.app.operations, second.app.live, () => second.store.sharing());
+  first.app.close();
+  expect(second.store.sharing().services.changes.operations).toContain('changes.list');
+  second.app.operations.close();
+  expect(second.store.sharing().services).toEqual({});
+});
