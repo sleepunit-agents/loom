@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -10,12 +10,16 @@ import { conversationId } from './conversations.js';
 import { schema } from './schema/001.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['alice'], agents: ['art'] }, other: { members: ['alice'], agents: ['art'] } }, services: {} });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['alice'], agents: ['art'] }, other: { members: ['alice'], agents: ['art'] } }, services: { reader: { types: ['attention.conversation', 'attention.turn'], operations: [] }, listed: { types: ['attention.conversation'], operations: ['attention.conversations'] } } });
 const alice: Viewer = { kind: 'member', id: 'alice' };
 const art: Viewer = { kind: 'agent', id: 'art' };
 const turn = { venue: 'relay', place: 'test', at: '2026-11-12T00:00:00Z', from: { kind: 'person', slug: 'alice' }, kind: 'message' };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'attention-conversation-')); dirs.push(home);
+  // Unreadable legacy formats must not participate in the new metadata path.
+  mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+  writeFileSync(join(home, 'agents', 'art', 'memories.db'), 'legacy sentinel, not SQLite');
+  writeFileSync(join(home, 'household.json'), 'legacy sentinel, not JSON');
   const types = new Map<string, RecordType>();
   const app = await startLoom({ home, clock: new FakeClock(), sharing, install(app) {
     // Exercise upgrade from the already-shipped ask/status schema, preserving its data.
@@ -29,7 +33,7 @@ async function setup() {
   closes.push(app.close); let n = 0;
   const call = (name: string, input: unknown, viewer: Viewer = alice, key = `op-${++n}`) => app.operations.call('direct', viewer, `attention.${name}`, input, key);
   const write = (t: unknown = turn, viewer = alice, key?: string) => call('recordTurn', { agent: 'art', turn: t }, viewer, key);
-  return { app, call, write, types };
+  return { app, call, write, types, home };
 }
 it('upgrades without losing asks; preserves ids, sequence, participants, bounds and reply latency', async () => {
   const { app, call, write } = await setup();
@@ -43,7 +47,9 @@ it('upgrades without losing asks; preserves ids, sequence, participants, bounds 
   expect(write(turn, art, 'delivery')).toMatchObject({ code: 'conflict' });
   write({ ...turn, at: '2026-11-12T00:00:01.000Z', from: { kind: 'agent', id: 'other' } });
   expect(write({ ...turn, at: '2026-11-12T00:00:03Z', kind: 'reply', from: { kind: 'agent', id: 'art' }, run: 'run-1', outcome: 'answered', model: 'test', harness: 'test' })).toMatchObject({ value: { seq: 3, latency_ms: 3000 } });
-  expect(write({ ...turn, kind: 'reply', from: { kind: 'agent', id: 'art' }, run: 'run-1', outcome: 'none' })).toMatchObject({ value: { seq: 4 } });
+  const unsolicited = write({ ...turn, kind: 'reply', from: { kind: 'agent', id: 'art' }, run: 'run-1', outcome: 'none' });
+  expect(unsolicited).toMatchObject({ value: { seq: 4 } });
+  if (unsolicited.ok) expect(unsolicited.value).not.toHaveProperty('latency_ms');
   write({ ...turn, at: '2026-11-11T23:00:00Z', label: 'Renamed' });
   expect(call('conversation', { id })).toMatchObject({ value: { id, agent: 'art', label: 'Renamed', people: ['alice'], agents: ['other'], projects: [], started: '2026-11-11T23:00:00.000Z', last: '2026-11-12T00:00:03.000Z', turns: 5 } });
   const turns = call('turns', { conversation: id, after: 2, limit: 1 });
@@ -145,4 +151,15 @@ it('times the first recorded pending message even when later deliveries have ear
   write({ ...turn, at: '2026-11-12T00:00:20Z' });
   write({ ...turn, at: '2026-11-12T00:00:10Z' });
   expect(write({ ...turn, at: '2026-11-12T00:00:23Z', kind: 'reply', from: { kind: 'agent', id: 'art' }, run: 'run-1', outcome: 'answered' })).toMatchObject({ value: { latency_ms: 3000 } });
+});
+
+it('keeps service collection reads behind central operation grants and ignores legacy files', async () => {
+  const { call, write, home } = await setup();
+  write();
+  const id = conversationId('art', 'relay', 'test');
+  expect(call('conversation', { id }, { kind: 'service', id: 'reader' })).toMatchObject({ ok: true });
+  expect(call('conversations', {}, { kind: 'service', id: 'reader' })).toMatchObject({ code: 'denied' });
+  expect(call('conversations', {}, { kind: 'service', id: 'listed' })).toMatchObject({ value: [{ id }] });
+  expect(readFileSync(join(home, 'agents', 'art', 'memories.db'), 'utf8')).toBe('legacy sentinel, not SQLite');
+  expect(readFileSync(join(home, 'household.json'), 'utf8')).toBe('legacy sentinel, not JSON');
 });
