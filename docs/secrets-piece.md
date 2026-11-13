@@ -697,3 +697,22 @@ and full Changes/Bridges deployment acceptance remain on t-2208. No installed
 configuration, credentials, source import or service activation accompanies this
 code. Fixture integration exercises actual TLS, encrypted storage, restart,
 current-member removal, same-CA peer rejection, failed startup and shutdown.
+
+
+## Async preparation and receipt ordering
+
+The core registry now checks a prepared write's existing operation receipt and
+registered external recovery hooks before calling `prepare`. A committed matching
+retry returns its acknowledgement without preparing again; a name or full-input
+fingerprint mismatch conflicts before preparation. External recovery can reconcile
+metadata and publish changes in that same transaction, preserving its original
+receipt deadline. Receipt, recovery and permission checks run again after awaited
+preparation, so another write that commits during preparation still wins.
+
+This is a prerequisite, not a holder write protocol. Preparation receives no
+durable reservation: two fresh calls can both prepare, authentication can end
+during the await, and the later loom transaction can roll back. Do not put holder
+mutations in `prepare` on the strength of the preflight check. Production async
+set/remove still need durable full-input binding, concurrency/uncertain-result
+handling and metadata reconciliation after holder success plus loom rollback.
+Settings value forms remain unavailable in normal next mode.
