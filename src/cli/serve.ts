@@ -41,6 +41,7 @@ mesh-reachable HTTP daemon instead.
 
 Options:
   --next                 Run only the new app and in-repo pieces
+  --secret-writes <file> Explicit private mutation transport and daemon retry key ring (next mode)
   --secret-authority <file> Explicit private holder authorization socket config (next mode)
   --secret-holder <file> Explicit private local holder config for next mode
   --staging              Hold outside effects in next mode
@@ -102,6 +103,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         staging: { type: 'boolean', default: false },
         'secret-authority': { type: 'string' },
         'secret-holder': { type: 'string' },
+        'secret-writes': { type: 'string' },
         home: { type: 'string' },
         http: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'full' },
@@ -145,6 +147,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }
     let changes;
+    let secretWrites;
     let secretAuthority;
     if (values['secret-authority']) {
       try {
@@ -160,7 +163,14 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         changes = configuredSecretHolder(values['secret-holder']);
       } catch { io.stderr('Invalid local secret holder configuration\n'); return 2; }
     }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, bridges:changes ? {source:changes.source} : undefined, secretAuthority });
+    if (values['secret-writes']) {
+      if (!secretAuthority) {io.stderr('--secret-writes requires --secret-authority\n');return 2;}
+      try {
+        const { configuredSecretWrites } = await import('../pieces/secrets/holder-config.js');
+        secretWrites = configuredSecretWrites(values['secret-writes']);
+      } catch {io.stderr('Invalid secret mutation configuration\n');return 2;}
+    }
+    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, bridges:changes ? {source:changes.source} : undefined, secretAuthority, secretWrites });
     io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };
@@ -168,6 +178,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     });
     return 0;
   }
+  if (values['secret-writes']) { io.stderr('--secret-writes requires --next\n'); return 2; }
   if (values['secret-authority']) { io.stderr('--secret-authority requires --next\n'); return 2; }
   if (values['secret-holder']) { io.stderr('--secret-holder requires --next\n'); return 2; }
   if (values.staging || values.home) { io.stderr('--staging and --home require --next\n'); return 2; }
