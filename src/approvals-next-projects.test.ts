@@ -1,15 +1,18 @@
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from './foundation.js';
 import { fixtureSharing } from './fixture.js';
+import { HouseholdDatabase } from './core/household/document.js';
 import { HouseholdRows } from './core/household/rows.js';
 
-it('next approvals resolve current row-backed project rules and fail closed on unreadable metadata', async () => {
+it.each([false, true])('next approvals resolve row-backed project rules (injected sharing: %s)', async injectedSharing => {
   const home = mkdtempSync(join(tmpdir(), 'loom-approvals-projects-'));
   writeFileSync(join(home, 'projects.json'), 'not json');
-  const options = { home, next: true, sharing: fixtureSharing,
+  vi.stubEnv('APPROVALS_PROJECTS', 'printf poisoned-projects');
+  vi.stubEnv('APPROVALS_SEED_RULES', '[{"kind":"merge","scope":"github:*/*","tier":"do"}]');
+  const options = { home, next: true, ...(injectedSharing ? { sharing: fixtureSharing } : {}),
     authenticate: (req: import('node:http').IncomingMessage) => ({ viewer: req.headers.authorization === 'art' ? { kind: 'agent' as const, id: 'art' } : { kind: 'member' as const, id: 'jonathan' }, valid: () => true }) };
   let loom = await startLoom(options);
   let sequence = 0;
@@ -20,8 +23,10 @@ it('next approvals resolve current row-backed project rules and fail closed on u
   };
   const target = `github:acme/app#12@${'a'.repeat(40)}`;
   const rule = () => call('rule', { kind: 'merge', targets: [target], for: 'art' });
-  const project = { slug: 'pond', name: 'Pond', repositories: ['github:acme/app'], members: [], agents: [] };
+  const project = { slug: 'pond', name: 'Pond', repositories: [' Acme/App '], members: [], agents: [] };
   try {
+    loom.db.transaction(() => new HouseholdDatabase(loom.db).replace(home, { v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }))();
+    expect(await call('rules', {})).toMatchObject({ ok: true, value: { rules: [] } });
     expect(await call('set-rule', { kind: 'merge', scope: 'github:acme/*', tier: 'do' })).toMatchObject({ ok: true });
     expect(await call('set-rule', { kind: 'merge', scope: 'project:pond', tier: 'ask' })).toMatchObject({ ok: true });
     new HouseholdRows(loom.db, 'projects').put('pond', project);
@@ -33,7 +38,7 @@ it('next approvals resolve current row-backed project rules and fail closed on u
     await loom.close(); loom = await startLoom(options);
     expect(await rule()).toMatchObject({ ok: true, value: { [target]: { tier: 'ask', scope: 'project:pond' } } });
     new HouseholdRows(loom.db, 'projects').put('pond', { ...project, repositories: null });
-    expect(await rule()).toMatchObject({ ok: true, value: { [target]: { tier: 'ask', note: expect.stringContaining("project list couldn't be read") } } });
+    expect(await rule()).toMatchObject(injectedSharing ? { ok: true, value: { [target]: { tier: 'ask', note: expect.stringContaining("project list couldn't be read") } } } : { ok: false, code: 'unavailable' });
     // A later repair is visible; malformed rows must not become an empty list.
     new HouseholdRows(loom.db, 'projects').put('pond', project);
     expect(await rule()).toMatchObject({ ok: true, value: { [target]: { tier: 'ask', scope: 'project:pond' } } });
@@ -44,5 +49,5 @@ it('next approvals resolve current row-backed project rules and fail closed on u
       .toMatchObject({ ok: true, value: { [target]: { tier: 'ask', for: '?' } } });
     expect(await call('rule', { kind: 'merge', targets: [target], for: 'art' }, 'art'))
       .toMatchObject({ ok: false, code: 'denied' });
-  } finally { await loom.close(); rmSync(home, { recursive: true, force: true }); }
+  } finally { await loom.close(); rmSync(home, { recursive: true, force: true }); vi.unstubAllEnvs(); }
 });
