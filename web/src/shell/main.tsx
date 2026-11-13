@@ -1,3 +1,4 @@
+import Appearance from './appearance';
 import { lazy, StrictMode } from 'react';
 import { LazyMotion, domAnimation } from 'motion/react';
 import { createRoot } from 'react-dom/client';
@@ -13,4 +14,6 @@ const fixtureApps = document.documentElement.dataset.fixture === 'true' ? [{
   fit:{min:[320,280] as [number,number],ideal:520,max:680,big:false,why:'a small live list'},
   Screen:lazy(() => import('../data-demo')),
 }] : [];
-createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><Signin><Shell surfaces={shellSurfaces} apps={[...apps,...fixtureApps,...(document.documentElement.dataset.staging==='true'?[stagingApp]:[])]} /></Signin></LazyMotion></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><LazyMotion features={domAnimation}><Signin><Appearance><Shell surfaces={shellSurfaces} apps={[...apps,...fixtureApps,...(document.documentElement.dataset.staging==='true'?[stagingApp]:[])]} /></Appearance></Signin></LazyMotion></StrictMode>);
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

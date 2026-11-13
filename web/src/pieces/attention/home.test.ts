@@ -3,7 +3,7 @@ import { createElement as h, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { Ask } from './model';
-import type { OwnedAgent, AgentStatus } from './home-model';
+import type { OwnedAgent, AgentStatus, RuntimeJob } from './home-model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
@@ -11,7 +11,7 @@ const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
-import { orderedAgents, reportLink } from './home-model';
+import { currentRuntimeJobs, orderedAgents, reportLink } from './home-model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 const ask=(id:string,fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:`Question ${id}`,why:'The whole reason',if_yes:'I continue.',if_no:'I stop.',refs:['t-2205'],source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 const live=<T,>(records:T[])=>({records,status:'live' as const});
@@ -28,7 +28,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'person':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -185,4 +185,34 @@ it('checks the real member wait operation from Home without synthesizing a local
   await publish('attention.ask',live([{...record,state:'resolved'}]));
   expect(text()).not.toContain('Question wait');expect(text()).toContain('All clear.');
   expect(f.call.mock.calls.some(([name])=>name==='attention.answer')).toBe(false);
+});
+
+const runtimeJob=(id:string,fields:Partial<RuntimeJob>={}):RuntimeJob=>({id,agent:'art',title:`Runtime ${id}`,state:'queued',box:'worker',runner:'worker',createdAt:1,...fields});
+it('shows current real Runtime jobs independently of reports and retains concurrent matching titles',async()=>{
+  const rows=[runtimeJob('first',{title:'Same work',state:'running'}),runtimeJob('second',{title:'Same work',state:'waiting'}),runtimeJob('queued'),runtimeJob('starting',{state:'starting'}),runtimeJob('uncertain',{state:'uncertain'}),...(['done','failed','stopped','lost'] as const).map(state=>runtimeJob(state,{state})),runtimeJob('foreign',{agent:'other'})];
+  f.snapshots['runtime.job']=live(rows);
+  await draw();
+  const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
+  expect(words(panel)).toContain('Runtime jobs · 5');expect(panel.findAllByType('li')).toHaveLength(5);
+  expect(panel.findAllByType('h4').map(words)).toEqual(['Runtime uncertain','Same work','Runtime starting','Same work','Runtime queued']);
+  expect(words(panel)).toContain('running · Box worker');expect(words(panel)).toContain(' CT');
+  expect(words(panel)).not.toContain('Runtime foreign');expect(words(panel)).not.toContain('Runtime failed');
+  expect(f.call).not.toHaveBeenCalled();
+  await publish('runtime.job',live([runtimeJob('first',{state:'done'}),runtimeJob('new',{title:'New authoritative work'})]));
+  expect(text()).not.toContain('Same work');expect(text()).toContain('New authoritative work');
+  await publish('runtime.job',live([]));expect(text()).not.toContain('New authoritative work');expect(text()).toContain('No current runtime jobs.');
+});
+it.each(['loading','offline','denied'] as const)('clears Runtime words and avoids a false empty inventory while %s',async(status)=>{
+  f.snapshots['runtime.job']=live([runtimeJob('private',{title:'Visible private Runtime title'})]);await draw();
+  await publish('runtime.job',{records:f.snapshots['runtime.job'].records,status});
+  const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
+  expect(words(panel)).not.toContain('Visible private Runtime title');expect(words(panel)).not.toContain('No current runtime jobs.');expect(words(panel)).not.toContain('Runtime jobs · 0');
+  expect(words(panel)).toContain(status==='loading'?'Opening runtime jobs':'Couldn’t load runtime jobs');
+  expect(text()).toContain('Art card');expect(text()).toContain('No clock jobs.');
+  await publish('runtime.job',live([runtimeJob('returned')]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
+  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
+});
+it('orders Runtime work deterministically by state, queued time and identity without mutating the live snapshot or limiting rows',()=>{
+  const rows=[runtimeJob('z',{createdAt:2}),runtimeJob('b'),runtimeJob('a'),...Array.from({length:40},(_,i)=>runtimeJob(`running-${i}`,{state:'running'}))];
+  const original=[...rows];const jobs=currentRuntimeJobs(rows,'art');expect(rows).toEqual(original);expect(jobs).toHaveLength(43);expect(jobs.slice(-3).map(j=>j.id)).toEqual(['a','b','z']);
 });

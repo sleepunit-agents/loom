@@ -4,6 +4,7 @@ import { ContextMenu, type MenuAt } from '../tiling/menu';
 import { layout, railWidth, type Rect } from '../tiling/layout';
 import { Loading, Error, Button, Empty } from '../kit';
 import './shell.css';
+import Preferences from './preferences';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -73,7 +74,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   },[visible,route.focused,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
   return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'}>
-    <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>
+    <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
       {!phone && Rail && visible.length>0 && <aside className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}

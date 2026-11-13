@@ -1,4 +1,5 @@
 import type { LiveRecord } from '../../data';
+import type { RuntimeRecords } from '../../../../src/pieces/runtime/records';
 import type { Ask } from './model';
 import { safeHref } from './model';
 export interface ReportedItem { id: string; label: string; href?: string }
@@ -31,3 +32,11 @@ export const orderedAgents = <T extends OwnedAgent>(records: readonly T[]) => [.
 /** Multiple scoped reporters may describe one agent. Newest visible report wins, then stable id. */
 export const latestStatus = (records: readonly AgentStatus[], agent: string) => records.filter(r => r.agent === agent).sort((a,b) => b.changedAt-a.changedAt || a.id.localeCompare(b.id))[0];
 export const inboxPath = (ask?: Ask) => ask ? `/p/inbox-preview/ask/${encodeURIComponent(ask.id)}` : '/p/inbox-preview';
+
+export type RuntimeJob = RuntimeRecords['job'] & LiveRecord;
+/** Runtime identity keeps concurrent jobs separate, even with identical titles. */
+export function currentRuntimeJobs(records: readonly RuntimeJob[], agent: string): RuntimeJob[] {
+  const rank: Partial<Record<RuntimeJob['state'], number>> = { uncertain: 0, running: 1, starting: 2, waiting: 3, queued: 4 };
+  return records.filter(job => job.agent === agent && rank[job.state] !== undefined)
+    .sort((a,b) => rank[a.state]! - rank[b.state]! || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}

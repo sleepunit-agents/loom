@@ -16,3 +16,18 @@ export function vouchable(w: Wake): boolean {
     && !w.prompt?.includes('<!-- house: local -->')
     && !String(old.prompt ?? '').includes('<!-- house: local -->');
 }
+
+/** Archived strings can exclude a request, never authenticate its asker. */
+export function askable(w: Wake): boolean {
+  return vouchable(w) && w.member === undefined && w.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
+    && !['steered', 'other-agent'].includes(String(w.legacy?.for_why));
+}
+/** Every id and due time survives the owning card's 1000-character details cap. */
+export function vouchDetails(rows: Wake[]): string {
+  const room = Math.floor(1000 / rows.length) - 1;
+  return rows.map(w => {
+    const prefix = `${w.id} fires ${new Date(w.due).toISOString()}: `;
+    const words = (w.note || w.file || 'Saved wake').normalize('NFKC').replace(/[\p{C}]/gu, ' ');
+    return prefix + words.slice(0, Math.max(0, room - prefix.length));
+  }).join('\n');
+}

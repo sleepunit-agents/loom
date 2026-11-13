@@ -75,7 +75,7 @@ it('keeps request words out of acknowledgements, live/registry collections and r
   expect(JSON.stringify(f.app.db.prepare("SELECT result FROM core_operations WHERE name='runtime.queueBody'").all())).not.toContain(f.input.brief);
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
   expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.startBody', f.input, 'start')).toMatchObject({ ok: false, code: 'not-found' });
-  expect(f.app.operations.offered('direct').some(op => /input/i.test(op.name) && op.name.startsWith('runtime.'))).toBe(false);
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.takeInput', { job })).toMatchObject({ ok: false });
 });
 it('replays after restart without re-placement or notifications; changed input conflicts', async () => {
   const f = await setup(), result = f.call({}, undefined, 'stable'), job = f.jobOf(result);

@@ -42,11 +42,11 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
     flags[flag] = value;
   }
-  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in', variadic = timed || name === 'vouch';
+  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in', variadic = timed || name === 'vouch' || name === 'ask-vouch';
   if (positional.length < count || !variadic && positional.length > count) return fail(`expected ${timed ? 'a time or duration' : count ? spec.positional!.join(', ') : 'no positional arguments'}`,2);
   if (!agent && !name?.startsWith('lane ' ) && name !== 'rearm') return fail('select a clock with --agent or WAKE_AGENT');
   const input: Record<string,unknown> = {};
-  if (name === 'vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
+  if (name === 'vouch' || name === 'ask-vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
   if (timed) input.when = positional.join(name === 'in' ? '' : ' ');
   if (['at','in','park','schedule set'].includes(name!)) {
@@ -101,6 +101,10 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (timed) {
     const w = value as Wake & { alreadyScheduled?: boolean; schedule: string };
     return success(w.alreadyScheduled ? `already scheduled: ${scheduleName(w.schedule,agent!)}, next at ${clockTime(w.due)} (nothing armed)` : `${w.id} will wake at ${clockTime(w.due)}`);
+  }
+  if (name === 'ask-vouch') {
+    const card = result.value as {id:string; state:string};
+    return success(`${card.id}: asked the owner on loom's page; his Allow counts eligible jobs as his work (${card.state})`);
   }
   if (name === 'vouch') {
     const {done,gone} = value as {done:string[];gone:string[]};
