@@ -12,13 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
-
+- Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
 - Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
+- Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 
@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
 - Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode Knowledge on live records: topics, page reader and durable check actions, with source socket lifecycle owned by the daemon.
 
 - Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
+- Add the opt-in `loom-wake-client` API command for the new clock, with daemon-side command metadata, legacy scheduling text and bounded idempotent retries.
 - Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.

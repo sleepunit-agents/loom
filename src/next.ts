@@ -10,6 +10,7 @@ import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
+import { maySee } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { installClock } from './pieces/clock/index.js';
@@ -19,6 +20,7 @@ import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installChanges } from './pieces/changes/index.js';
+import { changesApprovals } from './pieces/changes/approvals.js';
 import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
@@ -28,6 +30,10 @@ import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
+import { installMindProjects } from './pieces/mind/projects.js';
+import { projectTasks, projectChanges } from './pieces/mind/projects-roles.js';
+import { tasksRole } from './pieces/tasks/role.js';
+import { mindRole } from './pieces/mind/role.js';
 import { installMindPeople } from './pieces/mind/people.js';
 import { installMindPeopleActions } from './pieces/mind/people-actions.js';
 import { createPersonHalf } from './backends/people-creation.js';
@@ -72,6 +78,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   });
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
+    approvals: changesApprovals(app.operations),
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
     attribution: () => householdAttribution(app.db, options.home),
     knownAgents: () => new HouseholdDatabase(app.db).household(options.home)?.agents ?? [],
@@ -93,6 +100,11 @@ export function installNext(app: Foundation, options: NextOptions) {
     const actions = installMindPeopleActions(app.operations, { directory: inventory?.commons.people,
       relationship: inventory?.agents.find(a => a.agent === agent)?.memories, agent, sharing, create: createPersonHalf });
     app.onClose(() => actions.close());
+  }
+  if (!app.operations.has('mind.projectsList')) {
+    const projects = installMindProjects(app.operations, app.live, { agents: inventory?.agents ?? [], sharing, people: mindRole(app.operations),
+      tasks: projectTasks(tasksRole(app.operations), v => v.kind === 'member' && maySee(v, {type:'task'}, sharing())), changes: projectChanges(app.operations) });
+    app.onClose(() => projects.close());
   }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
