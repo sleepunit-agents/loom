@@ -17,7 +17,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);
   installRunnerReports(db, operations, sharing);
-  installRunnerJobs(db, operations, sharing);
+  installRunnerJobs(db, operations, sharing, options.credentials);
   installRevokeBox(db, operations, sharing, options.credentials);
   const names = { box: 'listBoxes', job: 'listJobs', settings: 'listSettings', binding: 'listBindings' };
   for (const kind of Object.keys(records) as RecordKind[]) {
