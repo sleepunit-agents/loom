@@ -10,4 +10,7 @@ CREATE UNIQUE INDEX runtime_bindings_place ON runtime_bindings(json_extract(reco
 ` }, { number: 2, sql: `
 -- Words are private runner inputs, never registry/live records or retry results.
 CREATE TABLE runtime_inputs (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), brief TEXT NOT NULL, needs TEXT NOT NULL CHECK(json_valid(needs)));
+` }, { number: 3, sql: `
+-- Output words are not registry/live records; reads use current job scope.
+CREATE TABLE runtime_results (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)));
 ` }];
