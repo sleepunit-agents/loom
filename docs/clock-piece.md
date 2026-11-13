@@ -265,7 +265,8 @@ wake-now keeps its legacy exemption. The job fixture fills the budget with 49
 timed wakes and one parked wait, refuses each additional one-off path, then
 cancels the wait and runs an ordinary schedule once. It failed before the shared
 check and passes afterwards. Another agent's budget stays separate. Lane run-now keeps its schedule link for reassignment but carries an explicit
-`runNow` marker for one-off accounting. Its recurring occurrence does not consume
+`runNow` marker for one-off accounting. Persisted immediate runs from before
+that marker are recognized by their existing pause-bypass flag. Its recurring occurrence does not consume
 that budget. API shares remain unfinished.
 
 The fully read legacy smoke script verifies runtime delivery's id, agent, local

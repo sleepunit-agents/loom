@@ -119,11 +119,27 @@ describe('durable daemon clock', () => {
     app.value('cancel', { id: run.id });
     expect(app.call('scheduleRun', { id: lane.id }).ok).toBe(true);
     expect(wakes(app.db).filter(w => w.schedule === lane.id && w.state === 'pending')).toHaveLength(2);
+    expect(app.call('now', { agent: 'art' }).ok).toBe(true); // fresh owner wake keeps its exemption at full capacity
+  });
+  it('counts persisted lane run-now from before the marker was introduced', async () => {
+    const dir = home(), clock = new FakeClock(), app = await loom({}, dir, clock);
+    const lane = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    for (let n = 0; n < 49; n++) app.set('2h');
+    const run = app.value('scheduleRun', { id: lane.id });
+    // Construct the previous on-disk format, retaining its lane link and pause bypass.
+    delete run.runNow;
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(run), run.id);
+    await app.close();
+    const restarted = await loom({}, dir, clock);
+    expect(restarted.call('scheduleRun', { id: lane.id })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(restarted.call('in', { agent: 'art', prompt: 'More', note: 'more', when: '2h' })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(restarted.call('now', { agent: 'art' }).ok).toBe(true);
   });
   it('waits for quota reset plus a minute without using the job failure budget, including after restart', async () => {
     const dir = home(), clock = new FakeClock(Date.parse('2026-11-13T10:00:00Z'));
     const retryAfter = '2026-11-13T22:01:00Z';
-    const app = await loom({ runtime: { async startBody() { return { state: 'not-started', code: 'quota', reason: 'No model room', retryAfter }; } } }, dir, clock);
+    const firstStart = vi.fn(async () => ({ state: 'not-started', code: 'quota', reason: 'No model room', retryAfter } as const));
+    const app = await loom({ runtime: { startBody: firstStart } }, dir, clock);
     const w = app.set();
     clock.advance(60_000); await settled();
     const due = Date.parse(retryAfter) + 60_000;
@@ -135,6 +151,10 @@ describe('durable daemon clock', () => {
     clock.advance(due - clock.now() - 1); await settled(); expect(startBody).not.toHaveBeenCalled();
     clock.advance(1); await settled();
     expect(startBody).toHaveBeenCalledTimes(1);
+    const firstInput = firstStart.mock.calls[0] as unknown as [{ wake: Wake; intent: string }];
+    const nextInput = startBody.mock.calls[0] as unknown as [{ wake: Wake; intent: string }];
+    expect(firstInput[0].wake.id).toBe(w.id); expect(nextInput[0].wake.id).toBe(w.id);
+    expect(nextInput[0].intent).not.toBe(firstInput[0].intent);
     expect(wake(restarted.db, w.id)).toMatchObject({ state: 'fired', failures: 0 });
   });
   it.each([

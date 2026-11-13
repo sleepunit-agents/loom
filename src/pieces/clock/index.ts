@@ -59,7 +59,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     make({ ...ctx, viewer: s.by }, s, calendar(() => nextOccurrence(s, after)), { schedule: s.id });
   }
   function oneOffRoom(agent: string) {
-    if (wakes(db).filter(w => w.agent === agent && (!w.schedule || w.runNow) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
+    // Before runNow was recorded, immediate lane runs carried only bypassPause.
+    if (wakes(db).filter(w => w.agent === agent && (!w.schedule || w.runNow || w.bypassPause) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
