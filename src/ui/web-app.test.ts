@@ -3,7 +3,7 @@
  * type loom accepts has a way to be drawn there, and the first page stays
  * inside its weight (JS under 230 KB, CSS under 120 KB, gzipped).
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
@@ -37,9 +37,11 @@ describe('the app (web/)', () => {
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
     const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
-    const screens = Object.keys(manifest).filter(key => /^src\/pieces\/[^/]+\/index\.tsx$/.test(key));
+    const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
+      .map(piece => `src/pieces/${piece}/index.tsx`);
     expect(screens.length).toBeGreaterThan(10);
     for (const page of ['index.html', 'next.html']) {
+      expect(manifest[page], page).toBeDefined();
       const initial = new Set<string>();
       const visit = (key: string) => {
         if (initial.has(key)) return;
@@ -49,7 +51,7 @@ describe('the app (web/)', () => {
       visit(page);
       expect(screens.filter(key => initial.has(key)), page).toEqual([]);
     }
-    expect(screens.filter(key => !manifest[key].isDynamicEntry)).toEqual([]);
+    expect(screens.filter(key => !manifest[key]?.isDynamicEntry)).toEqual([]);
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).
