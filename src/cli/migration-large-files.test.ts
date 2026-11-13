@@ -2,12 +2,25 @@ import { closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, rmSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createSnapshot, readSnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
 import { verifyMigration, verifyRuntimeMigration } from './migration-verify.js';
 import { fileDigest, migrationChunkBytes } from './migration-files.js';
+
+// A whole-file Buffer read would otherwise pass on a high-memory test runner.
+vi.mock('node:fs',async original=>{
+  const fs=await original<typeof import('node:fs')>();
+  return {...fs,readFileSync:vi.fn((...args:Parameters<typeof fs.readFileSync>)=>{
+    const input=args[0],size=typeof input==='number'?fs.fstatSync(input).size:fs.statSync(input).size;
+    if(size>1024*1024)throw Error('Unbounded migration file read');
+    return fs.readFileSync(...args);
+  }),readSync:vi.fn((...args:Parameters<typeof fs.readSync>)=>{
+    if(typeof args[3]==='number'&&args[3]>1024*1024)throw Error('Unbounded migration buffer read');
+    return fs.readSync(...args);
+  })};
+});
 
 it('streams a sparse file over 600 MiB through snapshot, plan, all, repeat and both independent verifiers',async()=>{
   const root=mkdtempSync(join(tmpdir(),'loom-large-migration-'));

@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
 import { migrate, type Db } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { runtimeImportTables } from './import-projection.js';
-import { canonicalRuntimeSource, readRuntimeImport, type RuntimeImportIdentities, type RuntimeImportSources } from './import-source.js';
+import { canonicalRuntimeSource, readRuntimeImport, readRuntimeInventory, type RuntimeImportIdentities, type RuntimeImportSources } from './import-source.js';
 
 /** Semantic row comparison preserves every id, count and column without trusting a receipt. */
 export function compareRuntimeImport(db: Db, expected: ReturnType<typeof runtimeImportTables>): boolean {
@@ -32,6 +32,7 @@ export function importRuntime(db: Db, sources: RuntimeImportSources, options: un
     }
     writeRuntimeArchive(db,source);
     controls.interrupt?.();
+    if(readRuntimeInventory(sources,open).checksum!==source.checksum)throw Error('Runtime source changed during import');
     if (!compareRuntimeImport(db,expected) || !compareRuntimeArchive(db,source)) throw Error('Runtime import ids, counts or content differ');
     return {ok:true,imported:true,checksum:source.checksum};
   })();

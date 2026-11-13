@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { compareComms } from './migration-comms-projection.js';
 import { snapshotPath } from './migration-registry.js';
-import { expectedTables, type Row } from './migration-projection.js';
+import { expectedTables, readRuntimeProjection, type Row } from './migration-projection.js';
 import { readReceipt, separateDestination } from './migration-all.js';
 import { canonicalPlanValue, migrationPlanChecksum, prepareMigrationPlan } from './migration-plan.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
@@ -15,9 +15,8 @@ import type { IOStreams } from './io.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { SharingDatabase } from '../core/household/sharing.js';
 import { parseHouseholdDocument } from '../household.js';
-import { readRuntimeImport } from '../pieces/runtime/import-source.js';
 import { runtimeImportTables } from '../pieces/runtime/import-projection.js';
-import { runtimeMigrationSources, assertRuntimeCheckpointed, sameRuntimeHousehold } from './migration-runtime.js';
+import { assertRuntimeCheckpointed, sameRuntimeHousehold } from './migration-runtime.js';
 
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
@@ -63,13 +62,9 @@ export async function verifyMigration(snapshot: string, destination: string, sup
     try {
       for (const [piece,input] of Object.entries(plan.importers)) {
         if (!verifiers.includes(piece)) { report.missing.push(piece); continue; }
-        if (piece === 'runtime') {
-          const sourceHome=join(checked.root,'home');
-          const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
-          const source=readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>join(checked.root,p))),input.options,
-            {agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite);
-          if(!compareRuntimeArchive(db,source))report.differences.push({piece,table:'runtime_import_chunks',expected:Object.keys(source.files).length,actual:null});
-        }
+        const paths=input.paths.map(p=>join(checked.root,p));
+        const runtimeSource=piece==='runtime'?readRuntimeProjection(paths,input.options,join(checked.root,'home')):undefined;
+        if(runtimeSource && !compareRuntimeArchive(db,runtimeSource))report.differences.push({piece,table:'runtime_import_chunks',expected:Object.keys(runtimeSource.files).length,actual:null});
         if (piece === 'comms') {
           report.pieces.push(piece);
           const differences = await compareComms(db,input.paths.map(p => snapshotPath({snapshot:{root:checked.root,manifest:checked.manifest}},p)),home);
@@ -77,7 +72,7 @@ export async function verifyMigration(snapshot: string, destination: string, sup
           if (!receipt.completed.includes(piece)) report.differences.push({piece,table:'coordinator-receipt',expected:1,actual:0});
           continue;
         }
-        const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now,join(checked.root,'home'));
+        const expected = runtimeSource ? runtimeImportTables(runtimeSource) : await expectedTables(piece,paths,input.options,receipt.now,join(checked.root,'home'));
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
           const filter=table==='attention_asks' && (piece==='secrets'||plan.importers.secrets) ? (row:Row)=>{
@@ -127,8 +122,7 @@ export async function verifyRuntimeMigration(snapshot:string,home:string,options
       const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
       const current=new HouseholdDatabase(db).household(home);
       if(!sameRuntimeHousehold(current,h))throw Error('Destination household differs from snapshot');
-      const source=readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>snapshotPath({snapshot:prepared},p))),options,
-        {agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(db,home).projectIds()},openSnapshotSqlite);
+      const source=readRuntimeProjection(input.paths.map(p=>snapshotPath({snapshot:prepared},p)),options,sourceHome,new SharingDatabase(db,home).projectIds());
       const plan={...prepared.plan,importers:{...prepared.plan.importers,runtime:{...input,options:JSON.parse(source.options)}}};
       const report:VerificationReport={status:'verified',snapshot:prepared.plan.snapshot,plan:migrationPlanChecksum(plan),pieces:['runtime'],missing:[],differences:[]};
       for(const [table,expected] of Object.entries(runtimeImportTables(source))) {

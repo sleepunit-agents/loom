@@ -63,13 +63,14 @@ function householdTables(from: string, now: number): Tables {
 }
 import { createHash } from 'node:crypto';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+export function readRuntimeProjection(paths:string[],options:unknown,householdHome?:string,projects:string[]=[]){
+  if(!householdHome)throw Error('Source household required');
+  const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
+  return readRuntimeImport(runtimeMigrationSources(paths),options,{agents:h.agents,members:h.members.map(m=>m.person),projects},openSnapshotSqlite);
+}
 export async function expectedTables(piece: string, paths: string[], options: unknown, now: number, householdHome?: string): Promise<Tables> {
   switch (piece) {
-    case 'runtime': {
-      if(!householdHome)throw Error('Source household required');
-      const h=parseHouseholdDocument(householdHome,JSON.parse(readFileSync(join(householdHome,'household.json'),'utf8')));
-      return runtimeImportTables(readRuntimeImport(runtimeMigrationSources(paths),options,{agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite));
-    }
+    case 'runtime': return runtimeImportTables(readRuntimeProjection(paths,options,householdHome));
     case 'household': return householdTables(paths[0],now);
     case 'secrets': {
       if(!householdHome)throw Error('Source household required');

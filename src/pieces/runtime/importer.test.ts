@@ -120,3 +120,9 @@ it.each(['missing','extra','changed','wrong-part','empty-file'])('independently 
   if(kind==='empty-file')f.app.db.prepare("INSERT INTO runtime_import_chunks VALUES ('data/empty.bin',0,?)").run(Buffer.alloc(0));
   expect(compareRuntimeArchive(f.app.db,source)).toBe(false);
 });
+
+it('rolls back new source files added after archival and before commit',()=>{
+  const f=fixture();expect(()=>f.run({interrupt:()=>writeFileSync(join(f.sources.data,'new-file.bin'),'late')})).toThrow('changed during import');
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_%'").all()).toEqual([]);
+  expect(f.run()).toMatchObject({imported:true});
+});
