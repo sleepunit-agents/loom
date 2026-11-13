@@ -94,7 +94,9 @@ refresh/restart, staging/shutdown, and two real WebSocket subscribers receiving
 citations, rule updates and exact expiry.
 
 `src/ui/changes-piece.integration.test.ts` is separate from the legacy
-`changes-app` suite. The Changes piece evidence CI job builds the app, runs only
+`changes-app` suite, whose ordinary `change-board` extension fixture keeps the
+legacy split-pane renderer covered without shadowing the core `changes` command.
+The Changes piece evidence CI job builds the app, runs only
 that browser proof, and uploads six screenshots under `artifacts/changes-piece`
 (390, 1280 and 1920; Neon Noir and Daylight). It checks two windows, live checks,
 citations and answers, viewer project scope, navigation/reload and merged expiry.
