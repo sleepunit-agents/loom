@@ -9,6 +9,7 @@ import { installHouseGrants } from './grants.js';
 import { installJobResults } from './results.js';
 import { installBuildStatus } from './build-status.js';
 import { installQueueBody } from './queue.js';
+import { installStartBody } from './start.js';
 import { installBoxOperations } from './boxes.js';
 import { installRevokeBox } from './revoke.js';
 import { installRunnerJobs } from './runner-jobs.js';
@@ -22,6 +23,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   const store = runtimeStore(db);
   installBoxOperations(db, operations, sharing);
   installQueueBody(db, operations, sharing);
+  installStartBody(db, operations, sharing);
   installHouseConfiguration(db, operations, sharing);
   installHouseGrants(db, operations, sharing);
   installBuildStatus(db, operations, sharing);

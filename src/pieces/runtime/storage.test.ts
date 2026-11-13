@@ -27,7 +27,7 @@ const job = (id: string, extra: Partial<RuntimeRecords['job']> = {}): RuntimeRec
 it('installs empty metadata collections in next mode without pretending execution is installed', async () => {
   const { app, call } = await setup();
   for (const name of ['listBoxes', 'listJobs', 'listSettings', 'listBindings']) expect(call(name)).toEqual({ ok: true, value: { records: [] } });
-  expect(app.operations.call('direct', owner, 'runtime.startBody', {}, 'start')).toMatchObject({ ok: false, code: 'not-found' });
+  expect(app.operations.call('direct', owner, 'runtime.startBody', {}, 'start')).toMatchObject({ ok: false, code: 'invalid' });
   expect(app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 3 });
 });
 it('does not install runtime tables or operations in legacy mode', async () => {

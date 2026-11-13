@@ -24,6 +24,7 @@ import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
+import { clockRuntime } from './pieces/runtime/clock.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
@@ -154,8 +155,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
   if (!app.operations.has('clock.list')) {
-    // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { runtime: clockRuntime(app), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   installAttentionMaintenance(app);
