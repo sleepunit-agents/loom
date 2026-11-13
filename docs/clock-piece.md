@@ -240,8 +240,8 @@ the command inventory above, the source has these domain obligations:
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
-| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notice integration remains unfinished. |
-| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history exists; attention role publication and owner notices remain unfinished. |
+| Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notices are implemented through the Attention source described below. |
+| Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices and scoped Next/jobs reads exist; desk composition remains unfinished. |
 
 The client still owes exact stdout/stderr/exit fixtures, including the runtime
 relay refusal, nested verb options, and schedule/list/log formatting. The app
@@ -319,8 +319,8 @@ not-started outcome; there is no old HTTP delivery-id adapter. It records
 cancels the triage wake and records `quota-notice`, preventing recursive triage
 when no model has room. Other alert work still waits. Only a structured quota
 code selects this behavior; arbitrary reason text conveys no status or authority.
-Runtime/attention composition and publication of the owner's quota notice remain
-separate unfinished work; this unit does not publish one itself.
+The Attention source below publishes one owner notice per wake; repeated quota
+waits do not reopen it. Runtime dispatch composition remains unfinished.
 
 ## Parked continuation messages
 
@@ -469,3 +469,27 @@ or importer-all registration; those remain on t-2201.
 | Subprocess-dependent log messages | New structured event time, kind and outcome/note, filtered as displayed, with the legacy duration and last-2000 rule. |
 | A separate lane registry surviving removal of its schedule | One owning schedule row. Removing it through either command removes the lane; no orphaned registry is kept. |
 | Caller-supplied principal statement | Refused; only the authenticated viewer and future runtime resolver can establish provenance. |
+
+## Attention start-failure notices
+
+When composed with Attention's trusted household source, each wake raises one
+notice at the third definite start failure, one when automatic retries stop
+(including the first failed continuation), and one on model quota deferral or
+suppressed quota triage. Stable wake-and-kind identities prevent receipt retries,
+repeated quota waits and restarts from reopening an acknowledged notice. The
+outcome and notice commit together. A source failure rolls back both; the daemon
+then holds the dispatch uncertain rather than retrying an unrecorded outcome.
+
+Notices link to Clock and carry only the wake id, generic explanation and failure
+category. Prompt, note, file, project/member scope and runtime error text never
+enter a household notice. Only household owners can see or acknowledge them under
+Attention's existing policy. Acknowledgement does not retry, cancel, approve or
+start work; the Clock reader remains the place to inspect the wake. Next mode
+registers this source using the installed Attention registry capability, including
+when an installer already supplied Attention. Independent Clock installations
+may omit it. Existing staging/uncertain outcomes do not report definite failures.
+
+The offline registry merged in #951 already registers Clock after household;
+`loom migrate all` invokes the same transactional importer as the standalone
+command, with its old WAKE_DATA directory selected from the validated snapshot.
+No import or live move is performed by either implementation slice.
