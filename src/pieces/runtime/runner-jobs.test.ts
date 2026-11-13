@@ -92,7 +92,13 @@ it('never reports unclaimed/terminal work or accepts state, identity and timesta
   for (const job of ['j', 'terminal']) expect(f.call('reportJob', { job, state: 'running' })).toMatchObject({ ok: false, code: 'conflict' });
   for (const input of [{ job: 'j', runner: 'b' }, { job: 'j', createdAt: 1 }]) expect(f.call('claimJob', input)).toMatchObject({ ok: false, code: 'invalid' });
   for (const state of ['queued', 'starting', 'done', 'failed', 'stopped', 'lost', 'uncertain']) expect(f.call('reportJob', { job: 'j', state })).toMatchObject({ ok: false, code: 'invalid' });
-  f.call('claimJob', { job: 'j' }); f.box({ reportOnly: true, mayHost: [] });
+  f.call('claimJob', { job: 'j' });
+  const before = f.store.read('job', 'j');
+  for (const extra of [{ runner: 'b' }, { box: 'b' }, { changedAt: 1 }]) {
+    expect(f.call('reportJob', { job: 'j', state: 'running', ...extra })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(f.store.read('job', 'j')).toEqual(before);
+  }
+  f.box({ reportOnly: true, mayHost: [] });
   expect(f.call('reportJob', { job: 'j', state: 'waiting' })).toMatchObject({ ok: true });
   f.box({ revokedAt: f.clock.now() });
   expect(f.call('reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: false, code: 'denied' });
