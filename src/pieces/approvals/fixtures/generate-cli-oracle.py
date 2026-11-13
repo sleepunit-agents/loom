@@ -68,5 +68,15 @@ with tempfile.TemporaryDirectory() as root:
     case('equals values',['use',allowed['id'],'--kind=merge','--target='+target],[allowed])
     case('last repeated value wins',['use',allowed['id'],'--kind','relay','--kind','merge','--target',target],[allowed])
     case('flags before positional',['check','--json',allowed['id']],[allowed])
+    for label,argv in [
+        ('no command',[]),('unknown command',['wat']),
+        ('check missing id',['check']),('use missing id',['use']),('withdraw missing id',['withdraw']),
+        ('rule missing kind',['rule']),('rule missing targets',['rule','merge']),
+        ('check extra id',['check',allowed['id'],'extra']),
+        ('unknown flag',['check',allowed['id'],'--bogus']),
+        ('value missing',['request','--kind']),('value followed by flag',['request','--kind','--why','reason']),
+        ('boolean with value',['check',allowed['id'],'--json=yes']),
+    ]:
+        case('invalid '+label,argv)
     dest=Path(__file__).resolve().parent
     Path(dest,'cli-oracle.json').write_text(json.dumps({'upstream':'588b3f7c22f86068063153676de159597348216a','generated_by':'offline Python run() oracle; frozen time and id; trusted principal fixtures; no runtime subprocess','cases':cases},indent=2)+'\n')

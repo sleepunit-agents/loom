@@ -2169,6 +2169,231 @@
         "stdout": "{\"id\": \"a-01234567\", \"agent\": \"art\", \"for\": \"owner\", \"state\": \"allowed\", \"kind\": \"merge\", \"target\": \"github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"expires\": \"2026-11-12T01:00:00Z\"}\n",
         "stderr": ""
       }
+    },
+    {
+      "label": "invalid no command",
+      "argv": [],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: request | check | use | withdraw | standing | list | rule | tell | grant\n"
+      }
+    },
+    {
+      "label": "invalid unknown command",
+      "argv": [
+        "wat"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: argument cmd: invalid choice: 'wat' (choose from request, check, use, withdraw, list, standing, rule, tell, grant)\n"
+      }
+    },
+    {
+      "label": "invalid check missing id",
+      "argv": [
+        "check"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: the following arguments are required: id\n"
+      }
+    },
+    {
+      "label": "invalid use missing id",
+      "argv": [
+        "use"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: the following arguments are required: id\n"
+      }
+    },
+    {
+      "label": "invalid withdraw missing id",
+      "argv": [
+        "withdraw"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: the following arguments are required: id\n"
+      }
+    },
+    {
+      "label": "invalid rule missing kind",
+      "argv": [
+        "rule"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: the following arguments are required: kind, targets\n"
+      }
+    },
+    {
+      "label": "invalid rule missing targets",
+      "argv": [
+        "rule",
+        "merge"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: the following arguments are required: targets\n"
+      }
+    },
+    {
+      "label": "invalid check extra id",
+      "argv": [
+        "check",
+        "a-01234567",
+        "extra"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: unrecognized arguments: extra\n"
+      }
+    },
+    {
+      "label": "invalid unknown flag",
+      "argv": [
+        "check",
+        "a-01234567",
+        "--bogus"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: unrecognized arguments: --bogus\n"
+      }
+    },
+    {
+      "label": "invalid value missing",
+      "argv": [
+        "request",
+        "--kind"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: argument --kind: expected one argument\n"
+      }
+    },
+    {
+      "label": "invalid value followed by flag",
+      "argv": [
+        "request",
+        "--kind",
+        "--why",
+        "reason"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: argument --kind: expected one argument\n"
+      }
+    },
+    {
+      "label": "invalid boolean with value",
+      "argv": [
+        "check",
+        "a-01234567",
+        "--json=yes"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "principal": {
+        "for": "owner",
+        "people": []
+      },
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: usage: argument --json: ignored explicit argument 'yes'\n"
+      }
     }
   ]
 }

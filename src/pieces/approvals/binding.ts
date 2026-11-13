@@ -14,15 +14,15 @@ export interface CommandAnswer { exit:number;stdout:string;stderr:string }
 export function command(operations:Operations,viewer:Viewer,argv:string[]):CommandAnswer {
   const fail=(message:string):CommandAnswer=>({exit:1,stdout:'',stderr:`approvals: ${message}\n`});
   const verb=argv[0],spec=approvalCommands.find(c=>c.name===verb);
-  if(!spec)return fail('request | check | use | withdraw | standing | list | rule | tell | grant');
+  if(!spec)return fail(verb?`usage: argument cmd: invalid choice: '${verb}' (choose from request, check, use, withdraw, list, standing, rule, tell, grant)`:'request | check | use | withdraw | standing | list | rule | tell | grant');
   const positional:string[]=[],input:Record<string,unknown>={},boolean=new Set(['json','deny']);
   for(let n=1;n<argv.length;n++){
     const arg=argv[n];
     if(!arg.startsWith('--')){positional.push(arg);continue;}
     const [flag,...equal]=arg.slice(2).split('=');
     if(flag!=='principal'&&!Object.hasOwn(spec.flags??{},flag))return fail(`usage: unrecognized arguments: --${flag}`);
-    if(boolean.has(flag)){if(equal.length)return fail(`usage: --${flag} takes no value`);input[flag]=true;continue;}
-    const value=equal.length?equal.join('='):argv[++n];if(value===undefined)return fail(`usage: --${flag} expected one argument`);
+    if(boolean.has(flag)){if(equal.length)return fail(`usage: argument --${flag}: ignored explicit argument '${equal.join('=')}'`);input[flag]=true;continue;}
+    const value=equal.length?equal.join('='):argv[++n];if(value===undefined||(!equal.length&&value.startsWith('--')))return fail(`usage: argument --${flag}: expected one argument`);
     input[flag.replaceAll('-','_')]=value;
   }
   if(input.as!==undefined)return fail('--as is for a piece acting for a body, not over the API');
@@ -31,9 +31,9 @@ export function command(operations:Operations,viewer:Viewer,argv:string[]):Comma
   if(verb==='grant'&&viewer.kind!=='member')return fail("grant is the owner's, on loom's machine; a body asks with request");
   if(verb==='list'&&viewer.kind!=='member')return fail("the list is the owner's, on loom's machine");
   if(verb==='standing')return fail("standing is for the clock on loom's machine, acting for a body (--as)");
-  if(verb==='rule'){input.kind=positional[0];input.targets=positional.slice(1);}
-  else if(spec.positional?.includes('id')){if(positional.length!==1)return fail('usage: an approval id is required');input.id=positional[0];}
-  else if(positional.length)return fail('usage: unexpected positional argument');
+  if(verb==='rule'){if(positional.length<2)return fail(`usage: the following arguments are required: ${positional.length?'targets':'kind, targets'}`);input.kind=positional[0];input.targets=positional.slice(1);}
+  else if(spec.positional?.includes('id')){if(!positional.length)return fail('usage: the following arguments are required: id');if(positional.length>1)return fail(`usage: unrecognized arguments: ${positional.slice(1).join(' ')}`);input.id=positional[0];}
+  else if(positional.length)return fail(`usage: unrecognized arguments: ${positional.join(' ')}`);
   const result=operations.call('direct',viewer,`approvals.${verb}`,input,`approvals-cli:${randomUUID()}`);
   if(!result.ok)return fail(result.message);
   const value=result.value as any; // Each operation already validates its result; this is the compatibility formatter.
