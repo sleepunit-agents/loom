@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
 import type { IOStreams } from './io.js';
@@ -12,9 +12,9 @@ export interface SnapshotManifest {
 }
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 const excluded = new Set(['node_modules', '.git']);
-function canonical(path: string): string {
+export function canonicalSnapshotPath(path: string): string {
   if (existsSync(path)) return realpathSync(path);
-  return join(canonical(dirname(path)), path.slice(dirname(path).length + 1));
+  return join(canonicalSnapshotPath(dirname(path)), basename(path));
 }
 function within(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent + sep);
@@ -22,7 +22,7 @@ function within(child: string, parent: string): boolean {
 /** SQLite's backup API gives each database a committed view while writers run.
  * Cross-store consistency requires stopping the old services for the final move. */
 export async function createSnapshot(from: string, to: string, tasks?: string): Promise<SnapshotManifest> {
-  const source = realpathSync(from), target = canonical(resolve(to));
+  const source = realpathSync(from), target = canonicalSnapshotPath(resolve(to));
   if (within(target, source) || within(source, target)) throw new Error('Snapshot and source must be separate directories');
   if (existsSync(target)) throw new Error('Snapshot destination already exists');
   mkdirSync(dirname(target), { recursive: true });
@@ -34,6 +34,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string): 
     const stat = lstatSync(input);
     if (stat.isSymbolicLink()) throw new Error('Snapshot source contains a symbolic link');
     if (stat.isDirectory()) {
+      mkdirSync(join(staging, path), { recursive: true, mode: 0o700 });
       for (const name of readdirSync(input).sort()) {
         if (excluded.has(name)) continue;
         // Only omit actual SQLite sidecars belonging to a database file.
@@ -98,11 +99,12 @@ export function readSnapshot(dir: string): SnapshotManifest {
   }
   return manifest;
 }
+const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] --to <new-directory>\n';
 export async function migrateSnapshot(argv: string[], io: IOStreams): Promise<number> {
   let values;
   try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' } }, strict: true, allowPositionals: false })); }
-  catch { io.stderr('usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] --to <new-directory>\n'); return 2; }
-  if (!values.from || !values.to) { io.stderr('usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] --to <new-directory>\n'); return 2; }
+  catch { io.stderr(usage); return 2; }
+  if (!values.from || !values.to) { io.stderr(usage); return 2; }
   try {
     const manifest = await createSnapshot(values.from, values.to, values.tasks);
     io.stdout(JSON.stringify({ status: 'ok', files: manifest.files.length, consistency: manifest.consistency }) + '\n');

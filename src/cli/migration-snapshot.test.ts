@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { Readable } from 'node:stream';
-import { migrateSnapshot, createSnapshot, readSnapshot } from './migration-snapshot.js';
+import { canonicalSnapshotPath, migrateSnapshot, createSnapshot, readSnapshot } from './migration-snapshot.js';
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -116,4 +116,23 @@ test('CLI validates arguments and never forwards key material in success or fail
   const source = new Database(path, { readonly: true });
   try { expect(source.prepare('SELECT * FROM records').all()).toEqual([{ id: 'kept' }]); }
   finally { source.close(); }
+});
+
+test('canonical paths retain the first character directly beneath the filesystem root', () => {
+  expect(canonicalSnapshotPath('/loom-snapshot-nonexistent-fixture')).toBe('/loom-snapshot-nonexistent-fixture');
+});
+test('preserves empty directories including an empty home', async () => {
+  const { home, to } = fixture();
+  rmSync(join(home, 'comms.key')); rmSync(join(home, 'household.json'));
+  mkdirSync(join(home, 'empty'));
+  expect((await createSnapshot(home, to)).files).toEqual([]);
+  expect(statSync(join(to, 'home/empty')).isDirectory()).toBe(true);
+  expect(statSync(join(to, 'home/empty')).mode & 0o777).toBe(0o700);
+  expect(readSnapshot(to).files).toEqual([]);
+});
+test('refuses a reserved directory with missing or interrupted completion manifest', () => {
+  const { to } = fixture(); mkdirSync(to);
+  expect(() => readSnapshot(to)).toThrow();
+  writeFileSync(join(to, 'manifest.json'), '{"version":1,"files":[');
+  expect(() => readSnapshot(to)).toThrow();
 });
