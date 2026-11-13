@@ -1,3 +1,4 @@
+import { storedSprite } from './core/household/sprites.js';
 import { installComms } from './pieces/comms/index.js';
 import { loadKey } from './pieces/comms/crypto.js';
 import { stagingHold } from './pieces/comms/role.js';
@@ -219,6 +220,18 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     await server.connect(transport);
     try { return await transport.handleRequest(c.req.raw); }
     finally { await transport.close(); await server.close(); }
+  });
+  routes.get('/faces/:agent/:file', c => {
+    const authentication = auth(c.env.incoming as IncomingMessage);
+    if (!authentication?.valid()) return c.notFound();
+    const agent = c.req.param('agent'), file = c.req.param('file');
+    if (!new HouseholdDatabase(app.db).household(options.home)?.agents.includes(agent) ||
+      !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
+    const sprite = storedSprite(app.db, agent);
+    if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
+    return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
+      headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
+    });
   });
   const publicRoot = resolve(import.meta.dirname, '../assets');
   const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
