@@ -12,6 +12,7 @@ import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
+import { installClock } from './pieces/clock/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
@@ -30,7 +31,6 @@ import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
 import { installMindPeople } from './pieces/mind/people.js';
 import { installMindPeopleActions } from './pieces/mind/people-actions.js';
 import { createPersonHalf } from './backends/people-creation.js';
-import { HouseholdDatabase } from './core/household/document.js';
 import { installMindKnowledge } from './pieces/mind/index.js';
 import { installMindKnowledgeActions } from './pieces/mind/actions.js';
 import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
@@ -95,6 +95,11 @@ export function installNext(app: Foundation, options: NextOptions) {
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
+  if (!app.operations.has('clock.list')) {
+    // The runtime dispatch role is still unavailable: Clock's default holds starts.
+    const jobs = installClock(app.db, app.operations, app.live, sharing);
+    app.onClose(jobs.close);
+  }
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
