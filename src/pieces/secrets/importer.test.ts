@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import subprocess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,6 +37,9 @@ it('atomically imports names, separate startup policy, exact temporary authority
   const f=setup(),before=['store.sops.json','policy.json','requests.json','audit.jsonl'].map(n=>readFileSync(join(f.from,n)));
   expect(importSecrets(f.app.db,f.home,f.from,now,options)).toMatchObject({imported:true,names:1,requests:2,grants:1});
   const legacy=JSON.parse((f.app.db.prepare("SELECT value FROM secrets_meta WHERE key='legacy-snapshot'").get() as {value:string}).value);
+  expect(legacy.requests).toEqual([request,pending]);
+  const ask=JSON.parse((f.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(pending.id) as {record:string}).record);
+  expect(ask).toMatchObject({sourceManaged:true,createdAt:Date.parse(at),changedAt:Date.parse(at)});
   expect(legacy.audit).toEqual(readFileSync(join(f.from,'audit.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line)));
   const tables=f.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
   const output=JSON.stringify(tables.map(t=>f.app.db.prepare(`SELECT * FROM "${t.name}"`).all()));
@@ -95,4 +101,29 @@ it('checks raw source identity, encrypted-only store contents, duplicate audit k
   writeFileSync(join(f.from,'audit.jsonl'),'');
   expect(()=>readSecretImport(f.from,now,{agents:{art:'art',other:'art'},members:options.members},registered)).toThrow();
   expect(()=>readSecretImport(f.from,now,{agents:options.agents,members:{jonathan:'absent'}},registered)).toThrow();
+});
+
+it('persists original reciprocal carry metadata without inventing carried attribution or reviving the moved house',()=>{
+ const f=setup(),carried={...request,id:'q-23456789',house:'h-4',who:undefined,carriedFrom:request.id};
+ const original={...request,claimedBy:carried.id};
+ f.put('requests.json',{v:1,requests:{[original.id]:original,[carried.id]:carried,[pending.id]:pending}});
+ expect(importSecrets(f.app.db,f.home,f.from,now,options).grants).toBe(2);
+ const legacy=JSON.parse((f.app.db.prepare("SELECT value FROM secrets_meta WHERE key='legacy-snapshot'").get() as {value:string}).value);
+ expect(legacy.requests).toEqual([original,JSON.parse(JSON.stringify(carried)),pending]);
+ const role=grantsRole(f.app.db),resource={kind:'secret' as const,target:'API'};
+ expect(role.mayUse('art',resource,now,{house:'h-1',service:'discord'})).toBe(false);
+ expect(role.mayUse('art',resource,now,{house:'h-4',service:'discord'})).toBe(true);
+});
+
+it('reads only the four copied metadata inputs and invokes no decryptor, child program or source write',()=>{
+ const f=setup(),inputs=new Map(['store.sops.json','policy.json','requests.json','audit.jsonl'].map(n=>[join(f.from,n),readFileSync(join(f.from,n))]));
+ const read=vi.spyOn(fs,'readFileSync').mockImplementation(path=>{const b=inputs.get(String(path));if(!b)throw Error('Unexpected source read');return b;});
+ const writes=(['writeFileSync','appendFileSync','renameSync','unlinkSync'] as const).map(name=>vi.spyOn(fs,name).mockImplementation(()=>{throw Error('Source write');}));
+ const processes=(['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork'] as const).map(name=>vi.spyOn(subprocess,name).mockImplementation(()=>{throw Error('Legacy program');}));
+ syncBuiltinESMExports();
+ try {
+  expect(readSecretImport(f.from,now,options,{agents:['art'],members:['jonathan']}).records.map(r=>r.id)).toEqual(['API']);
+  expect(read.mock.calls.map(c=>String(c[0])).sort()).toEqual([...inputs.keys()].sort());
+  for(const spy of [...writes,...processes])expect(spy).not.toHaveBeenCalled();
+ } finally {vi.restoreAllMocks();syncBuiltinESMExports();}
 });

@@ -1,11 +1,11 @@
 /** Explicit offline import. Caller owns the stopped-home gate. */
 import { realpathSync } from 'node:fs';
-import { dirname, sep } from 'node:path';
+import { dirname } from 'node:path';
 import { migrate, type Db } from '../../core/index.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { schema } from './schema/001.js';
 import { schema as attentionSchema } from '../attention/schema/001.js';
-import { canonicalSecretImport, readSecretImport, type SecretImportOptions } from './import-source.js';
+import { assertSeparateSecretPaths, canonicalSecretImport, readSecretImport, type SecretImportOptions } from './import-source.js';
 export { readSecretImport } from './import-source.js';
 
 export function importSecrets(db: Db, home: string, from: string, now: number, options: SecretImportOptions,
@@ -13,7 +13,7 @@ export function importSecrets(db: Db, home: string, from: string, now: number, o
   try {
     if(db.name && db.name!==':memory:') {
       const source=realpathSync(from),target=realpathSync(dirname(db.name));
-      if(source===target || source.startsWith(target+sep) || target.startsWith(source+sep))throw Error();
+      assertSeparateSecretPaths(source,target);
     }
     return db.transaction(()=>{
     const h=new HouseholdDatabase(db).household(home);

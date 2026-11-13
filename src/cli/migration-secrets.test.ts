@@ -1,7 +1,7 @@
 import * as secretsImporter from '../pieces/secrets/importer.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
-import {mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
+import {linkSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,statSync,symlinkSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {openSnapshotSqlite} from './migration-sqlite.js';
@@ -89,4 +89,13 @@ it('refuses source/destination overlap and symlink aliases before creating lock/
   expect(await run(['secrets','--home',home,'--from',f.source,'--identities',map],io)).toBe(1);
   expect(bytes(f.old)).toEqual(before);
  }
+});
+
+it('rejects hardlinked source inputs before SQLite can chmod their destination alias',async()=>{
+ const f=await setup(),io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:vi.fn(),stderr:vi.fn()};
+ const map=join(f.dir,'map.json');writeFileSync(map,JSON.stringify(f.plan.importers.secrets.options));
+ mkdirSync(f.home);const input=join(f.source,'store.sops.json');linkSync(input,join(f.home,'loom.db'));
+ const before=statSync(input).mode;
+ expect(await run(['secrets','--home',f.home,'--from',f.source,'--identities',map],io)).toBe(1);
+ expect(statSync(input).mode).toBe(before);expect(readdirSync(f.home)).toEqual(['loom.db']);
 });

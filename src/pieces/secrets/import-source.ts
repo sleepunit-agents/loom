@@ -1,7 +1,7 @@
 /** Offline source projection. No destination or credential decryption. */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import { z } from 'zod';
 import { secretName } from './input.js';
 import { parseLegacyMetadataJson } from './source-json.js';
@@ -31,10 +31,24 @@ const auditSchema = z.object({
 const optional = (path: string): Buffer | undefined => {
   try { return readFileSync(path); } catch(e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; }
 };
+/** Both callers supply canonical paths before allowing any destination write. */
+export function assertSeparateSecretPaths(source: string, destination: string): void {
+  if(source===destination || source.startsWith(destination+sep) || destination.startsWith(source+sep))throw Error('Overlapping secrets import paths');
+}
+/** A copied source may not alias writable destination files through hardlinks. */
+export function assertCopiedSecretSource(from: string): void {
+  for(const name of ['store.sops.json','policy.json','requests.json','audit.jsonl']) {
+    try {
+      const stat=lstatSync(join(from,name));
+      if(!stat.isFile()||stat.nlink!==1)throw Error();
+    } catch(e) {if((e as NodeJS.ErrnoException).code!=='ENOENT')throw Error('Invalid copied secrets source');}
+  }
+}
 /** Raw encrypted bytes affect receipt only. They never enter the projection. */
 export function readSecretImport(from: string, now: number, input: SecretImportOptions,
   registered: {agents: readonly string[]; members: readonly string[]}) {
   try {
+    assertCopiedSecretSource(from);
     const options = secretImportOptions.parse(input);
     const files = new Map([
       ['store.sops.json', optional(join(from,'store.sops.json'))],
