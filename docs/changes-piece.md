@@ -125,8 +125,9 @@ The Changes piece evidence CI job builds the app, runs only
 that browser proof, and uploads six screenshots under `artifacts/changes-piece`
 (390, 1280 and 1920; Neon Noir and Daylight). It checks two windows, live checks,
 citations and answers, viewer project scope, navigation/reload and merged expiry.
-Browser execution belongs in CI. Artifact links and the mandatory cold credential,
-permission and importer review will be recorded in the PR before it is ready.
+The same proof opens the linked Tasks reader in both windows, checks live checks
+and review badges, and reloads one window before checking subsequent updates.
+Browser execution belongs in CI; each PR records its own exact-head artifact evidence.
 
 Credential reader/client cold review stopped at its three-round bound, last
 verdict BLOCKING with all CRITICAL/MAJOR findings folded and tested. The fixes
@@ -135,7 +136,8 @@ configuration, response validation, safe pagination and malformed PR states.
 Missing or invalid upstream states fail the read and preserve the prior snapshot.
 The injected secret helper remains as an intentional paired boundary. Ledger
 and full transcripts are retained in loom note
-`loom/2026-11-12-changes-credential-review`. Actual root/Approvals integration remains open. This credential unit does not claim a CLEAR verdict.
+`loom/2026-11-12-changes-credential-review`. Root/Approvals integration subsequently
+landed as described above. This credential unit does not claim a CLEAR verdict.
 
 The daemon rechecks project mappings and agent attribution inside the snapshot
 commit transaction, including preserved rows from failed reads. A refresh request
@@ -154,8 +156,8 @@ helper and ownership-revocation coverage during an in-flight read. The full ledg
 prompts and transcripts are retained in loom note
 `loom/2026-11-12-changes-permission-review`. All 69 affected backend, importer,
 client and architecture tests pass, along with TypeScript and diff checks. No
-additional importer or credential review was run. Runtime root/Approvals composition
-remains a follow-up; no live home or service was changed.
+additional importer or credential review was run for that unit. Runtime root/Approvals
+composition subsequently landed; no live home or service was changed.
 
 ## Built-in service registration
 
@@ -167,8 +169,8 @@ The registry is rebuilt on installation after restart; household metadata cannot
 create a service, and another home cannot inherit one. Private member records,
 household setup and person answers retain their central policy restrictions.
 No cross-piece permission is implied: Changes still needs an explicit grant when
-calling another piece. The job uses this authority for its own snapshot operation; daemon startup
-in the next root remains a separate follow-up.
+calling another piece. The job uses this authority for its own snapshot operation;
+the next root now starts and stops the daemon with the foundation.
 
 ## GitHub service credentials
 

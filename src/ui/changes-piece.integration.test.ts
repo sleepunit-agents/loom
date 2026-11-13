@@ -68,6 +68,24 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares checks,
       expect(await b.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await b.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
+    // The same live Change records drive badges in the Tasks reader, including
+    // changes to reviews as well as checks. Keep this in the single app proof.
+    expect(loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'tasks.update', {
+      id: 't-1', cli: true, set: { description: 'Linked work: acme/app#3' },
+    }, 'browser:task-badges').ok).toBe(true);
+    await Promise.all([a.goto(`${loom.url}/p/tasks-preview/task/t-1`), b.goto(`${loom.url}/p/tasks-preview/task/t-1`)]);
+    const badge = (page: typeof a) => page.getByRole('link', { name: 'acme/app#3', exact: true }).locator('..');
+    for (const page of [a, b]) await expect.poll(() => badge(page).textContent()).toBe('acme/app#3 · passing · approved');
+    current = { ...current, checks: { state: 'failing', total: 2, failing: ['Typecheck'], running: [] }, review: { state: 'changes_requested', by: ['Reviewer'] } }; publish();
+    for (const page of [a, b]) await expect.poll(() => badge(page).textContent()).toBe('acme/app#3 · failing · changes requested');
+    await b.reload();
+    await expect.poll(() => badge(b).textContent()).toBe('acme/app#3 · failing · changes requested');
+    current = { ...current, checks: { state: 'passing', total: 2, failing: [], running: [] }, review: { state: 'approved', by: ['Reviewer'] } }; publish();
+    for (const page of [a, b]) await expect.poll(() => badge(page).textContent()).toBe('acme/app#3 · passing · approved');
+    await Promise.all([a.goto(`${loom.url}/p/changes-preview`), b.goto(`${loom.url}/p/changes-preview`)]);
+    await expect.poll(() => row(a).count()).toBe(1);
+    await expect.poll(() => row(b).count()).toBe(1);
+    await row(a).click(); await row(b).click();
     const pollock = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 } });
     await pollock.grantPermissions(['local-network-access'], { origin: loom.url });
     await pollock.addCookies([{ name: 'fixture', value: 'pollock', url: loom.url }]); await pollock.route('**/*', staticFiles);
