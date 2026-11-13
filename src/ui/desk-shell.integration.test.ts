@@ -57,6 +57,14 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
       expect(await page.locator('html').getAttribute('data-contrast')).toBe('more');
       expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
     }
+    // Ground is the member's live choice, shared across windows like the look.
+    for (const ground of ['wash', 'contours', 'depth']) {
+      set({ground}, 'ground-'+ground);
+      for (const page of [a,b]) {
+        await expect.poll(() => page.locator('html').getAttribute('data-ground')).toBe(ground);
+        await expect.poll(() => page.locator('.loom-ground').count()).toBe(ground==='wash'?0:1);
+      }
+    }
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
     const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});

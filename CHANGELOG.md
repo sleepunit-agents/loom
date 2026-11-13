@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
+
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
 
