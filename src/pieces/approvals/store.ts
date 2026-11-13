@@ -31,7 +31,10 @@ export function persist(db: Db, s: State, now: number): {type:string;id:string}[
     if (JSON.stringify((db.prepare(`SELECT record FROM approvals_${table} ORDER BY id`).all() as {record:string}[]).map(r => JSON.parse(r.record))) !== JSON.stringify(rows)) {
       // Notices are bounded and prepend; the append-only audit never rewrites prior entries.
       if (table === 'notices') { db.exec('DELETE FROM approvals_notices'); rows.forEach((r,i) => db.prepare('INSERT INTO approvals_notices VALUES (?,?)').run(i,JSON.stringify(r))); }
-      else { if (held.n > rows.length) throw Error('Audit cannot shrink'); rows.slice(held.n).forEach(r => db.prepare('INSERT INTO approvals_audit(record) VALUES (?)').run(JSON.stringify(r))); }
+      else { if (held.n > rows.length) throw Error('Audit cannot shrink');
+        const prefix = (db.prepare('SELECT record FROM approvals_audit ORDER BY id').all() as {record:string}[]).map(r => JSON.parse(r.record));
+        if (JSON.stringify(prefix) !== JSON.stringify(rows.slice(0, held.n))) throw Error('Audit history cannot change');
+        rows.slice(held.n).forEach(r => db.prepare('INSERT INTO approvals_audit(record) VALUES (?)').run(JSON.stringify(r))); }
     }
   }
   return changes;

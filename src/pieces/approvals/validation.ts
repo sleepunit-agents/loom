@@ -45,3 +45,8 @@ export const ruleSchema = z.object({
   by:slug,at:timestamp,person:slug.optional(),
 }).passthrough();
 export const noticeSchema = z.object({at:timestamp,agent,kind:z.string(),target:z.string(),what:z.string(),for:principal.optional()}).passthrough();
+
+export const auditSchema = z.object({
+  at:timestamp,event:z.string().min(1),id:z.string().regex(/^[as]-[0-9a-f]{8}$/),
+  kind:agent,target:z.string(),who:whoSchema,
+}).passthrough();

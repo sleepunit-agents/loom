@@ -155,7 +155,7 @@ describe('import validation',()=>{
 describe('transactional offline importer',()=>{
   it('imports and compares all source content, rolls back interruption and refuses a different source',async()=>{
     const a=await setup(),source=dir();const receipt={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark.',why:'He knows.',who:{agent:'art',where:'h-1'},for:'owner',minutes:60,at:'2026-11-12T00:00:00Z',state:'pending'};
-    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt},notices:[]}));writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[],grants:[],standing:[]}));writeFileSync(join(source,'audit.jsonl'),JSON.stringify({at:receipt.at,event:'request',id:receipt.id})+'\n');
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt},notices:[]}));writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[],grants:[],standing:[]}));writeFileSync(join(source,'audit.jsonl'),JSON.stringify({at:receipt.at,event:'request',id:receipt.id,kind:receipt.kind,target:receipt.target,who:receipt.who})+'\n');
     expect(()=>importApprovals(a.db,source,a.clock.now(),{interrupt:()=>{throw Error('power loss');}})).toThrow('power loss');expect(load(a.db).approvals).toHaveLength(0);expect(a.db.prepare('SELECT * FROM approvals_meta').all()).toHaveLength(0);
     expect(importApprovals(a.db,source,a.clock.now())).toMatchObject({imported:true,approvals:1,audit:1});expect(load(a.db).approvals[0]).toEqual({...receipt,agent:'art'});expect(importApprovals(a.db,source,a.clock.now())).toMatchObject({imported:false});writeFileSync(join(source,'audit.jsonl'),'');expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('different approvals source');
   });

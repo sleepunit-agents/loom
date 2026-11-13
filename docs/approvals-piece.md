@@ -70,13 +70,13 @@ inside the importer. An optional `--projects` JSON object explicitly maps
 approval ids or proven conversation ids to household project slugs. No guessing
 from titles. The source and mapping checksum, import and comparison of all
 records happen in one destination transaction; interrupted runs roll back,
-identical repeated input is a no-op, different input is refused.
+identical repeated input is a no-op, different input is refused. Explicit null rule collections and malformed audit envelopes are refused. Import tests preserve every collection, exercise both mapping keys and map checksum changes, and force schema/content rollback on interruption or comparison failure.
 
 Only at the final move, with the owner present: stop writers, back up source
 and destination, import a stopped source copy, verify ids/counts/content,
 start next mode and point the existing launcher at `loom-approvals-client`
 using `LOOM_URL` and `LOOM_TOKEN_FILE`. The compatibility client is transport
-only and never opens old state. Returning to the old side restarts it on its
+only and never opens old state. LOOM_URL is an HTTP(S) origin without URL credentials, path, query or fragment; redirects are refused. The client validates daemon output and preserves one operation id across at most four attempts. Returning to the old side restarts it on its
 untouched stores until the owner retires those stores.
 
 ## Remaining before merge
