@@ -229,3 +229,47 @@ it('denies authority methods, paths and bodies before looking up current members
   expect(current).not.toHaveBeenCalled();
   expect(await request('POST','/v1/authority','',{'content-length':'0'})).toBe(204);expect(current).toHaveBeenCalledExactlyOnceWith('jonathan');
 });
+it('binds a next bridge lifetime to actual persistent holder generation and household-authorized identical replacement',async()=>{
+  const s=await setup(),clock=new FakeClock();
+  let app=await startLoom({home:s.appHome,next:true,clock,secretAuthority:s.authority,stdout:()=>{}});
+  const holder=await startPersistentHolder(s.file);
+  closes.push(async()=>{await holder.close();await app.close();});
+  const api=localHolderMutations(s.client),source=localSecretSource({...s.client,socket:s.config.read.socket});
+  const generation=vi.fn(()=>source.generation()),bridgeSource={...source,generation};
+  await api.set({member:'jonathan',writeId:randomUUID()},'BRIDGE',Buffer.from('BRIDGE-PRIVATE'),'add');
+  await app.close();
+  const {EventEmitter}=await import('node:events');
+  const {installSecrets}=await import('./index.js');
+  const {installSecretServices}=await import('./service.js');
+  const {installBridges}=await import('../bridges/index.js');
+  const {put}=await import('../bridges/store.js');
+  const {venueSchema}=await import('../bridges/model.js');
+  const {fixtureSharing}=await import('../../fixture.js');
+  const sockets:Array<EventEmitter & {readyState:number;terminate:ReturnType<typeof vi.fn>}>=[];
+  const request=vi.fn<typeof fetch>(async url=>Response.json(String(url).endsWith('users/@me') ? {id:'200',bot:true}:{id:'100'}));
+  const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
+  app=await startLoom({home:s.appHome,next:true,clock,secretAuthority:s.authority,sharing,stdout:()=>{},
+    bridges:{source:bridgeSource,name:()=>undefined,receive:async()=>{},request,discordSocket:()=>{
+      const socket=Object.assign(new EventEmitter(),{readyState:1,terminate:vi.fn(()=>{socket.readyState=3;}),send:vi.fn(),ping:vi.fn()});sockets.push(socket);return socket as unknown as import('ws').WebSocket;
+    }},
+    install(a){
+      installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
+      expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name:'BRIDGE',description:'Bridge'},'bridge-name').ok).toBe(true);
+      expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name:'BRIDGE'},'bridge-grant').ok).toBe(true);
+      put(a.db,'venues',venueSchema.parse({id:'discord',platform:'discord',agent:'art',workspace:'100',bot:'200',tokenSecret:'BRIDGE'}));
+    }});
+  await vi.waitFor(()=>expect(sockets).toHaveLength(1));
+  const before=await source.generation();
+  await expect(api.set({member:'pollock',writeId:randomUUID()},'BRIDGE',Buffer.from('OTHER'),'replace')).rejects.toThrow();
+  expect(await source.generation()).toBe(before);
+  clock.advance(5000);await vi.waitFor(()=>expect(generation).toHaveBeenCalledTimes(2));
+  await generation.mock.results[1].value;for(let i=0;i<30;i++)await Promise.resolve();
+  expect(request).toHaveBeenCalledTimes(2);expect(sockets[0].terminate).not.toHaveBeenCalled();
+  // Same bytes still create a new public lifetime, without hashing the value.
+  await api.set({member:'jonathan',writeId:randomUUID()},'BRIDGE',Buffer.from('BRIDGE-PRIVATE'),'replace');
+  expect(await source.generation()).not.toBe(before);
+  clock.advance(5000);await vi.waitFor(()=>expect(sockets).toHaveLength(2));expect(sockets[0].terminate).toHaveBeenCalledOnce();
+  await holder.close();clock.advance(5000);await vi.waitFor(()=>expect(sockets[1].terminate).toHaveBeenCalledOnce());
+  for(const row of app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])
+    expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${row.name.replaceAll('"','""')}"`).all())).not.toContain('BRIDGE-PRIVATE');
+});

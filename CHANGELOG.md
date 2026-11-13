@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Load the daemon Secrets retry key from an explicit private file and pin its identity before async value operations are registered; changed keys and unbound old journals fail closed.
+- Next bridge credential lifetimes now follow asynchronous public holder generation, retiring both transports on rotation or holder failure without reading credential values.
 - Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
 
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.

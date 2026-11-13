@@ -13,7 +13,8 @@ import type { Venue } from './model.js';
 export interface DiscordDaemonOptions {
   secrets: SecretUse;
   /** Public holder generation, changed whenever a credential is replaced. */
-  credentialEpoch(): string;
+  credentialEpoch(): string | undefined;
+  observeCredentials?(changed: () => void): () => void;
   receive: DiscordDrainOptions['receive'];
   request?: typeof fetch;
   socket?: DiscordGatewayOptions['socket'];
@@ -34,7 +35,7 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
     for (const session of sessions.values()) session.stop();
     void sync();
   }
-  function key() { return JSON.stringify([setupRevision(app.db), options.credentialEpoch()]); }
+  function key() { const epoch=options.credentialEpoch();return epoch === undefined ? undefined : JSON.stringify([setupRevision(app.db),epoch]); }
   function schedule() {
     if (closed || cancel) return;
     cancel = clock.at(clock.now() + 5000, () => {
@@ -55,6 +56,11 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
     if (closed) return;
     if (app.db.inTransaction) { schedule(); return; }
     const next = key();
+    if (next === undefined) {
+      generation++;signature=undefined;await retire();
+      for (const attempt of attempts.values()) effects.finish(attempt.id);
+      attempts.clear();return;
+    }
     if (signature !== next) {
       generation++; await retire();
       for (const attempt of attempts.values()) effects.finish(attempt.id);
@@ -63,7 +69,7 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
       signature = key();
     }
     const epoch = generation, saved = signature;
-    const current = () => !closed && generation === epoch && key() === saved;
+    const current = () => saved !== undefined && !closed && generation === epoch && key() === saved;
     for (const venue of all(app.db, 'venues').filter(v => v.enabled && v.platform === 'discord')) {
       if (!current()) { invalidate(); return; }
       if (sessions.has(venue.id)) { await sessions.get(venue.id)!.flush(); continue; }
@@ -89,10 +95,13 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
       if (auth === 'wait') continue; // Transient failure does not end this released lifetime.
       let stopped = false;
       const valid = () => !stopped && current();
-      const binding = {venue,credentialEpoch:options.credentialEpoch()};
-      const inbox = discordInbox(app.db, clock, binding, options.credentialEpoch);
+      const credentialEpoch=options.credentialEpoch();
+      if (credentialEpoch === undefined || !current()) return;
+      const currentEpoch=()=>options.credentialEpoch() ?? '';
+      const binding = {venue,credentialEpoch};
+      const inbox = discordInbox(app.db, clock, binding, currentEpoch);
       const drain = discordDrain({db:app.db,clock,binding,channel:api.channel,
-        currentEpoch:options.credentialEpoch,receive:options.receive,current:valid,beforeRead:()=>valid() && permitted()});
+        currentEpoch,receive:options.receive,current:valid,beforeRead:()=>valid() && permitted()});
       const socket = discordGateway({bot:venue.bot,tokenSecret:venue.tokenSecret,secrets,clock,
         beforeConnect:()=>valid() && permitted(),socket:options.socket,
         load() { if (!valid()) throw Error('Discord binding ended'); return inbox.load(); },
@@ -118,7 +127,7 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
     if (closed) return Promise.resolve();
     if (running) { again=true; return running; }
     running=(async()=>{ do { again=false; try { await pass(); } catch { schedule(); } } while(again && !closed); })()
-      .finally(()=>{running=undefined;});
+      .finally(()=>{running=undefined;if(again && !closed) void sync();});
     return running;
   }
   const unobserve=app.live.observe(changes=>{
@@ -127,11 +136,12 @@ export function installDiscordDaemon(app: Foundation, effects: OutsideEffects, o
       || (changes.some(c=>c.type.startsWith('bridges.')) && key() !== signature)) invalidate();
   });
   const unrelease=effects.onReleased(id=>{if(id.startsWith('bridges:discord:')) void sync();});
+  const uncredential=options.observeCredentials?.(invalidate);
   schedule(); void sync();
   let closing: Promise<void> | undefined;
   return { sync, close(): Promise<void> {
     if (closing) return closing;
-    closed=true;generation++;cancel?.();unobserve();unrelease();
+    closed=true;generation++;cancel?.();unobserve();unrelease();uncredential?.();
     for(const session of sessions.values()) session.stop();
     return closing=(async()=>{await running;await retire();})();
   }};
