@@ -10,9 +10,10 @@ export async function runAttentionClient(argv: string[], io: IOStreams, runtime:
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') { io.stdout(help); return 0; }
   const command = attentionCommands.find(c => c.name === argv[0]);
   if (!command || argv.length > 2) { io.stderr(help); return 2; }
+  const inputText = argv[1] ?? '{}';
   let input: unknown;
   try {
-    input = JSON.parse(argv[1] ?? '{}');
+    input = JSON.parse(inputText);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error();
   } catch { io.stderr('loom-attention: expected a JSON object\n'); return 2; }
   const fail = (message: string) => { io.stderr(`loom-attention: ${message}\n`); return 1; };
@@ -25,7 +26,8 @@ export async function runAttentionClient(argv: string[], io: IOStreams, runtime:
     token = (await readFile(io.env.LOOM_TOKEN_FILE, 'utf8')).trim();
     if (!token) return fail('Token file is empty');
   } catch { return fail('Cannot configure loom connection'); }
-  const body = JSON.stringify({ input, ...(command.write ? { id: randomUUID() } : {}) });
+  // Preserve raw validated JSON: reserialization would turn overflow numbers into null.
+  const body = `{"input":${inputText}${command.write ? `,"id":${JSON.stringify(randomUUID())}` : ''}}`;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const response = await runtime.request(new URL(`/api/attention/${command.name}`, base), {

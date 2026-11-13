@@ -110,3 +110,15 @@ it('prints help with no credentials or daemon and never invokes transport', asyn
     expect(stdout).toContain('usage: loom-attention'); expect(stderr).toBe('');
   }
 });
+it('preserves overflowing JSON numbers for daemon rejection instead of converting them to null', async () => {
+  const app = await setup();
+  const turn = await app.run(['recordTurn', JSON.stringify({ agent: 'art', turn: { venue: 'terminal', place: 'fixture', at: '2026-11-12T00:00:00Z', from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r1', outcome: 'progressed' } })]);
+  expect(turn.code).toBe(0); const { conversation, seq } = JSON.parse(turn.stdout);
+  const raw = `{"conversation":"${conversation}","seq":${seq},"measure":"progress","score":1e400,"text":"Checked"}`;
+  const refused = await app.run(['writeFinding', raw]);
+  expect(refused).toMatchObject({ code: 1, stdout: '' });
+  expect(refused.bodies[0]).toContain('"score":1e400');
+  expect(app.db.prepare('SELECT count(*) AS n FROM attention_findings').get()).toEqual({ n: 0 });
+  const accepted = await app.run(['writeFinding', raw.replace('1e400', 'null')]);
+  expect(accepted.code).toBe(0); expect(JSON.parse(accepted.stdout)).toMatchObject({ score: null });
+});
