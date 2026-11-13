@@ -38,3 +38,15 @@ it.each([
   try{await listening;expect(start.mock.calls[0][0].home).toBe(expected==='default'?resolve(homedir(),'.config/loom-next'):expected);}
   finally{process.emit('SIGTERM');await running;start.mockRestore();vi.unstubAllEnvs();}
 });
+
+it('holder configuration requires next mode and invalid configuration never starts a daemon',async()=>{
+  const start=vi.spyOn(foundation,'startLoom');
+  const errors:string[]=[];
+  const io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:(s:string)=>errors.push(s)};
+  try {
+    expect(await run(['--secret-holder','/does-not-exist'],io)).toBe(2);
+    expect(await run(['--next','--secret-holder','/does-not-exist'],io)).toBe(2);
+    expect(start).not.toHaveBeenCalled();
+    expect(errors).toEqual(['--secret-holder requires --next\n','Invalid local secret holder configuration\n']);
+  } finally { start.mockRestore(); }
+});

@@ -265,3 +265,57 @@ for absent names also refuse. This helper is unregistered and does not persist o
 activate anything. Atomic names/policy/requests/grants/audit import, source receipts,
 independent destination verification, pending Attention composition and migration
 registry/CLI wiring remain required by t-2208.
+
+## Authenticated local holder reads
+
+`loom-secret-holder` is a standalone crypto-only process. It listens exclusively
+on an explicit Unix socket, speaks TLS 1.3 with required client certificates,
+and reads explicit private age ciphertext files (`NAME.age`) using its own age
+identity. No request starts a child process. The age key is loaded only in the
+holder; the daemon owns a different TLS client key. No value is supplied in
+arguments, environment, errors, logs or plaintext files. Values are decrypted
+in memory, bounded to 64 KiB, and owned buffers are erased after sending or use.
+The reader accepts raw age envelopes with headers below 16 KiB and one payload
+chunk: it bounds encrypted payload length before invoking decryption, so oversized
+plaintext is never materialized. The age library still authenticates the whole file.
+The TLS implementation and JavaScript may retain internal/string copies; trusted
+callbacks still must not retain, return or log credential strings.
+
+Holder arguments are paths only: `--socket`, `--ca`, `--cert`, `--key`,
+`--identity` (age identity file), and `--values` (ciphertext directory). All paths
+are explicit absolute paths; no old home, file or program is searched. The
+socket parent and ciphertext directory must be owned by the current OS user and
+private (0700). The socket is 0600; key, certificate, CA, identity, ciphertext
+and config files must be private regular files owned by that user, with no final
+symlink or hardlink. Use one dedicated PEM CA certificate for this holder/daemon pair with serverAuth
+and clientAuth certificates. Server DNS identity is verified even over the socket.
+The holder refuses an occupied socket path rather than unlinking it. Normal close
+removes the socket; after a crash an operator must verify the old holder is gone
+before removing its stale socket. No installation or certificate provisioning is
+performed here.
+
+`loom serve --next --secret-holder /absolute/private/config.json` explicitly
+composes the real source into `NextChangesOptions`. Config fields are `socket`,
+`ca`, `cert`, `key` (daemon TLS identity), `servername` (holder certificate DNS
+name) and `github` (public forge owner to secret-name map). No configuration means
+no value source. Invalid configuration refuses startup with a fixed error; CA material is parsed
+independently because Node TLS can silently ignore a malformed CA.
+Connections authenticate both peers; reads have an absolute five-second deadline,
+64 KiB response bound and generic failure. The existing bound service role checks
+current owner-written grants both before and after acquisition. Configuration
+creates neither secret names nor service grants. Staging holds scheduled Changes
+reads and forge requests before either runs.
+
+In-process next-mode tests use the real protocol with age ciphertext and separate
+client/server certificates, restart the holder, exercise `withValue`, revoke and
+expiry, verify failed authentication and buffer cleanup, and inspect every DB table,
+operation receipt, Live notification and captured log for a sentinel. A separate
+scheduled-job fixture proves root Changes composition and staging holds. The CLI
+test verifies the configured source is actually delivered to `startLoom`.
+
+This is persistent **read** delivery for Changes and future service consumers.
+Authenticated write/remove/rotation with durable full-input/member write receipts,
+runtime sinks, bridge composition, remaining importer/CLI/Settings work and final
+move verification remain on t-2208. Existing synchronous `KeyHolder` mutation
+operations are not connected to this asynchronous read transport. No real secret,
+installed home, process, unit or deployment is changed by these tests or this PR.
