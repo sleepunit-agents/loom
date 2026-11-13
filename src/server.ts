@@ -1,3 +1,4 @@
+import type { PeopleSelection } from './tools/person.js';
 import { IDENTITY_SECTIONS } from './identity/sections.js';
 /**
  * Loom — MCP Server Factory
@@ -84,6 +85,8 @@ function agentOfDir(contextDir: string): string {
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export interface LoomServerConfig {
+  /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
+  peopleSelection?: PeopleSelection;
   contextDir: string;
   /**
    * The house this session's agent token names, and its service if it's one (t-2061): set by the household HTTP server
@@ -237,7 +240,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
       // From a house, the tape carries only the digests of the conversation it holds (t-2118).
       const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people, undefined, bodyHouseConversation(contextDir, config.caller),
-        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])]);
+        piece === undefined && pieces === undefined ? undefined : [...(piece === undefined ? [] : [piece]), ...(pieces ?? [])], config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1031,7 +1034,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
-      const result = await personWrite(contextDir, input as Parameters<typeof personWrite>[1]);
+      const result = await personWrite(contextDir, input as Parameters<typeof personWrite>[1], config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1052,7 +1055,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, fields, verified_at, source }) => {
-      const result = await personVerify(contextDir, { slug, fields, verified_at, source });
+      const result = await personVerify(contextDir, { slug, fields, verified_at, source }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1070,7 +1073,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, reason }) => {
-      const result = await personArchive(contextDir, { slug, reason });
+      const result = await personArchive(contextDir, { slug, reason }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1096,7 +1099,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ from, into, dry_run }) => {
-      const result = await personMerge(contextDir, { from, into, ...(dry_run !== undefined ? { dry_run } : {}) });
+      const result = await personMerge(contextDir, { from, into, ...(dry_run !== undefined ? { dry_run } : {}) }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1109,7 +1112,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug }) => {
-      const result = await personRestore(contextDir, { slug });
+      const result = await personRestore(contextDir, { slug }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1128,7 +1131,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug, include_archived }) => {
-      const result = await person(contextDir, { slug, include_archived });
+      const result = await person(contextDir, { slug, include_archived }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1146,7 +1149,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ include_archived }) => {
-      const result = await personList(contextDir, { include_archived });
+      const result = await personList(contextDir, { include_archived }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1167,7 +1170,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       if (since !== undefined && Number.isNaN(Date.parse(since))) {
         return { content: [{ type: 'text' as const, text: 'Error: since takes an ISO time' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(personEvidence(contextDir, slug, since ?? null)) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(personEvidence(contextDir, slug, since ?? null, config.peopleSelection)) }] };
     },
   );
 
@@ -1247,7 +1250,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug }) => {
-      const result = await personHistory(contextDir, { slug });
+      const result = await personHistory(contextDir, { slug }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1269,7 +1272,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slug, revision_id, store }) => {
-      const result = await personRevisionRestore(contextDir, { slug, revision_id, store });
+      const result = await personRevisionRestore(contextDir, { slug, revision_id, store }, config.peopleSelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
