@@ -4,6 +4,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus, AttentionSources } from './role.js';
+import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
 import type { DigestReferences } from './project-references.js';
@@ -27,6 +28,7 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
+  installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
@@ -55,8 +57,13 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     may: (viewer, input) => { const r = readAsk(input.id); return !!r && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),
   }));
-  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && mayAct(viewer, scoped('attention.ask', r), sharing(), managed(r) ? 'household' : 'answer-person', 'attention.answer'); },
+  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
+    may: (viewer, input) => {
+      const r = readAsk(input.id), held = sharing();
+      return !!r && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
+        && (!input.requireOwnership || mayAct(viewer, { agent: r.agent }, held, 'give-work'));
+    },
+
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return failure('conflict', 'Ask is no longer open');

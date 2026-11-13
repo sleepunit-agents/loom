@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
+- Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
 
 - Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
+
+- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
 
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
@@ -25,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+
+- Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
 

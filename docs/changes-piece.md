@@ -156,3 +156,17 @@ household setup and person answers retain their central policy restrictions.
 No cross-piece permission is implied: Changes still needs an explicit grant when
 calling another piece. This supplies the authority source; daemon composition and
 the job's action check are separate follow-ups.
+
+## GitHub service credentials
+
+`githubSecrets(secretUseRole(...), {Acme: 'github-acme'})` adapts the real Secrets
+service role to the reader. Trusted composition supplies the owner-to-secret-name
+map and an explicit `SecretValueSource`; no value is part of this configuration.
+Owner matching ignores case. Invalid or conflicting bindings fail at composition;
+unmapped owners fail without reading a value or contacting GitHub.
+The adapter snapshots the bindings and delegates each use to Secrets, which checks
+current service registration, owner service grants, expiry and `never` policy,
+including after the value source replies. Agent grants cannot authorize it and
+installation creates no grants. The existing fixed GitHub transport still owns
+redaction and generic read failures. Root wiring and the actual authenticated
+value source remain separate composition work; this adapter discovers no files.
