@@ -8,6 +8,9 @@ import { FakeClock, migrate, openDb } from '../../core/index.js';
 import { installBridges } from './index.js';
 import { venueSchema } from './model.js';
 import { put } from './store.js';
+import { Bridges } from './engine.js';
+import type { Incoming } from './role.js';
+import { installEffects } from '../../core/effects.js';
 import { slackInbox } from './slack-inbox.js';
 import { slackSocket, type SlackSocketOptions } from './slack-socket.js';
 import { schema as initial } from './schema/001.js';
@@ -24,7 +27,10 @@ async function fixture(existing?: string) {
   const app=await startLoom({home,clock,install(app) { installBridges(app,()=>({members:{},projects:{},services:{}})); }});
   let closed=false;
   const close=async()=>{if(!closed){closed=true;await app.close();}}; closes.push(close);
-  if (!existing) put(app.db,'venues',venue);
+  if (!existing) {
+    put(app.db,'venues',venue);
+    put(app.db,'links',{id:'jonathan',platform:'slack',workspace:'T123',user:'U200',person:'jonathan'});
+  }
   const inbox=slackInbox(app.db,clock,{venue,app:'A123'});
   return {home,clock,app,inbox,close};
 }
@@ -103,13 +109,43 @@ describe('private Slack durable raw inbox',()=>{
     await f.close();const g=await fixture(f.home);await g.inbox.receive(payload());expect(g.inbox.pending()).toEqual([]);
   });
   it('isolates bots, apps and connection ids, even with identical platform event ids',async()=>{
-    const f=await fixture();await f.inbox.receive(payload());
+    const f=await fixture();
     const otherVenue={...venue,id:'mark-slack',agent:'mark',bot:'U456'};put(f.app.db,'venues',otherVenue);
-    const other=slackInbox(f.app.db,f.clock,{venue:otherVenue,app:'A456'});await other.receive({...payload(),api_app_id:'A456'});
-    const [row]=other.pending();expect(()=>f.inbox.consume(row.id)).toThrow('Unknown');expect(f.inbox.pending()).toHaveLength(1);expect(other.pending()).toHaveLength(1);
     const secondVenue={...venue,id:'second-art'};put(f.app.db,'venues',secondVenue);
-    const second=slackInbox(f.app.db,f.clock,{venue:secondVenue,app:'A123'});await second.receive(payload());expect(second.pending()).toHaveLength(1);
+    const first=slackInbox(f.app.db,f.clock,{venue,app:'A123'});
+    const other=slackInbox(f.app.db,f.clock,{venue:otherVenue,app:'A456'});
+    const second=slackInbox(f.app.db,f.clock,{venue:secondVenue,app:'A123'});
+    await first.receive(payload());await other.receive({...payload(),api_app_id:'A456'});await second.receive(payload());
+    const [row]=other.pending();expect(()=>first.consume(row.id)).toThrow('Unknown');expect(first.pending()).toHaveLength(1);expect(other.pending()).toHaveLength(1);expect(second.pending()).toHaveLength(1);
     expect(f.app.db.prepare('SELECT count(*) AS n FROM bridges_slack_receipts').get()).toEqual({n:3});
+  });
+  it.each(['restore','remove-recreate','unrelated-setup'])('rejects obsolete receiver after %s and lets a fresh receiver recover pending work',async change=>{
+    const f=await fixture();await f.inbox.receive(payload());const [row]=f.inbox.pending();
+    if(change==='restore') {put(f.app.db,'venues',{...venue,enabled:false});put(f.app.db,'venues',venue);}
+    else if(change==='remove-recreate') {f.app.db.prepare('DELETE FROM bridges_venues').run();put(f.app.db,'venues',venue);}
+    else put(f.app.db,'links',{id:'another',platform:'slack',workspace:'T123',user:'U201',person:'other'});
+    await expect(f.inbox.receive(payload('EvNew'))).rejects.toThrow('binding changed');
+    expect(()=>f.inbox.pending()).toThrow('binding changed');expect(()=>f.inbox.consume(row.id)).toThrow('binding changed');
+    const fresh=slackInbox(f.app.db,f.clock,{venue,app:'A123'});expect(fresh.pending()).toEqual([row]);await fresh.receive(payload());expect(fresh.pending()).toEqual([row]);
+  });
+  it('replays a crash after normalized commit before consumption without a second engine delivery',async()=>{
+    const delivered: Incoming[]=[];
+    function engine(f:Awaited<ReturnType<typeof fixture>>) {
+      const runtime={admit:async()=> 'allow' as const,deliver:async(input:Incoming)=>{delivered.push(input);return 'delivered' as const;},stop:async()=>{}};
+      const secrets={may:async()=>true,get:async()=> 'fixture-only'};
+      const adapter={platform:'slack' as const,connect:async()=>({close(){}}),inspect:async()=> 'allow' as const,send:async()=>({id:'post'})};
+      const effects=installEffects(f.app,()=>({members:{},projects:{},services:{}}),false);
+      const bridges=new Bridges(f.app,f.clock,runtime,secrets,[adapter],effects);closes.unshift(()=>bridges.close());return bridges;
+    }
+    const message={id:payload().event.ts,channel:'D123',user:'U200',text:'private words',dm:true,mentions:[]};
+    const f=await fixture();const first=engine(f);await f.inbox.receive(payload());const [raw]=f.inbox.pending();
+    await first.receive(venue.id,message);await first.flush();expect(delivered).toHaveLength(1);const stable=delivered[0].id;
+    // Simulated crash point: normalized receipt committed; raw consumption absent.
+    await first.close();await f.close();
+    const g=await fixture(f.home);const next=engine(g);expect(g.inbox.pending()).toEqual([raw]);
+    await next.receive(venue.id,message);await next.flush();expect(delivered.map(value=>value.id)).toEqual([stable]);
+    expect(g.app.db.prepare('SELECT count(*) AS n FROM bridges_inbox').get()).toEqual({n:1});
+    g.inbox.consume(raw.id);expect(g.inbox.pending()).toEqual([]);
   });
   it.each([{enabled:false},{workspace:'TOTHER'},{bot:'UOTHER'},{agent:'mark'},{tokenSecret:'replacement'},{appSecret:'replacement'}])('rejects stale binding after setup edit %j',async patch=>{
     const f=await fixture();await f.inbox.receive(payload());const [row]=f.inbox.pending();put(f.app.db,'venues',{...venue,...patch});

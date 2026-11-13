@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import type { Clock, Db } from '../../core/index.js';
 import type { Venue } from './model.js';
-import { venueById } from './store.js';
+import { setupRevision, venueById } from './store.js';
 
 export interface SlackBinding {
   venue: Venue;
@@ -25,10 +25,10 @@ export function slackInbox(db: Db, clock: Clock, input: SlackBinding) {
   const binding: SlackBinding = { venue: structuredClone(input.venue), app: input.app };
   if (binding.venue.platform !== 'slack' || !identifier(binding.app) || !identifier(binding.venue.workspace))
     throw Error('Invalid Slack binding');
-  const key = signature(binding);
+  const key = signature(binding), revision = setupRevision(db);
   function current() {
     const venue = venueById(db, binding.venue.id);
-    if (!venue?.enabled || JSON.stringify(venue) !== JSON.stringify(binding.venue)) throw Error('Slack binding changed');
+    if (setupRevision(db) !== revision || !venue?.enabled || JSON.stringify(venue) !== JSON.stringify(binding.venue)) throw Error('Slack binding changed');
   }
   function outsideTransaction() {
     // Resolving inside somebody else's transaction could ACK a later rollback.

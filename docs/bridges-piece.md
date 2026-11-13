@@ -385,7 +385,10 @@ the normalized engine still deduplicates platform message ids per addressed agen
 Only the inner event is stored, bounded to 1 MiB. The outer verification token and
 authorization array are not retained. No operation or live record exposes raw
 words. Pending reads are bounded to at most 64 entries and recheck the current
-venue snapshot; edits, disablement or removal invalidate the old receiver. A
+venue snapshot and transactional setup revision; any setup edit, including an
+edit-and-restore, disablement or removal/recreation, invalidates the old receiver.
+Composition must recreate receivers after every setup revision, including link and
+route edits. A fresh receiver with the same identity may recover its pending work. A
 replacement identity cannot read or consume its predecessor's events. Old pending
 rows remain private for disposition; they are never silently rebound.
 
