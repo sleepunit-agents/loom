@@ -38,7 +38,11 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       if (!['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
       if (!credentials) throw new OperationError('unavailable', 'Central credential revocation is not installed');
       const result = credentials.revokeJob(db, { job: id, now: ctx.now });
-      if ((result as unknown) instanceof Promise) throw new Error('Credential revocation must be synchronous');
+      if ((result as unknown) instanceof Promise) {
+        // Reject async roles without leaving a later rejection unhandled.
+        (result as unknown as Promise<unknown>).catch(() => {});
+        throw new Error('Credential revocation must be synchronous');
+      }
       ctx.changed('core.access', 'credentials');
       if (store.put('job', { ...job, state, endedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
       return { job: id, state };

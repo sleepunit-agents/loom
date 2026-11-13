@@ -15,8 +15,8 @@ import { centralRuntimeCredentials } from './central-credentials.js';
 import { installRuntime } from './index.js';
 import type { RuntimeCredentials } from './credentials.js';
 const cleanups: Array<() => void | Promise<void>> = [];
-afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function setup(options: { staging?: boolean; credentials?: 'missing' | 'async' | 'throw' } = {}) {
+afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
+async function setup(options: { staging?: boolean; credentials?: 'missing' | 'async' | 'reject' | 'throw' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'runtime-finish-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true })); fixture(home);
   const clock = new FakeClock();
@@ -26,7 +26,7 @@ async function setup(options: { staging?: boolean; credentials?: 'missing' | 'as
       revokeJob(db, input) {
         centralRuntimeCredentials.revokeJob(db, input);
         if (options.credentials === 'throw') throw new Error('revocation failed');
-        return Promise.resolve();
+        return options.credentials === 'reject' ? Promise.reject(new Error('async revocation failed')) : Promise.resolve();
       },
     };
     installRuntime(app.db, app.operations, app.live, () => new SharingDatabase(app.db, home).sharing(), { credentials });
@@ -56,6 +56,7 @@ async function setup(options: { staging?: boolean; credentials?: 'missing' | 'as
   return { app, clock, store, auth, mint, resolve, call, post };
 }
 it('finishes through real bearer HTTP and invalidates only exact job credentials and existing auth handles', async () => {
+  const revoke = vi.spyOn(centralRuntimeCredentials, 'revokeJob');
   const f = await setup(), runner = f.mint('runner:a');
   const bodies = ['agent:art@running', 'agent:art@running', 'agent:art/bridge@running', 'agent:mark@running'].map(f.mint);
   const others = ['runner:b', 'agent:art@running-other', 'agent:art@waiting', 'agent:art', 'agent:art/bridge', 'owner'].map(f.mint);
@@ -74,7 +75,8 @@ it('finishes through real bearer HTTP and invalidates only exact job credentials
   // A network retry is acknowledged even though a new finish is forbidden.
   const before = f.store.read('job', 'running'), tokens = f.auth.tokens.document(), changed = vi.spyOn(f.app.live, 'changed');
   f.clock.advance(20);
-  expect(await (await f.post(runner, { job: 'running', state: 'done' }, 'finish')).json()).toMatchObject({ ok: true });
+  expect(await (await f.post(runner, { job: 'running', state: 'done' }, 'finish')).json()).toEqual({ ok: true, value: { job: 'running', state: 'done' } });
+  expect(revoke).toHaveBeenCalledTimes(1);
   expect(f.store.read('job', 'running')).toEqual(before); expect(f.auth.tokens.document()).toEqual(tokens); expect(changed).not.toHaveBeenCalled();
   expect(f.call({ job: 'running', state: 'done' })).toMatchObject({ ok: false, code: 'conflict' });
   expect(f.call({ job: 'running', state: 'failed' })).toMatchObject({ ok: false, code: 'conflict' });
@@ -129,12 +131,15 @@ it('rolls central credential changes, job metadata, receipts and notifications b
   expect(changed.mock.calls[0][0]).toEqual([{ type: 'core.access', id: 'credentials' }, { type: 'runtime.job', id: 'running' }]);
 });
 it('fails closed for missing, throwing and asynchronous credential roles', async () => {
-  for (const credentials of ['missing', 'throw', 'async'] as const) {
+  for (const credentials of ['missing', 'throw', 'async', 'reject'] as const) {
     const f = await setup({ credentials }), token = f.mint('agent:art@running'), before = f.store.read('job', 'running'), tokens = f.auth.tokens.document();
     const changed = vi.spyOn(f.app.live, 'changed');
     expect(f.call({ job: 'running', state: 'done' })).toMatchObject({ ok: false, code: 'unavailable' });
     expect(f.store.read('job', 'running')).toEqual(before); expect(f.auth.tokens.document()).toEqual(tokens); expect(f.resolve(token)?.valid()).toBe(true);
     expect(changed).not.toHaveBeenCalled(); expect(f.app.db.prepare("SELECT * FROM core_operations WHERE name='runtime.finishJob'").all()).toEqual([]);
+    // Pass a whole event-loop turn: an abandoned rejection would fail Vitest
+    // and would terminate an ordinary daemon under Node's default policy.
+    await new Promise<void>(resolve => setImmediate(resolve));
   }
 });
 it('requires the caller transaction and permits empty-home completion and staging without outside effects', async () => {
