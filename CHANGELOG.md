@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
+
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
 - On the new clock side, count lane run-now against the one-off budget and wait for model quota reset without consuming job retries.
 

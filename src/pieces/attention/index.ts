@@ -1,6 +1,7 @@
+import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
-import { migrate, operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
+import { migrate, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus } from './role.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';

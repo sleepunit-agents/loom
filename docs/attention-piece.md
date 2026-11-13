@@ -40,7 +40,7 @@ Schema 4 adds folded days and checked findings. `attention.fold({conversation})`
 
 ## Completion and final move
 
-The remaining rebuild units must add the old-format importer with checks and interruption/repeat coverage, generated client bindings, Inbox and Home apps, liveness checks and CI screenshot artifacts. The mapping above covers installed operations, not a completed replacement of every old conversation route or job.
+The remaining rebuild units must add Inbox and Home apps, liveness checks and CI screenshot artifacts. The mapping above covers installed operations, not a completed replacement of every old conversation route or job.
 
 For the final move, the importer must read only a copy of old data and verify ids, counts and content in one transaction. No real import or deployment is part of this implementation. After all pieces and apps are merged and the owner approves the move, the coordinator backs up, imports, starts next mode and verifies the shared counts and answers. Until then, the old side is untouched and the new side depends on no import having run.
 
@@ -68,3 +68,11 @@ The new records, migration history and receipt are committed in one destination 
 `replied` is an import-only answer kind: a delivered reply with no stored words. Runtime answer input still accepts only yes/no/done/dismiss/words. Digest `legacyAnswer` preserves the original verdict, actor, time and optional reason even when it predates a rewrite or the current digest cleared its ask. Old overwritten digest revisions and old delivered message words cannot be recovered and are not invented. Status records are derived from live runtime state, never fabricated from old conversation rows.
 
 Legacy timestamps with mixed fractional precision exposed an old lexical min/max bug. The importer takes the chronological min/max of both stored bounds and all held turns; when this repairs a bound it also retains the exact source strings as conversation `legacyBounds`. Folded turns no longer expose their individual timestamps, so they cannot supply more precise bounds than the source retained. No source record is changed.
+
+## Generated API client
+
+`loom-attention <operation> [json-object]` is an opt-in executable for the new side. `attentionCommands` supplies both the installed operations' CLI metadata and the client's help, write markers and command names. An installation refuses mismatched metadata. Every installed Attention operation is offered. The client sends the JSON object unchanged to `/api/attention/<operation>`; the daemon owns defaults, validation, authorization and all domain behavior. With no JSON argument it sends `{}`. Nested objects, numbers and nulls use JSON rather than a second flag parser.
+
+Set explicit `LOOM_URL` (an HTTP or HTTPS origin) and `LOOM_TOKEN_FILE` (a token for that daemon), then use, for example, `node dist/attention-client.js conversations '{"agent":"art","limit":10}'`. Success prints the operation value as pretty JSON and exits 0; a daemon refusal, connection/configuration error or malformed envelope exits 1 with a generic stderr line and no data; malformed command/JSON usage exits 2. `--help` exits 0 without credentials or a daemon. Redirects are refused; retries are bounded to four attempts, retaining the same operation id and body for a write. The supplied bearer token is redacted from returned string values. It opens only the explicit token file, never a domain store or a legacy executable.
+
+There was no old `loom attention` executable to replace: conversation and digest tools were MCP bindings. This is the direct operation JSON surface, not an adapter for the old MCP envelope. MCP runtime identity/run binding and delivered answers remain separate final-composition obligations. The standalone launcher leaves existing commands and callers untouched until the whole-side move. During that move, compose Attention explicitly and point the launcher at the new daemon; no import receipt selects it. Inbox/Home, Projects reconciliation, public optional words replies and private encrypted Comms delivery remain pending.

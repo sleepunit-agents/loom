@@ -1,7 +1,8 @@
+import { operation } from './commands.js';
 /** Agent-authored summaries. Delivered messages never pass through this operation. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { operation, mayAct, maySee, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
+import { mayAct, maySee, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
 import type { Conversation } from './conversations.js';
 import { attentionRole } from './role.js';
 import { parseNeeds, answersOf, type NeedsOwner } from './needs.js';

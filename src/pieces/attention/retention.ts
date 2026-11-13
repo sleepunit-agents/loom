@@ -1,7 +1,8 @@
+import { operation } from './commands.js';
 /** Metadata retention and checked findings. No legacy store or message text is read. */
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord, type Viewer, type Clock, type Result } from '../../core/index.js';
+import { failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord, type Viewer, type Clock, type Result } from '../../core/index.js';
 import type { Conversation, Turn } from './conversations.js';
 const DAY_MS = 86_400_000;
 export const RETENTION_DAYS = 90;
