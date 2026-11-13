@@ -241,9 +241,9 @@ it('tracks incoming open-socket activity and publishes usage without passive val
   const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`,origin:f.loom.url};
   const ws=await f.open(cookie),admin=await f.open({authorization:`Bearer ${f.owner}`});
   admin.send(JSON.stringify({kind:'subscribe',type:'signin.admin'}));const snapshot=JSON.parse((await once(admin,'message'))[0].toString());expect(snapshot.kind).toBe('set');
-  const before=f.s.sessions.get('sessions',hash(f.cookie))!.seenAt;
+  const before=f.s.sessions.get('sessions',hash(f.cookie))!.seenAt,usedBefore=f.s.tokens.used();
   f.clock.advance(300_000);const reset=once(admin,'message');f.loom.live.changed([{type:'core.access',id:'credentials'}]);await reset;
-  expect(f.s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(before);
+  expect(f.s.sessions.get('sessions',hash(f.cookie))!.seenAt).toBe(before);expect(f.s.tokens.used()).toEqual(usedBefore);
   const update=once(admin,'message');ws.send(JSON.stringify({kind:'subscribe',type:'task'}));
   expect(JSON.parse((await once(ws,'message'))[0].toString()).kind).toBe('set');
   const message=JSON.parse((await update)[0].toString());expect(message).toMatchObject({kind:'put',type:'signin.admin',record:{sessions:expect.arrayContaining([expect.objectContaining({ref:hash(f.cookie).slice(0,16),seenAt:f.clock.now()/1000})])}});
