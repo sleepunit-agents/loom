@@ -1,4 +1,5 @@
 /** Offline import into a different home. No legacy backend is activated. */
+import { z } from 'zod';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, linkSync, openSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,10 +32,21 @@ const checksumOf = (files: Map<string, Buffer | undefined>) => createHash('sha25
 function object(bytes: Buffer | undefined, fallback?: object): Record<string, unknown> {
   if (!bytes && fallback) return fallback as Record<string, unknown>;
   if (!bytes) throw new Error('Source household.json is required');
-  const value: unknown = JSON.parse(bytes.toString('utf8'));
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString('utf8')); } catch { throw new Error('Source document is not valid JSON'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Source document must be an object');
   return value as Record<string, unknown>;
 }
+const digest = z.string().regex(/^[0-9a-f]{64}$/);
+const seconds = z.number().finite();
+const storedSession = z.object({ issuedAt: seconds, secret: digest, seenAt: seconds.optional(), device: z.string().optional(), label: z.string().optional(), via: z.enum(['token','link','passkey']).optional(), signedInAt: seconds.optional(), agent: z.literal(true).optional() }).passthrough();
+const link = z.object({ expires: seconds, secret: digest, label: z.string().optional(), signedInAt: seconds.optional(), agent: z.literal(true).optional() }).passthrough();
+const challenge = z.object({ expires: seconds, purpose: z.enum(['register','login']), secret: digest.optional() }).passthrough();
+const passkey = z.object({ id: z.string().min(1), publicKey: z.string().min(1), alg: z.number().int(), counter: z.number().int().nonnegative(), label: z.string(), created: seconds, lastUsed: seconds.optional(), secret: digest, tokenLabel: z.string().optional() }).passthrough();
+const credentialMaps = z.object({
+  v: z.literal(1), sessions: z.record(digest, storedSession), links: z.record(digest, link).optional(),
+  challenges: z.record(digest, challenge).optional(), passkeys: z.record(z.string(), passkey).optional(),
+}).passthrough();
 /** Publish only a complete durable key, never a half-written final pathname. */
 function copyKey(home: string, key: Buffer): void {
   const temp = join(home, `.ui-cookie.key-import-${randomUUID()}`);
@@ -57,8 +69,9 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
   const used = object(files.get('tokens.used.json'), {});
   if (Object.values(used).some(v => typeof v !== 'string')) throw new Error('Invalid token usage');
   const sessions = object(files.get('ui-sessions.json'), { v: 1, sessions: {} });
-  if (sessions.v !== 1 || !sessions.sessions || typeof sessions.sessions !== 'object' || Array.isArray(sessions.sessions)) throw new Error('Invalid session document');
-  for (const field of ['links', 'challenges', 'passkeys', 'members']) if (sessions[field] !== undefined && (!sessions[field] || typeof sessions[field] !== 'object' || Array.isArray(sessions[field]))) throw new Error(`Invalid session ${field}`);
+  if (!credentialMaps.safeParse(sessions).success) throw new Error('Invalid session credentials');
+  for (const [id, value] of Object.entries((sessions.passkeys ?? {}) as Record<string,{id:string}>)) if (id !== value.id) throw new Error('Invalid passkey credential id');
+  if (sessions.members !== undefined && (!sessions.members || typeof sessions.members !== 'object' || Array.isArray(sessions.members))) throw new Error('Invalid session members');
   const settings = [...files].filter(([p]) => p.startsWith('pieces/')).map(([p,b]) => [p.split('/')[1], object(b)] as const);
   const key = files.get('ui-cookie.key');
   if (key && key.length !== 32) throw new Error('Invalid source cookie key');

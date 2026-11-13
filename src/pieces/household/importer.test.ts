@@ -121,3 +121,15 @@ it.each(['extra-id','extra-record'])('refuses hidden token rows: %s', async kind
   }})).toThrow('content comparison failed');
   expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
 });
+it.each(['null-session','bad-secret','bad-passkey','bad-link','bad-challenge'])('refuses malformed credential records: %s', async kind => {
+  const f = await fixture();
+  const value = structuredClone(f.sessions) as Record<string,any>;
+  if (kind === 'null-session') value.sessions[hash('cookie')] = null;
+  if (kind === 'bad-secret') value.sessions[hash('cookie')].secret = 'broken';
+  if (kind === 'bad-passkey') value.passkeys.cred.counter = -1;
+  if (kind === 'bad-link') value.links[hash('link')].expires = 'tomorrow';
+  if (kind === 'bad-challenge') value.challenges = { [hash('challenge')]: {expires:2000,purpose:'invented'} };
+  writeFileSync(join(f.from,'ui-sessions.json'),JSON.stringify(value));
+  expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('Invalid session credentials');
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'household_%'").all()).toEqual([]);
+});
