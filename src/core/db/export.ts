@@ -9,14 +9,19 @@ export function registerExportFilter(db:Db,piece:string,filter:ExportFilter) {
  db.prepare('INSERT OR IGNORE INTO core_export_required VALUES (?)').run(piece);
 }
 /** Includes rendered retry copies and structured private scope, without returning words. */
-export function privateExportCopy(value:unknown,ids:ReadonlySet<string>):boolean {
+export function privateExportCopy(value:unknown,ids:ReadonlySet<string>,field?:string):boolean {
  if(typeof value==='string') {
-  if([...ids].some(id=>value.includes(id)))return true;
-  try{return privateExportCopy(JSON.parse(value),ids);}catch{return false;}
+  // Only persisted JSON envelopes are decoded. Prompt/note/details strings
+  // are words, even when their contents happen to look like JSON scope.
+  if(['id','from','wake','approval'].includes(field??'') && ids.has(value))return true;
+  if(['record','value','result'].includes(field??'')) {
+   try{return privateExportCopy(JSON.parse(value),ids);}catch{return false;}
+  }
+  return false;
  }
  if(!value || typeof value!=='object')return false;
  if(!Array.isArray(value) && Object.hasOwn(value,'member') && (value as {member?:unknown}).member!==undefined)return true;
- return Object.values(value).some(v=>privateExportCopy(v,ids));
+ return Object.entries(value).some(([key,v])=>privateExportCopy(v,ids,key));
 }
 /** Both export and backup use this snapshot, never copy loom.db. Comms and
  * private copies declared by owning pieces are intentionally unrecoverable.

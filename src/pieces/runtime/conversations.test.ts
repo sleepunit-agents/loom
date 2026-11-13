@@ -402,6 +402,9 @@ it('retains centrally authenticated service-house spend identity and fences stal
  const receipt=value<{id:string}>(await f.post(service,'approvals.request',ask));
  expect(readApproval(f.app.db,receipt.id)).toMatchObject({for:'owner',member:'jonathan',who:{agent:'art',where:`${job} (discord)`}});
  expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
+ const ack=await f.post(service,'approvals.command',{argv:['request','--kind',ask.kind,'--target',ask.target,'--what',ask.what,'--why',ask.why]});
+ expect(ack).toMatchObject({ok:true,value:{exit:0,stdout:`${receipt.id}: allowed; open the decision in your signed-in window\n`}});
+ expect(JSON.stringify(ack)).not.toContain(ask.target);
  expect(await f.post(other,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
  expect(readApproval(f.app.db,receipt.id)?.state).toBe('allowed');

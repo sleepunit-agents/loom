@@ -96,15 +96,15 @@ it('closes the generic standing bypass and retains private exclusions after stan
 });
 
 it('sends private words only to that member’s authenticated window, never a member token or another owner',async()=>{
- const s=await setupLocal('once',undefined,req=>({viewer:{kind:'member',id:req.headers['x-fixture-viewer']==='other'?'second-owner':'jonathan'},window:req.headers['x-fixture-window']==='yes',valid:()=>true}));secondOwner(s);
+ const s=await setupLocal('standing',undefined,req=>({viewer:{kind:'member',id:req.headers['x-fixture-viewer']==='other'?'second-owner':'jonathan'},window:req.headers['x-fixture-window']==='yes',valid:()=>true}));secondOwner(s);
  const id=value<{id:string}>(s.request(prompt,'PRIVATE_LIVE_WORDS',privateCaller)).id;
- const receipt=randomUUID();value(await s.app.operations.callAsync('socket',owner,'approvals.answer',{id,action:'allow'},receipt,true));
+ const receipt=randomUUID();value(await s.app.operations.callAsync('socket',owner,'approvals.every-time',{id},receipt,true));
  // A token cannot replay a browser response containing the private card.
- expect(s.app.operations.call('http',owner,'approvals.answer',{id,action:'allow'},receipt).ok).toBe(false);
- value(clockLocalRecovery(s.app.operations).schedule(privateCaller,{approval:id,mode:'in',when:'1h'}));
- for(const [viewer,window,visible] of [['self','yes',true],['other','yes',false],['self','no',false]]) {
+ expect(s.app.operations.call('http',owner,'approvals.every-time',{id},receipt).ok).toBe(false);
+ value(clockLocalStanding(s.app.operations).schedule(privateCaller,{approval:id,mode:'in',when:'1h'}));
+ for(const type of ['wake','approval','approval-rule'])for(const [viewer,window,visible] of [['self','yes',true],['other','yes',false],['self','no',false]]) {
   const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-fixture-viewer':viewer,'x-fixture-window':window}});
-  try{await once(ws,'open');const result=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'wake'}));
+  try{await once(ws,'open');const result=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type}));
    const [raw]=await result;expect(String(raw).includes('PRIVATE_LIVE_WORDS')).toBe(visible);
   }finally{ws.terminate();}
  }
@@ -152,4 +152,14 @@ it('creates exact standing authority from a new private approval after expiry an
  const standing=value<{id:string;from:string;project:string}>(await windowCall(s,owner,'approvals.every-time',{id:next}));
  expect(standing.id).not.toBe(old.id);expect(standing).toMatchObject({from:next,project:'other'});
  expect(clockLocalStanding(s.app.operations).schedule(current,{approval:next,mode:'in',when:'1h'})).toMatchObject({ok:true,value:{member:'jonathan',project:'other'}});
+});
+
+it('exports public words that look like member scope or refer to a private record as plain text',async()=>{
+ const s=await setupLocal('once');const id=value<{id:string}>(s.request(prompt,'PRIVATE_NOT_EXPORTED',privateCaller)).id;
+ for(const text of ['{"member":"jonathan"}',id,'{"caller":{"member":"jonathan"}}'])
+  value(call(s,owner,'clock.in',{agent:'art',prompt:text,note:text,when:'1h'}));
+ const exported=exportDatabase(s.app.db).find(t=>t.name==='clock_wakes')!;
+ expect(exported.rows).toHaveLength(3);
+ expect(JSON.stringify(exported.rows)).toContain('member');
+ expect(JSON.stringify(exportDatabase(s.app.db))).not.toContain('PRIVATE_NOT_EXPORTED');
 });
