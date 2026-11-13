@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath } from '../config.js';
+import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { MAX_NEEDS_HREF, MAX_NEEDS_STRING, needsOfRow, parseNeeds, type NeedsOwner } from './needs.js';
 
 // ─── Shapes ─────────────────────────────────────────────────────────────────
@@ -242,8 +242,8 @@ export function openConversations(contextDir: string): Database {
 }
 
 /** memories.db read-only, or null when there's no store or no conversations yet. */
-export function openConversationsReadonly(contextDir: string): Database | null {
-  const path = resolveSqliteDbPath(contextDir);
+export function openConversationsReadonly(contextDir: string, selection?: MemorySelection): Database | null {
+  const path = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(path)) return null;
   const db = new BetterSqlite3(path, { readonly: true });
   db.pragma('busy_timeout = 5000');
@@ -256,8 +256,8 @@ function withDb<T>(contextDir: string, f: (db: Database) => T): T {
   try { return f(db); } finally { db.close(); }
 }
 
-function withReadonly<T>(contextDir: string, empty: T, f: (db: Database) => T): T {
-  const db = openConversationsReadonly(contextDir);
+function withReadonly<T>(contextDir: string, empty: T, f: (db: Database) => T, selection?: MemorySelection): T {
+  const db = openConversationsReadonly(contextDir, selection);
   if (!db) return empty;
   try { return f(db); } finally { db.close(); }
 }
@@ -892,10 +892,10 @@ export function hubConversations(contextDir: string, slug: string, since: string
 export interface TapeDigest { at: string; venue: string; label: string | null; place: string; summary: string }
 
 /** Digests written in [since, now], oldest first, for the boot tape; with `only`, that conversation's alone (t-2118). */
-export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string, only?: string): TapeDigest[] {
+export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string, only?: string, selection?: MemorySelection): TapeDigest[] {
   return withReadonly(contextDir, [], (db) => db.prepare(`SELECT d.at, c.venue, c.label, c.place, d.summary FROM conversation_digests d
       JOIN conversations c ON c.id = d.conversation WHERE d.at >= ? AND d.at <= ?${only !== undefined ? ' AND d.conversation = ?' : ''} ORDER BY d.at`)
-    .all(...(only !== undefined ? [sinceIso, nowIso, only] : [sinceIso, nowIso])) as TapeDigest[]);
+    .all(...(only !== undefined ? [sinceIso, nowIso, only] : [sinceIso, nowIso])) as TapeDigest[], selection);
 }
 
 // ─── Retention ──────────────────────────────────────────────────────────────
