@@ -14,7 +14,7 @@ afterEach(async () => { for (const close of cleanup.splice(0)) await close(); })
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'bridges-client-'));
   const app = await startLoom({ home, next: true, host: '127.0.0.1', port: 0, clock: new FakeClock(), sharing: () => sharing,
-    authenticate: req => req.headers.authorization === 'Bearer fixture-token' ? { viewer: { kind: 'member', id: 'jonathan' }, valid: () => true } : req.headers.authorization === 'Bearer reader-token' ? { viewer: { kind: 'member', id: 'reader' }, valid: () => true } : undefined,
+    authenticate: req => ['Bearer fixture-token', 'Bearer v1'].includes(req.headers.authorization ?? '') ? { viewer: { kind: 'member', id: 'jonathan' }, valid: () => true } : req.headers.authorization === 'Bearer reader-token' ? { viewer: { kind: 'member', id: 'reader' }, valid: () => true } : undefined,
     install: app => installBridges(app, () => sharing) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const tokenFile = join(home, 'token'); writeFileSync(tokenFile, 'fixture-token');
@@ -72,6 +72,13 @@ it('retries the identical write after a committed response is lost', async () =>
   expect(app.db.prepare("SELECT count(*) AS n FROM core_operations WHERE name='bridges.putVenues'").get()).toEqual({ n: 1 });
   expect(app.db.prepare("SELECT value FROM bridges_meta WHERE key='setup-revision'").get()).toEqual({ value: '1' });
 });
+it('acknowledges a caller-supplied id even when it coincides with the bearer token', async () => {
+  const app = await setup(); writeFileSync(app.tokenFile, 'v1');
+  expect(await app.run(['putVenues', JSON.stringify(venue)])).toMatchObject({ code: 0, stdout: '{\n  "id": "v1"\n}\n', stderr: '' });
+  const row = app.db.prepare('SELECT id FROM bridges_venues WHERE id=?').get('v1');
+  expect(row).toEqual({ id: 'v1' });
+  expect(await app.run(['removeVenues', '{"id":"v1"}'], async () => Response.json({ ok: true, value: { id: 'other' } }))).toMatchObject({ code: 1, stdout: '' });
+});
 it('rejects malformed usage before networking and leaves overflowing numbers for daemon rejection', async () => {
   const app = await setup(); let requests = 0;
   const unavailable: typeof fetch = async () => { requests++; throw Error('fixture-token'); };
@@ -99,6 +106,10 @@ it('retries server errors with the same id and offers offline help without any t
     const result = await app.run(['removeVenues','{"id":"v1"}'], async () => ++calls < 4 ? Response.json({}, { status }) : Response.json({ ok: true, value: { id: 'v1' } }));
     expect(result).toMatchObject({ code: 0 }); expect(calls).toBe(4); expect(new Set(result.bodies).size).toBe(1);
   }
+  calls = 0;
+  const refused = await app.run(['removeVenues','{"id":"v1"}'], async () => { calls++; return Response.json({}, { status: 503 }); });
+  expect(refused).toMatchObject({ code: 1, stdout: '', stderr: 'loom-bridges: Request refused\n' });
+  expect(calls).toBe(4); expect(new Set(refused.bodies).size).toBe(1);
   for (const args of [[], ['--help'], ['-h']]) {
     let stdout = '';
     expect(await runBridgesClient(args, { stdout: s => stdout += s, stderr: () => {}, stdin: Readable.from([]), stdinIsTTY: false, env: {} }, { request: async () => { throw Error('must not request'); }, retry: async () => { throw Error('must not retry'); } })).toBe(0);

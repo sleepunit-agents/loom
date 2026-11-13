@@ -217,7 +217,8 @@ adds no actor or authority fields. It prints the daemon's `{ "id": "record-id" }
 acknowledgement as JSON, with exit 0; refusal/unavailability exits 1 and malformed
 command/JSON usage exits 2. Transport failures and HTTP 5xx responses retry at most four times with the
 same write id and original JSON, including after a lost commit acknowledgement.
-Redirects are refused and diagnostics are fixed strings. Only secret references
+Redirects are refused and diagnostics are fixed strings. The returned id must match
+the id supplied by the caller; unrelated response fields or ids are refused. Only secret references
 belong in venue setup; this command never obtains venue credentials.
 
 This is an additional setup surface for the new side. It does not replace legacy

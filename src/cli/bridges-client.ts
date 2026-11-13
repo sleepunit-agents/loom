@@ -42,7 +42,7 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
       // Setup writes acknowledge only an id. Never print arbitrary server fields.
       const result = z.object({ id: z.string() }).strict().safeParse(answer.value);
       if (!result.success) return fail('Invalid daemon response');
-      if (result.data.id.includes(token)) return fail('Invalid daemon response');
+      if (result.data.id !== (input as Record<string, unknown>).id) return fail('Invalid daemon response');
       io.stdout(JSON.stringify(result.data, null, 2) + '\n');
       return 0;
     } catch { if (attempt === 3) return fail('loom daemon is unavailable'); }
