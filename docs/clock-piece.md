@@ -506,3 +506,23 @@ stream clears stale values; losing ownership removes the card. The existing Home
 browser proof checks two-window create/pause/cancel updates and captures the
 composed panels in its six-size/look evidence. No caller authority or dispatch
 capability is added by these read-only panels.
+
+## Parked-answer composition
+
+Next mode supplies Clock with read-only owning roles for Approvals and, when
+installed in the same foundation, Secrets requests. Each read retains the wake's
+original viewer and checks the owning piece's current central visibility. Missing
+or invisible requests remain unreadable; saved kind/target fields cannot stand
+in for a current answer. Approval expiry is computed at the current clock time.
+Secret revocation is reported as cancellation. No secret names, house scope,
+values or request details enter this answer projection.
+
+Committed approval, secret-request and access changes notify parked work through
+the live observer; Clock removes its observer on close. Restart uses the same
+roles and persisted park deadlines. Existing unpark messages distinguish Allow,
+Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
+request again; it never carries a house grant forward. No answer read spends an
+approval or grants access, and runtime dispatch remains held until its owning
+implementation is composed. Local-wake filing/recovery/standing and vouch
+applications remain separate unfinished flows. This composition replaces the
+previously missing next-mode approval parking seam.

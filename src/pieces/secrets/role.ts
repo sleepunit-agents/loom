@@ -1,4 +1,4 @@
-import type { Operations, Result, Viewer } from '../../core/index.js';
+import { maySee, type Db, type Sharing, type Operations, type Result, type Viewer } from '../../core/index.js';
 export { secretName } from './input.js';
 export type { SecretUse } from './service.js';
 /** The single authority for agent use. No cache: revocation applies to the next call. */
@@ -37,6 +37,19 @@ export function secretRequestsRole(operations: Pick<Operations, 'call'>) {
   return {
     request(viewer: Viewer, context: GrantContext, input: { target: string; why: string; minutes?: number }, operationId: string): Result {
       return operations.call('direct', viewer, 'secrets.requestHouse', { ...input, agent: viewer.id, scope: context }, operationId);
+    },
+  };
+}
+
+/** Minimal answer projection; secret values and grant scope never cross this seam. */
+export function secretAnswers(db: Db, sharing: () => Sharing) {
+  return {
+    check(id: string, viewer: Viewer) {
+      const row = db.prepare('SELECT record FROM secrets_requests WHERE id=?').get(id) as { record: string } | undefined;
+      if (!row) return;
+      const request = JSON.parse(row.record) as GrantRequest;
+      if (!maySee(viewer, { type: 'secret.request', agent: request.agent }, sharing())) return;
+      return { state: request.state };
     },
   };
 }

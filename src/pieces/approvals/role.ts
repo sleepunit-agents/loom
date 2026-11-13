@@ -1,5 +1,6 @@
-import type { Operations, Viewer } from '../../core/index.js';
-import type { Caller } from './model.js';
+import { maySee, type Db, type Sharing, type Operations, type Viewer } from '../../core/index.js';
+import { approvalScope, stateOf, type Caller } from './model.js';
+import { readApproval } from './store.js';
 /** Owner UI composition keeps the authenticated viewer; no body Caller is minted. */
 export function ownerApprovalsRole(operations: Operations) {
   return {
@@ -17,6 +18,17 @@ export function approvalsRole(operations: Operations, service: string) {
     },
     standing(caller: Caller, input: Record<string,unknown>, id: string) {
       return operations.call('direct',viewer,'approvals.standing',{...input,caller},id);
+    },
+  };
+}
+
+/** Read-only answer seam. It retains the original viewer and never spends a receipt. */
+export function approvalAnswers(db: Db, sharing: () => Sharing, now: () => number) {
+  return {
+    check(id: string, viewer: Viewer) {
+      const approval = readApproval(db, id);
+      if (!approval || !maySee(viewer, approvalScope(approval), sharing())) return;
+      return { state: stateOf(approval, now()), kind: approval.kind, target: approval.target };
     },
   };
 }

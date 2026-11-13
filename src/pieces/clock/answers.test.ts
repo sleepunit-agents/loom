@@ -1,0 +1,124 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { startLoom } from '../../foundation.js';
+import { FakeClock, type Viewer } from '../../core/index.js';
+import { fixtureSharing } from '../../fixture.js';
+import { installAttention } from '../attention/index.js';
+import { secretGrantAttention } from '../secrets/attention.js';
+import { installSecrets } from '../secrets/index.js';
+import { wake, type Wake } from './store.js';
+import { clockAnswers } from './dependencies/answers.js';
+
+const owner: Viewer = { kind: 'member', id: 'jonathan' };
+const agent: Viewer = { kind: 'agent', id: 'art' };
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
+const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
+async function setup(secrets = false) {
+  const home = mkdtempSync(join(tmpdir(), 'loom-clock-answers-'));
+  const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+  const access = fixtureSharing();
+  const sharing = () => access;
+  const options = { home, clock, next: true, sharing, install: secrets ? (app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) => {
+    const sources = installAttention(app.db, app.operations, app.live, sharing);
+    installSecrets(app.db, app.operations, app.live, sharing, secretGrantAttention(sources, app.operations));
+  } : undefined };
+  let app = await startLoom(options);
+  cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
+  const call = (name: string, input: object = {}, viewer = owner) => app.operations.call('direct', viewer, name, input, randomUUID());
+  const value = <T>(name: string, input: object = {}, viewer = owner): T => {
+    const result = call(name, input, viewer); if (!result.ok) throw Error(JSON.stringify(result)); return result.value as T;
+  };
+  const request = () => value<{id:string}>('approvals.request', { kind: 'merge', target: `github:acme/app#12@${'a'.repeat(40)}`, ask: 'Merge the fix?', why: 'Fix the page.', if_yes: 'I merge it.', if_no: 'I leave it open.' }, agent);
+  const park = (id: string, viewer = agent) => value<Wake>('clock.park', { agent: 'art', prompt: 'Continue original work', note: 'original note', on: id }, viewer);
+  const flush = async () => { clock.advance(0); await settle(); };
+  return { get app() { return app; }, call, value, request, park, clock, access, flush,
+    async restart() { await app.close(); app = await startLoom(options); } };
+}
+
+it('next parks on a real approval and wakes promptly on Allow without spending it', async () => {
+  const s = await setup(); const card = s.request(); const parked = s.park(card.id);
+  await s.flush(); expect(wake(s.app.db, parked.id)?.state).toBe('parked');
+  s.value('approvals.answer', {id:card.id, action:'allow'});
+  await s.flush();
+  expect(wake(s.app.db, parked.id)).toMatchObject({state:'held',hold:'staging',wait:{answer:'allowed'},note:'Resumed after your OK: original note'});
+  expect(wake(s.app.db, parked.id)?.prompt).toContain(`approvals use ${card.id} --kind merge --target`);
+  expect(s.value('approvals.check',{id:card.id},agent)).toEqual({state:'allowed'});
+  await s.restart(); await s.flush();
+  expect(wake(s.app.db, parked.id)?.state).toBe('held');
+});
+
+it('reads a Deny after restart and times out a pending card with distinct instructions', async () => {
+  const s = await setup(); const first = s.request(); const denied = s.park(first.id);
+  await s.restart(); s.value('approvals.answer',{id:first.id,action:'deny'}); await s.flush();
+  expect(wake(s.app.db, denied.id)?.prompt).toContain('answer to '+first.id+': denied');
+  expect(wake(s.app.db, denied.id)?.prompt).not.toContain('approvals use');
+  const second = s.request(); const pending = s.park(second.id);
+  s.clock.advance(86400_000); await settle();
+  expect(wake(s.app.db,pending.id)).toMatchObject({state:'held',wait:{answer:'pending'}});
+  expect(wake(s.app.db,pending.id)?.prompt).toContain('No answer to '+second.id+' after 24h');
+});
+
+it('refuses invisible or missing answers and rechecks visibility rather than saved action metadata', async () => {
+  const s = await setup(); const card = s.request();
+  const reader = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
+  for (const viewer of [{kind:'agent',id:'mark'}, {kind:'member',id:'pollock'}, {kind:'service',id:'ungranted'}, {kind:'runner',id:'box'}] as Viewer[]) {
+    expect(reader.check(card.id,viewer)).toBeUndefined();
+    expect(s.call('clock.park',{agent:'mark',prompt:'Hidden',note:'',on:card.id},viewer).ok).toBe(false);
+  }
+  expect(s.call('clock.park',{agent:'art',prompt:'Missing',note:'',on:'a-deadbeef'},agent).ok).toBe(false);
+  const parked = s.park(card.id,owner);
+  s.access.members.jonathan.agents = []; s.access.members.jonathan.owner = false;
+  expect(reader.check(card.id,owner)).toBeUndefined();
+  s.clock.advance(86400_000); await settle();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',hold:'permission'});
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
+});
+
+it('composes real secret request answers without exposing secret names or granting a new house', async () => {
+  const s = await setup(true);
+  s.value('secrets.describe',{name:'api-key',description:'Private secret name'});
+  const request = s.value<{id:string}>('secrets.requestHouse',{agent:'art',target:'api-key',scope:{house:'h-1'},why:'work',minutes:2},agent);
+  const parked = s.park(request.id);
+  s.value('attention.answer',{id:request.id,answer:{kind:'yes'}}); await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'allowed'}});
+  expect(wake(s.app.db,parked.id)?.prompt).toContain('request it again');
+  const reader = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
+  expect(reader.check(request.id,agent)).toEqual({state:'allowed'});
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('api-key');
+  expect(reader.check(request.id,{kind:'agent',id:'mark'})).toBeUndefined();
+  expect(s.value('secrets.may',{agent:'art',kind:'secret',target:'api-key'},agent)).toEqual({allow:false});
+});
+
+it('keeps missing Secrets unavailable and unsubscribes the answer observer', async () => {
+  const s = await setup(); const reader = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
+  expect(reader.check('q-missing',owner)).toBeUndefined();
+  let changes = 0; const off = reader.subscribe(()=>changes++);
+  s.app.live.changed([{type:'wake',id:'w-test'}]); expect(changes).toBe(0);
+  s.app.live.changed([{type:'approval',id:'a-test'},{type:'secret.request',id:'q-test'}]); expect(changes).toBe(1);
+  off(); s.app.live.changed([{type:'core.access',id:'all'}]); expect(changes).toBe(1);
+});
+
+it('observes an expired approval rather than handing out stale Allow instructions', async () => {
+  const s = await setup(); const card = s.request();
+  s.value('approvals.answer',{id:card.id,action:'allow'});
+  const approval = s.value<{approvals:{id:string;expires:string}[]}>('approvals.list').approvals.find(a=>a.id===card.id)!;
+  s.clock.advance(Date.parse(approval.expires)-s.clock.now());
+  const parked = s.park(card.id); await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'expired'}});
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
+});
+
+it('reads a real secret Deny after restart without reopening its household ask', async () => {
+  const s = await setup(true);
+  s.value('secrets.describe',{name:'api-key',description:''});
+  const request = s.value<{id:string}>('secrets.requestHouse',{agent:'art',target:'api-key',scope:{house:'h-1'},why:'work'},agent);
+  const parked = s.park(request.id);
+  await s.restart(); s.value('attention.answer',{id:request.id,answer:{kind:'no'}}); await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'denied'}});
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('request it again');
+  expect(s.value('attention.get',{id:request.id})).toMatchObject({answer:{kind:'no'}});
+});
